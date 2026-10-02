@@ -1,0 +1,35 @@
+name: MEPlayerActions
+version: '${version}'
+main: com.simmc.meplayeractions.MEPlayerActionsPlugin
+api-version: '1.21.11'
+description: ModelEngine player disguise actions and optional client state sync
+authors: [SIMMC, Loliiiico]
+depend: [ModelEngine]
+softdepend: [GSit]
+commands:
+  meplayeractions:
+    description: 玩家模型动作
+    usage: /meplayeractions help
+    permission: mact.use
+permissions:
+  mact.use:
+    default: true
+  mact.disguise:
+    default: true
+  mact.disguise.effects:
+    description: 为本次伪装施加缓慢药水效果
+    default: op
+  mact.play:
+    default: true
+  mact.sit:
+    default: true
+  mact.crawl:
+    default: true
+  mact.sync:
+    default: true
+  mact.flight:
+    default: op
+  mact.debug:
+    default: op
+  mact.admin:
+    default: op
