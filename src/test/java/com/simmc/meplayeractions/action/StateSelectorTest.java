@@ -85,6 +85,16 @@ class StateSelectorTest {
             assertNull(StateSelector.select(riding, except(SyncFeature.RIDE)));
         }
     }
+    @Test void nativeBedIsDistinctFromGsitSleepAndKeepsSleepSynchronization() {
+        var bed = new StateSelector.Sample(false, false, false, false, false,
+                false, false, false, false, false, true, true, StateSelector.Vehicle.NONE);
+        var lay = new StateSelector.Sample(false, false, false, false, false,
+                false, false, false, false, false, true, StateSelector.Vehicle.NONE);
+        assertEquals(ActionState.BED_SLEEP, StateSelector.select(bed, ALL_ENABLED, ActionState.JUMP));
+        assertEquals("bed-sleep", bed.postureKey());
+        assertEquals(ActionState.SLEEP, StateSelector.select(lay, ALL_ENABLED, ActionState.JUMP));
+        assertNull(StateSelector.select(bed, except(SyncFeature.SLEEP), ActionState.JUMP));
+    }
 
     @Test void horizontalSwimmingAndUprightTreadingUseDifferentAnimations() {
         var horizontal = new StateSelector.Sample(false, false, false, false, true,

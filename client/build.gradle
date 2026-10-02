@@ -1,0 +1,87 @@
+plugins {
+    id 'fabric-loom' version '1.13.6'
+}
+
+group = 'com.simmc'
+version = '0.3.0'
+base { archivesName = 'MEPlayerActions-Client' }
+
+repositories {
+    mavenCentral()
+    maven { url = uri('../build/maven-repo') }
+}
+
+dependencies {
+    minecraft 'com.mojang:minecraft:1.21.11'
+    mappings 'net.fabricmc:yarn:1.21.11+build.3:v2'
+    modImplementation 'net.fabricmc:fabric-loader:0.18.4'
+    modImplementation 'net.fabricmc.fabric-api:fabric-api:0.140.2+1.21.11'
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.12.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.12.2'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+    withSourcesJar()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+    options.encoding = 'UTF-8'
+}
+
+processResources {
+    inputs.property 'version', project.version
+    filesMatching('fabric.mod.json') { expand version: project.version }
+    from('../examples/blueprints/npc') {
+        include '*.bbmodel'
+        into 'assets/meplayeractions/models'
+    }
+}
+
+sourceSets.test.resources {
+    srcDir '../examples/blueprints/npc'
+    include '*.bbmodel'
+}
+
+test {
+    useJUnitPlatform()
+    maxHeapSize = '1G'
+    // Windows launchers can decode Gradle's UTF-8 @argfile using the system ACP.
+    // Keep non-ASCII runtime entries out of that file, without changing JVM/OS defaults.
+    doFirst {
+        def isAsciiPath = { File value -> value.path.chars().allMatch { point -> point < 128 } }
+        if (System.getProperty('os.name').startsWith('Windows') && classpath.files.any { !isAsciiPath(it) }) {
+            File stagingRoot = providers.gradleProperty('mpaAsciiRuntimeDir').map { file(it) }
+                    .getOrElse(new File(System.getProperty('java.io.tmpdir'), 'meplayeractions-client-runtime'))
+            if (!isAsciiPath(stagingRoot)) throw new GradleException('Set -PmpaAsciiRuntimeDir to an ASCII-only temporary directory')
+            stagingRoot.mkdirs()
+            File staging = java.nio.file.Files.createTempDirectory(stagingRoot.toPath(), 'test-').toFile()
+            Map<File, File> remapped = [:]
+            classpath.files.eachWithIndex { original, index ->
+                if (!isAsciiPath(original)) {
+                    File entry = new File(staging, 'entry-' + index)
+                    project.copy { from original; into entry }
+                    remapped[original] = original.isDirectory() ? entry : new File(entry, original.name)
+                }
+            }
+            classpath = files(classpath.files.collect { remapped.getOrDefault(it, it) })
+            testClassesDirs = files(testClassesDirs.files.collect { remapped.getOrDefault(it, it) })
+        }
+    }
+}
+
+loom {
+    runs {
+        client {
+            runDir = 'run'
+            vmArg '-Dmeplayeractions.test=false'
+        }
+    }
+}
+
+tasks.withType(AbstractArchiveTask).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}

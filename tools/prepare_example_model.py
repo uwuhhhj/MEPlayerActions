@@ -119,9 +119,9 @@ def source_label(path: Path) -> str:
 
 
 def write_npc_variant(npc: dict, player: dict, npc_path: Path, npc_hash: str) -> None:
-    """Add player crawl tracks while retaining every existing NPC track and all geometry."""
+    """Add player posture tracks while retaining every existing NPC track and all geometry."""
     result = copy.deepcopy(npc)
-    for name in ("crawl_idle", "crawl_walk", "player_jump"):
+    for name in ("crawl_idle", "crawl_walk", "player_jump", "bed_sleep"):
         added = copy.deepcopy(animation(player, name))
         added["uuid"] = str(uuid.uuid5(DERIVED_UUID_NAMESPACE, f"npc:animation:{name}"))
         for bone_id, animator in added["animators"].items():
@@ -138,10 +138,11 @@ def write_npc_variant(npc: dict, player: dict, npc_path: Path, npc_hash: str) ->
         "model_id": "ysm_01_jk_npc",
         "npc_source": {"path": source_label(npc_path), "sha256": npc_hash},
         "derived_model": {"path": NPC_OUTPUT.relative_to(PACKAGE_ROOT).as_posix(), "sha256": sha256(NPC_OUTPUT)},
-        "added_animations": ["crawl_idle", "crawl_walk", "player_jump"],
+        "added_animations": ["crawl_idle", "crawl_walk", "player_jump", "bed_sleep"],
         "original_animation_count": len(npc["animations"]),
         "original_animations_and_geometry_preserved": True,
         "crawl_root_rotation_degrees": [90.0, 0.0, 0.0],
+        "bed_sleep": bed_sleep_contract(),
         "validation": checks,
         "in_game_verified": False,
     }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -176,6 +177,72 @@ def player_jump(model: dict) -> dict:
         frame["uuid"] = str(uuid.uuid5(DERIVED_UUID_NAMESPACE, f"player_jump:root:{index}"))
         frame["data_points"] = [{axis: "1" if frame["channel"] == "scale" else "0" for axis in ("x", "y", "z")}]
     result["animators"][root_id] = root
+    return result
+
+
+def bed_sleep_contract() -> dict:
+    return {
+        "anchor": "Two-block bed center, mattress top at block Y + 0.5625; floor lay uses floor anchor",
+        "local_head_direction": "-Z",
+        "local_back_contact_y_blocks": 0.0,
+        "legacy_root_rotation_degrees": [-90.0, -180.0, 0.0],
+        "renderer": "World Y rotation 180 - bodyYaw only; no native-pose X/Z rotation",
+        "original_sleep_preserved": True,
+    }
+
+
+def bed_sleep(model: dict) -> dict:
+    """Author a supine pose in the geometry itself, independent of YSM's sleeping renderer.
+
+    The source is BB 4.x: animated X/Y rotations and position X are negated by
+    preview/rendering. Effective Ry(180)Rx(90) puts the nose upward and the head
+    toward local -Z. Root translation centers its roughly 1.8-block body on a
+    two-block mattress instead of pivoting the body around the player's feet.
+    """
+    if model.get("meta", {}).get("format_version") != "4.10":
+        raise ValueError("Bed demo authoring expects the known Blockbench 4.10 source")
+    roots = [node for node in model["outliner"] if isinstance(node, dict) and node.get("name") == "Root"]
+    if len(roots) != 1:
+        raise ValueError("Expected one geometry Root for bed pose")
+    bones: list[dict] = []
+    def collect(node: dict) -> None:
+        bones.append(node)
+        for child in node.get("children", []):
+            if isinstance(child, dict): collect(child)
+    collect(roots[0])
+    result = {
+        "uuid": str(uuid.uuid5(DERIVED_UUID_NAMESPACE, "player:animation:bed_sleep")),
+        "name": "bed_sleep", "loop": "hold", "override": True, "length": 0.5,
+        "snapping": 20, "selected": False, "saved": True,
+        "anim_time_update": "", "blend_weight": "", "start_delay": "", "loop_delay": "",
+        "animators": {},
+    }
+    rotations = {
+        "Root": (-90, -180, 0),
+        # Bring the tail from behind the torso onto the bed above the legs.
+        "Tail": (-170, 0, 0),
+        # Relax the standing hair bends against the pillow; X/Y animation axes
+        # are legacy-inverted, while Z must cancel the rest roll directly.
+        "bone20": (-40, 0, 0),
+        "bone21": (-19.59657, -4.07774, 11.29549),
+        "bone25": (-19.59657, 4.07774, -11.29549),
+        "LeftArm": (0, 0, -8), "RightArm": (0, 0, 8),
+        "LeftForeArm": (-10, 0, 0), "RightForeArm": (-10, 0, 0),
+        "LeftLowerLeg": (4, 0, 0), "RightLowerLeg": (4, 0, 0),
+    }
+    positions = {"Root": (0, 3.2, 14.4), "LongHair": (0, 0, -.75),
+                 "LongLeftHair": (0, 0, -.5), "LongRightHair": (0, 0, -.5), "BaseHair": (0, 0, -1)}
+    for bone in bones:
+        bone_id, name = bone["uuid"], bone["name"]
+        frames = []
+        for channel, values in (("position", positions.get(name, (0, 0, 0))),
+                                ("rotation", rotations.get(name, (0, 0, 0))), ("scale", (1, 1, 1))):
+            frames.append({
+                "uuid": str(uuid.uuid5(DERIVED_UUID_NAMESPACE, f"bed_sleep:{bone_id}:{channel}")),
+                "channel": channel, "time": 0, "color": -1, "interpolation": "linear",
+                "data_points": [{axis: numeric_text(value) for axis, value in zip(("x", "y", "z"), values)}],
+            })
+        result["animators"][bone_id] = {"name": name, "type": "bone", "keyframes": frames}
     return result
 
 
@@ -219,9 +286,10 @@ def main() -> None:
             frame["uuid"] = str(uuid.uuid5(DERIVED_UUID_NAMESPACE, f"{MODEL_ID}:hover:{animator_id}:{index}"))
     result["animations"].append(hover)
     result["animations"].append(player_jump(result))
+    result["animations"].append(bed_sleep(result))
     checks = validate(result)
-    if len(result["animations"]) != 28:
-        raise ValueError("Expected exactly 28 player animations")
+    if len(result["animations"]) != 29:
+        raise ValueError("Expected exactly 29 player animations")
     preserved = [item["name"] for item in npc["animations"] if item["name"] not in ("climb", "climb_idle")]
     if any(animation(result, name) != animation(npc, name) for name in preserved):
         raise ValueError("An unrelated original NPC animation was modified")
@@ -247,6 +315,7 @@ def main() -> None:
         "crawl_root_position_model_units": [0.0, round(4.0 * scale, 8), round(19.0 * scale, 8)],
         "hover": "Same numeric pose and motion as fly; duplicated animation/keyframe UUIDs replaced deterministically",
         "player_jump": "Complete takeoff/airborne/landing pose cycle; zero root lift to avoid double jumping with delayed real position",
+        "bed_sleep": bed_sleep_contract(),
         "elytra": "Not generated; configure a fallback to fly until a dedicated action is authored",
         "animations": [{"name": item["name"], "length_seconds": item.get("length", 0), "loop": item.get("loop")} for item in result["animations"]],
         "validation": {**checks, "sources_unchanged": True, "unrelated_animations_preserved": len(preserved)},

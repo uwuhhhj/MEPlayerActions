@@ -6,7 +6,13 @@ import java.util.UUID;
 /** Position and posture share one delayed frame, avoiding a landed pose on an airborne model. */
 public final class VisualTimeline {
     public record Frame(long tick, UUID world, double x, double y, double z,
-                        StateSelector.Sample pose, ActionState air, long jumpCycle) {}
+                        StateSelector.Sample pose, ActionState air, long jumpCycle,
+                        float bodyYaw, float headYaw, float headPitch) {
+        public Frame(long tick, UUID world, double x, double y, double z,
+                     StateSelector.Sample pose, ActionState air, long jumpCycle) {
+            this(tick, world, x, y, z, pose, air, jumpCycle, 0, 0, 0);
+        }
+    }
     private final ArrayDeque<Frame> frames = new ArrayDeque<>();
 
     public Frame sample(Frame current, int delay, double maxDistance, boolean snapPostures) {

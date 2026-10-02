@@ -2,3 +2,5 @@ target/
 build/
 *.log
 __pycache__/
+.gradle/
+client/run/

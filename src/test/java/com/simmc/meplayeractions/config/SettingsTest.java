@@ -13,6 +13,17 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class SettingsTest {
+    @Test void bedAndGsitLayUseTheHorizontalClipButRetainIndependentMappings() throws IOException {
+        var config = configuration(); var settings = Settings.load(config);
+        for (var state : List.of(ActionState.BED_SLEEP, ActionState.SLEEP)) {
+            assertEquals("bed_sleep", settings.animation("ysm_01_jk_player", state, List.of("sleep", "bed_sleep")));
+            assertEquals("sleep", settings.animation("ysm_01_jk_player", state, List.of("sleep")));
+        }
+        config.set("animations.defaults.bed-sleep", List.of());
+        var disabled = Settings.load(config);
+        assertNull(disabled.animation("ysm_01_jk_player", ActionState.BED_SLEEP, List.of("bed_sleep")));
+        assertEquals("bed_sleep", disabled.animation("ysm_01_jk_player", ActionState.SLEEP, List.of("bed_sleep")));
+    }
     @Test void audienceDefaultsWorkWithOldConfigurationAndExplicitOverrides() throws IOException {
         var config = configuration();
         for (String key : List.of("show-self", "view-distance", "max-viewers")) config.set("disguise." + key, null);

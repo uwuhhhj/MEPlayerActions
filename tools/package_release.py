@@ -82,6 +82,8 @@ def main() -> None:
             b"${version}", version.encode("utf-8"))
         assert archive.read("plugin.yml") == expected_descriptor, "Stale plugin metadata"
         assert archive.read("config.yml") == (PROJECT / "src/main/resources/config.yml").read_bytes()
+        for model_file in (PROJECT / "examples/blueprints/npc").glob("*.bbmodel"):
+            assert archive.read(f"models/{model_file.name}") == model_file.read_bytes(), "Stale server client asset"
         classes = [n for n in archive.namelist() if n.endswith(".class")]
         assert "com/simmc/meplayeractions/MEPlayerActionsPlugin.class" in classes
         assert "com/simmc/meplayeractions/action/DisguiseOptions.class" in classes
@@ -102,8 +104,8 @@ def main() -> None:
     assert digest(model) == facts["derived_model"]["sha256"]
     parsed_model = json.loads(model.read_text(encoding="utf-8"))
     animation_names = [a["name"] for a in parsed_model["animations"]]
-    assert len(animation_names) == len(set(animation_names)) == 28
-    assert {"idle", "walk", "sit", "crawl_idle", "crawl_walk", "wave", "fly", "hover"} <= set(animation_names)
+    assert len(animation_names) == len(set(animation_names)) == 29
+    assert {"idle", "walk", "sit", "crawl_idle", "crawl_walk", "wave", "fly", "hover", "bed_sleep"} <= set(animation_names)
     for source_name in ("npc_source", "original_v9_source"):
         source = PROJECT.parent / facts[source_name]["path"]
         if source.exists():
@@ -115,8 +117,8 @@ def main() -> None:
     assert digest(npc_model) == npc_facts["derived_model"]["sha256"]
     npc_parsed = json.loads(npc_model.read_text(encoding="utf-8"))
     npc_names = [a["name"] for a in npc_parsed["animations"]]
-    assert len(npc_names) == len(set(npc_names)) == 29
-    assert {"climb", "climb_idle", "crawl_idle", "crawl_walk", "player_jump"} <= set(npc_names)
+    assert len(npc_names) == len(set(npc_names)) == 30
+    assert {"climb", "climb_idle", "crawl_idle", "crawl_walk", "player_jump", "bed_sleep"} <= set(npc_names)
     npc_source = PROJECT.parent / npc_facts["npc_source"]["path"]
     if npc_source.exists():
         original_npc = json.loads(npc_source.read_text(encoding="utf-8"))
@@ -147,7 +149,7 @@ def main() -> None:
             compared[target_name] = {"reference_clip": source_name, "reference_root": source_pose,
                                      "npc_root": target_pose}
         assert digest(reference_path) == reference_hash
-        reference_comparison = {"source": str(reference_path), "sha256": reference_hash,
+        reference_comparison = {"source": reference_path.relative_to(PROJECT.parent).as_posix(), "sha256": reference_hash,
                                 "npc_position_scale": scale, "root_tracks_match": True, "clips": compared}
 
     protocol = PROJECT / "src/main/java/com/simmc/meplayeractions/client/CLIENT_PROTOCOL.md"
@@ -173,6 +175,49 @@ def main() -> None:
     for filename in ("pom.xml", "README.md", ".gitignore"):
         source_entries[f"MEPlayerActions/{filename}"] = (PROJECT / filename).read_bytes()
 
+    client = PROJECT / "client"
+    client_jar = client / "build/libs" / f"MEPlayerActions-Client-{version}.jar"
+    assert client_jar.is_file(), "Run client gradlew build first"
+    client_inputs = [client / p for p in ("build.gradle", "settings.gradle", "gradle.properties")]
+    client_inputs += [p for p in (client / "src/main").rglob("*") if p.is_file()]
+    client_inputs += list((PROJECT / "examples/blueprints/npc").glob("*.bbmodel"))
+    assert all(p.stat().st_mtime_ns <= client_jar.stat().st_mtime_ns for p in client_inputs), "Client source changed after JAR"
+    client_totals = dict(tests=0, failures=0, errors=0, skipped=0)
+    client_reports = list((client / "build/test-results/test").glob("TEST-*.xml"))
+    assert client_reports, "Client test reports required"
+    client_report_names = set()
+    for report in client_reports:
+        suite = ET.parse(report).getroot()
+        client_report_names.add(suite.attrib["name"])
+        for key in client_totals:
+            client_totals[key] += int(suite.attrib.get(key, "0"))
+    assert client_totals["tests"] > 0 and not any(client_totals[k] for k in ("failures", "errors", "skipped")), client_totals
+    for test_source in (client / "src/test/java").rglob("*Test.java"):
+        suite_name = ".".join(test_source.relative_to(client / "src/test/java").with_suffix("").parts)
+        assert suite_name in client_report_names, f"Missing client test suite: {suite_name}"
+        assert (client / "build/test-results/test" / f"TEST-{suite_name}.xml").stat().st_mtime_ns >= test_source.stat().st_mtime_ns
+    with zipfile.ZipFile(client_jar) as archive:
+        assert archive.testzip() is None
+        metadata = json.loads(archive.read("fabric.mod.json"))
+        assert metadata["version"] == version and metadata["id"] == "meplayeractions"
+        assert metadata["environment"] == "client" and metadata["depends"]["minecraft"] == "~1.21.11"
+        assert metadata["depends"]["java"] == ">=21"
+        assert not any(n.endswith(".jar") for n in archive.namelist()), "Unexpected bundled client dependency"
+        for model_file in (PROJECT / "examples/blueprints/npc").glob("*.bbmodel"):
+            assert archive.read(f"assets/meplayeractions/models/{model_file.name}") == model_file.read_bytes()
+        client_classes = [n for n in archive.namelist() if n.endswith(".class")]
+        assert "com/simmc/meplayeractions/client/MEPlayerActionsClient.class" in client_classes
+        for name_in_jar in client_classes:
+            magic, minor, major = struct.unpack(">IHH", archive.read(name_in_jar)[:8])
+            assert magic == 0xCAFEBABE and minor == 0 and major == 65, f"Not Java 21: {name_in_jar}"
+    for path in client.rglob("*"):
+        relative = path.relative_to(client)
+        if not path.is_file() or any(part in {"build", ".gradle", "run", "__pycache__"} for part in relative.parts):
+            continue
+        if path.suffix in {".log", ".pyc"}:
+            continue
+        source_entries[f"MEPlayerActions/client/{relative.as_posix()}"] = path.read_bytes()
+
     DIST.mkdir(parents=True, exist_ok=True)
     delivered_jar = DIST / jar.name
     shutil.copyfile(jar, delivered_jar)
@@ -181,6 +226,75 @@ def main() -> None:
     write_zip(install_zip, install)
     write_zip(source_zip, source_entries)
     assert digest(delivered_jar) == digest(jar)
+    delivered_client = DIST / client_jar.name
+    shutil.copyfile(client_jar, delivered_client)
+    client_install_zip = DIST / f"MEPlayerActions-Client-{version}-install.zip"
+    write_zip(client_install_zip, {f"mods/{client_jar.name}": client_jar.read_bytes(),
+                                   "README.md": (PROJECT / "README.md").read_bytes()})
+    assert digest(delivered_client) == digest(client_jar)
+    game_report_path = client / "build/e2e/results.json"
+    game_report = json.loads(game_report_path.read_text(encoding="utf-8")) if game_report_path.is_file() else None
+    observer_report_path = client / "build/observer-test/results/observer-results.json"
+    observer_report = json.loads(observer_report_path.read_text(encoding="utf-8")) if observer_report_path.is_file() else None
+    tested_at = max(jar.stat().st_mtime_ns, client_jar.stat().st_mtime_ns)
+    game_current = bool(game_report and game_report_path.stat().st_mtime_ns >= tested_at)
+    observer_current = bool(observer_report and observer_report_path.stat().st_mtime_ns >= tested_at)
+    game_passed = bool(game_current and game_report.get("passed") is True)
+    observer_passed = bool(observer_current and observer_report.get("passed") is True
+                           and observer_report.get("installedMpa") is False)
+    # A release must carry proof from these exact JARs, not an earlier successful run.
+    game_launch_path = game_report_path.parent / "launch.json"
+    observer_launch_path = observer_report_path.parent / "launch.json"
+    assert game_passed and observer_passed, "Fresh, passing two-client game reports are required"
+    game_launch = json.loads(game_launch_path.read_text(encoding="utf-8"))
+    observer_launch = json.loads(observer_launch_path.read_text(encoding="utf-8"))
+    assert game_launch["clientJarSha256"].lower() == digest(client_jar), "Game run used another client JAR"
+    assert game_launch["serverJarSha256"].lower() == digest(jar), "Game run used another server JAR"
+    assert game_report["testedClientSha256"].lower() == digest(client_jar), "Loaded client differs from launch proof"
+    assert game_report["testedServerSha256"].lower() == digest(jar), "Server report differs from launch proof"
+    assert not any("MEPlayerActions-Client" in mod for mod in observer_launch["mods"]), \
+        "Observer run accidentally installed the client mod"
+    evidence = {}
+    for label, report_path, report, current in (
+            ("client", game_report_path, game_report, game_current),
+            ("observer-without-mpa", observer_report_path, observer_report, observer_current)):
+        if not current:
+            continue
+        evidence[f"{label}/results.json"] = report_path.read_bytes()
+        evidence[f"{label}/launch.json"] = (report_path.parent / "launch.json").read_bytes()
+        for relative in report.get("screenshots", []):
+            assert isinstance(relative, str)
+            screenshot = (report_path.parent / relative).resolve()
+            assert screenshot.is_relative_to(report_path.parent.resolve()) and screenshot.suffix == ".png"
+            assert screenshot.is_file(), f"Missing validation screenshot: {relative}"
+            assert screenshot.stat().st_mtime_ns >= tested_at, f"Stale validation screenshot: {relative}"
+            evidence[f"{label}/{relative}"] = screenshot.read_bytes()
+    evidence_zip = None
+    if evidence:
+        for filename in ("model-bounds-probe.txt", "model-bounds-corrected.txt", "animation-axes-research.md"):
+            evidence_file = client / "build/observer-test" / filename
+            if evidence_file.is_file():
+                evidence[f"model-coordinate-checks/{filename}"] = evidence_file.read_bytes()
+        server_proof_path = PROJECT / "build/e2e-server/matrix-proof.json"
+        if server_proof_path.is_file():
+            server_proof = json.loads(server_proof_path.read_text(encoding="utf-8"))
+            assert server_proof["serverJarSha256"].lower() == digest(jar), "Stale server matrix proof"
+            assert server_proof["passed"] is True, "Server matrix proof failed"
+            evidence["server/matrix-proof.json"] = server_proof_path.read_bytes()
+        evidence["tested-artifacts.json"] = (json.dumps({
+            "minecraft": "1.21.11", "server_sha256": digest(jar), "client_sha256": digest(client_jar),
+            "client_passed": game_passed, "observer_without_mpa_passed": observer_passed,
+        }, indent=2) + "\n").encode("utf-8")
+        evidence_zip = DIST / f"{name}-tests.zip"
+        write_zip(evidence_zip, evidence)
+
+    def report_summary(report: dict | None) -> dict | None:
+        if report is None:
+            return None
+        return {key: report[key] for key in ("passed", "complete", "minecraft", "clientVersion",
+                "installedMpa", "testedClientSha256", "testedServerSha256", "artifactProof",
+                "checks", "screenshots", "enabledPacks") if key in report}
+
     fingerprint = hashlib.sha256()
     for path in compiler_inputs:
         fingerprint.update(path.relative_to(PROJECT).as_posix().encode())
@@ -188,13 +302,15 @@ def main() -> None:
         fingerprint.update(path.read_bytes())
     validation = {
         "plugin": "MEPlayerActions", "version": version, "authors": ["SIMMC", "Loliiiico"],
-        "target": {"paper": "1.21.11", "modelengine": "R4.1.1", "optional_gsit": "3.x (public API checked at runtime)", "java_release": 21},
-        "test_totals": totals, "test_suites": suites,
+        "target": {"paper": "1.21.11", "modelengine": "R4.1.1", "optional_gsit": "3.5.1 (tested; public posture API checked at runtime)", "java_release": 21},
+        "test_totals": totals, "test_suites": suites, "client_test_totals": client_totals,
+        "client_target": {"minecraft": "1.21.11", "loader": "Fabric", "java_release": 21,
+                          "renderer": "RenderCommandQueue custom geometry", "protocol": 2},
         "compiled_source_fingerprint": fingerprint.hexdigest(),
         "compiled_class_count": len(classes), "animations": animation_names,
         "npc_animations": npc_names, "npc_original_animations_preserved": True,
         "legacy_npc_session_compatibility": ["crawl_idle", "crawl_walk", "player_jump"],
-        "owned_disguise_anchor": "independent ME display pivot, anchored to player feet; no player mounting",
+        "owned_disguise_anchor": "shared visual history; player feet, native bed center/top, or GSit seat contact plane; no player mounting",
         "owned_disguise_audience": {"show_self_default": True, "strict_distance_blocks_default": 8,
                                     "max_other_viewers_default": 10, "selection": "nearest tracked eligible players, UUID tie break",
                                     "update_ticks": 1, "protocol_recipient_filter": True},
@@ -208,16 +324,25 @@ def main() -> None:
             [PROJECT.parent / "ModelEngine-R4.1.1.jar", *sorted((PROJECT / "build/deps").glob("paper-api-*.jar"))]
             if p.is_file()},
         "artifacts": {p.name: {"sha256": digest(p), "bytes": p.stat().st_size}
-                      for p in (delivered_jar, install_zip, source_zip)},
+                      for p in (delivered_jar, install_zip, source_zip, delivered_client, client_install_zip, evidence_zip)
+                      if p is not None},
         "zip_integrity_and_content_match": True, "dependency_jars_included": False,
-        "in_game_verified": False, "resource_pack_generated": False,
-        "client_local_rendering_implemented": False,
+        "in_game_verified": game_passed,
+        "two_client_in_game_verified": game_passed and observer_passed,
+        "game_validation_current_for_artifacts": game_current,
+        "observer_validation_current_for_artifacts": observer_current,
+        "game_validation": report_summary(game_report),
+        "observer_game_validation": report_summary(observer_report),
+        "resource_pack_in_install_zip": False,
+        "client_local_rendering_implemented": True,
     }
     validation_path = DIST / f"{name}-validation.json"
     validation_path.write_text(json.dumps(validation, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"version": version, "tests": totals, "jar": str(delivered_jar),
                       "install_zip": str(install_zip), "source_zip": str(source_zip),
-                      "validation": str(validation_path)}, ensure_ascii=False, indent=2))
+                      "client_jar": str(delivered_client), "client_install_zip": str(client_install_zip),
+                      "validation": str(validation_path), "test_evidence_zip": str(evidence_zip) if evidence_zip else None},
+                     ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

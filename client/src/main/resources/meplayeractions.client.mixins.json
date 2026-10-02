@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "package": "com.simmc.meplayeractions.client.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "EntityRenderStateMixin",
+    "EntityRendererMixin",
+    "EntityRenderManagerMixin",
+    "PlayerArmRendererMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

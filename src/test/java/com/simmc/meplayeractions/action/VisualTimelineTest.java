@@ -31,4 +31,18 @@ class VisualTimelineTest {
         var other = new VisualTimeline.Frame(3, UUID.randomUUID(), 0, 0, 0, f.pose(), null, 0);
         assertEquals(other, t.sample(other, 20, 1, true));
     }
+    @Test void leavingABedRetainsItsSampledSurfaceAndDirectionUntilTheDelayedPoseChanges() {
+        var bedPose = new StateSelector.Sample(false, false, false, false, false, false,
+                false, false, false, false, true, true, StateSelector.Vehicle.NONE);
+        var bed = new VisualTimeline.Frame(0, world, 3, -59.4375, 2.5, bedPose, null, 0, -90, -90, 0);
+        var awakePose = new StateSelector.Sample(false, false, false, false, false, false, true, false, false, false);
+        var t = new VisualTimeline(); t.sample(bed, 2, 8, false);
+        var awake = new VisualTimeline.Frame(1, world, 2.5, -60, 2.5, awakePose, null, 0, 35, 40, 20);
+        var shown = t.sample(awake, 2, 8, false);
+        assertTrue(shown.pose().bedSleeping()); assertEquals(-59.4375, shown.y());
+        assertEquals(3, shown.x()); assertEquals(-90, shown.bodyYaw()); assertEquals(shown.bodyYaw(), shown.headYaw());
+        assertEquals(0, shown.headPitch());
+        assertEquals(awake, t.sample(new VisualTimeline.Frame(3, world, 2.5, -60, 2.5,
+                awakePose, null, 0, 35, 40, 20), 2, 8, false));
+    }
 }

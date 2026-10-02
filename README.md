@@ -1,14 +1,26 @@
 # MEPlayerActions
 
-为 **Paper 1.21.11 + ModelEngine R4.1.1** 提供玩家模型伪装、动作菜单和姿态动画同步，需要 Java 21。支持移动、跳跃、潜行、游泳、陆地爬行、坐下、睡眠、载具、飞行、挥臂及挖掘；默认动作菜单已汉化。
+为 **Paper 1.21.11 + ModelEngine R4.1.1** 提供玩家模型伪装、动作菜单和姿态动画同步，需要 Java 21。配套 Fabric 客户端可本地播放骨骼动画、平滑显示模型，并使用中文动作面板。
 
 可直接通过指令设置模型缩放、本人可见性、观看距离、观看人数、视觉延迟和缓慢药水。模型与资源包由 ModelEngine 管理。作者：SIMMC、Loliiiico。
 
+自动同步移动、跳跃、潜行、游泳、陆地爬行、坐下、睡眠、载具、飞行、挥臂及挖掘。安装客户端的观众在模型加载成功后使用本地渲染，其余观众使用 ModelEngine；观看距离与人数仍由服务器控制。
+
+原生床睡眠与 GSit 躺下分别识别。示例的 `bed_sleep` 为横卧动作，原有 `sleep` 卷曲睡眠仍可通过菜单或 `play` 使用。
+
 ## 安装
 
-1. 准备 Paper 1.21.11、Java 21 和 ModelEngine R4.1.1。使用真实坐下、爬行指令时，还需安装 [GSit 3.x](https://github.com/Gecolay/GSit)；原生爬行、睡眠及载具动画同步无需 GSit。
-2. 从 [Releases](https://github.com/uwuhhhj/MEPlayerActions/releases/latest) 下载 `MEPlayerActions-版本-install.zip`，停服后将包内 `plugins/` 合并到服务器目录。更新时移除旧版插件 JAR，保留自己的配置；覆盖自定义模型前先备份。
+1. 准备 Paper 1.21.11、Java 21 和 ModelEngine R4.1.1。使用真实坐下、爬行指令时，还需安装 [GSit](https://github.com/Gecolay/GSit)（本发布验收版本为 3.5.1）；原生爬行、睡眠及载具动画同步无需 GSit。
+2. 从 [Releases](https://github.com/uwuhhhj/MEPlayerActions/releases/latest) 下载 `MEPlayerActions-版本-install.zip`，停服后将包内 `plugins/` 合并到服务器目录。更新时移除旧版插件 JAR，并将旧配置中的自定义设置迁入包内新配置；覆盖自定义模型前先备份。
 3. 启动服务器，执行 `/meg reload models`，让玩家加载 ModelEngine 生成的新资源包。安装包提供 `ysm_01_jk_player` 和 `ysm_01_jk_npc` 两个示例模型。
+
+### 客户端安装
+
+1. 使用 Minecraft **1.21.11 Fabric**，安装 Fabric API（最低 0.140.2）。
+2. 将 Releases 中的 `MEPlayerActions-Client-版本.jar` 放入该游戏实例的 `mods/`，重新启动游戏。服务器插件与客户端均使用 0.3.0 或同一发布版本。
+3. 进入服务器并伪装后，按 **N** 打开中文动作面板；可调整本人模型显示、本地渲染开关和插值缓冲。关闭本地渲染会通知服务器恢复 ModelEngine。客户端在第一人称中自动隐藏自己的完整模型，第三人称默认可见。
+
+客户端会自动下载服务器模型并缓存。资源重载或渲染失败时恢复 ModelEngine，模型再次准备好后重新接管。当前目标版本为 1.21.11；26.x 需适配并验证对应版本的加载与渲染接口。
 
 ## 快速使用
 
@@ -21,6 +33,8 @@
 ```
 
 依次查看模型、进行伪装、打开动作菜单、播放挥手、解除伪装。伪装后自动同步玩家状态，也可在菜单中点击动作。`play` 仅展示动画，真实坐下或爬行请使用 `pose`。指令支持 Tab 补全；输入 `/meplayeractions help` 查看帮助。
+
+客户端还可使用 `/mpaclient` 打开面板、`/mpaclient status` 查看连接状态。解除服务器伪装后，在世界内执行 `/mpaclient preview ysm_01_jk_npc` 可本地预览示例模型，切换第三人称观察；使用 `/mpaclient preview off` 结束。预览只影响自己的客户端。
 
 ### 伪装参数
 
@@ -43,6 +57,8 @@
 省略参数时使用服务器配置默认值，参数只对本次伪装生效。也支持 `--scale=1.5` 或 `--scale 1.5`。缓慢药水需要 `mact.disguise.effects` 权限，默认 OP 可用；解除伪装或执行 `reset` 会清理本次药水。
 
 视觉延迟只影响模型显示，玩家真实位置和碰撞照常。20 TPS 下 2 tick 约 100 ms，可用 `delay=3` 或 `delay=4` 增加拖后感。
+
+客户端的“插值缓冲”用于平滑网络更新，独立于服务器视觉延迟；需要更紧跟时可分别调低这两个值。
 
 ### 常用命令
 
@@ -80,3 +96,5 @@
 真实飞行需设置 `gameplay.allow-flight-command: true` 并授予 `mact.flight`。普通玩家默认可使用伪装、动作、坐下、爬行和同步；缓慢药水、飞行、诊断、重载分别需要 `mact.disguise.effects`、`mact.flight`、`mact.debug`、`mact.admin`，默认仅 OP 拥有。
 
 接管 `/meg disguise` 时，需在 ModelEngine 配置中启用 `Model-Engine.Use-State-Machine`，重载后重新伪装，再执行 `attach`。
+
+自定义客户端模型推荐使用与示例相同的 Blockbench 4.10 格式、内嵌 PNG、cube 类型 `.bbmodel`，支持 linear、step、catmullrom 关键帧；外部贴图、mesh、脚本及 5.0 分离骨骼表暂不支持，无法本地加载时继续使用 ModelEngine。更新模型后重载插件与 ME，并重新伪装。

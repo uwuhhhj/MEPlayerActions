@@ -74,6 +74,7 @@ public final class MEPlayerActionsPlugin extends JavaPlugin implements Listener,
         clients.configure(settings.clientEnabled, settings.clientMaxPayload,
                 settings.clientCooldownTicks, settings.clientViewDistance);
         clients.audience(controller::canView);
+        clients.rendering(controller::localRendering);
         controller.clients(clients);
         clients.enable(); controller.start();
     }

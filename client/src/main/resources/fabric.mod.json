@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "meplayeractions",
+  "version": "${version}",
+  "name": "MEPlayerActions Client",
+  "description": "ModelEngine 玩家伪装的本地骨骼动画、平滑显示与中文动作面板。",
+  "authors": ["SIMMC", "Loliiiico"],
+  "contact": {"sources": "https://github.com/uwuhhhj/MEPlayerActions"},
+  "environment": "client",
+  "entrypoints": {"client": ["com.simmc.meplayeractions.client.MEPlayerActionsClient"]},
+  "mixins": ["meplayeractions.client.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.18.4",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": ">=0.140.2"
+  }
+}

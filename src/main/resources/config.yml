@@ -88,7 +88,9 @@ animations:
     jump: [player_jump, jump]
     fall: [fall, jump, idle]
     sit: [sit]
-    sleep: [sleep, lay]
+    # GSit 躺下接触地面；原生床使用独立状态及床顶锚点/朝向。
+    sleep: [bed_sleep, sleep, lay]
+    bed-sleep: [bed_sleep, sleep, lay]
     boat: [sit_boat, boat, sit]
     minecart: [sit_minecart, minecart, sit]
     ride: [ride, sit]
@@ -125,6 +127,9 @@ animation-settings:
   fall:
     loop: HOLD
   sleep:
+    loop: HOLD
+    speed: 1.0
+  bed-sleep:
     loop: HOLD
     speed: 1.0
   mining:
@@ -189,7 +194,8 @@ menu:
     swim: 游泳
     swim_idle: 踩水待机
     sit: 坐下
-    sleep: 睡觉／躺下
+    sleep: 卷曲睡眠
+    bed_sleep: 横卧睡眠
     climb: 攀爬动作
     climb_idle: 攀爬待机
     crawl_idle: 趴下待机
@@ -207,7 +213,9 @@ menu:
     surprised: 惊讶
 
 client-sync:
-  # 预留专用客户端协议；此版本仍使用 ME 渲染，不根据 hello 隐藏模型。
+  # 客户端协议 v2。仅在模型/纹理加载成功且服务器确认 ready 后按观众切换本地渲染。
+  # 未安装模组、资产失败、断开或 100 tick 无渲染续租时继续/恢复 ME。
+  # 本地模型原始资源依次读取本插件 models/、ME blueprints/、插件内置示例。
   enabled: true
   max-payload-bytes: 16000
   request-cooldown-ticks: 4

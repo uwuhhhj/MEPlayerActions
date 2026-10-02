@@ -11,7 +11,7 @@ public final class PostureResolver {
     public static Posture resolve(boolean gsitSeat, boolean gsitCrawl, String gsitPose,
                                   boolean sleeping, Pose pose, boolean inWater,
                                   boolean flying, boolean gliding, Vehicle vehicle) {
-        if ("LAY".equals(gsitPose) || "LEGS_UP".equals(gsitPose))
+        if ("LAY".equals(gsitPose) || "LAY_BACK".equals(gsitPose) || "LEGS_UP".equals(gsitPose))
             return new Posture(false, false, true, Vehicle.NONE);
         if (gsitCrawl || "BELLYFLOP".equals(gsitPose))
             return new Posture(false, true, false, Vehicle.NONE);

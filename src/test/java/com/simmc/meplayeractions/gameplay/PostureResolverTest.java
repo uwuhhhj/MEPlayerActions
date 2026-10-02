@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class PostureResolverTest {
     @Test void sleepingAndGSitLayWinOverInvisibleSeatAndSwimming() {
-        for (String type : new String[]{"LAY", "LEGS_UP"}) {
+        for (String type : new String[]{"LAY", "LAY_BACK", "LEGS_UP"}) {
             var p = PostureResolver.resolve(true, false, type, false, Pose.STANDING, true, false, false, Vehicle.OTHER);
             assertTrue(p.sleeping()); assertFalse(p.sitting()); assertEquals(Vehicle.NONE, p.vehicle());
         }

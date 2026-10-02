@@ -3,8 +3,10 @@ package com.simmc.meplayeractions.action;
 import com.simmc.meplayeractions.client.ClientSyncService;
 import com.simmc.meplayeractions.client.ClientSyncService.LayerState;
 import com.simmc.meplayeractions.client.ClientSyncService.StateSnapshot;
+import com.simmc.meplayeractions.client.ClientSyncService.AnimationInfo;
 import com.simmc.meplayeractions.config.Settings;
 import com.simmc.meplayeractions.gameplay.GameplayBackend;
+import com.simmc.meplayeractions.gameplay.GSitAnchor;
 import com.simmc.meplayeractions.gameplay.DisguiseEffects;
 import com.simmc.meplayeractions.gameplay.PaperEffectPort;
 import com.simmc.meplayeractions.me.ModelEngineBridge;
@@ -64,6 +66,8 @@ public final class ActionController {
         final VisualTimeline visual = new VisualTimeline();
         int jumpDuration;
         VisualTimeline.Frame visualFrame;
+        BedAnchor bedAnchor;
+        GSitAnchor gsitAnchor;
         Location lastVisualLocation;
         final Set<ActionState> missingMappings = EnumSet.noneOf(ActionState.class);
         String failure = "";
@@ -328,6 +332,11 @@ public final class ActionController {
         Session session = sessions.get(owner);
         return session != null && bridge.isAttached(session.attachment) && bridge.canView(session.attachment, viewer.getUniqueId());
     }
+    public boolean localRendering(UUID viewer, UUID owner, UUID instance, boolean enabled) {
+        Session session = sessions.get(owner);
+        if (session == null || !session.instance.equals(instance)) return !enabled;
+        return bridge.localRendering(session.attachment, viewer, enabled);
+    }
 
     private void tick() {
         clock = Integer.toUnsignedLong(Bukkit.getCurrentTick());
@@ -372,16 +381,19 @@ public final class ActionController {
         boolean moving = s.movement.sample(now.getWorld().getUID(), now.getX(), now.getY(), now.getZ(), clock,
                 player.isFlying() || player.isSwimming(), moveInput, settings.movementThreshold);
         var posture = gameplay.observe(player);
+        s.bedAnchor = BedAnchor.observe(player);
+        s.gsitAnchor = gameplay.visualAnchor(player);
         s.inputInterrupt = input.isJump() || input.isSneak();
         if (s.interactions.target() != null) s.interactions.validateTarget(target(player.getTargetBlockExact(6)));
         s.nextSample = clock + settings.interval;
         s.sample = new StateSelector.Sample(posture.sitting(), posture.crawling(), player.isGliding(), player.isFlying(),
                 player.isSwimming() || (player.isInWater() && player.getPose() == org.bukkit.entity.Pose.SWIMMING),
                 player.isInWater(), player.isOnGround(), player.isSneaking() || player.getPose() == org.bukkit.entity.Pose.SNEAKING, player.isSprinting(),
-                moving, posture.sleeping(), posture.vehicle());
+                moving, posture.sleeping(), s.bedAnchor != null, posture.vehicle());
         return s.sample;
     }
     private void update(Player player, Session s, boolean immediate) {
+        gameplay.syncPoseReplica(player, s.attachment.owned() && s.options.hideSelf());
         if (immediate || s.sample == null || clock >= s.nextSample) sample(player, s);
         StateSelector.Sample sample = s.sample;
         if (s.manual != null && (s.manual.isFinished() || clock - s.manualStarted >= s.manualLimit
@@ -402,9 +414,17 @@ public final class ActionController {
                 || sample.vehicle() != StateSelector.Vehicle.NONE || sample.flying() || sample.gliding()
                 || sample.swimming() || sample.inWater() || !syncEnabled(player, SyncFeature.JUMP);
         ActionState air = s.jump.sample(player.isOnGround(), rise, blocked, clock, s.jumpDuration, settings.jumpLandingTicks);
-        var frame = new VisualTimeline.Frame(clock, location.getWorld().getUID(), location.getX(), location.getY(), location.getZ(),
-                sample, air, s.jump.cycle());
+        var bed = sample.bedSleeping() ? s.bedAnchor : null;
+        var gsit = bed == null && (sample.sitting() || sample.sleeping() || sample.crawling()) ? s.gsitAnchor : null;
+        var rotation = bridge.rotation(s.attachment);
+        float bodyYaw = bed != null ? bed.bodyYaw() : gsit != null ? gsit.bodyYaw() : rotation.bodyYaw();
+        boolean reclining = bed != null || (gsit != null && sample.sleeping());
+        var frame = new VisualTimeline.Frame(clock, location.getWorld().getUID(), bed != null ? bed.x() : gsit != null ? gsit.x() : location.getX(),
+                bed != null ? bed.y() : gsit != null ? gsit.y() : location.getY(), bed != null ? bed.z() : gsit != null ? gsit.z() : location.getZ(),
+                sample, air, s.jump.cycle(), bodyYaw, reclining ? bodyYaw : rotation.headYaw(),
+                reclining ? 0 : rotation.headPitch());
         s.visualFrame = s.visual.sample(frame, s.options.visualDelay(), settings.visualMaxDistance, settings.visualSnapPostures);
+        bridge.visualRotation(s.attachment, s.visualFrame.bodyYaw(), s.visualFrame.headYaw(), s.visualFrame.headPitch());
         visualOffsets.put(s.attachment.activeModel(), new VisualOffset(s.visualFrame.x() - location.getX(),
                 s.visualFrame.y() - location.getY(), s.visualFrame.z() - location.getZ()));
         if (!immediate && clock < s.nextAnimation) return;
@@ -497,7 +517,19 @@ public final class ActionController {
         if (s.posture != null) layers.add(layer("posture", s.posture, s.postureStarted));
         if (s.interaction != null) layers.add(layer("interaction", s.interaction, s.interactionStarted));
         if (s.manual != null) layers.add(layer("manual", s.manual, s.manualStarted));
-        return new StateSnapshot(s.attachment.playerId(), s.instance, s.attachment.modelId(), s.sequence, clock, List.copyOf(layers));
+        Location location = s.player.getLocation();
+        var model = s.attachment.activeModel();
+        var visual = s.visualFrame != null && s.visualFrame.world().equals(location.getWorld().getUID()) ? s.visualFrame : null;
+        List<AnimationInfo> animations = ActionDirectory.build(settings, s.animations);
+        return new StateSnapshot(s.attachment.playerId(), s.instance, s.attachment.modelId(), s.sequence,
+                Integer.toUnsignedLong(Bukkit.getCurrentTick()), List.copyOf(layers), location.getWorld().getUID(),
+                visual == null ? location.getX() : visual.x(),
+                visual == null ? location.getY() : visual.y(),
+                visual == null ? location.getZ() : visual.z(),
+                visual == null ? model.getYBodyRot() : visual.bodyYaw(),
+                visual == null ? model.getYHeadRot() : visual.headYaw(),
+                visual == null ? model.getXHeadRot() : visual.headPitch(), model.getScale().x(),
+                s.options.hideSelf(), s.options.showSelf(), animations, bridge.supportsLocalRendering(s.attachment));
     }
     private static LayerState layer(String name, OwnedAnimation a, long tick) {
         return new LayerState(name, a.animation(), tick, a.speed(), a.loop().name(), a.inTicks(), a.outTicks());

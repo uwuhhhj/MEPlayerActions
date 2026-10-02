@@ -12,7 +12,7 @@ public final class AnimationLabels {
             entry("fly", "飞行"), entry("hover", "悬停"), entry("elytra_fly", "鞘翅滑翔"), entry("hurt", "受伤"),
             entry("crouch_idle", "潜行待机"), entry("crouch_walk", "潜行移动"),
             entry("swim", "游泳"), entry("swim_idle", "踩水待机"), entry("swim_prone_idle", "水平游泳待机"),
-            entry("sit", "坐下"), entry("sleep", "睡觉／躺下"), entry("lay", "躺下"),
+            entry("sit", "坐下"), entry("sleep", "卷曲睡眠"), entry("bed_sleep", "横卧睡眠"), entry("lay", "躺下"),
             entry("sit_boat", "乘船"), entry("sit_minecart", "乘坐矿车"), entry("ride", "骑乘"),
             entry("climb", "攀爬动作"), entry("climb_idle", "攀爬待机"),
             entry("crawl_idle", "趴下待机"), entry("crawl_walk", "爬行移动"),

@@ -91,7 +91,8 @@ public final class Settings {
         animationMaps.put("defaults", parseAnimations(c.getConfigurationSection("animations.defaults")));
         // New mappings also work when an administrator retains a 0.1.0 configuration.
         var defaults = animationMaps.get("defaults");
-        defaults.putIfAbsent(ActionState.SLEEP, List.of("sleep", "lay"));
+        defaults.putIfAbsent(ActionState.SLEEP, List.of("bed_sleep", "sleep", "lay"));
+        defaults.putIfAbsent(ActionState.BED_SLEEP, List.of("bed_sleep", "sleep", "lay"));
         defaults.putIfAbsent(ActionState.BOAT, List.of("sit_boat", "boat", "sit"));
         defaults.putIfAbsent(ActionState.MINECART, List.of("sit_minecart", "minecart", "sit"));
         defaults.putIfAbsent(ActionState.RIDE, List.of("ride", "sit"));
@@ -130,7 +131,7 @@ public final class Settings {
             ConfigurationSection options = tuning == null ? null : tuning.getConfigurationSection(state.key());
             LoopMode loop = switch (state) {
                 case JUMP, SWING_MAINHAND, SWING_OFFHAND -> LoopMode.ONCE;
-                case FALL, SIT, SLEEP, BOAT, MINECART, RIDE, CRAWL_IDLE, CROUCH_IDLE -> LoopMode.HOLD;
+                case FALL, SIT, SLEEP, BED_SLEEP, BOAT, MINECART, RIDE, CRAWL_IDLE, CROUCH_IDLE -> LoopMode.HOLD;
                 default -> LoopMode.LOOP;
             };
             if (options == null) { playback.put(state, new Playback(1, loop, inTicks, outTicks)); continue; }

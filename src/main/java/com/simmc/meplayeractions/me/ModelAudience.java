@@ -15,6 +15,7 @@ public final class ModelAudience {
     private final DisguiseOptions options;
     private final Function<UUID, Player> lookup;
     private volatile Set<UUID> allowed = Set.of();
+    private volatile Set<UUID> localRenderers = Set.of();
     private final Set<UUID> suppressedPairings = new HashSet<>();
     private TrackedEntity tracked;
     private Predicate<Player> original, filter;
@@ -26,6 +27,17 @@ public final class ModelAudience {
     }
 
     public boolean allows(UUID viewer) { return allowed.contains(viewer); }
+    private boolean renders(UUID viewer) { return allowed.contains(viewer) && !localRenderers.contains(viewer); }
+    /** A ready client retains its audience slot while only its ME display is suppressed. */
+    public boolean localRendering(UUID viewer, boolean enabled) {
+        Set<UUID> next = new HashSet<>(localRenderers);
+        boolean changed = enabled ? next.add(viewer) : next.remove(viewer);
+        if (changed) {
+            localRenderers = Set.copyOf(next);
+            if (tracked != null) tracked.markViewersDirty();
+        }
+        return changed;
+    }
     public int otherViewers(UUID owner) { return allowed.size() - (allowed.contains(owner) ? 1 : 0); }
 
     public boolean update(Player owner, TrackedEntity next) {
@@ -34,7 +46,7 @@ public final class ModelAudience {
         if (tracked == null) {
             original = next.getPlayerPredicate();
             Predicate<Player> before = original;
-            filter = viewer -> allowed.contains(viewer.getUniqueId()) && before.test(viewer);
+            filter = viewer -> renders(viewer.getUniqueId()) && before.test(viewer);
             next.setPlayerPredicate(filter);
         } else if (next != tracked && next.getPlayerPredicate() != filter) {
             throw new IllegalStateException("ME 更换跟踪接口时未保留模型观众过滤器");
@@ -65,15 +77,15 @@ public final class ModelAudience {
         allowed = AudienceSelector.select(owner.getUniqueId(), options.showSelf(), options.viewDistance(), options.maxViewers(), eligible);
         // ME's forced pairings bypass its player predicate. Temporarily remove only
         // disallowed pairings, retaining them for restoration when a slot opens/cleanup.
-        for (UUID id : List.copyOf(suppressedPairings)) if (allowed.contains(id)) {
+        for (UUID id : List.copyOf(suppressedPairings)) if (renders(id)) {
             next.addForcedPairing(id); suppressedPairings.remove(id);
         }
-        for (UUID id : next.getTrackedPlayer()) if (!allowed.contains(id)) {
+        for (UUID id : next.getTrackedPlayer()) if (!renders(id)) {
             next.removeForcedPairing(id);
             if (id.equals(owner.getUniqueId()) && addedSelf) addedSelf = false;
             else suppressedPairings.add(id);
         }
-        if (options.showSelf() && !next.getTrackedPlayer().contains(owner.getUniqueId())) {
+        if (options.showSelf() && renders(owner.getUniqueId()) && !next.getTrackedPlayer().contains(owner.getUniqueId())) {
             next.addForcedPairing(owner.getUniqueId()); addedSelf = true;
         }
         boolean changed = !previous.equals(allowed);
@@ -90,5 +102,6 @@ public final class ModelAudience {
         for (UUID id : suppressedPairings) current.addForcedPairing(id);
         current.markViewersDirty();
         suppressedPairings.clear(); addedSelf = false;
+        localRenderers = Set.of();
     }
 }

@@ -47,7 +47,7 @@ class ExampleCrawlModelTest {
         for (String key : List.of("elements", "outliner", "textures", "resolution")) assertEquals(npc.get(key), player.get(key));
         var names = new HashSet<String>();
         for (var a : npc.getAsJsonArray("animations")) assertTrue(names.add(a.getAsJsonObject().get("name").getAsString()));
-        assertEquals(29, names.size());
+        assertEquals(30, names.size());
         assertEquals(animation(npc, "jump"), animation(player, "jump"));
     }
 }

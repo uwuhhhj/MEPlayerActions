@@ -12,7 +12,7 @@
   },
   "derived_model": {
     "path": "examples/blueprints/npc/ysm_01_jk_player.bbmodel",
-    "sha256": "3f938d8310f84b29fe2f0ec5ea005fa03b2d305599f3a570c229c216f710635b"
+    "sha256": "53c39e11aba41ce839cc2a3725a72d52380f407b46dfec2be62bf6f0e43744e6"
   },
   "position_scale_derived_from_sit": 0.63796813,
   "geometry_height_and_textures_preserved_from_npc": true,
@@ -32,6 +32,18 @@
   ],
   "hover": "Same numeric pose and motion as fly; duplicated animation/keyframe UUIDs replaced deterministically",
   "player_jump": "Complete takeoff/airborne/landing pose cycle; zero root lift to avoid double jumping with delayed real position",
+  "bed_sleep": {
+    "anchor": "Two-block bed center, mattress top at block Y + 0.5625; floor lay uses floor anchor",
+    "local_head_direction": "-Z",
+    "local_back_contact_y_blocks": 0.0,
+    "legacy_root_rotation_degrees": [
+      -90.0,
+      -180.0,
+      0.0
+    ],
+    "renderer": "World Y rotation 180 - bodyYaw only; no native-pose X/Z rotation",
+    "original_sleep_preserved": true
+  },
   "elytra": "Not generated; configure a fallback to fly until a dedicated action is authored",
   "animations": [
     {
@@ -173,12 +185,17 @@
       "name": "player_jump",
       "length_seconds": 0.75,
       "loop": "once"
+    },
+    {
+      "name": "bed_sleep",
+      "length_seconds": 0.5,
+      "loop": "hold"
     }
   ],
   "validation": {
     "animation_names_unique": true,
-    "numeric_keyframes_checked": 9623,
-    "numeric_coordinates_checked": 28869,
+    "numeric_keyframes_checked": 9953,
+    "numeric_coordinates_checked": 29859,
     "non_numeric_or_molang_coordinates": 0,
     "script_channels": 0,
     "sources_unchanged": true,

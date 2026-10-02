@@ -125,4 +125,31 @@ class ModelAudienceTest {
         Predicate<Player> external = p -> false; s.tracker.setPlayerPredicate(external); a.close(s.tracker, s.owner.id);
         assertSame(external, s.tracker.predicate);
     }
+    @Test void readyViewerKeepsItsSlotWhileOnlyMeRenderingIsSuppressedThenRestored() {
+        var s = new Scene(); var near = s.viewer(1, 0, 0); var waiting = s.viewer(2, 0, 0);
+        var a = s.audience(false, 8, 1); a.update(s.owner.player, s.tracker);
+        a.localRendering(near.id, true); a.update(s.owner.player, s.tracker);
+        assertTrue(a.allows(near.id)); assertFalse(a.allows(waiting.id)); assertEquals(1, a.otherViewers(s.owner.id));
+        assertTrue(s.tracker.getTrackedPlayer().isEmpty());
+        a.update(s.owner.player, s.tracker); assertTrue(a.allows(near.id));
+        a.localRendering(near.id, false); a.update(s.owner.player, s.tracker);
+        assertEquals(Set.of(near.id), s.tracker.getTrackedPlayer());
+    }
+    @Test void readySelfRemovesForcedPairingAndFallbackRestoresIt() {
+        var s = new Scene(); var other = s.viewer(1, 0, 0); var a = s.audience(true, 8, 1);
+        a.update(s.owner.player, s.tracker); a.localRendering(s.owner.id, true); a.update(s.owner.player, s.tracker);
+        assertTrue(a.allows(s.owner.id)); assertEquals(Set.of(other.id), s.tracker.getTrackedPlayer());
+        a.localRendering(s.owner.id, false); a.update(s.owner.player, s.tracker);
+        assertEquals(Set.of(s.owner.id, other.id), s.tracker.getTrackedPlayer());
+        a.close(s.tracker, s.owner.id); assertFalse(s.tracker.paired.contains(s.owner.id));
+    }
+    @Test void forcedReadyObserverStillCountsAndIsRecoveredAcrossTrackerReplacement() {
+        var s = new Scene(); var other = s.viewer(1, 0, 0); s.owner.tracking.remove(other.player); s.tracker.addForcedPairing(other.id);
+        var a = s.audience(false, 8, 1); a.update(s.owner.player, s.tracker);
+        a.localRendering(other.id, true); a.update(s.owner.player, s.tracker);
+        assertTrue(a.allows(other.id)); assertTrue(s.tracker.paired.isEmpty());
+        var next = new Tracker(s.owner); next.predicate = s.tracker.predicate; a.update(s.owner.player, next);
+        assertTrue(a.allows(other.id)); a.localRendering(other.id, false); a.update(s.owner.player, next);
+        assertEquals(Set.of(other.id), next.getTrackedPlayer());
+    }
 }

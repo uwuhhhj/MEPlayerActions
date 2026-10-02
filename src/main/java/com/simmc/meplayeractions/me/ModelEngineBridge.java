@@ -186,6 +186,35 @@ public final class ModelEngineBridge {
         Session session = requireSession(attachment);
         return session.audience == null ? -1 : session.audience.otherViewers(attachment.playerId());
     }
+    public record Rotation(float bodyYaw, float headYaw, float headPitch) { }
+    /** Read the base's live rotation rather than our delayed model's locked values. */
+    public Rotation rotation(Attachment attachment) {
+        var base = requireSession(attachment).entity.getBase();
+        return new Rotation(base.getYBodyRot(), base.getYHeadRot(), base.getXHeadRot());
+    }
+    /** Owned model rotation and bone offsets share the exact delayed visual frame. */
+    public void visualRotation(Attachment attachment, float bodyYaw, float headYaw, float headPitch) {
+        if (!attachment.owned()) return;
+        var model = requireSession(attachment).attachment.activeModel();
+        model.setLockedYBodyRot(bodyYaw); model.setLockedYHeadRot(headYaw); model.setLockedXHeadRot(headPitch);
+        model.setModelRotationLocked(true);
+    }
+    public boolean supportsLocalRendering(Attachment attachment) {
+        if (!isAttached(attachment) || !attachment.owned()) return false;
+        Session session = requireSession(attachment);
+        return session.audience != null && session.entity.getModels().size() == 1;
+    }
+    /** Per-viewer display replacement; never hides a foreign model sharing the entity. */
+    public boolean localRendering(Attachment attachment, UUID viewer, boolean enabled) {
+        if (!isAttached(attachment)) return !enabled;
+        Session session = requireSession(attachment);
+        if (enabled && (!supportsLocalRendering(attachment) || !session.audience.allows(viewer))) return false;
+        if (session.audience == null) return !enabled;
+        session.audience.localRendering(viewer, enabled);
+        session.audience.update(session.player, tracked(session));
+        if (session.entity.getBase().getData() instanceof BukkitEntityData data) data.syncUpdate();
+        return true;
+    }
     private static TrackedEntity tracked(Session session) {
         return session.entity.getBase().getData() instanceof BukkitEntityData data ? data.getTracked() : null;
     }

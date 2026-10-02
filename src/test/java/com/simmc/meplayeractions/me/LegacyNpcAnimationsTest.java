@@ -31,7 +31,7 @@ class LegacyNpcAnimationsTest {
         blueprint.constructFlatBoneMap(new ErrorCollector("test.bbmodel"));
         for (var item : json.getAsJsonArray("animations")) {
             var a = item.getAsJsonObject(); String name = a.get("name").getAsString();
-            if (legacy && Set.of("crawl_idle", "crawl_walk", "player_jump").contains(name)) continue;
+            if (legacy && Set.of("crawl_idle", "crawl_walk", "player_jump", "bed_sleep").contains(name)) continue;
             var clip = new BlueprintAnimation(blueprint, name);
             clip.setLength(a.get("length").getAsDouble()); clip.setLoopMode(LoopMode.get(a.get("loop").getAsString()));
             for (var entry : a.getAsJsonObject("animators").entrySet()) {

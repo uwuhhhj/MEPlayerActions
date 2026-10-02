@@ -10,7 +10,13 @@ public final class StateSelector {
 
     public record Sample(boolean sitting, boolean crawling, boolean gliding, boolean flying,
                          boolean swimming, boolean inWater, boolean grounded, boolean sneaking,
-                         boolean sprinting, boolean moving, boolean sleeping, Vehicle vehicle) {
+                         boolean sprinting, boolean moving, boolean sleeping, boolean bedSleeping, Vehicle vehicle) {
+        public Sample(boolean sitting, boolean crawling, boolean gliding, boolean flying,
+                      boolean swimming, boolean inWater, boolean grounded, boolean sneaking,
+                      boolean sprinting, boolean moving, boolean sleeping, Vehicle vehicle) {
+            this(sitting, crawling, gliding, flying, swimming, inWater, grounded, sneaking,
+                    sprinting, moving, sleeping, false, vehicle);
+        }
         public Sample(boolean sitting, boolean crawling, boolean gliding, boolean flying,
                       boolean swimming, boolean inWater, boolean grounded, boolean sneaking,
                       boolean sprinting, boolean moving) {
@@ -19,6 +25,7 @@ public final class StateSelector {
         }
 
         public String postureKey() {
+            if (bedSleeping) return "bed-sleep";
             if (sleeping) return "sleep";
             if (sitting) return "sit";
             if (crawling) return "crawl";
@@ -37,6 +44,7 @@ public final class StateSelector {
     }
 
     public static ActionState select(Sample s, Predicate<SyncFeature> enabled, ActionState air) {
+        if (s.bedSleeping) return enabled.test(SyncFeature.SLEEP) ? ActionState.BED_SLEEP : null;
         if (s.sleeping) return enabled.test(SyncFeature.SLEEP) ? ActionState.SLEEP : null;
         // GSit poses can also mount the player on an invisible seat entity.
         if (s.sitting) return enabled.test(SyncFeature.SIT) ? ActionState.SIT : null;
