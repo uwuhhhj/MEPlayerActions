@@ -12,6 +12,18 @@ import static org.junit.jupiter.api.Assertions.*;
 class ClientOptionsTest {
     @TempDir Path directory;
 
+    @Test void removedServerBuiltinDoesNotSilentlyEnableDefaultAndFavoritesPersist() throws Exception {
+        Path path=directory.resolve("options.json");
+        Files.writeString(path,"{\"localAppearance\":{\"enabled\":true,\"modelId\":\"ysm_02_jk\",\"scale\":1,\"offsetX\":0,\"offsetY\":0,\"offsetZ\":0}}");
+        var options=new ClientOptions(path);
+        assertEquals(LocalAppearanceSettings.defaults(),options.localAppearance());
+        options.showModelIds=true; options.toggleFavorite("openysm_default"); options.toggleFavorite("local:sample.bbmodel");
+        options.toggleFavorite("local:../escape.bbmodel"); options.save();
+        var loaded=new ClientOptions(path); assertTrue(loaded.showModelIds);
+        assertTrue(loaded.isFavorite("openysm_default")); assertTrue(loaded.isFavorite("local:sample.bbmodel"));
+        assertFalse(loaded.isFavorite("local:../escape.bbmodel"));
+    }
+
     @Test void missingAndLegacyFilesDoNotEnableIndependentAppearance() throws Exception {
         Path path=directory.resolve("options.json");
         assertEquals(LocalAppearanceSettings.defaults(),new ClientOptions(path).localAppearance());
@@ -27,7 +39,7 @@ class ClientOptionsTest {
         Path path=directory.resolve("config").resolve("options.json");
         var options=new ClientOptions(path);
         options.enabled=false;options.showSelf=false;options.interpolationTicks=5;options.followServerTimeline=true;
-        for(String model:List.of("ysm_01_jk","ysm_02_jk","local:sample.bbmodel","local:我的模型.bbmodel")) {
+        for(String model:List.of("openysm_default","ysm:sample","local:sample.bbmodel","local:我的模型.bbmodel")) {
             var appearance=new LocalAppearanceSettings(true,model,1.375f,-.75,1.25,.5);
             options.setLocalAppearance(appearance);options.save();
             var reloaded=new ClientOptions(path);
@@ -50,8 +62,8 @@ class ClientOptionsTest {
     @Test void aReloadReadsChangesMadeByAnotherOptionsInstance() {
         Path path=directory.resolve("options.json");var initial=new ClientOptions(path);
         initial.enabled=false;initial.showSelf=false;initial.followServerTimeline=true;initial.interpolationTicks=4;
-        initial.setLocalAppearance(new LocalAppearanceSettings(true,"ysm_01_jk",1,0,0,0));initial.save();
-        var changed=new ClientOptions(path);var desired=new LocalAppearanceSettings(false,"ysm_02_jk",2,.25,-.5,.75);
+        initial.setLocalAppearance(new LocalAppearanceSettings(true,"openysm_default",1,0,0,0));initial.save();
+        var changed=new ClientOptions(path);var desired=new LocalAppearanceSettings(false,"ysm:sample",2,.25,-.5,.75);
         changed.enabled=true;changed.showSelf=true;changed.followServerTimeline=false;changed.interpolationTicks=1;
         changed.setLocalAppearance(desired);changed.save();
         initial.reloadLocalAppearance();
@@ -62,20 +74,20 @@ class ClientOptionsTest {
 
     @Test void reloadingAfterFileDeletionOrCorruptionDisablesThePreviousAppearance() throws Exception {
         Path path=directory.resolve("options.json");var options=new ClientOptions(path);
-        options.setLocalAppearance(new LocalAppearanceSettings(true,"ysm_01_jk",1,0,0,0));options.save();
+        options.setLocalAppearance(new LocalAppearanceSettings(true,"openysm_default",1,0,0,0));options.save();
         Files.writeString(path,"invalid JSON");options.reloadLocalAppearance();
         assertEquals(LocalAppearanceSettings.defaults(),options.localAppearance());
-        options.setLocalAppearance(new LocalAppearanceSettings(true,"ysm_01_jk",1,0,0,0));
+        options.setLocalAppearance(new LocalAppearanceSettings(true,"openysm_default",1,0,0,0));
         Files.delete(path);options.reloadLocalAppearance();
         assertEquals(LocalAppearanceSettings.defaults(),options.localAppearance());
     }
 
     @Test void malformedOrUnsafeAppearanceDoesNotAccidentallyEnableIt() throws Exception {
         Path path=directory.resolve("options.json");
-        String valid="{\"enabled\":true,\"modelId\":\"ysm_01_jk\",\"scale\":1,\"offsetX\":0,\"offsetY\":0,\"offsetZ\":0}";
+        String valid="{\"enabled\":true,\"modelId\":\"openysm_default\",\"scale\":1,\"offsetX\":0,\"offsetY\":0,\"offsetZ\":0}";
         for(String bad:List.of(valid.replace("\"scale\":1","\"scale\":0"),valid.replace("\"scale\":1","\"scale\":1e300"),
                 valid.replace("\"offsetX\":0","\"offsetX\":33"),valid.replace("\"offsetY\":0","\"offsetY\":-33"),
-                valid.replace("\"offsetZ\":0","\"offsetZ\":\"NaN\""),valid.replace("ysm_01_jk","local:../escape.bbmodel"),
+                valid.replace("\"offsetZ\":0","\"offsetZ\":\"NaN\""),valid.replace("openysm_default","local:../escape.bbmodel"),
                 valid.replace("\"enabled\":true","\"enabled\":\"true\""),valid.replace("\"scale\":1","\"scale\":\"1\""),
                 valid.replace(",\"offsetZ\":0",""),
                 "null","[]","\"invalid\"")) {

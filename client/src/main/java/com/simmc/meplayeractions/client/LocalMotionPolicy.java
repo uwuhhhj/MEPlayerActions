@@ -2,6 +2,7 @@ package com.simmc.meplayeractions.client;
 
 import com.google.gson.*;
 import com.simmc.meplayeractions.client.model.BbModel.Layer;
+import com.simmc.meplayeractions.client.model.BbModel;
 import com.simmc.meplayeractions.client.network.WireJson;
 import java.util.*;
 
@@ -21,6 +22,29 @@ public record LocalMotionPolicy(Set<String> features, Map<String, Layer> clips, 
         Layer clip = clips.get(state);
         return clip == null ? null : new Layer(layer, clip.animation(), started, clip.speed(), clip.loop(), clip.inTicks(), clip.outTicks());
     }
+    public static LocalMotionPolicy forModel(BbModel model) {
+        String[][] mappings={
+                {"idle","idle"},{"walk","walk"},{"run","run","walk"},{"jump","player_jump","jump"},{"fall","fall","jump"},
+                {"sit","sit","minecart"},{"sleep","bed_sleep","sleep"},{"bed-sleep","bed_sleep","sleep"},
+                {"boat","boat","sit"},{"minecart","minecart","sit"},{"ride","ride","sit"},{"ride-pig","ride_pig","ride","sit"},
+                {"ladder-move","ladder_up","climb"},{"ladder-idle","ladder_stillness","ladder_up","climb"},
+                {"crawl-idle","climbing","crawl_idle","crawl"},{"crawl-walk","climb","crawl_walk","climbing","crawl"},
+                {"crouch-idle","sneaking","crouch_idle","sneak"},{"crouch-walk","sneak","crouch_walk","sneaking"},
+                {"swim-idle","swim_stand","swim_idle","swim"},{"swim-prone-idle","swim_idle","swim"},{"swim-walk","swim","swim_idle"},
+                {"hover","hover","fly"},{"fly","fly","hover"},{"elytra","elytra_fly","fly"},
+                {"swing-mainhand","swing_hand","use_mainhand","attack"},{"swing-offhand","swing_offhand","use_offhand","swing_hand","attack"},
+                {"mining","mining","attack"}
+        };
+        Map<String,Layer> clips=new LinkedHashMap<>();
+        for(String[] mapping:mappings)for(int i=1;i<mapping.length;i++)if(model.animations().contains(mapping[i])) {
+            String loop=Set.of("jump","swing-mainhand","swing-offhand").contains(mapping[0])?"ONCE"
+                    :Set.of("sleep","bed-sleep").contains(mapping[0])?"HOLD":"LOOP";
+            clips.put(mapping[0],new Layer("posture",mapping[i],0,1,loop,2,2));break;
+        }
+        return new LocalMotionPolicy(Set.of("movement","sprint","jump","sit","sleep","ride","crawl","sneak","swim","flight","elytra","swing","mining"),
+                clips,17,8,.02,true,true,false,"","","",0,0,0,0);
+    }
+
     public static LocalMotionPolicy read(JsonObject json) {
         if (json == null) throw new IllegalArgumentException("Missing local motion policy");
         Set<String> features = new HashSet<>();

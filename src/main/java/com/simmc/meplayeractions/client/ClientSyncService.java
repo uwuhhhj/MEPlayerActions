@@ -20,17 +20,18 @@ import java.util.regex.Pattern;
 public final class ClientSyncService implements PluginMessageListener, AutoCloseable {
     public static final String CHANNEL = "meplayeractions:main";
     public static final int PROTOCOL = 3;
-    private static final int HEARTBEAT_TICKS = 20, MAX_TRANSFERS = 2;
+    private static final int HEARTBEAT_TICKS = 20;
     private static final Gson GSON = new GsonBuilder().setStrictness(Strictness.STRICT).create();
     private static final Pattern ANIMATION_NAME = Pattern.compile("[a-zA-Z0-9_.:/-]{1,128}");
     private static final Pattern MODEL_ID = Pattern.compile("[a-z0-9_-]{1,64}"), HASH = Pattern.compile("[a-f0-9]{64}");
     private static final Set<String> ACTIONS = Set.of("play", "stop", "sit", "crawl", "reset");
+    private static final Set<String> CAPABILITIES = Set.of("local_render", "resource_pack_models");
     private final JavaPlugin plugin;
     private final Supplier<List<StateSnapshot>> snapshots;
     private final Consumer<ActionRequest> actionRequests;
     private final ModelAssets assets;
     private final Map<UUID, Session> sessions = new HashMap<>();
-    private final Map<UUID, TrafficWindow> traffic = new HashMap<>();
+    private final ConnectionLimits limits = new ConnectionLimits();
     private boolean configuredEnabled = true, running;
     private int maxPayload = 16000, requestCooldownTicks = 4;
     private double viewDistanceBlocks = 64;
@@ -70,7 +71,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         if (!running || !configuredEnabled) return;
         for (var entry : List.copyOf(sessions.entrySet())) {
             Player viewer = Bukkit.getPlayer(entry.getKey());
-            if (viewer == null || !viewer.isOnline()) endSession(entry.getKey(), viewer, entry.getValue(), "offline");
+            if (viewer == null || !viewer.isOnline()) { endSession(entry.getKey(), viewer, entry.getValue(), "offline"); limits.forget(entry.getKey()); }
             else if (canObserve(viewer, snapshot.owner())) sendState(viewer, entry.getValue(), snapshot);
             else removeBinding(viewer, entry.getValue(), snapshot.owner(), "out_of_range");
         }
@@ -83,7 +84,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     }
     public void forget(Player player) {
         Session session = sessions.get(player.getUniqueId());
-        if (session != null) endSession(player.getUniqueId(), player, session, "session_ended"); traffic.remove(player.getUniqueId());
+        if (session != null) endSession(player.getUniqueId(), player, session, "session_ended"); limits.forget(player.getUniqueId());
     }
     public void sendSnapshot(Player player) {
         Session session = sessions.get(player.getUniqueId());
@@ -105,21 +106,26 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             byte[] copy = bytes.clone(); if (plugin.isEnabled()) plugin.getServer().getScheduler().runTask(plugin,
                     () -> onPluginMessageReceived(channel, player, copy)); return;
         }
-        if (!player.isOnline() || !allowTraffic(player.getUniqueId())) return;
+        if (!player.isOnline() || !limits.allowInbound(player.getUniqueId(), bytes.length, System.nanoTime())) return;
         Inbound inbound;
         try { inbound = decode(bytes); }
         catch (IOException | IllegalArgumentException | IllegalStateException exception) { sendError(player, "invalid_payload"); return; }
-        if (inbound.protocol() != PROTOCOL) { sendError(player, "unsupported_protocol"); forget(player); return; }
+        if (inbound.protocol() != PROTOCOL) {
+            sendError(player, "unsupported_protocol"); Session previous = sessions.get(player.getUniqueId());
+            if (previous != null) endSession(player.getUniqueId(), player, previous, "unsupported_protocol"); return;
+        }
         if (inbound.type().equals("hello")) {
             long now = System.nanoTime(); Session previous = sessions.get(player.getUniqueId());
-            if (previous != null && now - previous.lastHelloAt < 1000000000L) return;
+            if (!limits.allowHello(player.getUniqueId(), now)) return;
             if (previous != null) endSession(player.getUniqueId(), player, previous, "new_handshake");
-            Session session = new Session(player.getUniqueId()); session.lastHelloAt = now; session.clientVersion = inbound.clientVersion();
+            Session session = new Session(player.getUniqueId(), inbound.packModels()); session.clientVersion = inbound.clientVersion();
             sessions.put(player.getUniqueId(), session); JsonObject ack = envelope("hello_ack");
             ack.addProperty("mode", "local-render"); ack.addProperty("serverTick", currentTick());
+            ack.addProperty("assetMode", session.packModels ? "resource-pack" : "legacy-download");
             ack.addProperty("heartbeatTicks", HEARTBEAT_TICKS); ack.addProperty("leaseTicks", RenderLeases.LEASE_TICKS);
             ack.addProperty("maxPayload", maxPayload); ack.addProperty("requestCooldownTicks", requestCooldownTicks);
-            JsonArray capabilities = new JsonArray(); capabilities.add("local_render"); ack.add("capabilities", capabilities);
+            JsonArray capabilities = new JsonArray(); capabilities.add("local_render");
+            if (session.packModels) capabilities.add("resource_pack_models"); ack.add("capabilities", capabilities);
             if (send(player, ack)) sendSnapshot(player); return;
         }
         Session session = sessions.get(player.getUniqueId()); if (session == null) return; long tick = currentTick();
@@ -135,7 +141,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             }
             case "render_heartbeat" -> session.leases.renew(inbound.bindings(), tick);
             case "snapshot_request", "request" -> {
-                if (!session.requests.allow(inbound.type(), inbound.action(), tick, requestCooldownTicks)) { sendError(player, "request_cooldown"); return; }
+                if (!limits.allowRequest(player.getUniqueId(), inbound.type(), inbound.action(), tick, requestCooldownTicks)) { sendError(player, "request_cooldown"); return; }
                 if (inbound.type().equals("snapshot_request")) sendSnapshot(player);
                 else try { actionRequests.accept(new ActionRequest(player, inbound.action(), inbound.argument())); }
                 catch (RuntimeException exception) { plugin.getLogger().log(Level.WARNING, "Client action failed", exception); sendError(player, "action_failed"); }
@@ -163,20 +169,22 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         if (!send(viewer, ack)) { session.leases.remove(binding.owner()); restore(viewer.getUniqueId(), binding); }
     }
     private void requestAsset(Player viewer, Session session, Inbound inbound, long tick) {
+        if (session.packModels) { sendError(viewer, "asset_resource_pack_mode"); return; }
         if (session.bindings.entrySet().stream().noneMatch(e -> e.getValue().modelId().equals(inbound.modelId())
                 && e.getValue().hash().equals(inbound.hash()) && canObserve(viewer, e.getKey()))) {
             sendError(viewer, "asset_not_authorized"); return;
         }
         if (session.transfers.stream().anyMatch(t -> t.asset.hash().equals(inbound.hash()))) return;
-        Long previous = session.assetRequests.get(inbound.hash());
-        if (previous != null && tickDistance(tick, previous) < 100) { sendError(viewer, "asset_cooldown"); return; }
-        if (session.transfers.size() >= MAX_TRANSFERS) { sendError(viewer, "asset_queue_full"); return; }
         var asset = assets.get(inbound.modelId()).filter(a -> a.hash().equals(inbound.hash()));
         if (asset.isEmpty()) { sendError(viewer, "asset_unavailable"); return; }
-        if (session.assetRequests.size() >= 128) session.assetRequests.clear(); session.assetRequests.put(inbound.hash(), tick);
+        if (!limits.reserveTransfer(viewer.getUniqueId())) { sendError(viewer, "asset_queue_full"); return; }
+        if (!limits.allowAsset(viewer.getUniqueId(), inbound.hash(), tick)) {
+            limits.releaseTransfer(viewer.getUniqueId()); sendError(viewer, "asset_cooldown"); return;
+        }
         session.transfers.add(new Transfer(asset.get(), Math.min(9000, (maxPayload - 512) * 3 / 4)));
     }
     private void maintainSessions() {
+        limits.pruneOffline(id -> { Player viewer = Bukkit.getPlayer(id); return viewer != null && viewer.isOnline(); });
         if (!configuredEnabled || sessions.isEmpty()) return; long tick = currentTick();
         List<StateSnapshot> current = tick % 2 == 0 ? readSnapshots() : List.of();
         boolean heartbeat = tickDistance(tick, lastHeartbeatTick) >= HEARTBEAT_TICKS; if (heartbeat) lastHeartbeatTick = tick;
@@ -190,27 +198,37 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             if (heartbeat) { JsonObject message = envelope("heartbeat"); message.addProperty("serverTick", tick);
                 message.addProperty("leaseTicks", RenderLeases.LEASE_TICKS); send(viewer, message); }
         }
-        traffic.keySet().removeIf(uuid -> Bukkit.getPlayer(uuid) == null);
     }
     private void pumpAssets(Player viewer, Session session) {
         int sentChunks = 0;
         while (sentChunks < 2 && !session.transfers.isEmpty()) {
             Transfer transfer = session.transfers.peek();
-            if (session.bindings.values().stream().noneMatch(b -> b.hash().equals(transfer.asset.hash()))) { session.transfers.remove(); continue; }
+            if (session.bindings.entrySet().stream().noneMatch(e -> e.getValue().modelId().equals(transfer.asset.modelId())
+                    && e.getValue().hash().equals(transfer.asset.hash()) && canObserve(viewer, e.getKey()))) {
+                removeTransfer(session); continue;
+            }
             if (!transfer.started) {
                 JsonObject begin = envelope("asset_begin"); begin.addProperty("modelId", transfer.asset.modelId()); begin.addProperty("hash", transfer.asset.hash());
                 begin.addProperty("rawBytes", transfer.asset.rawBytes()); begin.addProperty("compressedBytes", transfer.asset.compressed().length);
                 begin.addProperty("chunks", transfer.asset.chunks(transfer.chunkBytes));
-                if (!send(viewer, begin)) { session.transfers.remove(); continue; } transfer.started = true;
+                SendResult result = sendPacket(viewer, begin, true);
+                if (result == SendResult.DEFERRED) return;
+                if (result == SendResult.FAILED) { removeTransfer(session); continue; } transfer.started = true;
+            }
+            if (transfer.index == transfer.asset.chunks(transfer.chunkBytes)) {
+                JsonObject end = envelope("asset_end"); end.addProperty("hash", transfer.asset.hash());
+                SendResult result = sendPacket(viewer, end, true);
+                if (result == SendResult.DEFERRED) return;
+                removeTransfer(session); continue;
             }
             JsonObject chunk = envelope("asset_chunk"); chunk.addProperty("hash", transfer.asset.hash()); chunk.addProperty("index", transfer.index);
             chunk.addProperty("data", Base64.getEncoder().encodeToString(transfer.asset.chunk(transfer.index, transfer.chunkBytes)));
-            if (!send(viewer, chunk)) { session.transfers.remove(); continue; } sentChunks++; transfer.index++;
-            if (transfer.index == transfer.asset.chunks(transfer.chunkBytes)) {
-                JsonObject end = envelope("asset_end"); end.addProperty("hash", transfer.asset.hash()); send(viewer, end); session.transfers.remove();
-            }
+            SendResult result = sendPacket(viewer, chunk, true);
+            if (result == SendResult.DEFERRED) return;
+            if (result == SendResult.FAILED) { removeTransfer(session); continue; } sentChunks++; transfer.index++;
         }
     }
+    private void removeTransfer(Session session) { session.transfers.remove(); limits.releaseTransfer(session.viewer); }
     private List<StateSnapshot> readSnapshots() {
         try { return List.copyOf(snapshots.get()); }
         catch (RuntimeException exception) { plugin.getLogger().log(Level.WARNING, "Cannot obtain client snapshot", exception); return List.of(); }
@@ -290,27 +308,28 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     private void endSession(UUID id, Player viewer, Session session, String reason) {
         for (UUID owner : List.copyOf(session.bindings.keySet())) removeBinding(viewer, session, owner, reason);
         for (var binding : session.leases.clear()) restore(id, binding);
-        session.transfers.clear(); session.assetRequests.clear(); sessions.remove(id); traffic.remove(id);
+        session.transfers.clear(); limits.releaseTransfers(id); sessions.remove(id);
     }
     private void clearSessions(String reason) {
         for (var entry : List.copyOf(sessions.entrySet())) endSession(entry.getKey(), Bukkit.getPlayer(entry.getKey()), entry.getValue(), reason);
-        sessions.clear(); traffic.clear();
+        sessions.clear();
     }
     private boolean send(Player player, JsonObject message) {
-        if (player == null || !running || !configuredEnabled || !plugin.isEnabled() || !player.isOnline() || !sessions.containsKey(player.getUniqueId())) return false;
+        return sendPacket(player, message, false) == SendResult.SENT;
+    }
+    private SendResult sendPacket(Player player, JsonObject message, boolean asset) {
+        if (player == null || !running || !configuredEnabled || !plugin.isEnabled() || !player.isOnline()
+                || !sessions.containsKey(player.getUniqueId())) return SendResult.FAILED;
         try {
             byte[] payload = GSON.toJson(message).getBytes(StandardCharsets.UTF_8);
-            if (payload.length > maxPayload) { plugin.getLogger().warning("Client packet exceeds payload limit: " + message.get("type")); return false; }
-            player.sendPluginMessage(plugin, CHANNEL, payload); return true;
-        } catch (RuntimeException exception) { plugin.getLogger().log(Level.FINE, "Cannot send client packet", exception); return false; }
+            if (payload.length > maxPayload) { plugin.getLogger().warning("Client packet exceeds payload limit: " + message.get("type")); return SendResult.FAILED; }
+            if (!limits.allowOutbound(player.getUniqueId(), payload.length, asset, System.nanoTime(), currentTick())) return SendResult.DEFERRED;
+            player.sendPluginMessage(plugin, CHANNEL, payload); return SendResult.SENT;
+        } catch (RuntimeException exception) { plugin.getLogger().log(Level.FINE, "Cannot send client packet", exception); return SendResult.FAILED; }
     }
     private void sendError(Player player, String code) { JsonObject message = envelope("error"); message.addProperty("code", code); send(player, message); }
     private void sendError(Player player, String code, RenderLeases.Binding binding) {
         JsonObject message = envelope("error"); message.addProperty("code", code); addBinding(message, binding); send(player, message);
-    }
-    private boolean allowTraffic(UUID player) {
-        long now = System.nanoTime(); TrafficWindow window = traffic.computeIfAbsent(player, ignored -> new TrafficWindow(now));
-        if (now - window.startedAt >= 1000000000L) { window.startedAt = now; window.packets = 0; } return ++window.packets <= 48;
     }
     private static Inbound decode(byte[] bytes) throws IOException {
         String text;
@@ -339,7 +358,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
                     case "capabilities" -> {
                         reader.beginArray(); while (reader.hasNext()) {
                             String capability = readString(reader, 32);
-                            if (!capability.equals("local_render") || !capabilities.add(capability)) throw new IllegalArgumentException("Unsupported capability");
+                            if (!CAPABILITIES.contains(capability) || !capabilities.add(capability)) throw new IllegalArgumentException("Unsupported capability");
                         } reader.endArray();
                     }
                     default -> throw new IllegalArgumentException("Unknown field");
@@ -363,7 +382,8 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             default -> throw new IllegalArgumentException("Unknown message type");
         }
         if (!allowed.containsAll(fields)) throw new IllegalArgumentException("Field not allowed for message");
-        return new Inbound(protocol, type, version, action, argument, modelId, hash, owner == null ? null : new RenderLeases.Binding(owner, instance, hash), bindings);
+        return new Inbound(protocol, type, version, capabilities.contains("resource_pack_models"), action, argument, modelId, hash,
+                owner == null ? null : new RenderLeases.Binding(owner, instance, hash), bindings);
     }
     private static List<RenderLeases.Binding> readBindings(JsonReader reader) throws IOException {
         List<RenderLeases.Binding> bindings = new ArrayList<>(); Set<UUID> owners = new HashSet<>(); reader.beginArray();
@@ -450,21 +470,20 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     public record AnimationInfo(String id, String label) {}
     public record ActionRequest(Player player, String action, String argument) {}
     @FunctionalInterface public interface RenderControl { boolean set(UUID viewer, UUID owner, UUID instance, boolean enabled); }
-    private record Inbound(int protocol, String type, String clientVersion, String action, String argument, String modelId,
+    private record Inbound(int protocol, String type, String clientVersion, boolean packModels, String action, String argument, String modelId,
             String hash, RenderLeases.Binding binding, List<RenderLeases.Binding> bindings) {}
     private record BoundState(UUID instance, String modelId, String hash) {}
     private static final class Session {
-        final UUID viewer;
-        Session(UUID viewer) { this.viewer = viewer; }
+        final UUID viewer; final boolean packModels;
+        Session(UUID viewer, boolean packModels) { this.viewer = viewer; this.packModels = packModels; }
         final Map<UUID, BoundState> bindings = new HashMap<>(); final RenderLeases leases = new RenderLeases();
-        final Deque<Transfer> transfers = new ArrayDeque<>(); final Map<String, Long> assetRequests = new HashMap<>();
+        final Deque<Transfer> transfers = new ArrayDeque<>();
         final Set<UUID> payloadFailures = new HashSet<>();
-        final RequestCooldown requests = new RequestCooldown();
-        String clientVersion = "unspecified"; long lastHelloAt, snapshotId;
+        String clientVersion = "unspecified"; long snapshotId;
     }
     private static final class Transfer {
         final ModelAssets.Asset asset; final int chunkBytes; int index; boolean started;
         Transfer(ModelAssets.Asset asset, int chunkBytes) { this.asset = asset; this.chunkBytes = chunkBytes; }
     }
-    private static final class TrafficWindow { long startedAt; int packets; TrafficWindow(long time) { startedAt = time; } }
+    private enum SendResult { SENT, DEFERRED, FAILED }
 }

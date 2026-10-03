@@ -34,7 +34,18 @@ public final class AnimationPlayer {
 
     public List<BbModel.Vertex> sample(double serverTick, List<BbModel.Layer> layers, float relativeHeadYaw,
                                      float headPitch, Map<String, Double> queries, Map<String, Double> accessories) {
+        return sample(serverTick, layers, relativeHeadYaw, headPitch, queries, accessories, Map.of());
+    }
+
+    public List<BbModel.Vertex> sample(double serverTick, List<BbModel.Layer> layers, float relativeHeadYaw,
+                                     float headPitch, Map<String, Double> queries, Map<String, Double> accessories,
+                                     Map<String, Double> localParameters) {
         BbModel.checkedTick(serverTick);
+        if (localParameters.size() > 32) throw new IllegalArgumentException("Local parameter count");
+        localParameters.forEach((key, value) -> {
+            if (!key.matches("variable\\.roaming\\.[a-z0-9_]{1,64}") || value == null || !Double.isFinite(value) || value < 0 || value > 1)
+                throw new IllegalArgumentException("Local parameter value");
+        });
         if (!accessories.isEmpty()) {
             if (!accessories.keySet().equals(Set.of("a", "b"))) throw new IllegalArgumentException("Accessory fields");
             for (Double value : accessories.values())
@@ -70,6 +81,7 @@ public final class AnimationPlayer {
             expressions.set("variable.roaming.a", accessories.get("a"));
             expressions.set("variable.roaming.b", accessories.get("b"));
         }
+        localParameters.forEach(expressions::set);
         Set<String> present = new HashSet<>();
         for (BbModel.Layer layer : incoming) {
             present.add(layer.layer());

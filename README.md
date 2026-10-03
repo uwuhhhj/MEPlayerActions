@@ -2,7 +2,7 @@
 
 玩家模型渲染、中文动作面板和姿态动画同步，包含 **Fabric 1.21.11 客户端模组**与 **Paper 1.21.11 服务端插件**。客户端运行需要 Java 21、Fabric Loader 和 Fabric API；服务端插件的当前模型后端为 **ModelEngine R4.1.1**。作者：SIMMC、Loliiiico。
 
-服务器多人伪装模式由服务器管理模型、动作权限、观看距离和人数。安装模组的观看者自动使用本地模型渲染，可流畅显示自己和其他玩家；被观看者无需安装模组。未安装模组的观看者使用 ModelEngine 资源包。第一人称隐藏自己的完整模型，第三人称默认显示。
+服务器多人伪装模式由服务器管理模型、动作权限、观看距离和人数。安装模组的观看者自动使用本地模型渲染，可流畅显示自己和其他玩家；被观看者无需安装模组。未安装模组的观看者使用包内 ModelEngine 资源；安装模组的观看者从同一个完整资源包读取骨架、动画和共享贴图，不再额外申请下载 `.bbmodel`。第一人称隐藏自己的完整模型，第三人称默认显示。
 
 客户端没有 ModelEngine、GSit 或服务端插件的硬依赖。多人同步需要服务器实现 `meplayeractions:main` 的 v3 协议；其他模型引擎实现相同资产、状态和渲染接管约定后，可以使用同一客户端。客户端按协议解释模型和动作，不会自动识别未适配的引擎或任意模型格式。
 
@@ -16,19 +16,20 @@
 
 1. 在 [Releases](https://github.com/uwuhhhj/MEPlayerActions/releases/latest) 下载同一版本的服务端安装 ZIP。
 2. 停服，将安装 ZIP 的 `plugins/` 合并到服务器，移除旧插件 JAR。使用包内新配置，并把自定义设置迁入其中。旧的 `_npc`、`_player` 示例蓝图可移除。
-3. 启动服务器，执行 `/meg reload models`，为玩家更新 ModelEngine 生成的资源包。
+3. 启动服务器，执行 `/meg reload models`，再用安装包内 `tools/build_client_resource_pack.py` 将生成包与客户端原模型合并为完整资源包，作为服务器原版资源包下发给玩家。详见 [资源包规范](docs/CLIENT_RESOURCE_PACK.md)。
 
-安装包包含 ModelEngine 用的数值蓝图和客户端用的表达式原模型，分别位于 `plugins/ModelEngine/blueprints/meplayeractions/` 与 `plugins/MEPlayerActions/models/`。ModelEngine、GSit 和生成后的资源包需另行准备。
+安装包包含 ModelEngine 用的数值蓝图和客户端用的表达式原模型，分别位于 `plugins/ModelEngine/blueprints/meplayeractions/` 与 `plugins/MEPlayerActions/models/`。ModelEngine、GSit 需另行准备。发布中的完整示例资源包含两套服务器模型；自定义模型更新后应重新合并资源包并更新服务器的资源包 URL/哈希。构建无需修改 ModelEngine 源码。
 
 真实坐下、爬行指令需要 [GSit](https://github.com/Gecolay/GSit)，已验证 3.5.1。原生爬行、床睡眠和载具的动画同步无需 GSit。
 
 ## 使用
 
-按 **N** 打开动作面板，进入“本地外观设置”；也可使用 `/mpaclient settings` 或 `/mpaclient local`。选择内置 `ysm_01_jk` / `ysm_02_jk`，或把符合客户端格式要求的单个 `.bbmodel` 放入该实例的 `config/meplayeractions/models/` 后选择。缩放范围为 `0.05–8`，世界 X/Y/Z 偏移各为 `-32–32` 方块，Y 正值向上；点击“保存并预览”后在第三人称查看。
+按 **Y** 打开模型图库，支持搜索、收藏、显示模型 ID、来源筛选、分页、可旋转的真实模型预览和缩略图。点击卡片只浏览，点击“使用模型”才应用本机外观；“外观设置”提供缩放与 X/Y/Z 对齐。按 **G** 打开动作轮盘，悬停后松开按键选择，也可点击或用数字键选择；轮盘锁定只让界面保持打开。按 **N** 打开动作列表。本地与服务器动作作用范围明确区分。
 
-本地外观默认关闭，模型、缩放、偏移及启用状态保存在 `config/meplayeractions-client.json`，重进世界或重启后恢复。它只改变本机看到的自己：单人世界、无插件服务器均可使用，其他玩家仍看到服务器决定的外观。启用时优先显示这份本地外观；关闭后显示当前服务器伪装或原版人物。本地动作预览只改变动画，不发送服务器姿态命令，也不修改真实位置、碰撞和能力。
+客户端仅内置参考 OpenYSM 的 CC0 默认模型，保留作者及许可说明；可以切换默认/蓝色皮肤和红色蝴蝶结头饰。服务器 `ysm_01_jk`、`ysm_02_jk` 不内置在客户端 JAR。将嵌入 PNG 的单个 `.bbmodel` 放入 `config/meplayeractions/models/`，或在该目录下放包含 `ysm.json`、主骨架、主/extra 动画和 PNG 的普通 YSM 模型文件夹，点击刷新选择。当前支持有界的 YSM 文件夹主模型与常规/extra 动画；不读取加密 `.ysm`，也不包含 OpenYSM 的全部外部模组接口、投射物、载具替换、声音或动态表单。缩放范围 `0.05–8`，位置偏移各为 `-32–32` 方块，Y 正值向上。
+本地外观默认关闭，模型、缩放、偏移及启用状态保存在 `config/meplayeractions-client.json`，重进世界或重启后恢复。它只改变本机看到的自己：单人世界、无插件服务器均可使用，其他玩家仍看到服务器决定的外观。启用时优先显示这份本地外观；关闭后显示当前服务器伪装或原版人物。本地模式第一人称保留原版手臂与手持物，完整自定义身体在第三人称显示。本地动作预览只改变动画，不发送服务器姿态命令，也不修改真实位置、碰撞和能力。
 
-也可用 `/mpaclient local model ysm_02_jk` 选择并启用模型，`/mpaclient local play wave` 预览动作，`local stop` 停止动作，`local off` 关闭本地外观，`local reset` 恢复默认。本地文件的模型 ID 为 `local:文件名.bbmodel`。
+也可用 `/mpaclient local model openysm_default` 选择并启用模型，`/mpaclient local play extra1` 预览动作，`local stop` 停止动作，`local off` 关闭本地外观，`local reset` 恢复默认。本地文件的模型 ID 为 `local:文件名.bbmodel`，YSM 文件夹 ID 为 `ysm:文件夹名`。
 
 | 模式 | 模型由谁选择 | 谁能看见 | 是否需要服务器协议 |
 | --- | --- | --- | --- |
@@ -67,8 +68,11 @@
 
 `play extra0` 切换 `ysm_02_jk` 的花朵与帽子；`ysm_01_jk` 保留原外貌，未包含这两组方块。其他专用动作可从菜单选择。`play` 展示动画，真实姿态使用 `pose`。
 
-客户端 `/mpaclient toggle` 是客户端渲染总开关，涵盖本地外观和服务器模型接管，关闭后恢复服务器后端或原版人物。重新启用本地外观会打开总开关；“关闭本地外观”只关闭自己的本地选择。旧的 `/mpaclient preview ysm_01_jk` / `preview off` 保留为临时示例预览；持久自己的外观使用“本地外观”设置。
+客户端 `/mpaclient toggle` 是客户端渲染总开关，涵盖本地外观和服务器模型接管，关闭后恢复服务器后端或原版人物。重新启用本地外观会打开总开关；“关闭本地外观”只关闭自己的本地选择。旧的 `/mpaclient preview ysm_01_jk` / `preview off` 保留为临时预览，但服务器示例须已在完整资源包中；持久自己的外观使用“本地外观”设置。
 
 配置在 `plugins/MEPlayerActions/config.yml`，可调整采样间隔、动画切换间隔、过渡、跳跃收尾、同步许可与各模型动画映射。修改后执行 `reload` 并重新伪装。
 
-本轮提供基础独立客户端设置，以及这两套模型的 YSM 表达式与动作；完整 OpenYSM 界面和功能对齐留待后续迭代，当前不包含其全部外部模组接口或粒子系统。26.x 需要适配验证。开发资料见 [架构](ARCHITECTURE.md) 和 [客户端协议](src/main/java/com/simmc/meplayeractions/client/CLIENT_PROTOCOL.md)；表达式和动作语义参考 [OpenYSM-Updated](https://github.com/IzumiiKonata/OpenYSM-Updated)。
+客户端资产读取规范与服务端引擎解耦。OpenYSM 原项目使用自身的模型分发协议和缓存；本项目选择统一 Minecraft 资源包，模型文件夹仅在支持范围内解释，两者网络协议不互通。26.x 需要适配验证。开发资料见 [架构](ARCHITECTURE.md) 和 [客户端协议](src/main/java/com/simmc/meplayeractions/client/CLIENT_PROTOCOL.md)；表达式和动作语义参考 [OpenYSM-Updated](https://github.com/IzumiiKonata/OpenYSM-Updated)。
+
+
+资源包内容可以被获得该包的玩家提取。客户端只确认服务器授予的渲染绑定，不选择服务器下载目标；新客户端不发送 `asset_request`。服务端为旧客户端保留受限兼容传输，连接级入包、握手和资产冷却不因新会话/错误协议重置，另有每客户端和全局带宽/并发预算。模型资源缺失、哈希不一致或渲染失败时保持服务器后端显示。

@@ -4,6 +4,8 @@ import com.google.gson.*;
 import java.nio.file.*;
 import java.io.IOException;
 import java.util.Objects;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -11,6 +13,10 @@ public final class ClientOptions {
     private static final Logger LOGGER = LoggerFactory.getLogger("MEPlayerActions/Options");
     public boolean enabled = true, showSelf = true, followServerTimeline = false;
     public int interpolationTicks = 2;
+    public boolean showModelIds;
+    public boolean defaultHeaddress = true;
+    public boolean defaultBlueTexture;
+    private final Set<String> favorites = new LinkedHashSet<>();
     private final Path path;
     private LocalAppearanceSettings localAppearance = LocalAppearanceSettings.defaults();
     public ClientOptions(Path path) {
@@ -23,6 +29,16 @@ public final class ClientOptions {
                 if (json.has("followServerTimeline")) followServerTimeline = json.get("followServerTimeline").getAsBoolean();
                 if (json.has("interpolationTicks")) interpolationTicks = Math.max(0,Math.min(6,json.get("interpolationTicks").getAsInt()));
                 localAppearance = readAppearance(json);
+                if (json.has("showModelIds")) showModelIds = json.get("showModelIds").getAsBoolean();
+                if (json.has("defaultHeaddress")) defaultHeaddress = json.get("defaultHeaddress").getAsBoolean();
+                if (json.has("defaultBlueTexture")) defaultBlueTexture = json.get("defaultBlueTexture").getAsBoolean();
+                if (json.has("favorites") && json.get("favorites").isJsonArray()) {
+                    for (JsonElement value : json.getAsJsonArray("favorites")) {
+                        if (favorites.size() >= 64) break;
+                        if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()
+                                && LocalAppearanceSettings.isValidModelId(value.getAsString())) favorites.add(value.getAsString());
+                    }
+                }
             }
         } catch (IOException | RuntimeException exception) {
             LOGGER.warn("Could not read client options; using defaults",exception);
@@ -32,6 +48,12 @@ public final class ClientOptions {
     public LocalAppearanceSettings localAppearance() { return localAppearance; }
     public void setLocalAppearance(LocalAppearanceSettings settings) { localAppearance = Objects.requireNonNull(settings); }
     public Path path() { return path; }
+    public boolean isFavorite(String id) { return favorites.contains(id); }
+    public void toggleFavorite(String id) {
+        if (!LocalAppearanceSettings.isValidModelId(id)) return;
+        if (!favorites.remove(id) && favorites.size() < 64) favorites.add(id);
+        save();
+    }
 
     /** Reload only the private appearance without changing live server-render options. */
     public void reloadLocalAppearance() {
@@ -46,7 +68,7 @@ public final class ClientOptions {
 
     private JsonObject read() throws IOException {
         if (!Files.exists(path)) return null;
-        if (Files.size(path) >= 16_384) throw new IOException("Client options exceed size limit");
+        if (Files.size(path) >= 65_536) throw new IOException("Client options exceed size limit");
         return JsonParser.parseString(Files.readString(path)).getAsJsonObject();
     }
 
@@ -58,6 +80,9 @@ public final class ClientOptions {
             if (!enabled.isBoolean() || !model.isString()) throw new IllegalArgumentException("Appearance field type");
             for (String field : new String[]{"scale", "offsetX", "offsetY", "offsetZ"})
                 if (!value.getAsJsonPrimitive(field).isNumber()) throw new IllegalArgumentException("Appearance number type");
+            // Removed bundled server models must not silently become another enabled appearance.
+            if (model.getAsString().equals("ysm_01_jk") || model.getAsString().equals("ysm_02_jk"))
+                return LocalAppearanceSettings.defaults();
             return new LocalAppearanceSettings(enabled.getAsBoolean(), model.getAsString(), value.get("scale").getAsFloat(),
                     value.get("offsetX").getAsDouble(), value.get("offsetY").getAsDouble(), value.get("offsetZ").getAsDouble());
         } catch (RuntimeException invalid) {
@@ -70,6 +95,10 @@ public final class ClientOptions {
         JsonObject json = new JsonObject(); json.addProperty("enabled",enabled);
         json.addProperty("showSelf",showSelf); json.addProperty("interpolationTicks",interpolationTicks);
         json.addProperty("followServerTimeline",followServerTimeline);
+        json.addProperty("showModelIds", showModelIds);
+        json.addProperty("defaultHeaddress", defaultHeaddress);
+        json.addProperty("defaultBlueTexture", defaultBlueTexture);
+        JsonArray favoriteJson = new JsonArray(); favorites.forEach(favoriteJson::add); json.add("favorites", favoriteJson);
         JsonObject appearance = new JsonObject();
         appearance.addProperty("enabled",localAppearance.enabled()); appearance.addProperty("modelId",localAppearance.modelId());
         appearance.addProperty("scale",localAppearance.scale()); appearance.addProperty("offsetX",localAppearance.offsetX());

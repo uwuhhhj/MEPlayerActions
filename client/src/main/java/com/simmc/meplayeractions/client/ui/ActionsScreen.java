@@ -33,6 +33,11 @@ public final class ActionsScreen extends Screen {
         int pageSize = rows * 3;
         page = Math.max(0, Math.min(page, Math.max(0, (actions.size() - 1) / pageSize)));
         int panel = Math.min(450, width - 24), left = (width - panel) / 2, col = (panel - 12) / 3;
+        var wheel = ButtonWidget.builder(Text.literal("动作轮盘"), b -> {
+            if (client != null) client.setScreen(new AnimationWheelScreen(runtime, localMode, this));
+        }).dimensions(width - 80, 10, 68, 20).build();
+        wheel.setTooltip(Tooltip.of(Text.literal("扇形选择、数字 1–8 和分页；本地动作仅自己可见")));
+        addDrawableChild(wheel);
         addDrawableChild(ButtonWidget.builder(Text.literal(localMode ? "本地动作 ✓" : "本地动作"), b -> switchMode(true))
                 .dimensions(left, 61, (panel - 6) / 2, 20).build());
         addDrawableChild(ButtonWidget.builder(Text.literal(localMode ? "服务器动作" : "服务器动作 ✓"), b -> switchMode(false))
@@ -67,10 +72,12 @@ public final class ActionsScreen extends Screen {
         addDrawableChild(ButtonWidget.builder(enabledText(), b -> {
             runtime.toggleEnabled(); b.setMessage(enabledText());
         }).dimensions(left, bottom, col, 20).build());
-        addDrawableChild(ButtonWidget.builder(selfText(), b -> {
+        var self = ButtonWidget.builder(selfText(), b -> {
             runtime.options.showSelf = !runtime.options.showSelf;
             runtime.options.save(); b.setMessage(selfText());
-        }).dimensions(left + col + 6, bottom, col, 20).build());
+        }).dimensions(left + col + 6, bottom, col, 20).build();
+        self.setTooltip(Tooltip.of(Text.literal("控制本客户端第三人称中本人模型的显示。本地外观启用在模型设置中操作，其他玩家不受此开关影响。")));
+        addDrawableChild(self);
         addDrawableChild(ButtonWidget.builder(Text.literal(localMode ? "关闭菜单" : "本地外观设置"), b -> {
             if (localMode) close(); else openAppearance();
         }).dimensions(left + 2 * (col + 6), bottom, col, 20).build());
@@ -104,7 +111,7 @@ public final class ActionsScreen extends Screen {
         }
     }
     private Text enabledText() { return Text.literal("客户端渲染：" + (runtime.options.enabled ? "开启" : "关闭")); }
-    private Text selfText() { return Text.literal("本人模型：" + (runtime.options.showSelf ? "显示" : "隐藏")); }
+    private Text selfText() { return Text.literal("第三人称本人：" + (runtime.options.showSelf ? "显示" : "隐藏")); }
     @Override public void tick() {
         if (!currentActions().equals(actions) || serverAvailable != (runtime.serverBridgeReady() && runtime.serverOwnModelReady())) clearAndInit();
     }

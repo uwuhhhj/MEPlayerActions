@@ -174,7 +174,7 @@ public final class ModelRenderer {
     private static void reloadTextures() {
         Map<String, BbModel> retained = new LinkedHashMap<>();
         ASSETS.forEach((hash, asset) -> retained.put(hash, asset.model()));
-        if (runtime != null) runtime.releaseAll();
+        if (runtime != null) { runtime.releaseAll(); retained.keySet().removeAll(runtime.resourcesReloaded()); }
         clear();
         retained.forEach((hash, model) -> {
             if (!prepare(hash, model) && runtime != null) {
@@ -239,7 +239,7 @@ public final class ModelRenderer {
                 AnimationPlayer player = PLAYERS.computeIfAbsent(key, ignored -> new AnimationPlayer(binding.model()));
                 List<BbModel.Vertex> vertices = player.sample(binding.serverTick(), binding.layers(),
                         binding.headYaw() - binding.bodyYaw(), binding.headPitch(), activeRuntime.expressionQueries(binding.owner()),
-                        activeRuntime.accessoryState(binding.owner()));
+                        activeRuntime.accessoryState(binding.owner()), activeRuntime.localParameters(binding.owner()));
                 // Hidden self rendering still advances timeline scripts and spring state.
                 if (firstPerson && (binding.owner().equals(cameraOwner) || binding.owner().equals(localOwner))) {
                     skipped++;

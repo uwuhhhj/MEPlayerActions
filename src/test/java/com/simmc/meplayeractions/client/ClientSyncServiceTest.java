@@ -75,6 +75,31 @@ class ClientSyncServiceTest {
         Object decoded = decode(json);
         assertEquals(3, field(decoded, "protocol"));
         assertEquals("hello", field(decoded, "type"));
+        assertEquals(false, field(decoded, "packModels"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\",\"resource_pack_models\"]}",
+            "{\"capabilities\":[\"resource_pack_models\",\"local_render\"],\"clientVersion\":\"0.4.0\",\"type\":\"hello\",\"protocol\":3}"
+    })
+    void acceptsResourcePackModeOnlyAsExplicitHelloCapability(String json) throws IOException {
+        Object decoded = decode(json);
+        assertEquals(3, field(decoded, "protocol"));
+        assertEquals("hello", field(decoded, "type"));
+        assertEquals(true, field(decoded, "packModels"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"resource_pack_models\"]}",
+            "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\",\"resource_pack_models\",\"resource_pack_models\"]}",
+            "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\",\"resource_pack_models\",\"arbitrary_engine\"]}",
+            "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\",\"resource_pack_models\"],\"assetMode\":\"resource-pack\"}",
+            "{\"protocol\":3,\"type\":\"snapshot_request\",\"capabilities\":[\"resource_pack_models\"]}"
+    })
+    void resourcePackExtensionRetainsStrictCapabilityAndMessageFieldValidation(String json) {
+        assertRejected(json);
     }
 
     @ParameterizedTest

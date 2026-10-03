@@ -7,7 +7,7 @@ public record LocalAppearanceSettings(boolean enabled, String modelId, float sca
     public static final double MAX_OFFSET = 32;
 
     public LocalAppearanceSettings {
-        if (!isValidModelId(modelId)) throw new IllegalArgumentException("请选择内置模型或本地 .bbmodel 文件");
+        if (!isValidModelId(modelId)) throw new IllegalArgumentException("请选择默认模型、本地 .bbmodel 文件或 YSM 模型文件夹");
         if (!Float.isFinite(scale) || scale < MIN_SCALE || scale > MAX_SCALE)
             throw new IllegalArgumentException("缩放范围为 0.05 到 8");
         if (!validOffset(offsetX) || !validOffset(offsetY) || !validOffset(offsetZ))
@@ -15,18 +15,23 @@ public record LocalAppearanceSettings(boolean enabled, String modelId, float sca
     }
 
     public static LocalAppearanceSettings defaults() {
-        return new LocalAppearanceSettings(false, "ysm_02_jk", 1, 0, 0, 0);
+        return new LocalAppearanceSettings(false, "openysm_default", 1, 0, 0, 0);
     }
 
     public static boolean isValidModelId(String id) {
-        if ("ysm_01_jk".equals(id) || "ysm_02_jk".equals(id)) return true;
-        if (id == null || !id.startsWith("local:") || id.length() > 128) return false;
-        String filename = id.substring(6);
-        return filename.length() > 8 && filename.endsWith(".bbmodel")
-                && !filename.startsWith(".") && !filename.contains("..")
-                && filename.equals(filename.strip())
-                && filename.chars().noneMatch(Character::isISOControl)
-                && !filename.matches(".*[<>:\"/\\\\|?*\\p{Cntrl}].*");
+        if ("openysm_default".equals(id)) return true;
+        if (id == null || id.length() > 128) return false;
+        if (id.startsWith("local:")) {
+            String filename = id.substring(6);
+            return filename.length() > 8 && filename.endsWith(".bbmodel") && safeName(filename);
+        }
+        return id.startsWith("ysm:") && safeName(id.substring(4));
+    }
+
+    private static boolean safeName(String name) {
+        return !name.isBlank() && !name.startsWith(".") && !name.contains("..")
+                && name.equals(name.strip()) && name.chars().noneMatch(Character::isISOControl)
+                && !name.matches(".*[<>:\"/\\\\|?*\\p{Cntrl}].*");
     }
 
     private static boolean validOffset(double value) {

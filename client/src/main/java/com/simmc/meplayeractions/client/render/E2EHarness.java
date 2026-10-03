@@ -1,8 +1,11 @@
 package com.simmc.meplayeractions.client.render;
 
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.simmc.meplayeractions.client.ClientRuntime;
 import com.simmc.meplayeractions.client.LocalAppearanceSettings;
+import com.simmc.meplayeractions.client.PackModelLibrary;
 import com.simmc.meplayeractions.client.ui.ActionsScreen;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;
@@ -17,12 +20,16 @@ import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.Entity;
 import net.minecraft.block.BedBlock;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.Identifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -43,7 +50,7 @@ public final class E2EHarness {
             ? List.of("other-idle", "other-undisguise", "other-native-move", "other-redisguise", "other-undisguise-again", "undisguise")
             : List.of("idle", "local-appearance-server-base", "local-appearance-own", "local-appearance-action", "local-appearance-off",
             "native-follow", "server-trailing", "wave", "crawl", "crawl-side", "bed", "ride", "boat", "extra", "hunger", "jump",
-            "firstperson", "firstperson-extra0", "extra0-restored", "gsit-sit", "gsit-crawl", "gsit-lay", "gsit-firstperson", "gsit-thirdperson", "gsit-undisguise", "gsit-redisguise", "gsit-reset", "resource-reload", "local-off", "local-on", "npc", "npc-crawl", "npc-crawl-side",
+            "firstperson", "firstperson-extra0", "extra0-restored", "gsit-sit", "gsit-crawl", "gsit-lay", "gsit-firstperson", "gsit-thirdperson", "gsit-undisguise", "gsit-redisguise", "gsit-reset", "resource-reload", "pack-disabled", "pack-restored", "local-off", "local-on", "npc", "npc-crawl", "npc-crawl-side",
             "menu", "self-hidden", "self-hidden-extra0", "self-restored", "server-reload", "other-idle", "other-native-follow", "other-crawl", "other-bed",
             "other-ride", "other-jump", "other-extra0", "other-range-out", "other-range-in", "other-undisguise", "other-native-move", "other-redisguise", "other-undisguise-again",
             "other-second-model", "other-second-undisguise", "other-first-model", "own-second-model", "own-second-undisguise", "own-first-model", "undisguise", "preview", "preview-end");
@@ -51,6 +58,7 @@ public final class E2EHarness {
     private final Path output = Path.of(System.getProperty("meplayeractions.e2e.output", "../build/e2e")).toAbsolutePath();
     private final List<Map<String, Object>> checks = new ArrayList<>();
     private final List<String> screenshots = new ArrayList<>();
+    private final List<Map<String, Object>> screenshotCallbacks = new ArrayList<>();
     private final List<Map<String, Object>> observations = new ArrayList<>();
     private final List<Map<String, Object>> fixtureFrames = new ArrayList<>();
     private final long started = System.nanoTime();
@@ -68,6 +76,14 @@ public final class E2EHarness {
     private double jumpGroundY, jumpMaxRise, otherJumpMaxRise;
     private int reloadReadyAt = -1, reloadVisibleTicks;
     private long reloadFrameBaseline;
+    private List<String> originalPackProfiles = List.of(), disabledPackProfiles = List.of();
+    private String packExpectedInstance = "", packExpectedHash = "", packAuthorityError = "", packReloadError = "";
+    private boolean packSelectionChanged;
+    private long packReloadRequest, packReloadStartedAtMillis, packReloadCompletedAtMillis, packFrameBaseline, packDrawBaseline;
+    private int packReloadCallbacks, packReadyAt = -1, packSettledTicks;
+    private int packMissingSamples;
+    private boolean packNoStaleReady = true;
+    private JsonObject packAuthority;
     private String remotePreviousInstance = "", remoteExtraInstance = "";
     private boolean remoteExtraRequested, remoteExtraSeen, remoteExtraEventChecked, remoteExtraEarlyValid = true;
     private int remoteExtraReadyTicks, remoteExtraEarlySamples, remoteExtraCompletedAt = -1;
@@ -84,7 +100,12 @@ public final class E2EHarness {
     private List<ClientRuntime.RenderBinding> localRemoteBaseline = List.of();
     private long localRequestBaseline;
     private int localAppearanceReadyAt = -1;
-    private static final LocalAppearanceSettings LOCAL_PROFILE = new LocalAppearanceSettings(true, "ysm_02_jk", .65f, .25, .35, -.2);
+    private String ownAccessoryInstance = "";
+    private boolean ownAccessorySeen, ownAccessoryEventChecked, ownAccessoryEarlyValid;
+    private int ownAccessoryEarlySamples, ownAccessoryCompletedAt;
+    private long ownAccessoryStartedAt;
+    private double ownAccessoryLengthTicks, ownAccessoryFirstChangedAge;
+    private static final LocalAppearanceSettings LOCAL_PROFILE = new LocalAppearanceSettings(true, "openysm_default", .65f, .25, .35, -.2);
 
     private E2EHarness(ClientRuntime runtime) { this.runtime = runtime; }
 
@@ -217,8 +238,16 @@ public final class E2EHarness {
                 resourceReloadTick(client);
                 return;
             }
+            if (name.equals("pack-disabled") || name.equals("pack-restored")) {
+                packReloadTick(client, name);
+                return;
+            }
             if (name.equals("other-extra0")) {
                 remoteAccessoryTick(client);
+                return;
+            }
+            if (name.equals("firstperson-extra0") || name.equals("self-hidden-extra0")) {
+                ownAccessoryTick(client, name);
                 return;
             }
             if (name.startsWith("local-appearance-") && !name.equals("local-appearance-server-base")) {
@@ -289,7 +318,7 @@ public final class E2EHarness {
             case "local-appearance-server-base" -> { runtime.disableLocalAppearance(); command(client, "mpatest " + PLAYER + " reset"); }
             case "local-appearance-own" -> {
                 localRequestBaseline = runtime.requestPacketsSent(); localAppearanceReadyAt = -1;
-                runtime.selectLocalModel("ysm_02_jk"); runtime.updateLocalAppearance(LOCAL_PROFILE);
+                runtime.selectLocalModel("openysm_default"); runtime.updateLocalAppearance(LOCAL_PROFILE);
             }
             case "local-appearance-action" -> {
                 localAppearanceReadyAt = -1;
@@ -316,7 +345,7 @@ public final class E2EHarness {
                 command(client, "mpatest " + PLAYER + " reset");
                 client.options.setPerspective(Perspective.FIRST_PERSON);
             }
-            case "firstperson-extra0" -> command(client, "meplayeractions play extra0");
+            case "firstperson-extra0" -> beginOwnAccessory(client, name);
             case "gsit-sit" -> {
                 command(client, "mpatest " + PLAYER + " reset");
                 command(client, "item replace entity " + PLAYER + " armor.chest with minecraft:elytra");
@@ -341,6 +370,11 @@ public final class E2EHarness {
                 client.options.setPerspective(Perspective.THIRD_PERSON_FRONT);
                 reload = client.reloadResources();
             }
+            case "pack-disabled" -> beginPackDisable(client);
+            case "pack-restored" -> {
+                client.getResourcePackManager().setEnabledProfiles(originalPackProfiles);
+                beginPackReload(client);
+            }
             case "local-off" -> { runtime.toggleEnabled(); command(client, "mpatest " + PLAYER + " status"); }
             case "local-on" -> { runtime.toggleEnabled(); command(client, "mpatest " + PLAYER + " status"); }
             case "boat" -> command(client,"mpatest "+PLAYER+" boat");
@@ -353,7 +387,7 @@ public final class E2EHarness {
                 client.setScreen(new ActionsScreen(runtime));
             }
             case "self-hidden" -> runtime.options.showSelf = false;
-            case "self-hidden-extra0" -> command(client, "meplayeractions play extra0");
+            case "self-hidden-extra0" -> beginOwnAccessory(client, name);
             case "self-restored" -> runtime.options.showSelf = true;
             case "server-reload" -> {
                 command(client, "mpatest " + PLAYER + " reset");
@@ -422,6 +456,7 @@ public final class E2EHarness {
                 "layers", binding.layers(), "tick", binding.serverTick(), "x", binding.x(), "y", binding.y(),
                 "z", binding.z(), "scale", binding.scale(), "hidePlayer", binding.hidePlayer())).toList());
         observation.put("renderer", diagnostic); observations.add(observation);
+        if (name.equals("pack-disabled") || name.equals("pack-restored")) observation.put("packLifecycle", packEvidence(client, name, diagnostic));
         if (name.startsWith("local-appearance-")) {
             observation.put("localAppearance", runtime.localAppearance());
             observation.put("requestPacketsSent", runtime.requestPacketsSent());
@@ -661,10 +696,109 @@ public final class E2EHarness {
         boolean ready = local != null && local.instance().startsWith("local-self:") == override
                 && visibleModel(ModelRenderer.diagnostics(), local);
         if (ready && localAppearanceReadyAt < 0) localAppearanceReadyAt = stageTicks;
-        if (!captured && ready && localAppearanceReadyAt >= 0 && stageTicks >= localAppearanceReadyAt + 25) capture(client, name);
+        if (name.equals("local-appearance-action")) {
+            var action = local == null ? null : local.layers().stream()
+                    .filter(layer -> layer.layer().equals("manual") && layer.animation().equals("extra1")).findFirst().orElse(null);
+            if (ready && action != null) {
+                double age = local.serverTick() - action.startedAtTick();
+                double length = local.model().animationLengthTicks("extra1") / action.speed();
+                if (stageTicks % 5 == 0) fixtureFrames.add(Map.of("stage", name, "stageTick", stageTicks,
+                        "instance", local.instance(), "sampleTick", local.serverTick(), "startedAtTick", action.startedAtTick(),
+                        "ageTicks", age, "lengthTicks", length, "layers", local.layers()));
+                // The real OpenYSM extra1 is 20 ticks long. Observe after its blend-in
+                // while it is alive, instead of the old ready+25 capture after stopLocal.
+                if (!captured && age >= Math.min(5, length * .5) && age < length) capture(client, name);
+            }
+        } else if (!captured && ready && localAppearanceReadyAt >= 0 && stageTicks >= localAppearanceReadyAt + 25) capture(client, name);
         if (captured && stageTicks >= localAppearanceReadyAt + 55) { next(client); return; }
         if (stageTicks > 240) {
             check(name + "Ready", false, "Local appearance did not become visible; status=" + runtime.localAppearanceStatus());
+            if (!captured) capture(client, name);
+            next(client);
+        }
+    }
+
+    private void beginOwnAccessory(MinecraftClient client, String name) {
+        var binding = runtime.animationBindings().stream()
+                .filter(value -> value.owner().equals(client.player.getUuid())).findFirst().orElse(null);
+        ownAccessoryInstance = binding == null ? "" : binding.instance();
+        ownAccessorySeen = false; ownAccessoryEventChecked = false; ownAccessoryEarlyValid = true;
+        ownAccessoryEarlySamples = 0; ownAccessoryCompletedAt = -1; ownAccessoryStartedAt = 0;
+        ownAccessoryLengthTicks = 0; ownAccessoryFirstChangedAge = Double.NaN;
+        var authority = runtime.accessoryState(client.player.getUuid());
+        check(ownAccessoryPrefix(name) + "StartsClear", binding != null
+                        && authority.getOrDefault("a", -1d) == 0 && authority.getOrDefault("b", -1d) == 0,
+                "Same real owner instance=" + ownAccessoryInstance + "; authoritative accessories before extra0=" + authority);
+        command(client, "meplayeractions play extra0");
+    }
+
+    private static String ownAccessoryPrefix(String name) {
+        return name.equals("firstperson-extra0") ? "firstPersonAccessory" : "hiddenSelfAccessory";
+    }
+
+    /** A fixed deadline in the accepted action clock, independent of when the expected value appears. */
+    private void ownAccessoryTick(MinecraftClient client, String name) {
+        String prefix = ownAccessoryPrefix(name);
+        // showSelf=false suppresses renderBindings, while its real animation instance
+        // must continue sampling. Read that clock without requiring submitted geometry.
+        var binding = runtime.animationBindings().stream().filter(value -> value.owner().equals(client.player.getUuid())
+                && value.instance().equals(ownAccessoryInstance)).findFirst().orElse(null);
+        if (binding != null) {
+            var active = binding.layers().stream().filter(layer -> layer.layer().equals("manual")
+                    && layer.animation().equals("extra0")).findFirst().orElse(null);
+            if (!ownAccessorySeen && active != null) {
+                ownAccessorySeen = true; ownAccessoryStartedAt = active.startedAtTick();
+                ownAccessoryLengthTicks = binding.model().animationLengthTicks("extra0") / active.speed();
+            }
+            if (ownAccessorySeen) {
+                double age = binding.serverTick() - ownAccessoryStartedAt;
+                var authority = runtime.accessoryState(client.player.getUuid());
+                var variables = ModelRenderer.expressionVariables(client.player.getUuid());
+                boolean changed = authority.getOrDefault("a", -1d) == 1 && authority.getOrDefault("b", -1d) == 1;
+                if (changed && !Double.isFinite(ownAccessoryFirstChangedAge)) ownAccessoryFirstChangedAge = age;
+                if (age < 20) {
+                    ownAccessoryEarlySamples++;
+                    ownAccessoryEarlyValid &= authority.getOrDefault("a", -1d) == 0 && authority.getOrDefault("b", -1d) == 0;
+                }
+                // Source events occur at 24.166/25 ticks. ME's authoritative property
+                // clock includes LERPIN and its snapshot can follow the rebased local
+                // event; use the same bounded 35-tick deadline as the remote fixture.
+                // Never wait for a/b=1 to decide when to assert or capture.
+                if (!ownAccessoryEventChecked && age >= 35) {
+                    ownAccessoryEventChecked = true;
+                    check(prefix + "EventDeadline", changed
+                                    && variables.getOrDefault("variable.roaming.a", -1d) == 1
+                                    && variables.getOrDefault("variable.roaming.b", -1d) == 1,
+                            "Accepted manual action age=" + age + "; source events=24.166/25 ticks; first authoritative change="
+                                    + ownAccessoryFirstChangedAge + "; authority=" + authority + "; instance=" + binding.instance());
+                    capture(client, name);
+                }
+                if (stageTicks % 5 == 0) {
+                    Map<String, Object> sample = new LinkedHashMap<>();
+                    sample.put("stage", name); sample.put("stageTick", stageTicks); sample.put("instance", binding.instance());
+                    sample.put("sampleTick", binding.serverTick()); sample.put("startedAtTick", ownAccessoryStartedAt);
+                    sample.put("ageTicks", age); sample.put("sourceLengthTicks", ownAccessoryLengthTicks);
+                    sample.put("layers", binding.layers()); sample.put("authority", authority);
+                    sample.put("variables", Map.of("a", variables.getOrDefault("variable.roaming.a", -1d),
+                            "b", variables.getOrDefault("variable.roaming.b", -1d)));
+                    if (Double.isFinite(ownAccessoryFirstChangedAge)) sample.put("firstAuthoritativeChangeAge", ownAccessoryFirstChangedAge);
+                    fixtureFrames.add(sample);
+                }
+                if (ownAccessoryCompletedAt < 0 && age >= ownAccessoryLengthTicks + 10 && active == null) {
+                    ownAccessoryCompletedAt = stageTicks;
+                    check(prefix + "ActionCompleted", ownAccessoryEventChecked && captured,
+                            "Actual manual source ended before restoring visibility; age=" + age + "; instance=" + binding.instance());
+                }
+            }
+        }
+        if (captured && ownAccessoryCompletedAt >= 0 && stageTicks >= ownAccessoryCompletedAt + 12) {
+            check(prefix + "NotPremature", ownAccessoryEarlySamples >= 3 && ownAccessoryEarlyValid,
+                    "Actual pre-event samples=" + ownAccessoryEarlySamples + "; a/b remain 0 before source event");
+            next(client); return;
+        }
+        if (stageTicks > 240) {
+            check(prefix + "TimelineCompleted", false, "extra0 did not start/reach its fixed deadline/finish in the same real instance; started="
+                    + ownAccessorySeen + "; eventChecked=" + ownAccessoryEventChecked);
             if (!captured) capture(client, name);
             next(client);
         }
@@ -717,6 +851,189 @@ public final class E2EHarness {
             if (!captured) capture(client, "resource-reload");
             next(client);
         }
+    }
+
+    private void beginPackDisable(MinecraftClient client) {
+        var manager = client.getResourcePackManager();
+        originalPackProfiles = List.copyOf(manager.getEnabledIds());
+        disabledPackProfiles = manager.getEnabledProfiles().stream()
+                .filter(profile -> profile.getId().equals("vanilla") || profile.isRequired())
+                .map(profile -> profile.getId()).toList();
+        var binding = own(client).stream().findFirst().orElse(null);
+        packExpectedInstance = binding == null ? "" : binding.instance();
+        packExpectedHash = binding == null ? "" : binding.assetHash();
+        packMissingSamples = 0; packNoStaleReady = true;
+        check("packFallbackPrerequisites", binding != null && ModelRenderer.has(packExpectedHash)
+                        && packIndexPresent(client) && originalPackProfiles.stream().anyMatch(id -> !disabledPackProfiles.contains(id)),
+                "Real enabled profiles=" + originalPackProfiles + "; keeping vanilla/required=" + disabledPackProfiles
+                        + "; instance=" + packExpectedInstance + "; hash=" + packExpectedHash);
+        manager.setEnabledProfiles(disabledPackProfiles);
+        packSelectionChanged = true;
+        beginPackReload(client);
+    }
+
+    private void beginPackReload(MinecraftClient client) {
+        packReadyAt = -1; packSettledTicks = 0; packFrameBaseline = -1; packDrawBaseline = -1;
+        packAuthority = null; packAuthorityError = "Waiting for a fresh MPATestHelper owner status";
+        packReloadCallbacks = 0; packReloadCompletedAtMillis = 0; packReloadError = "";
+        packReloadStartedAtMillis = System.currentTimeMillis();
+        long request = ++packReloadRequest;
+        reload = client.reloadResources();
+        reload.whenComplete((unused, failure) -> {
+            long completedAt = System.currentTimeMillis();
+            client.execute(() -> {
+                if (request != packReloadRequest) return;
+                packReloadCallbacks++;
+                packReloadCompletedAtMillis = completedAt;
+                packReloadError = failure == null ? "" : failure.toString();
+            });
+        });
+    }
+
+    private void packReloadTick(MinecraftClient client, String name) {
+        boolean disabling = name.equals("pack-disabled");
+        Map<String, Object> diagnostic = ModelRenderer.diagnostics();
+        long frameNumber = ((Number) diagnostic.get("extractedFrames")).longValue();
+        boolean completed = reload != null && reload.isDone() && !reload.isCompletedExceptionally()
+                && packReloadCallbacks == 1 && packReloadCompletedAtMillis >= packReloadStartedAtMillis;
+        if (completed && clearWorldTicks >= 10 && packFrameBaseline < 0) {
+            packFrameBaseline = frameNumber;
+            packDrawBaseline = ((Number) diagnostic.get("drawnBatches")).longValue();
+        }
+        boolean freshFrames = completed && clearWorldTicks >= 10 && packFrameBaseline >= 0
+                && frameNumber >= packFrameBaseline + 2;
+        if (completed && stageTicks % 10 == 0) command(client, "mpatest " + PLAYER + " status");
+        if (completed && stageTicks % 5 == 0) {
+            JsonObject status = readPackAuthority(client);
+            if (status != null) packAuthority = status;
+        }
+        var binding = own(client).stream().findFirst().orElse(null);
+        boolean noOwnModel = binding == null && !runtime.shouldHidePlayer(client.player.getUuid())
+                && ((List<?>) diagnostic.get("models")).stream().filter(ModelRenderer.FrameModel.class::isInstance)
+                .map(ModelRenderer.FrameModel.class::cast).noneMatch(model -> model.owner().equals(client.player.getUuidAsString()));
+        boolean previousAssetGone = !packExpectedHash.isEmpty() && !ModelRenderer.has(packExpectedHash);
+        if (disabling && freshFrames) {
+            packMissingSamples++;
+            packNoStaleReady &= noOwnModel && previousAssetGone;
+        }
+        boolean matchingReady = binding != null && binding.instance().equals(packExpectedInstance)
+                && binding.assetHash().equals(packExpectedHash) && ModelRenderer.has(packExpectedHash)
+                && visibleModel(diagnostic, binding)
+                && ((Number) diagnostic.get("drawnBatches")).longValue() > packDrawBaseline;
+        boolean serverMatches = packAuthorityMatches(client, !disabling);
+        boolean profilesMatch = List.copyOf(client.getResourcePackManager().getEnabledIds())
+                .equals(disabling ? disabledPackProfiles : originalPackProfiles);
+        boolean settled = freshFrames && runtime.serverBridgeReady() && profilesMatch && serverMatches
+                && (disabling ? !packIndexPresent(client) && noOwnModel && previousAssetGone && packNoStaleReady
+                : packIndexPresent(client) && matchingReady && packMissingSamples >= 10 && packNoStaleReady);
+        packSettledTicks = settled ? packSettledTicks + 1 : 0;
+        if (settled && packReadyAt < 0) packReadyAt = stageTicks;
+        if (stageTicks % 5 == 0) fixtureFrames.add(packEvidence(client, name, diagnostic));
+        boolean failed = reload != null && reload.isCompletedExceptionally();
+        if (packSettledTicks >= 10 || failed || stageTicks > (disabling ? 240 : 400)) {
+            check(disabling ? "packDisableReloadCompleted" : "packRestoreReloadCompleted", completed,
+                    "Real reload callbacks=" + packReloadCallbacks + "; started=" + packReloadStartedAtMillis
+                            + "; completed=" + packReloadCompletedAtMillis + "; error=" + packReloadError);
+            if (disabling) {
+                check("packDisabledRemovesInstalledIndex", profilesMatch && !packIndexPresent(client),
+                        "Enabled now=" + client.getResourcePackManager().getEnabledIds() + "; original=" + originalPackProfiles);
+                check("packDisabledDropsPreviousAsset", previousAssetGone && packMissingSamples >= 10 && packNoStaleReady,
+                        "Previous hash=" + packExpectedHash + "; actual absent-resource frame samples=" + packMissingSamples
+                                + "; no old cache reacquired ready=" + packNoStaleReady);
+                check("packDisabledNoLocalOwnRendering", freshFrames && noOwnModel && packSettledTicks >= 10,
+                        "Extracted frames=" + frameNumber + "; post-reload baseline=" + packFrameBaseline + "; renderer=" + diagnostic);
+                check("packDisabledServerFallbackSameInstance", serverMatches && packSettledTicks >= 10,
+                        "Expected owner instance=" + packExpectedInstance + "; authority=" + packAuthority + "; read=" + packAuthorityError);
+            } else {
+                check("packRestoredExactProfiles", profilesMatch && packIndexPresent(client),
+                        "Restored enabled profiles=" + client.getResourcePackManager().getEnabledIds() + "; original=" + originalPackProfiles);
+                check("packRestoredHashRevalidated", matchingReady && packMissingSamples >= 10 && packNoStaleReady,
+                        "Expected instance/hash=" + packExpectedInstance + "/" + packExpectedHash
+                                + "; absent-resource samples=" + packMissingSamples + "; binding=" + binding);
+                check("packRestoredOwnerLeaseSameInstance", serverMatches && packSettledTicks >= 10,
+                        "Fresh helper authority=" + packAuthority + "; read=" + packAuthorityError);
+                check("packRestoredFreshFrames", freshFrames && matchingReady && packSettledTicks >= 10,
+                        "Extracted frames=" + frameNumber + "; post-reload baseline=" + packFrameBaseline + "; renderer=" + diagnostic);
+                if (completed && profilesMatch) packSelectionChanged = false;
+            }
+            capture(client, name);
+            next(client);
+        }
+    }
+
+    private static boolean packIndexPresent(MinecraftClient client) {
+        return client.getResourceManager().getResource(Identifier.of(PackModelLibrary.INDEX)).isPresent();
+    }
+
+    private Map<String, Object> packEvidence(MinecraftClient client, String name, Map<String, Object> diagnostic) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("stage", name); row.put("stageTick", stageTicks); row.put("expectedInstance", packExpectedInstance);
+        row.put("expectedHash", packExpectedHash); row.put("originalEnabledProfiles", originalPackProfiles);
+        row.put("enabledProfiles", List.copyOf(client.getResourcePackManager().getEnabledIds()));
+        row.put("indexPresent", packIndexPresent(client)); row.put("expectedGpuAssetPresent", ModelRenderer.has(packExpectedHash));
+        row.put("reloadCallbacks", packReloadCallbacks); row.put("reloadStartedAtMillis", packReloadStartedAtMillis);
+        row.put("reloadCompletedAtMillis", packReloadCompletedAtMillis); row.put("reloadError", packReloadError);
+        row.put("frameBaseline", packFrameBaseline); row.put("drawnBatchBaseline", packDrawBaseline);
+        row.put("readyAtStageTick", packReadyAt); row.put("stableTicks", packSettledTicks);
+        row.put("noOldCacheReady", packNoStaleReady); row.put("missingResourceFrameSamples", packMissingSamples);
+        row.put("serverAuthority", packAuthority); row.put("authorityRead", packAuthorityError); row.put("renderer", diagnostic);
+        return row;
+    }
+
+    /** Read genuine helper telemetry from the frozen server's log; never infer leases from a client flag. */
+    private JsonObject readPackAuthority(MinecraftClient client) {
+        try {
+            String serverSource = (String) proof.get("serverSource");
+            if (serverSource == null || serverSource.isBlank()
+                    || !String.valueOf(proof.get("serverArtifactSha256")).matches("[0-9a-fA-F]{64}"))
+                throw new IllegalStateException("Missing existing frozen server artifact proof");
+            Path plugins = Path.of(serverSource).toAbsolutePath().normalize().getParent();
+            Path log = plugins.getParent().resolve("logs/latest.log");
+            try (FileChannel channel = FileChannel.open(log, StandardOpenOption.READ)) {
+                long size = channel.size();
+                int count = (int) Math.min(size, 512 * 1024L);
+                ByteBuffer buffer = ByteBuffer.allocate(count);
+                channel.position(size - count);
+                while (buffer.hasRemaining() && channel.read(buffer) > 0) { }
+                String[] lines = new String(buffer.array(), 0, buffer.position(), StandardCharsets.UTF_8).split("\n");
+                for (int i = lines.length - 1; i >= 0; i--) {
+                    int marker = lines[i].indexOf("LOCAL STATUS ");
+                    if (marker < 0) continue;
+                    JsonObject status;
+                    try { status = JsonParser.parseString(lines[i].substring(marker + "LOCAL STATUS ".length()).strip()).getAsJsonObject(); }
+                    catch (RuntimeException incompleteLine) { continue; }
+                    if (!client.player.getUuidAsString().equals(status.get("owner").getAsString())) continue;
+                    JsonObject snapshot = status.getAsJsonObject("clientSnapshot"), actor = status.getAsJsonObject("testActorAuthority");
+                    if (snapshot == null || actor == null || !packExpectedInstance.equals(snapshot.get("instance").getAsString())) continue;
+                    long sample = actor.get("sampledAtMillis").getAsLong();
+                    if (sample < packReloadCompletedAtMillis || System.currentTimeMillis() - sample > 3_000) continue;
+                    if (!actor.get("authorityReadSucceeded").getAsBoolean() || !actor.get("serverActualOwned").getAsBoolean()
+                            || !client.player.getUuidAsString().equals(actor.get("ownerUuid").getAsString())
+                            || !actor.get("source").getAsString().startsWith("Ignored MPATestHelper authoritative Bukkit owner")) continue;
+                    packAuthorityError = "Fresh MPATestHelper LOCAL STATUS from " + log + "; sample=" + sample;
+                    return status;
+                }
+            }
+            packAuthorityError = "Waiting for fresh same-owner/same-instance LOCAL STATUS after the real reload callback";
+        } catch (Exception failure) { packAuthorityError = failure.toString(); }
+        return null;
+    }
+
+    private boolean packAuthorityMatches(MinecraftClient client, boolean localReady) {
+        try {
+            if (packAuthority == null) return false;
+            JsonObject actor = packAuthority.getAsJsonObject("testActorAuthority");
+            long sample = actor.get("sampledAtMillis").getAsLong();
+            if (sample < packReloadCompletedAtMillis || System.currentTimeMillis() - sample > 3_000) return false;
+            for (var entry : packAuthority.getAsJsonArray("viewers")) {
+                JsonObject viewer = entry.getAsJsonObject();
+                if (client.player.getUuidAsString().equals(viewer.get("viewer").getAsString()))
+                    return viewer.get("allowed").getAsBoolean()
+                            && viewer.get("localReadyForOwner").getAsBoolean() == localReady
+                            && viewer.get("meVisibleForOwner").getAsBoolean() != localReady;
+            }
+        } catch (Exception failure) { packAuthorityError = failure.toString(); }
+        return false;
     }
 
     private void remoteAccessoryTick(MinecraftClient client) {
@@ -873,7 +1190,13 @@ public final class E2EHarness {
             screenshots.add("screenshots/" + filename);
             client.inGameHud.getChatHud().clear(false);
             ScreenshotRecorder.saveScreenshot(output.toFile(), filename, client.getFramebuffer(), 1,
-                    message -> LOGGER.info("E2E screenshot {}: {}", filename, message.getString()));
+                    message -> {
+                        long completedAt = System.currentTimeMillis();
+                        client.execute(() -> screenshotCallbacks.add(Map.of("file", "screenshots/" + filename,
+                                "completedAtMillis", completedAt, "fileWritten", Files.isRegularFile(output.resolve("screenshots").resolve(filename)),
+                                "message", message.getString())));
+                        LOGGER.info("E2E screenshot {}: {}", filename, message.getString());
+                    });
         } catch (Exception failure) { check("screenshot-" + name, false, failure.toString()); }
     }
 
@@ -884,15 +1207,27 @@ public final class E2EHarness {
 
     private void finish(MinecraftClient client) {
         if (finished) return;
+        if (packSelectionChanged) {
+            try {
+                client.getResourcePackManager().setEnabledProfiles(originalPackProfiles);
+                check("packSelectionRestoredOnFailure", List.copyOf(client.getResourcePackManager().getEnabledIds()).equals(originalPackProfiles),
+                        "Emergency restore of the saved selection before isolated client shutdown; profiles=" + originalPackProfiles);
+                // Normal pack-restored waits for the real callback and rendering. On a
+                // failing/timeout exit, restore selection as well without claiming that gate passed.
+                client.reloadResources();
+            } catch (Exception failure) { check("packSelectionRestoredOnFailure", false, failure.toString()); }
+            packSelectionChanged = false;
+        }
         finished = true;
         try {
             Files.createDirectories(output);
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("passed", !checks.isEmpty() && checks.stream().allMatch(check -> Boolean.TRUE.equals(check.get("passed"))));
-            result.put("minecraft", "1.21.11"); result.put("clientVersion", "0.4.0");
+            result.put("minecraft", "1.21.11"); result.put("clientVersion", "0.4.1");
             result.put("testedClientSha256", proof.get("clientArtifactSha256")); result.put("testedServerSha256", proof.get("serverArtifactSha256"));
             result.put("artifactProof", proof);result.put("startedAtMillis", startedMillis);result.put("completedAtMillis", System.currentTimeMillis());
             result.put("checks", checks); result.put("screenshots", screenshots); result.put("observations", observations);
+            result.put("screenshotCallbacks", screenshotCallbacks);
             result.put("fixtureFrames", fixtureFrames);
             Files.writeString(output.resolve("results.json"), new GsonBuilder().setPrettyPrinting().create().toJson(result), StandardCharsets.UTF_8);
             LOGGER.info("E2E results written to {}", output.resolve("results.json"));

@@ -33,11 +33,14 @@ public final class ClientRuntime {
     private final ServerClock clock=new ServerClock();
     private final Map<UUID,Binding> bindings=new LinkedHashMap<>();
     private final Map<String,BbModel> assets=new LinkedHashMap<>(16,0.75f,true);
+    private final Set<String> packAssets=new HashSet<>();
     private final Map<String,AssetTransfer> transfers=new HashMap<>();
     private final Map<String,Long> transferTimes=new HashMap<>(),failedAssets=new HashMap<>();
     private final Set<String> loading=new HashSet<>(),requested=new HashSet<>();
     private final ThreadPoolExecutor decoder=new ThreadPoolExecutor(1,1,0,TimeUnit.MILLISECONDS,new LinkedBlockingQueue<>(8),
             r->{Thread t=new Thread(r,"MPA-model-loader");t.setDaemon(true);return t;});
+    private final ThreadPoolExecutor previewDecoder=new ThreadPoolExecutor(1,1,0,TimeUnit.MILLISECONDS,new LinkedBlockingQueue<>(8),
+            r->{Thread t=new Thread(r,"MPA-preview-loader");t.setDaemon(true);return t;});
     private final Path cache=FabricLoader.getInstance().getGameDir().resolve("config/meplayeractions/cache");
     private final LocalModelLibrary localModelLibrary=new LocalModelLibrary(
             FabricLoader.getInstance().getConfigDir().resolve("meplayeractions/models"));
@@ -66,7 +69,7 @@ public final class ClientRuntime {
     public void joined() { reset(); connected=true; world=client.world; }
     public void reset() {
         releaseBindings();abortTransfers();connected=false;acknowledged=false;
-        loading.clear(); requested.clear(); failedAssets.clear(); assets.clear(); clock.reset();
+        loading.clear(); requested.clear(); failedAssets.clear(); assets.clear(); packAssets.clear(); clock.reset();
         lastHello=0;lastHeartbeat=0;lastReceived=0;previewId="";previewHash="";previewManual="";previewPose="";
         localSelf=null;localAppearanceError="";localAppearanceRetryAfter=0;
         ownAppearanceMissingSince=0;lastAppearanceSnapshotRequest=0;
@@ -87,8 +90,8 @@ public final class ClientRuntime {
             releaseBindings();abortTransfers();acknowledged=false;lastHello=0;lastError="服务器同步已超时，恢复服务器显示";
         }
         if (options.enabled && !acknowledged && now-lastHello>3*SECOND && ClientPlayNetworking.canSend(ActionPayload.ID)) {
-            JsonObject hello=WireJson.envelope("hello");hello.addProperty("clientVersion","0.4.0");
-            JsonArray caps=new JsonArray();caps.add("local_render");hello.add("capabilities",caps);
+            JsonObject hello=WireJson.envelope("hello");hello.addProperty("clientVersion","0.4.1");
+            JsonArray caps=new JsonArray();caps.add("local_render");caps.add("resource_pack_models");hello.add("capabilities",caps);
             send(hello);lastHello=now;
         }
         if (acknowledged && options.enabled) {
@@ -249,30 +252,51 @@ public final class ClientRuntime {
         if(!accessories.keySet().equals(Set.of("a","b")))throw new IllegalArgumentException("Accessory fields");
         return Map.of("a",WireJson.number(accessories,"a",0,1),"b",WireJson.number(accessories,"b",0,1));
     }
-    private void tryCached(String modelId,String hash) {
-        if(loading.size()>=4 || requested.size()>=2)return;
-        loading.add(hash);long epoch=generation;
-        decoder.execute(()->{
-            BbModel model=null;
-            try {
-                Path path=cache.resolve(hash+".bbmodel");
-                if(Files.isRegularFile(path) && Files.size(path)<=AssetTransfer.MAX_RAW) {
-                    byte[] raw=Files.readAllBytes(path);
-                    if(AssetTransfer.hash(raw).equals(hash)) model=BbModel.parse(raw);
-                }
-            } catch(Exception exception) { MEPlayerActionsClient.LOGGER.debug("Cache miss: {}",exception.toString()); }
-            BbModel loaded=model;
-            client.execute(()->{
-                if(epoch!=generation) return;
-                loading.remove(hash);
-                if(loaded!=null) install(hash,loaded); else if(requested.size()<2) {
-                    requested.add(hash);transferTimes.put(hash,System.nanoTime());JsonObject request=WireJson.envelope("asset_request");
-                    request.addProperty("modelId",modelId);request.addProperty("hash",hash);
-                    if(!send(request))failAsset(hash,"模型请求发送失败");
-                }
-            });
-        });
+    private LocalModelLibrary.Loaded loadPackModel(String id, String hash) throws IOException {
+        var manager=client.getResourceManager();
+        return PackModelLibrary.load((resource,maximum)->{
+            var found=manager.getResource(net.minecraft.util.Identifier.of(resource));
+            if(found.isEmpty())throw new IOException("缺少资源 "+resource);
+            try(InputStream input=found.get().getInputStream()) {
+                byte[] data=input.readNBytes(maximum+1);
+                if(data.length==0 || data.length>maximum)throw new IOException("资源大小超出限制");
+                return data;
+            }
+        },id,hash);
     }
+    /** Assets follow a server binding, but every byte comes from an installed resource pack. */
+    private void tryCached(String modelId,String hash) {
+        if(loading.size()>=4)return;
+        loading.add(hash);long epoch=generation;
+        try {decoder.execute(()->{
+            LocalModelLibrary.Loaded loaded=null;String failure="";
+            try {loaded=loadPackModel(modelId,hash);}
+            catch(Exception exception) {failure=exception.getMessage();}
+            var result=loaded;String reason=failure;
+            client.execute(()->{
+                if(epoch!=generation)return;
+                loading.remove(hash);
+                if(result!=null) {packAssets.add(hash);install(hash,result.model());}
+                else failAsset(hash,"请启用服务器完整资源包："+reason);
+            });
+        });} catch(RejectedExecutionException busy) {loading.remove(hash);}
+    }
+    public Set<String> resourcesReloaded() {
+        abortTransfers();failedAssets.clear();
+        Set<String> refresh=Set.copyOf(packAssets);
+        refresh.forEach(assets::remove);packAssets.clear();
+        if(refresh.contains(previewHash)){previewHash="";previewId="";}
+        return refresh;
+    }
+    /** Independent browser decoding; it never creates a world binding or acknowledges a server lease. */
+    public CompletableFuture<LocalModelLibrary.Loaded> loadLocalPreview(String id) {
+        try {return CompletableFuture.supplyAsync(()->{
+            try {return localModelLibrary.load(id,options.defaultBlueTexture);}
+            catch(IOException failure) {throw new CompletionException(failure);}
+        },previewDecoder);} catch(RejectedExecutionException busy) {return CompletableFuture.failedFuture(busy);}
+    }
+    public Path localModelDirectory() {return localModelLibrary.directory();}
+    public void refreshLocalAppearance() {invalidateLocalAppearance();ensureLocalAppearance();}
     private void begin(JsonObject json,long now) {
         String hash=WireJson.hash(json,"hash");
         if(!requested.contains(hash) || transfers.size()>=4) throw new IllegalArgumentException("Unexpected asset transfer");
@@ -457,6 +481,10 @@ public final class ClientRuntime {
         Binding binding=bindings.get(owner);
         return binding==null?Map.of():binding.accessories;
     }
+    public Map<String,Double> localParameters(UUID owner) {
+        return localAppearanceActive() && owner.equals(client.player.getUuid()) && localAppearance().modelId().equals("openysm_default")
+                ? Map.of("variable.roaming.red_bow_headdress", options.defaultHeaddress ? 1d : 0d) : Map.of();
+    }
     private RenderBinding entityBinding(Binding binding,BbModel model,PlayerEntity player) {
         float delta=client.getRenderTickCounter().getTickProgress(false);
         Vec3d pos=player.getLerpedPos(delta);
@@ -506,7 +534,7 @@ public final class ClientRuntime {
         return binding!=null && binding.active && !binding.unsupported && now-binding.lastPacket<leaseTicks*50_000_000L
                 && now-lastReceived<leaseTicks*50_000_000L && ModelRenderer.has(binding.hash);
     }
-    public boolean shouldHideFirstPersonArm() {return client.player!=null && shouldHidePlayer(client.player.getUuid());}
+    public boolean shouldHideFirstPersonArm() {return !localAppearanceActive() && client.player!=null && shouldHidePlayer(client.player.getUuid());}
     public void renderFailed(UUID owner,String instance,String hash,String reason) {
         if(localSelf!=null && localSelf.hash.equals(hash)
                 && (owner==null || localSelf.owner.equals(owner) && localSelf.instance.equals(instance))) {
@@ -543,7 +571,7 @@ public final class ClientRuntime {
         try {return localModelLibrary.models().stream().map(entry -> new Action(entry.id(),entry.label())).toList();}
         catch(IOException exception) {
             MEPlayerActionsClient.LOGGER.warn("Cannot list local model directory: {}",exception.toString());
-            return List.of(new Action("ysm_01_jk","银灰蓝眼 · 01"),new Action("ysm_02_jk","酒狐 · 02"));
+            return List.of(new Action("openysm_default","OpenYSM 默认模型"));
         }
     }
     public List<Action> localActions() {
@@ -608,6 +636,7 @@ public final class ClientRuntime {
         return localAppearanceVisibility.canRender(bridgeAvailable,serverBridgeReady(),
                 usable(bindings.get(client.player.getUuid()),System.nanoTime()));
     }
+    public boolean privateAppearanceActive() {return localAppearanceActive();}
     private void ensureLocalAppearance() {
         var settings=localAppearance();
         if(!options.enabled || !settings.enabled() || client.world==null || client.player==null
@@ -617,7 +646,7 @@ public final class ClientRuntime {
         try {
             decoder.execute(()->{
                 try {
-                    var loaded=localModelLibrary.load(id);
+                    var loaded=localModelLibrary.load(id,options.defaultBlueTexture);
                     client.execute(()->{
                         if(token!=localAppearanceRequest || epoch!=generation)return;
                         localAppearancePending=false;
@@ -659,28 +688,7 @@ public final class ClientRuntime {
                 binding.x()+settings.offsetX(),binding.y()+settings.offsetY(),binding.z()+settings.offsetZ(),
                 binding.bodyYaw(),binding.headYaw(),binding.headPitch(),settings.scale(),true,"local-self");
     }
-    private static LocalMotionPolicy localMotionPolicy(BbModel model) {
-        String[][] mappings={
-                {"idle","idle"},{"walk","walk"},{"run","run","walk"},{"jump","player_jump","jump"},{"fall","fall","jump"},
-                {"sit","sit","minecart"},{"sleep","bed_sleep","sleep"},{"bed-sleep","bed_sleep","sleep"},
-                {"boat","boat","sit"},{"minecart","minecart","sit"},{"ride","ride","sit"},{"ride-pig","ride_pig","ride","sit"},
-                {"ladder-move","ladder_up","climb"},{"ladder-idle","ladder_stillness","ladder_up","climb"},
-                {"crawl-idle","climbing","crawl_idle","crawl"},{"crawl-walk","climbing","crawl_walk","crawl"},
-                {"crouch-idle","sneaking","crouch_idle","sneak"},{"crouch-walk","sneaking","crouch_walk","sneak"},
-                {"swim-idle","swim_stand","swim_idle","swim"},{"swim-prone-idle","swim_idle","swim"},{"swim-walk","swim","swim_idle"},
-                {"hover","hover","fly"},{"fly","fly","hover"},{"elytra","elytra_fly","fly"},
-                {"swing-mainhand","use_mainhand","swing_hand","attack"},{"swing-offhand","use_offhand","swing_hand","attack"},
-                {"mining","mining","attack"}
-        };
-        Map<String,Layer> clips=new LinkedHashMap<>();
-        for(String[] mapping:mappings)for(int i=1;i<mapping.length;i++)if(model.animations().contains(mapping[i])) {
-            String loop=Set.of("jump","swing-mainhand","swing-offhand").contains(mapping[0])?"ONCE"
-                    :Set.of("sleep","bed-sleep").contains(mapping[0])?"HOLD":"LOOP";
-            clips.put(mapping[0],new Layer("posture",mapping[i],0,1,loop,2,2));break;
-        }
-        return new LocalMotionPolicy(Set.of("movement","sprint","jump","sit","sleep","ride","crawl","sneak","swim","flight","elytra","swing","mining"),
-                clips,17,8,.02,true,true,false,"","","",0,0,0,0);
-    }
+    private static LocalMotionPolicy localMotionPolicy(BbModel model) {return LocalMotionPolicy.forModel(model);}
 
     public List<Action> actions() {
         Binding own=client.player==null?null:bindings.get(client.player.getUuid());
@@ -689,13 +697,13 @@ public final class ClientRuntime {
         return preview==null?List.of():preview.animations().stream().filter(id->!id.startsWith("parallel")&&!id.startsWith("pre_parallel")).sorted().map(id->new Action(id,previewLabel(id))).toList();
     }
     private static String previewLabel(String id) {
-        return com.simmc.meplayeractions.config.AnimationLabels.DEFAULTS.getOrDefault(id,"自定义动作");
+        return com.simmc.meplayeractions.config.AnimationLabels.DEFAULTS.getOrDefault(id,id);
     }
     public List<String> status() {
         long active=bindings.values().stream().filter(b->b.active).count();
         List<String> text=new ArrayList<>();
-        text.add("客户端 0.4.0 · "+(acknowledged?"已连接动作服务器":"等待服务器 / 本地预览"));
-        text.add("已接管 "+active+" / "+bindings.size()+" 个模型 · 资产 "+assets.size()+" · 下载 "+transfers.size());
+        text.add("客户端 0.4.1 · "+(acknowledged?"已连接动作服务器":"等待服务器 / 本地预览"));
+        text.add("已接管 "+active+" / "+bindings.size()+" 个模型 · 资产 "+assets.size()+" · 资源包加载 "+loading.size());
         text.add((options.followServerTimeline?"服务器拖后轨迹 · 缓冲 "+options.interpolationTicks+" tick":"客户端实体即时跟随 · 无额外位置缓冲")
                 +" · 本人模型 "+(options.showSelf?"显示":"隐藏"));
         if(localAppearance().enabled())text.add("本地外观："+localAppearance().modelId()+" · "+localAppearanceStatus());
@@ -709,8 +717,8 @@ public final class ClientRuntime {
     }
     public void preview(String id) {
         if(id.equals("off")){previewRequest++;previewPending=false;previewId="";previewHash="";previewManual="";return;}
-        if(!Set.of("ysm_02_jk","ysm_01_jk").contains(id) || client.world==null || client.player==null) {
-            notify("进入世界后可预览 ysm_02_jk / ysm_01_jk");return;
+        if((!LocalAppearanceSettings.isValidModelId(id) && !Set.of("ysm_02_jk","ysm_01_jk").contains(id)) || client.world==null || client.player==null) {
+            notify("进入世界后可预览本地模型；服务器模型需要完整资源包");return;
         }
         if(bindings.containsKey(client.player.getUuid())){notify("请先解除服务器伪装，再使用本地预览");return;}
         if(previewPending || loading.size()>=4){notify("模型正在加载，请稍后");return;}
@@ -718,12 +726,11 @@ public final class ClientRuntime {
         previewPending=true;
         long epoch=generation;
         decoder.execute(()->{
-            try(InputStream input=ClientRuntime.class.getResourceAsStream("/assets/meplayeractions/models/"+id+".bbmodel")) {
-                if(input==null)throw new IOException("Missing preview model");
-                byte[] raw=input.readNBytes(AssetTransfer.MAX_RAW+1);
-                if(raw.length>AssetTransfer.MAX_RAW)throw new IOException("Preview asset size");
-                BbModel model=BbModel.parse(raw);String hash=AssetTransfer.hash(raw);
-                client.execute(()->{if(epoch==generation && token==previewRequest){previewPending=false;install(hash,model);if(assets.containsKey(hash)){
+            try {
+                boolean packSource=!LocalAppearanceSettings.isValidModelId(id);
+                var loaded=packSource?loadPackModel(id,null):localModelLibrary.load(id,options.defaultBlueTexture);
+                BbModel model=loaded.model();String hash=loaded.hash();
+                client.execute(()->{if(epoch==generation && token==previewRequest){previewPending=false;if(packSource)packAssets.add(hash);install(hash,model);if(assets.containsKey(hash)){
                     previewId=id;previewHash=hash;previewManual="";previewStarted=client.world.getTime();notify("本地模型预览已开启，请切换第三人称；N 打开动作面板");}}});
             }catch(Exception exception){client.execute(()->{if(epoch==generation && token==previewRequest){previewPending=false;notify("预览失败："+exception.getMessage());}});}
         });

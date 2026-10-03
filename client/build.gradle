@@ -3,7 +3,7 @@ plugins {
 }
 
 group = 'com.simmc'
-version = '0.4.0'
+version = '0.4.1'
 base { archivesName = 'MEPlayerActions-Client' }
 
 repositories {
@@ -39,10 +39,6 @@ tasks.withType(JavaCompile).configureEach {
 processResources {
     inputs.property 'version', project.version
     filesMatching('fabric.mod.json') { expand version: project.version }
-    from('../examples/models') {
-        include '*.bbmodel'
-        into 'assets/meplayeractions/models'
-    }
 }
 
 sourceSets.test.resources {

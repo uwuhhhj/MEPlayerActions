@@ -1,6 +1,6 @@
 # MEPlayerActions 整体设计架构
 
-本文依据当前工作区 0.4.0 的服务端插件、Fabric 客户端及测试代码整理，描述已实现的机制。客户端目标为 Fabric / Minecraft 1.21.11、Java 21；服务端插件目标为 Paper 1.21.11、ModelEngine R4.1.1，GSit 为可选姿态后端。构建版本、协议版本与配置版本分别由 `pom.xml` / `client/build.gradle`、`ClientSyncService.PROTOCOL` / `WireJson`、`config-version` 决定；当前三者分别为 0.4.0、3、3，不应混用。
+本文依据当前工作区 0.4.1 的服务端插件、Fabric 客户端及测试代码整理，描述已实现的机制。客户端目标为 Fabric / Minecraft 1.21.11、Java 21；服务端插件目标为 Paper 1.21.11、ModelEngine R4.1.1，GSit 为可选姿态后端。构建版本、协议版本与配置版本分别由 `pom.xml` / `client/build.gradle`、`ClientSyncService.PROTOCOL` / `WireJson`、`config-version` 决定；当前三者分别为 0.4.1、3、3，不应混用。
 
 使用说明见 [README](README.md)，消息字段、限制和错误码见 [客户端协议](src/main/java/com/simmc/meplayeractions/client/CLIENT_PROTOCOL.md)。本文中的源码链接以仓库根目录为基准，源码阅读不等同于本次完成实机验收。
 
@@ -15,20 +15,20 @@
 | Paper / GSit | 真实移动、姿态、飞行、床、载具、交互事件 | 玩家实体、事件、GSit 姿态与座位锚点 |
 | 服务端动作控制 | 权限、会话、同步许可、状态选择、动画映射、观众范围 | 已解析的动画层、运动策略和模型绑定 |
 | ModelEngine | 模型注册、状态机动画、资源包及未接管观众的显示 | ModelEngine 显示实体和原生实体过滤 |
-| 客户端通信 | 按观众传送资产与状态，验证渲染接管并管理租约 | `meplayeractions:main` 的 JSON 消息 |
+| 客户端通信 | 按观众授权模型绑定与状态，验证渲染接管并管理租约；资产来自完整资源包 | `meplayeractions:main` 的 JSON 消息 |
 | Fabric 客户端 | 解析支持的 `.bbmodel`、采样动画、上传纹理、本地绘制和动作面板 | 原版 `PlayerEntity`、服务器许可、本地渲染命令 |
 
 本插件创建的伪装使用独立视觉枢轴，不把玩家挂载到模型上。`attach` 接管已有的 `state_machine` 模型，仅添加受管动作层，不取得原模型的销毁、观众或渲染替换所有权。
 
 ### 本地自己的外观与服务器多人伪装
 
-`LocalAppearanceSettings` 保存本机自己的模型选择、均匀缩放和世界 X/Y/Z 偏移（方块单位、Y 正值向上），默认关闭、默认模型为 `ysm_02_jk`。配置写入 `config/meplayeractions-client.json` 的 `localAppearance`，不发送给服务器；进出世界保留配置并重新准备本地实例。模型来源为 JAR 内置两套模型或 `config/meplayeractions/models/` 的单个 `.bbmodel`，同样经过 `BbModel` 格式、原始大小和纹理预算校验，不支持外部贴图或任意路径。
+`LocalAppearanceSettings` 保存本机自己的模型选择、均匀缩放和世界 X/Y/Z 偏移（方块单位、Y 正值向上），默认关闭、默认模型为 `openysm_default`。配置写入 `config/meplayeractions-client.json` 的 `localAppearance`，不发送给服务器；进出世界保留配置并重新准备本地实例。模型来源为 JAR 内置 CC0 OpenYSM 默认模型、`config/meplayeractions/models/` 的单个 `.bbmodel` 或安全 YSM 文件夹。后者通过受限转换器合并主骨架、main/extra 动画与默认 PNG，再交给同一 `BbModel`。服务器示例不内置客户端。文件访问不接受链接、目录外路径或任意 URL。
 
 本地实例仅替换本机看到的自己，按本机玩家实体运行姿态、交互和模型脚本，无需服务器绑定或握手。显式启用的本地外观优先于服务器自己的模型显示，服务器自己的绑定和租约继续独立维护，其他玩家的模型仍服从服务器许可。关闭本地外观后恢复已有的服务器本人模型，或显示原版人物；本地模型加载失败不能阻断服务器多人接管。
 
 `options.enabled` 为客户端渲染总开关，本地外观和服务器接管均遵守；启用本地外观时同步打开总开关。关闭本地外观只关闭本地 profile，不修改总开关或服务器绑定。加载失败保留配置、显示错误，并恢复服务器/原版显示，按 30 秒间隔退避重试。本人饥饿、手持物和运动输入取本机实体，附件脚本不读取服务器本人 `a/b`。
 
-N 面板的“本地外观”及 `/mpaclient settings` 提供模型、缩放和偏移设置；本地动作只调用本地播放/停止。服务器动作和真实姿态走原有 v3 请求及权限校验，界面只在服务器同步和本人模型就绪后启用。本轮交付基础独立客户端设置，完整 OpenYSM 界面和功能对齐留待后续迭代；其他引擎的服务端适配器也尚未实现，未来接入应复用下文 v3 约定。
+Y 图库及 `/mpaclient settings` 提供搜索、收藏、分页、真实 3D 预览；外观设置页提供模型、缩放、偏移、默认皮肤和头饰。G 打开动作轮盘；本地动作只调用本地播放/停止。服务器动作和真实姿态走原有 v3 请求及权限校验，界面只在服务器同步和本人模型就绪后启用。当前提供图库、基础外观设置与动作轮盘，不包括 OpenYSM 全部动态表单及外部模组集成；其他引擎的服务端适配器也尚未实现，未来接入应复用下文 v3 约定。
 
 ## 2. 组件与数据流
 
@@ -184,7 +184,8 @@ sequenceDiagram
     S->>A: 后台准备原始 bbmodel / SHA-256 / GZIP
     S-->>C: 后续 state 含 assetHash
     opt 缓存未命中
-        C->>S: asset_request（modelId / hash）
+        C->>C: 从已加载完整资源包读取模型与共享 PNG
+        C->>C: 恢复原始资产并校验 SHA-256
         S-->>C: asset_begin / 连续 asset_chunk / asset_end
     end
     Note over C: 校验原始 hash、解析模型、准备 GPU 纹理
@@ -214,6 +215,11 @@ sequenceDiagram
 `NativeEntityPackets` 以 1.21.11 的包结构读取实体 ID；`NativeEntityPacketHandler` 保持混合 bundle 顺序，未匹配包继续交给 ME。无法建立通道则拒绝接管并保持 ME。退租时移除对应例外和隐藏基础实体的客户端副本；解除伪装后，`NativeEntityRestoration` 只为仍被合法追踪、同世界、在线且可见的原本本地观众重新发送真实人物出生，避免恢复可见性后人物仍缺失。
 
 ## 6. 协议、资产与资源上限
+
+0.4.1 客户端声明 `resource_pack_models` 能力，只从当前 ResourceManager 被动读取服务器绑定对应的资源。`PackModelLibrary` 校验资源路径、资源大小、模型 ID/原始 SHA-256；PNG 以标准 Base64 恢复原始 BBModel 字节后才解析。不发送资产下载申请，也不把资源包模型复制到旧磁盘模型缓存。完整包的分发和缓存由 Minecraft 标准资源包流程承担。具体格式见 [统一资源包规范](docs/CLIENT_RESOURCE_PACK.md)。
+
+服务端为不声明该能力的旧客户端保留 v3 GZIP 兼容传输。下文的分片、压缩和磁盘缓存约束仅涉及旧路径；新客户端的资源来源始终是已安装资源包。连接级 `ConnectionLimits` 跨模型会话/错误协议保留：入包 48 包和 256 KiB/秒，每客户端总出站 2 MiB/秒，全局 512 KiB/tick；旧资产传输另受每客户端 512 KiB/秒、全局 256 KiB/tick 和全局 32 并发约束。只有真实离线/退出连接才清除连接记录。
+
 
 通信使用 Minecraft plugin messaging / Fabric custom payload 的 `meplayeractions:main`，没有额外 HTTP 服务或数据库。协议 v3 不兼容 v1/v2；两端使用严格 UTF-8 JSON。客户端请求只能操作发送者自身，`play / stop / sit / crawl / reset` 转回服务端 `handleAction`，继续走命令权限、模型与动作校验。
 
@@ -301,7 +307,7 @@ ME 模型及玩家基础状态也有所有权记录：释放受管动画句柄�
 | --- | --- | --- |
 | 服务端 Maven | [pom.xml](pom.xml) | Java 21、Paper API 1.21.11、ModelEngine R4.1.1 本地依赖；Gson/Netty 由运行环境提供 |
 | 客户端 Gradle | [build.gradle](client/build.gradle)、[fabric.mod.json](client/src/main/resources/fabric.mod.json) | Gradle Wrapper 9.2.0、Loom 1.13.6、Yarn 1.21.11+build.3、Loader 0.18.4、Fabric API 0.140.2+1.21.11 |
-| 示例资产准备 | [prepare_models.py](tools/prepare_models.py) | 保留两套外貌、补齐动作并生成 ME 数值蓝图及可追溯 manifest；构建将原模型放入两端 JAR |
+| 示例资产准备 | [prepare_models.py](tools/prepare_models.py) | 保留两套外貌、补齐动作并生成 ME 数值蓝图及可追溯 manifest；服务器构建保留原模型；客户端构建不内置服务器示例，最终资源包携带完整客户端资产 |
 | 发布打包 | [package_release.py](tools/package_release.py) | 校验构建、模型和验收证据，输出工作区 `dist/` |
 
 在项目根执行 `mvn package`，在 `client/` 执行 Gradle Wrapper 的 `build`，完成实机验收后在项目根执行 `python tools/package_release.py`。发布脚本是验收与打包入口，不会代替 Maven/Gradle 构建，也不会自动完成 A/B 及独立客户端游戏测试。它检查两端输入早于 JAR、测试报告覆盖当前测试源码且无失败/错误/跳过、JAR 元数据与 Java 字节码版本、模型清单/hash，以及安装 ZIP 的文件内容和完整性。
