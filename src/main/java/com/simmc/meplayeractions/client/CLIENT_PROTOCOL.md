@@ -1,5 +1,7 @@
 # 客户端模型协议 v3
 
+本文对应 0.4.1 实现。安装和专项说明见 [项目 README](../../../../../../../README.md)、[文档索引](../../../../../../../docs/README.md)、[客户端配置](../../../../../../../docs/CLIENT_CONFIG.md) 和 [统一资源包格式](../../../../../../../docs/CLIENT_RESOURCE_PACK.md)；运行原理见 [架构说明](../../../../../../../ARCHITECTURE.md)。
+
 频道 `meplayeractions:main`，严格 UTF-8 JSON，每包带整数 `protocol:3`、字符串 `type`。不兼容 v1/v2。所有消息保持分包顺序；不允许重复键、类型强制转换、非法 UTF-8、尾随内容；当前服务端还拒绝客户端请求中的额外字段。每包受 maxPayload（默认 16000 字节）限制；连接流量和下载预算见下文。客户端请求只操作自己，仍经过服务端权限校验。
 
 ## 引擎与本地外观边界
@@ -8,7 +10,11 @@ v3 是玩家模型资产、动画状态及观众渲染接管协议。客户端�
 
 其他引擎要使用现有客户端，应实现同频道、版本、字段范围及以下语义：通过统一资源包提供客户端支持的 `.bbmodel` 与对应 hash（兼容旧客户端时另提供下述 legacy 传输）；提供已解析的动画层和 `motion` 状态映射；为观众保留可追踪的原版玩家实体；匹配 ready/ack 后才切换该观众的后端显示；失败、解绑和租约超时恢复正常显示。服务器的姿态后端可将已支持的 sit/sleep/crawl 与接触面偏移映射到 `specialPose` 和 anchor 字段，无需安装 GSit 才能发送这些字段。实现兼容适配器后，更换服务器引擎本身不要求更新客户端；这不表示客户端会自动识别未知引擎、新状态枚举或不支持的模型格式。
 
-纯本地自己的外观使用客户端模型和设置，不发送 `state`、动作请求或 ready/heartbeat，不占服务器观众名额。没有服务器插件时也可显示，但其他玩家看不到这份本地选择。服务器多人伪装仍按下述授权、资产和租约流程同步；本地外观不能替代该流程。
+0.4.1 新建客户端配置默认 `enabled=true`、`showSelf=true`、`followServerTimeline=false`：客户端渲染和本人显示开启，按原版实体即时跟随。进入兼容服务器后自动握手、加载授权模型和发起 ready；不需要启用私人外观或手动选择服务器模型。已有配置中的用户开关继续生效。服务端的观众与本人可见性许可仍是上限，客户端 `showSelf` 只控制本机绘制。
+
+私人外观默认 `localAppearance.enabled=false`，默认模型 `openysm_default` 只是可选项，不会自动套用。私人模型不建立自己的服务器绑定、不发送本地动作请求，也不为这份本地模型申请 ready/heartbeat；已有服务器绑定的 ready 和租约仍独立维护。没有服务器插件时也可显示，但其他玩家看不到这份本地选择。服务器多人伪装仍按下述授权、资产和租约流程同步。
+
+有服务器动作频道时，私人外观先等待握手和完整快照；已知服务器本人伪装存在时，还需其绑定完成 ready/ack 才覆盖本机的自己。缺资源包、版本不匹配、租约丢失或资源重载期间，它不能叠在 ME 回退显示上。完整快照确认没有服务器本人伪装，或匹配的解除原因已清除该伪装后，才可恢复独立私人显示。这一约束不改变默认服务器自动接管。
 
 ## 握手与状态
 
@@ -40,11 +46,13 @@ state 必须额外包含 `motion` 对象：`features` 为服务器及玩家允�
 
 两种模式都保持相同的 `state.modelId`、`state.assetHash` 和 ready/ack/heartbeat 语义。hash 为**原始完整 .bbmodel JSON 字节** SHA-256 小写 64 位十六进制，不是 ZIP、PNG 或 gzip hash。
 
-`resource-pack` 模式从 Minecraft 当前已加载的资源包被动读取模型及 PNG，不通过本频道请求下载。资源包索引为 `assets/meplayeractions/models/index.json`，按模型 ID、原始 hash 对齐；元数据、PNG 引用、原始字节恢复和校验规则见 [统一资源包格式](../../../../../../../docs/CLIENT_RESOURCE_PACK.md)。缺包、资源缺失、hash 不符、解析或 GPU 准备失败时保持后端显示。服务端对此模式的任何合法 `asset_request` 返回 `asset_resource_pack_mode`，不查找、排队或发送资产。Minecraft 原有资源包下发流程负责整包传递，本协议不增加客户端自选 URL、路径或模型下载接口。
+0.4.1 客户端始终声明 `resource_pack_models`，从 Minecraft 当前 ResourceManager 被动读取模型及 PNG，不通过本频道请求下载。资源包索引为 `assets/meplayeractions/models/index.json`，按模型 ID、原始 hash 对齐；元数据、PNG 引用、原始字节恢复和校验规则见 [统一资源包格式](../../../../../../../docs/CLIENT_RESOURCE_PACK.md)。服务端按此能力返回 `assetMode:"resource-pack"`，并对此会话的任何合法 `asset_request` 返回 `asset_resource_pack_mode`，不查找、排队或发送资产。
+
+完整资源包须通过 Minecraft 标准资源包机制提供并启用，包含原版引擎资源、客户端模型索引和共享 PNG。接到 `state` 后自动准备对应模型；缺包、索引/模型/PNG 缺失、hash 不符、解析或 GPU 准备失败时不发送 ready，保持 ME 显示并记录失败原因。新客户端不读取旧下载模型的磁盘缓存、不主动请求单个模型，也不以 legacy 下载补救缺包；失败 hash 默认退避 30 秒，资源重载会清除退避并重新读取。本协议不增加客户端自选 URL、路径或模型下载接口。
 
 统一资源包通常同时包含原版引擎资源和客户端完整模型；接收整包的玩家能够取得包内所有资产，包括当前不可见的模型。`state` 可见性和 ready 授权限制渲染接管，不能把资源包中的文件当作保密资产。资源包构建不修改 ModelEngine 源码，也不把引擎私有对象放入协议；其他引擎适配器可提供同样的资源包和状态语义。
 
-以下 `asset_request/begin/chunk/end` 仅用于未声明 `resource_pack_models` 的旧客户端兼容。资产是原始 .bbmodel JSON（含 elements/outliner/animations 与内嵌 PNG），以 GZIP 压缩传输；原始上限 8 MiB，压缩上限 4 MiB。客户端依据 hash 缓存；无需每次重新下载。
+以下 `asset_request/begin/chunk/end` 仅用于未声明 `resource_pack_models` 的旧 0.4.0 客户端兼容，是服务端保留的 legacy 路径。资产是原始 .bbmodel JSON（含 elements/outliner/animations 与内嵌 PNG），以 GZIP 压缩传输；原始上限 8 MiB，压缩上限 4 MiB。旧客户端依据 hash 缓存；无需每次重新下载。
 
 ```json
 {"protocol":3,"type":"asset_request","modelId":"ysm_01_jk","hash":"小写SHA256"}
@@ -53,6 +61,7 @@ state 必须额外包含 `motion` 对象：`features` 为服务器及玩家允�
 协议 modelId 仅允许 1–64 位小写英文字母/数字/_/-；hash 必须匹配当前可见绑定。当前服务器适配器的资产查找：`plugins/MEPlayerActions/models/<id>.bbmodel` → JAR `models/<id>.bbmodel` → `plugins/ModelEngine/blueprints/` 内文件名或 model_identifier。资产在本服务生命周期缓存，更新后 reload。其他引擎可从自己的资产库提供相同 wire 内容，无需复用这些目录。客户端本地外观的 `local:文件名.bbmodel` 只用于本地文件选择，不属于服务器 modelId，也不发送到此协议。
 
 服务端顺序发送：
+
 - `asset_begin {modelId,hash,rawBytes,compressedBytes,chunks}`
 - `asset_chunk {hash,index,data}`：index 从 0 连续递增，data 是 gzip 分片标准 Base64。
 - `asset_end {hash}`
@@ -72,7 +81,7 @@ state 必须额外包含 `motion` 对象：`features` 为服务器及玩家允�
 | 其中 legacy 资产消息 | 512 KiB/秒 | 256 KiB/tick |
 | 排队或进行中的 legacy transfer | 2 | 32 |
 
-超出入站预算的包直接忽略，不解析或执行动作。出站包在扣减前同时核对所有适用预算，超限不消耗其他预算。legacy 的 begin/chunk/end 超限时保留传输阶段和分片下标，后续 tick 继续；未发送的分片不会跳号，end 也要成功发送后才释放传输。实际发送失败或失去授权则取消传输。控制/状态包发送失败沿用后端回退和客户端租约超时恢复；限流不保证所有拥挤连接仍可接管显示。
+超出入站预算的包直接忽略，不解析或执行动作。出站包在扣减前同时核对所有适用预算，超限不消耗其他预算。legacy 的 begin/chunk/end 超限时保留传输阶段和分片下标，后续 tick 继续；未发送的分片不会跳号，正常完成只在 end 成功发送后释放传输。实际发送失败或失去授权则取消传输并释放并发槽。控制/状态包发送失败沿用后端回退和客户端租约超时恢复；限流不保证所有拥挤连接仍可接管显示。
 
 资源包模式关闭了本会话的主动资产接口。为保持旧 0.4.0 客户端兼容，恶意客户端仍可只声明 `local_render` 进入受限 legacy 路径；capability 不是客户端可信身份的证明。该路径只允许当前可见绑定的已选 modelId/hash，不接受任意服务器文件、URL 或路径。已接收的资产不能因解绑收回；ready/heartbeat 也是客户端声明，服务器能验证当前绑定和可见性，不能证明 GPU 实际绘制。
 
@@ -83,6 +92,8 @@ state 必须额外包含 `motion` 对象：`features` 为服务器及玩家允�
 {"protocol":3,"type":"render_ready","owner":"00000000-0000-0000-0000-000000000001","instance":"00000000-0000-0000-0000-000000000002","hash":"小写SHA256"}
 ```
 服务器再次验证当前 owner/instance/hash、可见性、owned 且无外来模型，然后只对该观众抑制 ME 显示，返回 `render_ack {owner,instance,hash}`。客户端只有匹配本地待确认实例的 ACK 到达后才开启本地绘制。hello 和 state 本身均不切换 ME。就绪客户端仍占用原来的观众名额，不额外增加 max-viewers。
+
+资源重载先释放现有服务器绑定并发送 `render_failed`，取消旧后台结果，清除来自资源包的内存模型和 GPU 纹理。后续 state 触发从当前 ResourceManager 重新读取、恢复原始资产、校验 hash 和准备 GPU；不能沿用重载前的同 hash 缓存绕过当前缺包。成功后仍需重新 ready/ack，禁用资源包或版本不符时继续 ME。私人外观设置保留，但有已知服务器本人伪装时仍等待该服务器绑定重新就绪，避免与 ME 回退同时显示。
 
 对于其他玩家，ME 隐藏基础实体时原版追踪包也会被过滤。服务器在 ACK 前仅为该就绪观众及 owner 实体 ID 安装原版追踪通道，用 ME 公共 `ProtectedPacket` 保留出生、位移、朝向、姿态、装备、挥臂及乘客数据，并通过公共 forceSpawn 初始化原版实体。混合 bundle 保留顺序，其他实体包继续经过 ME。通道无法建立时拒绝接管并保持 ME；退租时移除隐藏基础实体的客户端副本及对应例外。被观看者无需握手或安装模组。
 
@@ -110,6 +121,6 @@ bindings 最多 64 项，owner 唯一。只续租已有且 instance/hash 完全�
 
 ## v3 资源包模式迁移
 
-0.4.1 的频道和 `protocol:3` 保持不变。先用原始完整模型构建并部署统一资源包，确保其索引 hash 与服务端 `state.assetHash` 一致；新客户端在 hello 同时声明 `local_render`、`resource_pack_models`，确认 ACK 的 `assetMode:"resource-pack"` 后只从游戏资源读取。解析、hash 与 GPU 准备完成后仍发送精确 ready，并等待 ACK 才绘制。资源包重载同样先退出旧接管、重新准备，再 ready；重新进入范围不需要主动请求模型下载。服务器继续向未就绪观众提供原版引擎显示。
+0.4.1 的频道和 `protocol:3` 保持不变。先用原始完整模型构建并部署统一资源包，确保其索引 hash 与服务端 `state.assetHash` 一致；新客户端在 hello 同时声明 `local_render`、`resource_pack_models`，服务端 ACK 返回 `assetMode:"resource-pack"`。客户端资产路径固定为当前 ResourceManager；解析、hash 与 GPU 准备完成后自动发送精确 ready，并等待匹配 ACK 才绘制。资源包重载同样先退出旧接管、重新准备，再 ready；重新进入范围不需要主动请求模型下载。服务器继续向未就绪观众提供原版引擎显示。
 
-未升级的 0.4.0 客户端只声明 `local_render`，继续使用受限 legacy 下载流程。新客户端遇到未支持扩展的旧服务器不能假定资源包模式已被接受，也不能偷偷恢复主动请求；应保持服务器显示并提示适配器需要升级。引擎替换只要求资源包及服务端适配器符合本规范，客户端无需因引擎名称变化而更新。
+未升级的 0.4.0 客户端只声明 `local_render`，继续使用受限 legacy 下载流程。新客户端遇到未支持扩展的旧服务器可能无法完成握手，保持服务器显示且不会恢复主动下载；需要升级服务端适配器。迁移时私人外观保持默认关闭也能自动接管服务器绑定；旧配置中曾关闭总开关的用户，应按 [客户端配置](../../../../../../../docs/CLIENT_CONFIG.md) 启用渲染。引擎替换只要求资源包及服务端适配器符合本规范，客户端无需因引擎名称变化而更新。

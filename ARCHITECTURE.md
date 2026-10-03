@@ -2,7 +2,7 @@
 
 本文依据当前工作区 0.4.1 的服务端插件、Fabric 客户端及测试代码整理，描述已实现的机制。客户端目标为 Fabric / Minecraft 1.21.11、Java 21；服务端插件目标为 Paper 1.21.11、ModelEngine R4.1.1，GSit 为可选姿态后端。构建版本、协议版本与配置版本分别由 `pom.xml` / `client/build.gradle`、`ClientSyncService.PROTOCOL` / `WireJson`、`config-version` 决定；当前三者分别为 0.4.1、3、3，不应混用。
 
-使用说明见 [README](README.md)，消息字段、限制和错误码见 [客户端协议](src/main/java/com/simmc/meplayeractions/client/CLIENT_PROTOCOL.md)。本文中的源码链接以仓库根目录为基准，源码阅读不等同于本次完成实机验收。
+安装与命令见 [README](README.md)，专项说明见 [文档索引](docs/README.md)、[客户端配置](docs/CLIENT_CONFIG.md) 和 [统一资源包规范](docs/CLIENT_RESOURCE_PACK.md)；消息字段、限制和错误码见 [客户端协议](src/main/java/com/simmc/meplayeractions/client/CLIENT_PROTOCOL.md)。本文中的源码链接以仓库根目录为基准，源码阅读不等同于本次完成实机验收。
 
 ## 1. 系统目标与职责边界
 
@@ -22,9 +22,13 @@
 
 ### 本地自己的外观与服务器多人伪装
 
+0.4.1 新建客户端配置默认 `enabled=true`、`showSelf=true`、`followServerTimeline=false`。进入支持 v3 的服务器后，客户端自动握手、接收授权绑定，从游戏 ResourceManager 读取对应的完整资源包资产；校验和 GPU 准备成功后自动发送 ready，收到精确 ACK 才绘制服务器模型。无需打开私人外观或重新选择服务器模型。已有配置文件中的用户开关继续生效；客户端的 `showSelf` 是绘制选项，不能扩大服务端 `show-self` 或观众许可。
+
 `LocalAppearanceSettings` 保存本机自己的模型选择、均匀缩放和世界 X/Y/Z 偏移（方块单位、Y 正值向上），默认关闭、默认模型为 `openysm_default`。配置写入 `config/meplayeractions-client.json` 的 `localAppearance`，不发送给服务器；进出世界保留配置并重新准备本地实例。模型来源为 JAR 内置 CC0 OpenYSM 默认模型、`config/meplayeractions/models/` 的单个 `.bbmodel` 或安全 YSM 文件夹。后者通过受限转换器合并主骨架、main/extra 动画与默认 PNG，再交给同一 `BbModel`。服务器示例不内置客户端。文件访问不接受链接、目录外路径或任意 URL。
 
-本地实例仅替换本机看到的自己，按本机玩家实体运行姿态、交互和模型脚本，无需服务器绑定或握手。显式启用的本地外观优先于服务器自己的模型显示，服务器自己的绑定和租约继续独立维护，其他玩家的模型仍服从服务器许可。关闭本地外观后恢复已有的服务器本人模型，或显示原版人物；本地模型加载失败不能阻断服务器多人接管。
+私人外观的配置开关是 `localAppearance.enabled=false`，运行时状态由 `privateAppearanceActive()` 给出；默认模型仅是可供用户选择的本地模型，不会自动替换原版人物。启用后仅替换本机看到的自己，按本机玩家实体运行姿态、交互和模型脚本，没有插件的世界也能显示，其他玩家看不到这份选择。
+
+有服务器动作频道时，`LocalAppearanceVisibility` 先等待握手和完整快照；已知服务器本人伪装存在时，还必须等其服务器绑定已 ready/ack，才以私人外观覆盖本机的自己。缺资源包、hash 不匹配或资源重载期间保留 ME 回退，不能用私人模型叠在 ME 上掩盖失败。接管成功后，服务器自己的绑定和租约继续独立维护，其他玩家的模型仍服从服务器许可。关闭私人外观后恢复已有的服务器本人模型，或显示原版人物；本地模型加载失败不能阻断服务器多人接管。
 
 `options.enabled` 为客户端渲染总开关，本地外观和服务器接管均遵守；启用本地外观时同步打开总开关。关闭本地外观只关闭本地 profile，不修改总开关或服务器绑定。加载失败保留配置、显示错误，并恢复服务器/原版显示，按 30 秒间隔退避重试。本人饥饿、手持物和运动输入取本机实体，附件脚本不读取服务器本人 `a/b`。
 
@@ -63,9 +67,11 @@ flowchart LR
         Timeline[服务器轨迹 / ServerClock]
         Model[BbModel / AnimationPlayer]
         Renderer[ModelRenderer / 冻结帧 / 绘制命令]
-        UI[N 面板 / mpaclient]
+        Resources[ResourceManager / PackModelLibrary]
+        UI[Y 图库 / G 轮盘 / N 动作面板]
         Local[本地外观设置 / 内置与本地 bbmodel]
         Runtime --> Motion
+        Resources --> Runtime
         Local --> Runtime
         Entity --> Motion
         Runtime --> Timeline
@@ -74,6 +80,8 @@ flowchart LR
         Model --> Renderer
         UI --> Runtime
     end
+    Pack[完整 Minecraft 资源包 / 引擎资源与客户端模型]
+    Pack --> Resources
     Sync <-->|协议 v3| Runtime
     Relay --> Entity
 ```
@@ -90,8 +98,8 @@ flowchart LR
 | ME 适配 | 创建/接管模型、保留动画层句柄、共享状态恢复 | [ModelEngineBridge](src/main/java/com/simmc/meplayeractions/me/ModelEngineBridge.java) |
 | 观众 | ME 跟踪过滤、最近观众名额、本地渲染观众的 ME 抑制 | [ModelAudience](src/main/java/com/simmc/meplayeractions/me/ModelAudience.java)、[AudienceSelector](src/main/java/com/simmc/meplayeractions/me/AudienceSelector.java) |
 | 原版追踪 | 为就绪观众保留对应玩家的原版实体包，释放后恢复合法追踪 | [NativeEntityRelay](src/main/java/com/simmc/meplayeractions/me/NativeEntityRelay.java)、[NativeEntityRestoration](src/main/java/com/simmc/meplayeractions/me/NativeEntityRestoration.java) |
-| 客户端服务 | 握手、入包校验、完整状态、资产队列和渲染租约 | [ClientSyncService](src/main/java/com/simmc/meplayeractions/client/ClientSyncService.java)、[RenderLeases](src/main/java/com/simmc/meplayeractions/client/RenderLeases.java) |
-| 资产 | 异步查找 `.bbmodel`、按原始字节生成 SHA-256、GZIP 压缩与缓存 | [ModelAssets](src/main/java/com/simmc/meplayeractions/client/ModelAssets.java) |
+| 客户端服务 | 握手、严格入包、完整状态、连接预算、旧客户端资产队列和渲染租约 | [ClientSyncService](src/main/java/com/simmc/meplayeractions/client/ClientSyncService.java)、[ConnectionLimits](src/main/java/com/simmc/meplayeractions/client/ConnectionLimits.java)、[RenderLeases](src/main/java/com/simmc/meplayeractions/client/RenderLeases.java) |
+| 服务端资产身份 | 异步查找原始 `.bbmodel`、生成 SHA-256；保留旧客户端 GZIP 兼容资产 | [ModelAssets](src/main/java/com/simmc/meplayeractions/client/ModelAssets.java) |
 | 动作目录 | 自定义动作别名、原始动画开关、中文名称及排序 | [ActionDirectory](src/main/java/com/simmc/meplayeractions/action/ActionDirectory.java)、[ActionMenu](src/main/java/com/simmc/meplayeractions/ui/ActionMenu.java) |
 
 ### 客户端代码索引
@@ -100,13 +108,14 @@ flowchart LR
 | --- | --- | --- |
 | 模组入口 | 注册 payload、连接事件、每 tick 更新、N 键与客户端命令 | [MEPlayerActionsClient](client/src/main/java/com/simmc/meplayeractions/client/MEPlayerActionsClient.java) |
 | 运行时 | 握手和绑定生命周期、后台解码、主线程纹理安装、缓存与失败退避 | [ClientRuntime](client/src/main/java/com/simmc/meplayeractions/client/ClientRuntime.java) |
+| 资源包模型 | 从当前 ResourceManager 读取索引、模型和共享 PNG，恢复原始字节并匹配服务器 hash | [PackModelLibrary](client/src/main/java/com/simmc/meplayeractions/client/PackModelLibrary.java) |
 | 即时动作 | 从观看者的原版实体采样普通动作，遵守服务器运动策略 | [EntityAnimationController](client/src/main/java/com/simmc/meplayeractions/client/EntityAnimationController.java)、[LocalMotionPolicy](client/src/main/java/com/simmc/meplayeractions/client/LocalMotionPolicy.java) |
 | 时间协调 | 服务器 tick 展开和估计、位置/动画历史、本地动作开始时间转换 | [ServerClock](client/src/main/java/com/simmc/meplayeractions/client/ServerClock.java)、[LocalLayerClock](client/src/main/java/com/simmc/meplayeractions/client/LocalLayerClock.java)、[TransformTimeline](client/src/main/java/com/simmc/meplayeractions/client/TransformTimeline.java)、[SnapshotTimeline](client/src/main/java/com/simmc/meplayeractions/client/SnapshotTimeline.java) |
 | 模型与动画 | 有限格式解析、骨骼矩阵、关键帧插值、叠层和连续过渡 | [BbModel](client/src/main/java/com/simmc/meplayeractions/client/model/BbModel.java)、[AnimationPlayer](client/src/main/java/com/simmc/meplayeractions/client/model/AnimationPlayer.java) |
 | 绘制 | 纹理预算、帧提取、视锥裁剪、冻结顶点、提交绘制命令 | [ModelRenderer](client/src/main/java/com/simmc/meplayeractions/client/render/ModelRenderer.java) |
 | 原人物隐藏 | 记录隐藏标记，取消玩家与装备绘制，并控制第一人称手臂 | [mixin/](client/src/main/java/com/simmc/meplayeractions/client/mixin/) |
-| 本地模型库 | 内置模型与专用目录的单文件模型，读取后使用同一受限解析器 | [LocalModelLibrary](client/src/main/java/com/simmc/meplayeractions/client/LocalModelLibrary.java) |
-| 界面与选项 | 本地外观设置、分页动作面板、渲染总开关、自显；拖后参数保留在配置中 | [LocalAppearanceScreen](client/src/main/java/com/simmc/meplayeractions/client/ui/LocalAppearanceScreen.java)、[ActionsScreen](client/src/main/java/com/simmc/meplayeractions/client/ui/ActionsScreen.java)、[ClientOptions](client/src/main/java/com/simmc/meplayeractions/client/ClientOptions.java)、[LocalAppearanceSettings](client/src/main/java/com/simmc/meplayeractions/client/LocalAppearanceSettings.java) |
+| 本地模型库 | 内置默认模型、专用目录的 `.bbmodel` 与安全 YSM 文件夹，读取后使用同一受限解析器 | [LocalModelLibrary](client/src/main/java/com/simmc/meplayeractions/client/LocalModelLibrary.java) |
+| 界面与选项 | 模型图库、私人外观设置、动作轮盘和服务器动作面板；即时跟随默认开启，拖后参数保留在配置中 | [LocalAppearanceScreen](client/src/main/java/com/simmc/meplayeractions/client/ui/LocalAppearanceScreen.java)、[ActionsScreen](client/src/main/java/com/simmc/meplayeractions/client/ui/ActionsScreen.java)、[ClientOptions](client/src/main/java/com/simmc/meplayeractions/client/ClientOptions.java)、[LocalAppearanceSettings](client/src/main/java/com/simmc/meplayeractions/client/LocalAppearanceSettings.java) |
 
 ## 3. 动作会话与每 tick 控制
 
@@ -170,7 +179,7 @@ flowchart LR
 
 `ModelAudience` 从 ME 原有跟踪条件中选择同世界、在线、`Player.canSee(owner)`、原过滤器允许的候选；严格三维距离小于单次伪装的观看距离，再按距离和 UUID 排序选取最近 N 位。本人由 `showSelf` 决定，且不占其他观众名额。本地渲染观众保留名额，只抑制自己的 ME 模型显示。`ClientSyncService` 另加通信距离检查，不能突破前面的授权范围。
 
-只有本插件创建、没有共存外来模型、拥有可分发资产的实例才可接管。原生 ME 接管或资产尚在后台准备时，`assetHash` 为空并继续 ME 渲染。
+只有本插件创建、没有共存外来模型、拥有可校验客户端资产的实例才可接管。原生 ME 接管或服务端资产尚在后台准备时，`assetHash` 为空并继续 ME 渲染。非空 hash 也不意味着客户端已加载完整资源包：缺包或模型版本不符时不发送 ready，ME 持续显示；模型准备成功也要完成服务器 ready/ack 确认。
 
 ```mermaid
 sequenceDiagram
@@ -178,17 +187,19 @@ sequenceDiagram
     participant S as ClientSyncService
     participant A as ModelAssets
     participant M as ModelEngineBridge
-    C->>S: hello（protocol 3 / local_render）
-    S-->>C: hello_ack + snapshot_begin/state/snapshot_end
+    participant R as ResourceManager
+    C->>S: hello（protocol 3 / local_render + resource_pack_models）
+    S-->>C: hello_ack（assetMode=resource-pack）+ 快照
     Note over C,M: 握手和 state 不隐藏 ME
     S->>A: 后台准备原始 bbmodel / SHA-256 / GZIP
     S-->>C: 后续 state 含 assetHash
-    opt 缓存未命中
-        C->>C: 从已加载完整资源包读取模型与共享 PNG
+    opt 尚未准备匹配 hash 的内存资产
+        C->>R: 从已加载完整资源包读取模型与共享 PNG
+        R-->>C: 当前资源字节或缺失错误
         C->>C: 恢复原始资产并校验 SHA-256
-        S-->>C: asset_begin / 连续 asset_chunk / asset_end
     end
-    Note over C: 校验原始 hash、解析模型、准备 GPU 纹理
+    Note over C,M: 缺资源、hash 不符或准备失败时继续 ME
+    Note over C: 校验原始 hash、解析模型、准备 GPU 纹理后才 ready
     C->>S: render_ready（owner / instance / hash）
     S->>M: 再验证实例、所有权及观众许可
     M->>M: 远端追踪通道可用后，仅抑制该观众 ME 显示
@@ -218,8 +229,9 @@ sequenceDiagram
 
 0.4.1 客户端声明 `resource_pack_models` 能力，只从当前 ResourceManager 被动读取服务器绑定对应的资源。`PackModelLibrary` 校验资源路径、资源大小、模型 ID/原始 SHA-256；PNG 以标准 Base64 恢复原始 BBModel 字节后才解析。不发送资产下载申请，也不把资源包模型复制到旧磁盘模型缓存。完整包的分发和缓存由 Minecraft 标准资源包流程承担。具体格式见 [统一资源包规范](docs/CLIENT_RESOURCE_PACK.md)。
 
-服务端为不声明该能力的旧客户端保留 v3 GZIP 兼容传输。下文的分片、压缩和磁盘缓存约束仅涉及旧路径；新客户端的资源来源始终是已安装资源包。连接级 `ConnectionLimits` 跨模型会话/错误协议保留：入包 48 包和 256 KiB/秒，每客户端总出站 2 MiB/秒，全局 512 KiB/tick；旧资产传输另受每客户端 512 KiB/秒、全局 256 KiB/tick 和全局 32 并发约束。只有真实离线/退出连接才清除连接记录。
+服务器按 hello 能力固定本次会话的模式：声明 `resource_pack_models` 时 ACK 返回 `assetMode=resource-pack`，任何资产请求都拒绝；旧客户端仅声明 `local_render` 时返回 `legacy-download`，保留受限 v3 GZIP 下载。0.4.1 客户端始终使用 ResourceManager，不主动申请资产，不以旧磁盘缓存或 legacy 下载补救缺包。下文的分片、压缩和旧磁盘缓存约束仅涉及兼容路径。
 
+连接级 `ConnectionLimits` 跨会话结束、未知协议、新 hello 和同步开关变化保留流量、握手时间、动作及 hash 冷却；结束会话只释放传输槽和渲染租约。只有真实离线/退出连接才清除该连接记录。窗口和预算不持久化到插件销毁或服务器重启。
 
 通信使用 Minecraft plugin messaging / Fabric custom payload 的 `meplayeractions:main`，没有额外 HTTP 服务或数据库。协议 v3 不兼容 v1/v2；两端使用严格 UTF-8 JSON。客户端请求只能操作发送者自身，`play / stop / sit / crawl / reset` 转回服务端 `handleAction`，继续走命令权限、模型与动作校验。
 
@@ -229,24 +241,30 @@ v3 的线格式不传 ModelEngine 对象、骨骼实体 ID 或引擎名称。`ow
 
 当前服务端 `ModelAssets` 的资产查找顺序为本插件 `models/<id>.bbmodel` → JAR 内置表达式模型 → ME `blueprints/` 的匹配文件名 → 匹配 `model_identifier`。读文件、计算 hash 和压缩在服务器异步任务中完成；准备中及失败项保留 ME。结果（含失败）缓存在当前服务实例中，更新模型后需插件 reload。hash 针对原始 JSON 字节，压缩和 Base64 仅用于传输；这份目录规则不是其他引擎适配器必须使用的目录。
 
-客户端在后台线程读取缓存、解压、校验和解析，使用 `generation` 拒绝断开、世界切换或重载后到达的旧后台结果。纹理注册回到 Minecraft 主线程，准备成功后才允许发送 ready。
+0.4.1 客户端在后台线程读取当前 ResourceManager 的索引、元数据和共享 PNG，恢复原始字节、校验 hash 并解析模型；使用 `generation` 拒绝断开、世界切换或重载后到达的旧后台结果。纹理注册回到 Minecraft 主线程，准备成功后才允许发送 ready。失败 hash 默认退避 30 秒，资源重载会清除退避并重新读取当前资源。
 
 | 限制或间隔 | 当前值 / 默认值 | 目的 |
 | --- | --- | --- |
 | 完整状态 / 心跳 | 每 2 tick / 每 20 tick；动作变化可立即广播 | 同步位置并续租 |
 | 服务端渲染租约 | 100 tick | 无有效续租时恢复 ME |
 | 客户端状态/连接超时 | `leaseTicks × 50 ms`，默认约 5 秒 | 单调时间超时，不依赖世界时间推进 |
-| 入包 / 入包频率 | 默认 16000 字节 / 每观众每秒最多 48 包 | 限制协议流量与解析成本 |
+| 单包 / 入站解析流量 | 默认 16000 字节；每连接每秒最多 48 包且 256 KiB | 限制协议流量与解析成本 |
+| 全部出站消息 | 每连接 2 MiB/秒；服务端合计 512 KiB/tick | 按实际 UTF-8 JSON 限制总发送量 |
+| 其中旧资产消息 | 每连接 512 KiB/秒；服务端合计 256 KiB/tick | 为控制/状态消息留出余量 |
+| hello 接受间隔 | 同一连接至少 1 秒 | 防止新会话绕过限制 |
 | 动作请求冷却 | 默认 4 tick；`stop/reset` 不占冷却 | 防止重复动作请求，保留及时停止 |
-| 原始 / 压缩模型 | 8 MiB / 4 MiB | 限制资产大小与解压结果 |
-| 分片与队列 | 每片最多 9000 压缩字节；每观众每 tick 最多 2 片、最多 2 个传输 | 控制下载负载 |
+| 完整原始模型 / 旧压缩模型 | 8 MiB / 4 MiB | 限制原始资产与兼容解压结果 |
+| 旧传输分片与队列 | 每片最多 9000 压缩字节；每连接每 tick 最多 2 片、2 个传输；全局最多 32 个 | 控制 legacy 下载负载 |
+| 旧传输 hash 冷却 | 从接受排队起 100 tick，同一连接跨握手保留 | 防止取消后立即重新下载 |
 | 客户端绑定 / 内存模型 | 最多 64 个绑定 / 16 个模型资产 | 限制并发显示与资产驻留 |
 | 模型结构 | 最多 2048 骨骼、4096 cube、16 贴图、128 动画、200000 关键帧、深度 64 | 限制解析与动画计算成本 |
 | 纹理预算 | 单边 ≤4096 像素；单资产 ≤16M 像素；全体 GPU ≤32M 像素 | 限制纹理驻留 |
-| 下载超时 / 失败退避 | 约 15 秒 / 30 秒 | 避免永久在途或无限快速重试 |
-| 磁盘缓存清理 | 约 128 MiB 总量，按文件时间保留 | 限制旧资产占用 |
+| 旧客户端下载超时 / 资产失败退避 | 约 15 秒 / 30 秒 | 避免永久在途或无限快速重试 |
+| 旧磁盘资产缓存 | 约 128 MiB 总量，按文件时间保留；0.4.1 资源包路径不使用此缓存 | 限制旧下载资产占用 |
 
-以上 tick 时长的秒数按名义 20 TPS 换算；服务器租约按服务器 tick 推进，客户端按单调时间在更新时检查。状态包过大时先删去动作目录；仍超限则解绑、保持 ME，并按观众/owner 去重日志。握手、入包、资产分片的精确约束见协议文档。
+以上 tick 时长的秒数按名义 20 TPS 换算；服务器租约按服务器 tick 推进，客户端按单调时间在更新时检查。流量秒预算为单调时钟的一秒固定窗口，字节数包含完整 JSON 和 Base64。超限 legacy 包保留传输阶段/下标，后续 tick 续发；全部预算核对成功才扣减。控制或状态发送失败沿用 ME 回退与客户端超时恢复，不保证拥挤连接仍能接管。状态包过大时先删去动作目录；仍超限则解绑、保持 ME，并按观众/owner 去重日志。精确约束见协议文档。
+
+统一完整资源包通过 Minecraft 标准资源包机制提供，接收者能取得包内所有资源。观众范围与 ready 校验限定显示接管，不能保护已分发文件的保密性。旧客户端兼容能力也不是可信客户端身份：恶意客户端可以只声明 `local_render`，但 legacy 路径仍只允许可见绑定的 modelId/hash，并受上述连接与全局预算约束。
 
 ## 7. 客户端模型解析与绘制
 
@@ -274,7 +292,9 @@ v3 的线格式不传 ModelEngine 对象、骨骼实体 ID 或引擎名称。`ow
 4. `BEFORE_ENTITIES` 应用相机相对位置、身体 yaw 和统一缩放，向 `RenderCommandQueue` 提交 `entityCutoutNoCull` 自定义几何。
 5. Mixin 按已确认且仍有效的绑定隐藏原玩家与装备，`PlayerArmRendererMixin` 控制第一人称手臂。
 
-资源重载先释放服务器绑定、恢复后端显示，再重新注册纹理；服务器实例重新 ready/ack 后接管。本地外观配置保留，纹理准备成功后继续本地显示，不需要服务器 ACK。渲染或纹理恢复失败释放相应实例并退避重试；断开和世界变化清理动画状态及 GPU 纹理，持久本地配置在下个世界重新应用。`showSelf` 控制本地本人模型显示，不扩大服务器允许的多人可见性。
+资源重载先释放服务器绑定并发送 render_failed，让后端恢复显示；取消旧后台结果，删除来自资源包的内存模型和纹理，再从当前 ResourceManager 重新读取。不能用重载前的同 hash 缓存替代当前缺失资源，服务器实例须重新校验、准备 GPU 并完成 ready/ack 才接管。禁用资源包或换成不匹配版本时继续 ME。
+
+私人外观配置保留，独立内置/本地模型纹理可重新准备。没有服务器本人伪装时，它的本地生命周期无需 ACK；有已知服务器本人伪装时，仍遵守 `LocalAppearanceVisibility`，等该绑定恢复就绪才覆盖本人显示。渲染或纹理恢复失败释放相应实例并退避重试；断开和世界变化清理动画状态及 GPU 纹理，持久本地配置在下个世界重新应用。`showSelf` 控制本地本人模型显示，不扩大服务器允许的多人可见性。
 
 ## 8. 真实姿态与状态所有权
 
