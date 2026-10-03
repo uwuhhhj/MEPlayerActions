@@ -6,9 +6,10 @@ The independent client includes the `builtin/default` player model from
 [IzumiiKonata/OpenYSM-Updated](https://github.com/IzumiiKonata/OpenYSM-Updated),
 revision `0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85`.
 
-Included original assets: `ysm.json`, `models/main.json`,
-`animations/main.animation.json`, `animations/extra.animation.json`, and
-`textures/default.png`, and `textures/blue.png`. They are kept in
+Included original assets: `ysm.json`, the player and arm geometry, vanilla
+projectile/vehicle geometry and textures, main/extra/arm/first-person-arm
+animations, boat/arrow animations, both player skins, GUI background/foreground
+textures, and `en_us`/`zh_cn` model strings. They are kept in
 `assets/meplayeractions/builtin/openysm_default/`. No wine-fox model is bundled.
 
 The original `ysm.json` identifies this default model's license as **CC0**
@@ -18,13 +19,14 @@ The original `ysm.json` identifies this default model's license as **CC0**
 The CC0 public-domain dedication is documented at
 <https://creativecommons.org/publicdomain/zero/1.0/>.
 
-The client independently converts the main cube geometry, main/extra animation
-tracks and selected PNG into its existing renderer. It preserves keyframes,
-expressions and interpolation, maps Bedrock coordinates, and expands the
-default model's damped second-order expressions into bounded per-instance
-physics scripts. Optional projectile, vehicle, first-person and third-party
-mod animation files named by the original manifest are outside this imported
-player subset and are not included.
+The client independently imports the cube geometry, vanilla animation families,
+selected PNG, configuration metadata and local components. Bedrock coordinates
+are mapped once; authored expressions, null defaults, timeline scripts, loops,
+controller definitions and interpolation remain available to the independent
+per-instance runtime. Third-party mod animation files named by the original
+manifest remain metadata for later integration and are not included. This asset
+notice describes imported resources; it does not claim that every OpenYSM
+feature is implemented or that unverified render paths have passed validation.
 
 The reference repository's software license is reproduced in the bundled
 `LICENSE.OpenYSM.txt`:

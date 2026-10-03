@@ -1,6 +1,8 @@
 package com.simmc.meplayeractions.client.ui;
 
 import com.simmc.meplayeractions.client.model.BbModel;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -10,14 +12,64 @@ import java.util.List;
 final class PreviewMesh {
     record Point(float x, float y, float u, float v) { }
     record Quad(List<Point> points, int texture, int color, float depth) { }
+    record Settings(boolean noLighting, boolean disableRotation, String background, String foreground) { }
 
     private PreviewMesh() { }
+
+    static Settings settings(JsonObject properties) {
+        return new Settings(flag(properties, "gui_no_lighting"), flag(properties, "disable_preview_rotation"),
+                resource(properties, "gui_background"), resource(properties, "gui_foreground"));
+    }
+
+    private static boolean flag(JsonObject properties, String key) {
+        JsonElement value = properties.get(key);
+        return value != null && value.isJsonPrimitive() && value.getAsJsonPrimitive().isBoolean() && value.getAsBoolean();
+    }
+    private static String resource(JsonObject properties, String key) {
+        JsonElement value = properties.get(key);
+        return value != null && value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()
+                && value.getAsString().length() <= 256 ? value.getAsString() : "";
+    }
+
+    /** One ordered atlas batch prevents a GUI texture sorter from placing the foreground behind the model. */
+    static List<Quad> compose(List<Quad> model, int x, int y, int width, int height, boolean background, boolean foreground) {
+        if (width <= 0 || height <= 0) return List.of();
+        if (!background && !foreground) return model;
+        List<Quad> result = new ArrayList<>(model.size() + 2);
+        if (background) result.add(image(x, y, width, height, -1));
+        result.addAll(model);
+        if (foreground) result.add(image(x, y, width, height, -2));
+        return List.copyOf(result);
+    }
+
+    private static Quad image(int x, int y, int width, int height, int texture) {
+        return new Quad(List.of(new Point(x, y, 0, 0), new Point(x, y + height, 0, 1),
+                new Point(x + width, y + height, 1, 1), new Point(x + width, y, 1, 0)), texture, 0xffffffff, 0);
+    }
+
+    /** A short UI reveal, separate from any authored model animation. */
+    static List<Quad> entrance(List<Quad> quads, int x, int y, int width, int height, double progress) {
+        if (progress >= 1) return quads;
+        double t = Math.clamp(progress, 0, 1), ease = t * t * (3 - 2 * t);
+        float scale = (float) (.9 + .1 * ease), centerX = x + width * .5f, centerY = y + height * .5f;
+        int alpha = (int) Math.round(255 * ease);
+        return quads.stream().map(quad -> new Quad(quad.points().stream().map(point ->
+                new Point(centerX + (point.x() - centerX) * scale,
+                        centerY + (point.y() - centerY) * scale, point.u(), point.v())).toList(),
+                quad.texture(), alpha << 24 | quad.color() & 0xffffff, quad.depth())).toList();
+    }
 
     /** Angles are degrees; zero yaw faces the model's authored negative-Z front. */
     static List<Quad> project(List<BbModel.Vertex> vertices, int x, int y, int width, int height,
                               float yaw, float pitch) {
+        return project(vertices, x, y, width, height, yaw, pitch, new Settings(false, false, "", ""));
+    }
+
+    static List<Quad> project(List<BbModel.Vertex> vertices, int x, int y, int width, int height,
+                              float yaw, float pitch, Settings settings) {
         if (width <= 0 || height <= 0 || !Float.isFinite(yaw) || !Float.isFinite(pitch)
                 || vertices.isEmpty() || vertices.size() % 4 != 0) return List.of();
+        if (settings.disableRotation()) { yaw = 0; pitch = 0; }
         double a = Math.toRadians(yaw % 360), b = Math.toRadians(pitch % 360);
         double cy = Math.cos(a), sy = Math.sin(a), cp = Math.cos(b), sp = Math.sin(b);
         float[] positions = new float[vertices.size() * 3];
@@ -64,7 +116,7 @@ final class PreviewMesh {
             // gameplay renderer, so thin hair/clothing sheets remain visible on rotation.
             double light = normalLength < 1e-8 ? 0 : Math.max(0, (-.45 * nx + .7 * ny - .8 * nz)
                     / (Math.sqrt(.45 * .45 + .7 * .7 + .8 * .8) * normalLength));
-            int shade = (int) Math.round(255 * (.58 + .42 * light));
+            int shade = settings.noLighting() ? 255 : (int) Math.round(255 * (.58 + .42 * light));
             int color = 0xff000000 | shade << 16 | shade << 8 | shade;
             quads.add(new Quad(List.copyOf(points), face.texture(), color, depth));
         }

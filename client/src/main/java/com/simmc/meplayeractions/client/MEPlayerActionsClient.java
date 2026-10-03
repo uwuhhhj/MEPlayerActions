@@ -67,6 +67,6 @@ public final class MEPlayerActionsClient implements ClientModInitializer {
                 .then(literal("preview").then(argument("model",StringArgumentType.word())
                         .suggests((ctx,builder)->{builder.suggest("ysm_02_jk");builder.suggest("ysm_01_jk");builder.suggest("off");return builder.buildFuture();})
                         .executes(ctx->{runtime.preview(StringArgumentType.getString(ctx,"model"));return 1;})))));
-        LOGGER.info("MEPlayerActions Client 0.4.1 initialized for Minecraft 1.21.11 (local bone rendering, protocol 3)");
+        LOGGER.info("MEPlayerActions Client 0.4.2 initialized for Minecraft 1.21.11 (local bone rendering, protocol 3, server-push models)");
     }
 }

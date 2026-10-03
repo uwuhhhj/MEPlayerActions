@@ -22,6 +22,35 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** Exercises the real wire decoder without a Bukkit server or invented player permissions. */
 class ClientSyncServiceTest {
     private static final Method DECODER = decoderMethod();
+    @Test void acceptsPushOnlyOrPushPlusResourcePackCapabilitiesWithoutWeakeningHello() throws IOException {
+        for (String capabilities : List.of("\"local_render\",\"server_push_models\"",
+                "\"local_render\",\"resource_pack_models\",\"server_push_models\"")) {
+            Object decoded = decode("{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[" + capabilities + "]}");
+            assertEquals(true, field(decoded, "pushModels"));
+        }
+        assertRejected("{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"server_push_models\"]}");
+        assertRejected("{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\",\"server_push_models\",\"server_push_models\"]}");
+    }
+    @Test void acceptsOnlyTypedTokenFeedbackWithoutClientSelectedModelIds() throws IOException {
+        String offerId = "00000000-0000-0000-0000-000000000011", hash = "b".repeat(64);
+        for (String status : List.of("cached", "missing", "rejected")) {
+            Object decoded = decode("{\"protocol\":3,\"type\":\"asset_status\",\"offerId\":\"" + offerId
+                    + "\",\"hash\":\"" + hash + "\",\"status\":\"" + status + "\"}");
+            assertEquals(UUID.fromString(offerId), field(decoded, "offerId")); assertEquals(hash, field(decoded, "hash"));
+            assertEquals(status, field(decoded, "assetStatus")); assertEquals("", field(decoded, "modelId"));
+        }
+    }
+    @Test void feedbackRejectsInventedFieldsDuplicateKeysBadTokensAndUnknownStatuses() {
+        String base = "{\"protocol\":3,\"type\":\"asset_status\",\"offerId\":\"00000000-0000-0000-0000-000000000011\",\"hash\":\""
+                + "b".repeat(64) + "\",\"status\":\"missing\"}";
+        for (String invalid : List.of(base.replace("00000000-0000-0000-0000-000000000011", "0-0-0-0-11"),
+                base.replace("\"missing\"", "true"), base.replace("\"missing\"", "\"download\""),
+                base.replace("b".repeat(64), "B".repeat(64)), base.replace(",\"status\":\"missing\"", ""),
+                base.replace("}", ",\"modelId\":\"ysm_02_jk\"}"),
+                base.replace("}", ",\"owner\":\"00000000-0000-0000-0000-000000000001\"}"),
+                base.replace("}", ",\"status\":\"missing\"}"),
+                base.replace("asset_status", "snapshot_request"))) assertRejected(invalid);
+    }
     @Test void longMenuLabelsAreBoundedWithoutSplittingSurrogatePairs() {
         assertEquals("中文", ClientSyncService.truncateLabel("中文"));
         String emoji = "🦊".repeat(65);

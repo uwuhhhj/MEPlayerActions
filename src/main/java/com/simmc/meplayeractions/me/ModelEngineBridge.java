@@ -226,6 +226,26 @@ public final class ModelEngineBridge {
         Session session = requireSession(attachment);
         return session.audience != null && session.entity.getModels().size() == 1;
     }
+    public record LocalRenderingDiagnosis(boolean attached, boolean owned, boolean audience, int modelCount,
+                                          boolean allowed, String reason) { }
+    /** Observe the existing ownership/audience/single-model gate; never create or change a session. */
+    public LocalRenderingDiagnosis localRenderingDiagnosis(Attachment attachment) {
+        requireMainThread();
+        Session session = attachment == null ? null : sessions.get(attachment.playerId());
+        ModeledEntity entity = attachment == null ? null : ModelEngineAPI.getModeledEntity(attachment.playerId());
+        return diagnoseLocalRendering(isAttached(attachment), attachment != null && attachment.owned(),
+                session != null && session.attachment == attachment && session.audience != null,
+                entity == null ? 0 : entity.getModels().size());
+    }
+    static LocalRenderingDiagnosis diagnoseLocalRendering(boolean attached, boolean owned, boolean audience, int modelCount) {
+        boolean allowed = attached && owned && audience && modelCount == 1;
+        String reason = !attached ? "模型会话未连接或已失效"
+                : !owned ? "此模型来自原生 ME/其他插件；仅本插件创建的 owned 实例允许本地替换"
+                : !audience ? "实例没有本插件的观众过滤器"
+                : modelCount != 1 ? "目标实体必须恰好有 1 个模型；当前 " + modelCount + " 个，保留 ME 渲染"
+                : "owned、连接、观众过滤与单模型条件均满足；仍须资产就绪及客户端确认";
+        return new LocalRenderingDiagnosis(attached, owned, audience, modelCount, allowed, reason);
+    }
     /** Per-viewer display replacement; never hides a foreign model sharing the entity. */
     public boolean localRendering(Attachment attachment, UUID viewer, boolean enabled) {
         if (!isAttached(attachment)) return !enabled;

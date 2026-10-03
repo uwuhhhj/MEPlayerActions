@@ -293,6 +293,7 @@ public final class ActionController {
     }
     public List<String> debug(Player player) {
         Session s = requireSession(player);
+        var localRendering = bridge.localRenderingDiagnosis(s.attachment);
         List<String> lines = new ArrayList<>(List.of("模型：" + s.attachment.modelId(),
                 "处理器：" + s.attachment.activeModel().getAnimationHandler().getId(),
                 "模型原有动画：" + s.attachment.activeModel().getBlueprint().getAnimations().size()
@@ -313,6 +314,10 @@ public final class ActionController {
                         + (s.visualFrame == null ? "未采样" : s.visualFrame.air()),
                 "真实坐下/爬行：" + gameplay.isSitting(player) + "/" + gameplay.isCrawling(player),
                 "GSit：" + gameplay.diagnosis(),
+                "本地接管：" + (localRendering.allowed() ? "允许申请" : "不允许")
+                        + "；attached=" + localRendering.attached() + "；owned=" + localRendering.owned()
+                        + "；audience=" + localRendering.audience() + "；模型数量=" + localRendering.modelCount() + "/1"
+                        + "；" + localRendering.reason(),
                 "客户端：" + (clients == null ? "未启用" : clients.status(player))));
         if (!s.failure.isEmpty()) lines.add("最近动作失败：" + s.failure);
         if (s.attachment.owned()) lines.add("模型观众：" + bridge.viewerCount(s.attachment)

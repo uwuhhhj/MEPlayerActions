@@ -37,6 +37,10 @@ public final class BbModel {
     private final Map<String, Clip> clips;
     private final int cubeCount;
     private final int[] headBones;
+    private final YsmAnimationController.Definitions controllers;
+    private final String controllerFamily;
+    private final Map<String,List<Molang.Program>> controllerEvents;
+    private final Map<String,Molang.Program> authorFunctions;
 
     public record Texture(int index, byte[] png) {
         public Texture { png = png.clone(); }
@@ -102,7 +106,8 @@ public final class BbModel {
         }
     }
     private record Script(double time, Molang.Program program) { }
-    private record Clip(double length, Map<Integer, Track[]> tracks, List<Script> scripts) { }
+    private record Clip(double length, Map<Integer, Track[]> tracks, List<Script> scripts,
+                        String loop, Molang.Program blendWeight, boolean infinite) { }
     /** Nullable channel values mean this layer does not own that channel. */
     static final class Pose {
         final Vector3f[][] channels;
@@ -119,12 +124,14 @@ public final class BbModel {
     record Evaluated(Pose pose, double weight) { }
 
     private BbModel(List<Texture> textures, List<Bone> bones, List<BakedFace> faces,
-                    Map<String, Clip> clips, int cubeCount) {
+                    Map<String, Clip> clips, int cubeCount, YsmAnimationController.Definitions controllers, String family,
+                    Map<String,List<Molang.Program>> events, Map<String,Molang.Program> functions) {
         this.textures = List.copyOf(textures);
         this.bones = List.copyOf(bones);
         this.faces = List.copyOf(faces);
         this.clips = Collections.unmodifiableMap(new LinkedHashMap<>(clips));
         this.cubeCount = cubeCount;
+        this.controllers = controllers; this.controllerFamily = family; this.controllerEvents = events; this.authorFunctions = functions;
         headBones = findHeadBones(bones);
     }
 
@@ -148,10 +155,94 @@ public final class BbModel {
     public List<Texture> textures() { return textures; }
     public Set<String> animations() { return clips.keySet(); }
     public int cubeCount() { return cubeCount; }
+    /** Geometry preparation never evaluates author expressions or timeline effects. */
+    public List<Vertex> basisVertices() { return vertices(emptyPose()); }
+    public Map<String,Matrix4f> basisBoneTransforms() { return boneTransforms(emptyPose(), false); }
+    /** Author defaults are evaluated in an isolated, inert context; world/entry effects never run here. */
+    public Map<String,Double> initialVariables() {
+        Molang.Context context = new Molang.Context(); context.frame(Map.of("query.life_time", 0d));
+        int[] depth = { 0 }, eventDepth = { 0 };
+        context.functions((name, args) -> {
+            if (name.equals("ysm.sync")) {
+                List<Object> values = syncArguments(args);
+                if (values == null || eventDepth[0] >= 16) return 0d;
+                eventDepth[0]++;
+                try { authorEvent("sync", values, context); }
+                finally { eventDepth[0]--; }
+                return 0d;
+            }
+            if (name.startsWith("fn.")) {
+                Molang.Program program = authorFunctions.get(name.substring(3));
+                if (program == null || args.size() > 32 || depth[0] >= 16) return 0d;
+                depth[0]++;
+                try { return callAuthorFunction(context, program, args); }
+                finally { depth[0]--; }
+            }
+            if (name.equals("ysm.first_order") || name.equals("ysm.second_order"))
+                return args.size() > 1 && args.get(1) instanceof Number number ? number.doubleValue() : 0d;
+            if (name.startsWith("ysm.bone_")) return new Molang.VectorValue(0, 0, name.equals("ysm.bone_scale") ? 1 : 0);
+            return 0d;
+        });
+        authorEvent("player_init", List.of(), context);
+        for (var entry : clips.entrySet()) if (entry.getKey().matches("(pre_)?parallel[0-7]")) {
+            for (Script script : entry.getValue().scripts) if (script.time == 0) script.program.evaluateValue(context);
+        }
+        return context.variables();
+    }
+    public Set<String> boneNames() {
+        Set<String> names = new LinkedHashSet<>(); for (Bone bone : bones) if (!bone.name.isEmpty()) names.add(bone.name);
+        return Collections.unmodifiableSet(names);
+    }
+    public boolean hasBone(String name) { return bones.stream().anyMatch(bone -> bone.name.equals(name)); }
+    public boolean ysmControllers() { return !controllerFamily.isEmpty(); }
+    YsmAnimationController.Definitions controllerDefinitions() { return controllers; }
+    public String controllerFamily() { return controllerFamily; }
+    Map<String,List<Molang.Program>> controllerEvents() { return controllerEvents; }
+    Map<String,Molang.Program> authorFunctions() { return authorFunctions; }
+    void authorEvent(String name, List<Object> arguments, Molang.Context context) {
+        for (Molang.Program program : controllerEvents.getOrDefault(name, List.of()))
+            callAuthorFunction(context, program, arguments);
+    }
+    /** Bounded numeric arguments for local event execution; this path has no networking. */
+    static List<Object> syncArguments(List<Object> arguments) {
+        if (arguments.size() > 16) return null;
+        List<Object> values = new ArrayList<>(arguments.size());
+        for (Object argument : arguments) {
+            if (!(argument instanceof Number number) || !Double.isFinite(number.doubleValue())) return null;
+            values.add(number.doubleValue());
+        }
+        return List.copyOf(values);
+    }
+    /** Function arguments and temp locals are separate from persistent entity/controller variables. */
+    static Object callAuthorFunction(Molang.Context context, Molang.Program program, List<Object> args) {
+        Map<String,Object> queries = context.queryValues(), temps = context.tempValues();
+        try {
+            context.query("args", new Molang.SequenceValue(args)); context.restoreTempValues(Map.of());
+            return program.evaluateValue(context);
+        } finally { context.restoreQueries(queries); context.restoreTempValues(temps); }
+    }
+    public String animationLoop(String name) {
+        Clip clip = clips.get(name); if (clip == null) throw invalid("Unknown animation: " + name); return clip.loop;
+    }
+    double animationWeight(String name, Molang.Context context) {
+        return Math.max(0, Math.min(64, clips.get(name).blendWeight.evaluate(context)));
+    }
+    Vector3f boneValue(String name, int channel, Pose pose) {
+        for (int i = 0; i < bones.size(); i++) if (bones.get(i).name.equals(name)) {
+            if (channel == 3) return matrices(pose)[i].getTranslation(new Vector3f()).mul(16);
+            if (channel == 1) {
+                Vector3f value = pose.channels[i][1];
+                return new Vector3f(bones.get(i).rotation).add(value == null ? new Vector3f() : value);
+            }
+            Vector3f value = pose.channels[i][channel];
+            return value == null ? defaultValue(channel) : new Vector3f(value);
+        }
+        return defaultValue(channel == 3 ? 0 : channel);
+    }
     public double animationLengthTicks(String animation) {
         Clip clip = clips.get(animation);
         if (clip == null) throw invalid("Unknown animation: " + animation);
-        return clip.length * 20;
+        return clip.infinite ? Double.POSITIVE_INFINITY : clip.length * 20;
     }
 
     public boolean ysmPhysics() { return clips.containsKey("parallel1") && clips.containsKey("parallel2"); }
@@ -202,7 +293,7 @@ public final class BbModel {
         if (physics != null) for (Script script : physics.scripts) script.program.evaluate(context);
     }
     List<Layer> withParallelLayers(List<Layer> input) {
-        if (!ysmPhysics()) return input;
+        if (ysmControllers() || !ysmPhysics()) return input;
         List<Layer> result = new ArrayList<>(input);
         Set<String> active = new HashSet<>(); input.forEach(layer -> active.add(layer.animation));
         for (String name : clips.keySet()) if ((name.startsWith("pre_parallel") || name.equals("parallel0")) && !active.contains(name))
@@ -218,6 +309,7 @@ public final class BbModel {
     /** Adds the player's look only to designated head bones, after authored poses. */
     public List<Vertex> sample(double serverTick, List<Layer> layers, float relativeHeadYaw, float headPitch) {
         checkedTick(serverTick);
+        if (ysmControllers()) return new AnimationPlayer(this).sample(serverTick, layers, relativeHeadYaw, headPitch);
         Pose pose = new Pose(bones.size());
         double[] headWeights = defaultHeadWeights();
         Molang.Context context = new Molang.Context();
@@ -251,13 +343,15 @@ public final class BbModel {
         return switch (layer.toLowerCase(Locale.ROOT)) {
             case "environment", "ambient", "blink", "ribbon", "tail" -> 0;
             case "posture", "movement", "main" -> 10;
-            case "interaction", "arms", "swing", "use" -> 20;
+            case "player.hold_mainhand", "player.hold_offhand" -> 15;
+            case "interaction", "arms", "swing", "use", "player.swing", "player.use" -> 20;
             case "manual" -> 30;
             default -> 5;
         };
     }
     static boolean additive(String layer) {
-        return Set.of("interaction", "arms", "swing", "use").contains(layer.toLowerCase(Locale.ROOT));
+        return Set.of("interaction", "arms", "swing", "use", "player.hold_mainhand", "player.hold_offhand",
+                "player.swing", "player.use").contains(layer.toLowerCase(Locale.ROOT));
     }
     Pose emptyPose() { return new Pose(bones.size()); }
     double[] defaultHeadWeights() {
@@ -329,6 +423,16 @@ public final class BbModel {
         return new Evaluated(pose, weight);
     }
 
+    Evaluated evaluateClip(String name, double elapsedTicks, String loop, Molang.Context context) {
+        // Shifting the sampled tick preserves fractional transition times without changing the wire Layer clock.
+        Layer layer = new Layer("ysm", name, 0, 1, loop.equals("ONCE") ? "HOLD" : loop, 0, 0);
+        Evaluated result = evaluate(Math.max(0, elapsedTicks), layer, false, context);
+        return new Evaluated(result.pose, animationWeight(name, context));
+    }
+    void clipEvents(String name, String loop, double beforeTicks, double afterTicks, Molang.Context context) {
+        events(new Layer("ysm", name, 0, 1, loop, 0, 0), beforeTicks, afterTicks, context);
+    }
+
     static void overlay(Pose below, Pose above, double weight, boolean additive) {
         if (weight <= 0) return;
         float t = (float) clamp(weight);
@@ -354,32 +458,13 @@ public final class BbModel {
         return vertices(pose, null);
     }
     List<Vertex> vertices(Pose pose, Set<String> selectedBones) {
-        Matrix4f[] transforms = new Matrix4f[bones.size()];
-        Matrix3f[] normals = new Matrix3f[bones.size()];
-        boolean[] visible = new boolean[bones.size()];
+        Matrix4f[] transforms = matrices(pose);
+        Matrix3f[] normals = new Matrix3f[bones.size()]; boolean[] visible = new boolean[bones.size()];
         for (int i = 0; i < bones.size(); i++) {
-            Bone bone = bones.get(i);
-            Vector3f parentPivot = bone.parent >= 0 ? bones.get(bone.parent).pivot : new Vector3f();
-            Vector3f position = pose.channels[i][0], rotation = pose.channels[i][1], scale = pose.channels[i][2];
-            if (position == null) position = new Vector3f();
-            if (rotation == null) rotation = new Vector3f();
-            if (scale == null) scale = new Vector3f(1);
-            Matrix4f transform = bone.parent >= 0 ? new Matrix4f(transforms[bone.parent]) : new Matrix4f();
-            transform.translate((bone.pivot.x - parentPivot.x + position.x) * UNIT,
-                    (bone.pivot.y - parentPivot.y + position.y) * UNIT,
-                    (bone.pivot.z - parentPivot.z + position.z) * UNIT);
-            transform.rotateZ((float) ((bone.rotation.z + rotation.z) * DEG))
-                    .rotateY((float) ((bone.rotation.y + rotation.y) * DEG))
-                    .rotateX((float) ((bone.rotation.x + rotation.x) * DEG));
-            Vector3f look = pose.look[i];
-            if (look != null) transform.rotateY((float) (look.y * DEG)).rotateX((float) (look.x * DEG));
-            transform.scale(scale);
-            transforms[i] = transform;
-            float determinant = transform.determinant3x3();
+            Bone bone = bones.get(i); float determinant = transforms[i].determinant3x3();
             if (!Float.isFinite(determinant)) throw invalid("Sampled bone transform exceeded limits");
-            visible[i] = bone.visible && (bone.parent < 0 || visible[bone.parent])
-                    && Math.abs(determinant) > 1e-12;
-            if (visible[i]) normals[i] = transform.normal(new Matrix3f());
+            visible[i] = bone.visible && (bone.parent < 0 || visible[bone.parent]) && Math.abs(determinant) > 1e-12;
+            if (visible[i]) normals[i] = transforms[i].normal(new Matrix3f());
         }
         List<Vertex> result = new ArrayList<>(faces.size() * 4);
         Vector3f point = new Vector3f(), normal = new Vector3f();
@@ -399,6 +484,43 @@ public final class BbModel {
             }
         }
         return List.copyOf(result);
+    }
+
+    Map<String, Matrix4f> boneTransforms(Pose pose) { return boneTransforms(pose, true); }
+    private Map<String, Matrix4f> boneTransforms(Pose pose, boolean visibleOnly) {
+        Matrix4f[] matrices = matrices(pose); Map<String, Matrix4f> result = new LinkedHashMap<>();
+        boolean[] visible = new boolean[bones.size()];
+        for (int i = 0; i < bones.size(); i++) {
+            Bone bone = bones.get(i); float determinant = matrices[i].determinant3x3();
+            visible[i] = bone.visible && (bone.parent < 0 || visible[bone.parent])
+                    && Float.isFinite(determinant) && Math.abs(determinant) > 1e-12;
+            if (!bone.name.isEmpty() && (!visibleOnly || visible[i])) result.put(bone.name, new Matrix4f(matrices[i]));
+        }
+        return Collections.unmodifiableMap(result);
+    }
+    private Matrix4f[] matrices(Pose pose) {
+        Matrix4f[] transforms = new Matrix4f[bones.size()];
+        for (int i = 0; i < bones.size(); i++) {
+            Bone bone = bones.get(i);
+            Vector3f parentPivot = bone.parent >= 0 ? bones.get(bone.parent).pivot : new Vector3f();
+            Vector3f position = pose.channels[i][0], rotation = pose.channels[i][1], scale = pose.channels[i][2];
+            if (position == null) position = new Vector3f();
+            if (rotation == null) rotation = new Vector3f();
+            if (scale == null) scale = new Vector3f(1);
+            Matrix4f transform = bone.parent >= 0 ? new Matrix4f(transforms[bone.parent]) : new Matrix4f();
+            transform.translate((bone.pivot.x - parentPivot.x + position.x) * UNIT,
+                    (bone.pivot.y - parentPivot.y + position.y) * UNIT,
+                    (bone.pivot.z - parentPivot.z + position.z) * UNIT);
+            transform.rotateZ((float) ((bone.rotation.z + rotation.z) * DEG))
+                    .rotateY((float) ((bone.rotation.y + rotation.y) * DEG))
+                    .rotateX((float) ((bone.rotation.x + rotation.x) * DEG));
+            Vector3f look = pose.look[i];
+            if (look != null) transform.rotateY((float) (look.y * DEG)).rotateX((float) (look.x * DEG));
+            transform.scale(scale);
+            transforms[i] = transform;
+
+        }
+        return transforms;
     }
 
     private static Vector3f catmull(Vector3f p0, Vector3f p1, Vector3f p2, Vector3f p3, float t) {
@@ -461,7 +583,43 @@ public final class BbModel {
             for (var entry : cubes.entrySet()) if (!assigned.contains(entry.getKey())) bakeCube(entry.getValue(), 0);
             readAnimations();
             if (faces.isEmpty()) throw invalid("Model has no textured cube faces");
-            return new BbModel(textures, bones, faces, clips, cubes.size());
+            String family = string(root, "ysm_controller_family", "");
+            if (!family.isEmpty() && !Set.of("player", "fp.arm", "fp_arm", "arm", "vehicle", "projectile").contains(family))
+                throw invalid("Unknown YSM controller family");
+            YsmAnimationController.Definitions definitions = YsmAnimationController.parse(
+                    root.has("ysm_animation_controllers") ? object(root.get("ysm_animation_controllers")) : new JsonObject());
+            Map<String,List<Molang.Program>> events = new LinkedHashMap<>();
+            if (root.has("ysm_events")) {
+                JsonObject entries = object(root.get("ysm_events")); if (entries.size() > 64) throw invalid("YSM event count");
+                for (var event : entries.entrySet()) {
+                    if (event.getKey().isEmpty() || event.getKey().length() > 128) throw invalid("YSM event name");
+                    List<Molang.Program> programs = new ArrayList<>();
+                    JsonArray values = event.getValue().isJsonArray() ? event.getValue().getAsJsonArray() : new JsonArray();
+                    if (!event.getValue().isJsonArray()) values.add(event.getValue());
+                    if (values.size() > 32) throw invalid("YSM event script count");
+                    for (JsonElement value : values) {
+                        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) throw invalid("YSM event script");
+                        programs.add(Molang.compile(value.getAsString()));
+                    }
+                    events.put(event.getKey().replace("_ctrl_", "."), List.copyOf(programs));
+                }
+            }
+            Map<String,Molang.Program> functions = new LinkedHashMap<>();
+            if (root.has("ysm_functions")) {
+                JsonObject entries = object(root.get("ysm_functions")); if (entries.size() > 64) throw invalid("YSM function count");
+                for (var function : entries.entrySet()) {
+                    String name = function.getKey().toLowerCase(Locale.ROOT);
+                    if (name.length() > 128 || name.isBlank() || name.codePoints().anyMatch(Character::isISOControl)
+                            || functions.containsKey(name)) throw invalid("YSM function name or duplicate");
+                    if (!function.getValue().isJsonPrimitive() || !function.getValue().getAsJsonPrimitive().isString())
+                        throw invalid("YSM function script");
+                    String script = function.getValue().getAsString();
+                    if (script.getBytes(StandardCharsets.UTF_8).length > 32_768) throw invalid("YSM function script byte limit");
+                    functions.put(name, Molang.compile(script));
+                }
+            }
+            return new BbModel(textures, bones, faces, clips, cubes.size(), definitions, family,
+                    Collections.unmodifiableMap(events), Collections.unmodifiableMap(functions));
         }
         void readTextures() {
             JsonArray items = array(root, "textures", true);
@@ -575,7 +733,7 @@ public final class BbModel {
                 JsonObject animation = object(value);
                 String name = string(animation, "name", "");
                 if (name.isBlank() || name.length() > 128 || clips.containsKey(name)) throw invalid("Missing/duplicate animation name");
-                rejectScript(animation, "anim_time_update", "blend_weight", "start_delay", "loop_delay");
+                rejectScript(animation, "anim_time_update", "animation_time_update", "start_delay", "loop_delay");
                 double length = number(animation, "length", 0, 0, 3600);
                 Map<Integer, Track[]> tracks = new LinkedHashMap<>();
                 List<Script> scripts = new ArrayList<>();
@@ -587,10 +745,24 @@ public final class BbModel {
                         for (JsonElement keyValue : array(animator, "keyframes", false)) {
                             if (++keys > MAX_KEYFRAMES) throw invalid("Keyframe limit exceeded");
                             JsonObject frame = object(keyValue);
-                            if (!string(frame, "channel", "").equals("timeline")) throw invalid("External effect channels are unsupported");
+                            String channel = string(frame, "channel", "");
+                            if (!Set.of("timeline", "sound", "particle").contains(channel)) throw invalid("Unknown effect channel");
                             double time = number(frame, "time", 0, 0, length + .001);
-                            for (JsonElement point : array(frame, "data_points", true))
-                                scripts.add(new Script(time, Molang.compile(string(object(point), "script", ""))));
+                            JsonArray points = array(frame, "data_points", true);
+                            if (points.size() > 32) throw invalid("Effect count limit exceeded");
+                            for (JsonElement point : points) {
+                                JsonObject data = object(point);
+                                String program;
+                                if (channel.equals("timeline")) program = string(data, "script", "");
+                                else {
+                                    String effect = string(data, "effect", "");
+                                    if (effect.isBlank() || effect.length() > 256 || effect.chars().anyMatch(Character::isISOControl)) throw invalid("Invalid effect identifier");
+                                    // The reference sound keyframe uses the effect identifier; custom script/host fields are inert.
+                                    String quoted = new Gson().toJson(effect);
+                                    program = (channel.equals("sound") ? "ysm.play_sound(" : "ysm.particle(") + quoted + ")";
+                                }
+                                scripts.add(new Script(time, Molang.compile(program)));
+                            }
                         }
                         continue;
                     }
@@ -627,7 +799,22 @@ public final class BbModel {
                     tracks.put(index, boneTracks);
                 }
                 scripts.sort(Comparator.comparingDouble(Script::time));
-                clips.put(name, new Clip(length, Collections.unmodifiableMap(tracks), List.copyOf(scripts)));
+                JsonElement loopValue = animation.get("loop");
+                String loop = "ONCE";
+                if (loopValue != null) {
+                    if (!loopValue.isJsonPrimitive()) throw invalid("Invalid animation loop");
+                    String authored = loopValue.getAsString().toUpperCase(Locale.ROOT);
+                    loop = switch (authored) {
+                        case "TRUE", "LOOP" -> "LOOP";
+                        case "FALSE", "ONCE", "PLAY_ONCE" -> "ONCE";
+                        case "HOLD", "HOLD_ON_LAST_FRAME" -> "HOLD";
+                        default -> throw invalid("Invalid animation loop");
+                    };
+                }
+                JsonElement blend = animation.get("blend_weight");
+                if (blend != null && !blend.isJsonPrimitive()) throw invalid("Invalid clip blend weight");
+                Molang.Program blendWeight = Molang.compile(blend == null ? "1" : blend.getAsString());
+                clips.put(name, new Clip(length, Collections.unmodifiableMap(tracks), List.copyOf(scripts), loop, blendWeight, bool(animation, "ysm_infinite", false)));
             }
         }
         Point point(JsonObject point, int channel) {
@@ -734,7 +921,7 @@ public final class BbModel {
         }
         if (depth != 0 || string) throw invalid("Unbalanced JSON");
     }
-    private static long validatePng(byte[] png, long remainingPixels) {
+    static long validatePng(byte[] png, long remainingPixels) {
         byte[] signature = {(byte)137,80,78,71,13,10,26,10};
         if (png.length < 33 || png.length > 6 * 1024 * 1024
                 || !Arrays.equals(Arrays.copyOf(png, 8), signature)) throw invalid("Invalid PNG signature/size");

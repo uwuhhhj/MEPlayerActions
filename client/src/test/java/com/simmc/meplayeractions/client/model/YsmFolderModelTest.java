@@ -18,7 +18,7 @@ class YsmFolderModelTest {
 
     @Test void cc0DefaultRetainsGeometryRealActionTracksAndSecondOrderDynamics() throws Exception {
         byte[] converted=YsmFolderModel.bundledDefault();BbModel model=BbModel.parse(converted);
-        assertEquals(172,model.cubeCount());assertEquals(59,model.animations().size());assertTrue(model.ysmPhysics());
+        assertEquals(172,model.cubeCount());assertEquals(115,model.animations().size());assertTrue(model.ysmPhysics());
         assertTrue(model.animations().containsAll(List.of("idle","walk","run","jump","swim","elytra_fly","extra1","extra7")));
         assertEquals(60,model.animationLengthTicks("idle"));assertEquals(20,model.animationLengthTicks("walk"));
         assertNotEquals(model.sample(7,List.of(layer("idle"))),model.sample(7,List.of(layer("walk"))),"Imported movement must use authored tracks");
@@ -28,9 +28,13 @@ class YsmFolderModelTest {
             right.sample(tick,List.of(layer("walk")),-30,15,Map.of("query.ground_speed",0d,"query.vertical_speed",0d));
             assertEquals(4128,vertices.size());assertTrue(vertices.stream().allMatch(vertex->Float.isFinite(vertex.x())&&Float.isFinite(vertex.y())&&Float.isFinite(vertex.z())));
         }
-        assertNotEquals(left.expressionVariables(),right.expressionVariables(),"Springs must use each model instance's input");
-        assertEquals(1d,left.expressionVariables().get("variable.roaming.red_bow_headdress"));
-        assertTrue(left.expressionVariables().entrySet().stream().anyMatch(entry->entry.getKey().startsWith("variable.ysm_import_s")&&entry.getKey().endsWith(".y")&&Math.abs(entry.getValue())>.01));
+        assertNotEquals(left.sample(79,List.of(layer("walk")),30,-15,Map.of("query.ground_speed",5d,"query.vertical_speed",1d)),
+                right.sample(79,List.of(layer("walk")),-30,15,Map.of("query.ground_speed",0d,"query.vertical_speed",0d)),
+                "Imported look and dynamics must use each model instance's input");
+        assertTrue(new String(converted, StandardCharsets.UTF_8).contains("ysm.second_order"),
+                "The native per-instance resolver receives authored spring calls");
+        assertFalse(new String(converted, StandardCharsets.UTF_8).contains("variable.ysm_import_s"));
+        assertTrue(model.animations().containsAll(List.of("use_mainhand:bow", "use_offhand:shield", "swing:sword")));
         try(var manifest=YsmFolderModel.class.getResourceAsStream(RESOURCE+"ysm.json")) {
             assertNotNull(manifest);assertEquals("CC 0",JsonParser.parseString(new String(manifest.readAllBytes(),StandardCharsets.UTF_8)).getAsJsonObject().getAsJsonObject("metadata").getAsJsonObject("license").get("type").getAsString());
         }
@@ -39,6 +43,22 @@ class YsmFolderModelTest {
 
     @Test void localFolderConvertsToTheSameCanonicalPlayerModel() throws Exception {
         Path folder=copyDefault();assertArrayEquals(YsmFolderModel.bundledDefault(),YsmFolderModel.read(folder));
+    }
+
+    @Test void previewMetadataTravelsBesideTheUnchangedModelBytesAndHash() throws Exception {
+        Path folder = copyDefault(); var imported = YsmFolderModel.readWithPreview(folder);
+        assertEquals("gui", imported.previewAnimation());
+        assertArrayEquals(YsmFolderModel.bundledDefault(), imported.raw());
+        JsonObject manifest = read(folder.resolve("ysm.json"));
+        manifest.getAsJsonObject("properties").addProperty("preview_animation", "idle");
+        Files.writeString(folder.resolve("ysm.json"), manifest.toString());
+        var idle = YsmFolderModel.readWithPreview(folder);
+        assertEquals("idle", idle.previewAnimation()); assertArrayEquals(imported.raw(), idle.raw());
+        assertEquals(AssetTransfer.hash(imported.raw()), AssetTransfer.hash(idle.raw()));
+        manifest.getAsJsonObject("properties").addProperty("preview_animation", "missing");
+        Files.writeString(folder.resolve("ysm.json"), manifest.toString());
+        var missing = YsmFolderModel.readWithPreview(folder);
+        assertEquals("", missing.previewAnimation()); assertArrayEquals(imported.raw(), missing.raw());
     }
 
     @Test void resourceReferencesCannotReadOutsideTheSelectedFolder() throws Exception {
@@ -81,12 +101,7 @@ class YsmFolderModelTest {
     }
 
     private Path copyDefault() throws Exception {
-        Path folder=temporary.resolve("model");
-        for(String asset:List.of("ysm.json","models/main.json","animations/main.animation.json","animations/extra.animation.json","textures/default.png")) {
-            Path target=folder.resolve(asset);Files.createDirectories(target.getParent());
-            try(var input=YsmFolderModel.class.getResourceAsStream(RESOURCE+asset)) { assertNotNull(input);Files.write(target,input.readAllBytes()); }
-        }
-        return folder;
+        return YsmFolderFixtures.copyDefault(temporary.resolve("model"));
     }
     private static JsonObject read(Path path) throws Exception { return JsonParser.parseString(Files.readString(path)).getAsJsonObject(); }
     private static BbModel.Layer layer(String name) { return new BbModel.Layer("locomotion",name,0,1,"LOOP",0,0); }

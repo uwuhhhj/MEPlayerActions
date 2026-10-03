@@ -119,6 +119,35 @@ class EntityAnimationControllerTest {
         c.update(102,normal(.2,64,true,true),p,manual);assertEquals(1,c.layers().size());
         c.update(103,normal(.2,64,true,true),p,List.of(new Layer("manual","wave",103,1,"ONCE",2,2)));assertEquals(2,c.layers().size());
     }
+    @Test void privateActionLockKeepsMovingExtraWhileUnlockedMotionStillCancelsIt() {
+        var source=policy(FEATURES,"","");var manual=List.of(new Layer("manual","dance",100,1,"LOOP",2,2));
+        for(boolean locked:List.of(false,true)) {
+            var c=new EntityAnimationController();var p=source.withActionLock(locked);
+            c.update(100,normal(0,64,true,true),p,manual);
+            c.update(101,normal(.2,64,true,true),p,manual);
+            assertEquals(locked,c.layers().stream().anyMatch(layer->layer.layer().equals("manual")));
+            c.update(102,normal(.2,64,true,true),p,manual);
+            assertEquals(locked,c.layers().stream().anyMatch(layer->layer.layer().equals("manual")));
+        }
+        assertTrue(source.interruptMove());assertTrue(source.interruptPosture());
+        var locked=source.withActionLock(true);
+        assertFalse(locked.interruptMove());assertEquals(source.features(),locked.features());assertEquals(source.clips(),locked.clips());
+        assertEquals(source.interruptPosture(),locked.interruptPosture());assertSame(source,source.withActionLock(false));
+        assertSame(locked,locked.withActionLock(false)); // An unlocked call cannot broaden an already-authorized policy.
+    }
+    @Test void privateActionLockDoesNotOverridePostureOrDeath() {
+        var p=policy(FEATURES,"","").withActionLock(true);
+        var manual=List.of(new Layer("manual","dance",100,1,"HOLD",2,2));var c=new EntityAnimationController();
+        c.update(100,normal(0,64,true,true),p,manual);
+        c.update(101,sample(0,64,true,true,false,"",true,false,0,false,false),p,manual);
+        assertEquals("crawl-idle",c.state());assertTrue(c.layers().stream().noneMatch(layer->layer.layer().equals("manual")));
+        var dead=new VanillaYsmAnimations.VanillaState(true,0,false,false,false,
+                VanillaYsmAnimations.ItemState.EMPTY,VanillaYsmAnimations.ItemState.EMPTY,
+                VanillaYsmAnimations.Hand.NONE,0,VanillaYsmAnimations.Hand.NONE,0,false,"",Set.of(),false,false);
+        var d=new EntityAnimationController();
+        d.update(100,nativeSample(normal(0,64,true,true),dead),p,manual,nativeClips(p,"death"));
+        assertEquals("death",d.state());assertTrue(d.layers().stream().noneMatch(layer->layer.layer().equals("manual")));
+    }
     @Test void authoritativeLayerClockRebasesOnceAcrossRepeatedPacketsAndServerTickWrap() {
         var clock=new LocalLayerClock();var manual=new Layer("manual","wave",0x1_0000_0000L,1,"ONCE",2,2);
         var first=clock.accept(0x1_0000_0002L,100,List.of(manual)).getFirst();assertEquals(98,first.startedAtTick());
@@ -159,5 +188,125 @@ class EntityAnimationControllerTest {
         assertEquals("ladder-move",controller.state());assertEquals("custom_ladder_move",controller.layers().getFirst().animation());
         controller.update(102,sample(0,64.1,false,false,false,"ride-pig",true,false,0,false,false),parsed,List.of());
         assertEquals("ride-pig",controller.state());assertEquals("custom_ride_pig",controller.layers().getFirst().animation());
+    }
+    private static EntityAnimationController.Sample nativeSample(EntityAnimationController.Sample base,VanillaYsmAnimations.VanillaState vanilla) {
+        return new EntityAnimationController.Sample(base.x(),base.y(),base.z(),base.grounded(),base.bedSleeping(),base.prone(),base.inWater(),
+                base.flying(),base.gliding(),base.sneaking(),base.sprinting(),base.vehicle(),base.swinging(),base.swingTick(),base.offhand(),
+                base.mining(),base.localPlayer(),base.climbing(),vanilla);
+    }
+    private static VanillaYsmAnimations.VanillaState nativeState(boolean dead,int hurt,boolean riptide,boolean swimming,
+            VanillaYsmAnimations.ItemState main,VanillaYsmAnimations.ItemState off,VanillaYsmAnimations.Hand use,int useTicks,
+            VanillaYsmAnimations.Hand swing,int swingTicks) {
+        return new VanillaYsmAnimations.VanillaState(dead,hurt,riptide,false,swimming,main,off,use,useTicks,swing,swingTicks,false,"",Set.of(),false,false);
+    }
+    private static Set<String> nativeClips(LocalMotionPolicy policy,String... extras) {
+        var names=new LinkedHashSet<String>();policy.clips().values().forEach(layer->names.add(layer.animation()));names.addAll(List.of(extras));return names;
+    }
+    @Test void ownAndUnmoddedRemoteHandsUseTheSameNativeEquipmentAndUseClock() {
+        var sword=new VanillaYsmAnimations.ItemState("minecraft:diamond_sword",Set.of(),"sword","none",false,false,1);
+        var shield=new VanillaYsmAnimations.ItemState("minecraft:shield",Set.of(),"shield","block",false,false,1);
+        var p=policy(FEATURES,"","");var clips=nativeClips(p,"hold_mainhand:sword","hold_offhand:shield","use_offhand:block");
+        List<Layer> own=null;
+        for(boolean local:List.of(true,false)) {
+            var c=new EntityAnimationController();
+            c.update(100,nativeSample(normal(0,64,true,local),nativeState(false,0,false,false,sword,shield,
+                    VanillaYsmAnimations.Hand.NONE,0,VanillaYsmAnimations.Hand.NONE,0)),p,List.of(),clips);
+            Layer held=c.layers().stream().filter(layer->layer.layer().equals("player.hold_offhand")).findFirst().orElseThrow();
+            c.update(101,nativeSample(normal(0,64,true,local),nativeState(false,0,false,false,sword,shield,
+                    VanillaYsmAnimations.Hand.OFF,1,VanillaYsmAnimations.Hand.NONE,0)),p,List.of(),clips);
+            assertEquals(Set.of("player.hold_offhand"),c.pausedControllers());assertTrue(c.layers().contains(held));
+            Layer use=c.layers().stream().filter(layer->layer.layer().equals("player.use")).findFirst().orElseThrow();
+            assertEquals("use_offhand:block",use.animation());assertEquals(101,use.startedAtTick());
+            c.update(102,nativeSample(normal(0,64,true,local),nativeState(false,0,false,false,sword,shield,
+                    VanillaYsmAnimations.Hand.OFF,2,VanillaYsmAnimations.Hand.NONE,0)),p,List.of(),clips);
+            assertTrue(c.layers().contains(use));
+            if(local)own=c.layers();else assertEquals(own,c.layers());
+        }
+    }
+    @Test void holdItemComponentChangeRestartsOnceAndPauseDoesNotRewriteItsClock() {
+        var p=policy(FEATURES,"","");var clips=nativeClips(p,"hold_mainhand:bow","use_mainhand:bow");
+        var bow=new VanillaYsmAnimations.ItemState("minecraft:bow",Set.of(),"bow","bow",false,false,7);
+        var changed=new VanillaYsmAnimations.ItemState("minecraft:bow",Set.of(),"bow","bow",false,false,8);
+        var empty=VanillaYsmAnimations.ItemState.EMPTY;var c=new EntityAnimationController();
+        c.update(100,nativeSample(normal(0,64,true,true),nativeState(false,0,false,false,bow,empty,
+                VanillaYsmAnimations.Hand.NONE,0,VanillaYsmAnimations.Hand.NONE,0)),p,List.of(),clips);
+        Layer held=c.layers().stream().filter(layer->layer.layer().equals("player.hold_mainhand")).findFirst().orElseThrow();
+        c.update(101,nativeSample(normal(0,64,true,true),nativeState(false,0,false,false,bow,empty,
+                VanillaYsmAnimations.Hand.MAIN,1,VanillaYsmAnimations.Hand.NONE,0)),p,List.of(),clips);
+        assertTrue(c.layers().contains(held));assertEquals(Set.of("player.hold_mainhand"),c.pausedControllers());
+        c.update(102,nativeSample(normal(0,64,true,true),nativeState(false,0,false,false,changed,empty,
+                VanillaYsmAnimations.Hand.NONE,0,VanillaYsmAnimations.Hand.NONE,0)),p,List.of(),clips);
+        var next=c.layers().stream().filter(layer->layer.layer().equals("player.hold_mainhand")).findFirst().orElseThrow();
+        assertEquals(102,next.startedAtTick());assertTrue(c.pausedControllers().isEmpty());
+        c.update(103,nativeSample(normal(0,64,true,true),nativeState(false,0,false,false,changed,empty,
+                VanillaYsmAnimations.Hand.NONE,0,VanillaYsmAnimations.Hand.NONE,0)),p,List.of(),clips);
+        assertTrue(c.layers().contains(next));
+    }
+    @Test void nativeSwingDoesNotInferRemoteMiningAndServerEchoCannotRestartItsClock() {
+        var p=policy(FEATURES,"","");var clips=nativeClips(p,"swing_hand");var empty=VanillaYsmAnimations.ItemState.EMPTY;
+        var c=new EntityAnimationController();
+        c.update(100,nativeSample(normal(0,64,true,false),nativeState(false,0,false,false,empty,empty,
+                VanillaYsmAnimations.Hand.NONE,0,VanillaYsmAnimations.Hand.MAIN,0)),p,List.of(),clips);
+        Layer swing=c.layers().stream().filter(layer->layer.layer().equals("player.swing")).findFirst().orElseThrow();
+        assertEquals("swing_hand",swing.animation());assertEquals(100,swing.startedAtTick());
+        c.update(101,nativeSample(normal(0,64,true,false),nativeState(false,0,false,false,empty,empty,
+                VanillaYsmAnimations.Hand.NONE,0,VanillaYsmAnimations.Hand.MAIN,1)),p,
+                List.of(new Layer("interaction","custom_swing_mainhand",9000,1,"ONCE",2,2)),clips);
+        assertTrue(c.layers().contains(swing));assertTrue(c.layers().stream().noneMatch(layer->layer.animation().equals("custom_mining")));
+        c.update(102,nativeSample(normal(0,64,true,false),VanillaYsmAnimations.VanillaState.NONE),p,List.of(),clips);
+        assertTrue(c.layers().contains(swing));assertEquals("ONCE",swing.loop());
+        c.update(103,nativeSample(normal(0,64,true,false),nativeState(false,0,false,false,empty,empty,
+                VanillaYsmAnimations.Hand.NONE,0,VanillaYsmAnimations.Hand.MAIN,0)),p,List.of(),clips);
+        Layer repeated=c.layers().stream().filter(layer->layer.layer().equals("player.swing")).findFirst().orElseThrow();
+        assertEquals(103,repeated.startedAtTick());assertNotEquals(swing,repeated);
+    }
+    @Test void nativeDeathHurtAndRiptidePrioritiesUseExistingClipsAndBoundedEventStarts() {
+        var p=policy(FEATURES,"","");var clips=nativeClips(p,"death","attacked","riptide");var empty=VanillaYsmAnimations.ItemState.EMPTY;
+        var c=new EntityAnimationController();
+        c.update(100,nativeSample(normal(0,64,true,true),nativeState(false,0,false,false,empty,empty,
+                VanillaYsmAnimations.Hand.NONE,0,VanillaYsmAnimations.Hand.NONE,0)),p,List.of(),clips);
+        c.update(101,nativeSample(normal(0,64,true,true),nativeState(false,10,false,false,empty,empty,
+                VanillaYsmAnimations.Hand.NONE,0,VanillaYsmAnimations.Hand.NONE,0)),p,List.of(),clips);
+        assertEquals("attacked",c.state());assertEquals(101,c.layers().getFirst().startedAtTick());
+        c.update(102,nativeSample(normal(0,64,true,true),nativeState(false,9,false,false,empty,empty,
+                VanillaYsmAnimations.Hand.NONE,0,VanillaYsmAnimations.Hand.NONE,0)),p,List.of(),clips);
+        assertEquals(101,c.layers().getFirst().startedAtTick());
+        c.update(103,nativeSample(normal(0,64,true,true),nativeState(false,10,false,false,empty,empty,
+                VanillaYsmAnimations.Hand.NONE,0,VanillaYsmAnimations.Hand.NONE,0)),p,List.of(),clips);
+        assertEquals(103,c.layers().getFirst().startedAtTick());
+        c.update(104,nativeSample(normal(0,64,true,true),nativeState(false,10,true,false,empty,empty,
+                VanillaYsmAnimations.Hand.NONE,0,VanillaYsmAnimations.Hand.NONE,0)),p,List.of(),clips);
+        assertEquals("riptide",c.state());assertEquals("riptide",c.layers().getFirst().animation());
+        c.update(105,nativeSample(normal(0,64,true,true),nativeState(true,10,true,false,empty,empty,
+                VanillaYsmAnimations.Hand.NONE,0,VanillaYsmAnimations.Hand.NONE,0)),p,
+                List.of(new Layer("manual","wave",100,1,"ONCE",2,2)),clips);
+        assertEquals("death",c.state());assertEquals("death",c.layers().getFirst().animation());assertEquals("ONCE",c.layers().getFirst().loop());
+        assertTrue(c.layers().stream().noneMatch(layer->layer.layer().equals("manual")));
+    }
+    @Test void nativeDownwardLadderAndSwimmingFlagAreDistinctFromOnlyPronePose() {
+        var p=policy(FEATURES,"","");var clips=nativeClips(p,"ladder_down");var c=new EntityAnimationController();
+        var ladder=new EntityAnimationController.Sample(0,64,0,false,false,false,false,false,false,false,false,"",false,0,false,false,false,true);
+        c.update(100,nativeSample(ladder,VanillaYsmAnimations.VanillaState.NONE),p,List.of(),clips);
+        var down=new EntityAnimationController.Sample(0,63.9,0,false,false,false,false,false,false,false,false,"",false,0,false,false,false,true);
+        c.update(101,nativeSample(down,VanillaYsmAnimations.VanillaState.NONE),p,List.of(),clips);
+        assertEquals("ladder-down",c.state());assertEquals("ladder_down",c.layers().getFirst().animation());
+        var empty=VanillaYsmAnimations.ItemState.EMPTY;
+        var prone=sample(0,63.9,false,true,true,"",false,false,0,false,false);
+        c.update(102,nativeSample(prone,nativeState(false,0,false,true,empty,empty,
+                VanillaYsmAnimations.Hand.NONE,0,VanillaYsmAnimations.Hand.NONE,0)),p,List.of(),clips);
+        assertEquals("swim-walk",c.state());
+        c.update(103,nativeSample(prone,VanillaYsmAnimations.VanillaState.NONE),p,List.of(),clips);assertEquals("crawl-idle",c.state());
+    }
+    @Test void nativeVehicleConditionsUseTheirOwnControllerAndDeadVehicleFallsBackToBody() {
+        var p=policy(FEATURES,"","");var clips=nativeClips(p,"vehicle$minecraft:horse");var c=new EntityAnimationController();
+        var empty=VanillaYsmAnimations.ItemState.EMPTY;
+        var mounted=new VanillaYsmAnimations.VanillaState(false,0,false,false,false,empty,empty,VanillaYsmAnimations.Hand.NONE,0,
+                VanillaYsmAnimations.Hand.NONE,0,false,"minecraft:horse",Set.of(),true,true);
+        c.update(100,nativeSample(sample(0,64,true,false,false,"ride",false,false,0,false,false),mounted),p,List.of(),clips);
+        assertEquals("player.vehicle",c.layers().getFirst().layer());assertEquals("vehicle$minecraft:horse",c.layers().getFirst().animation());
+        var removed=new VanillaYsmAnimations.VanillaState(false,0,false,false,false,empty,empty,VanillaYsmAnimations.Hand.NONE,0,
+                VanillaYsmAnimations.Hand.NONE,0,false,"minecraft:horse",Set.of(),false,true);
+        c.update(101,nativeSample(sample(0,64,true,false,false,"ride",false,false,0,false,false),removed),p,List.of(),clips);
+        assertEquals("idle",c.state());assertEquals("posture",c.layers().getFirst().layer());
     }
 }

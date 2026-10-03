@@ -5,7 +5,6 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.simmc.meplayeractions.client.ClientRuntime;
 import com.simmc.meplayeractions.client.LocalAppearanceSettings;
-import com.simmc.meplayeractions.client.PackModelLibrary;
 import com.simmc.meplayeractions.client.ui.ActionsScreen;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;
@@ -36,6 +35,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.Set;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import net.fabricmc.loader.api.FabricLoader;
@@ -48,10 +48,11 @@ public final class E2EHarness {
     private static final UUID OTHER = UUID.nameUUIDFromBytes("OfflinePlayer:MPAObserver".getBytes(StandardCharsets.UTF_8));
     private static final List<String> STAGES = System.getProperty("meplayeractions.e2e.focus", "").equals("visibility")
             ? List.of("other-idle", "other-undisguise", "other-native-move", "other-redisguise", "other-undisguise-again", "undisguise")
-            : List.of("idle", "local-appearance-server-base", "local-appearance-own", "local-appearance-action", "local-appearance-off",
+            : List.of("push-first-download", "push-cache-reconnect", "push-asset-failed", "push-asset-recovered", "idle", "local-appearance-server-base", "local-appearance-own", "local-appearance-action", "local-appearance-off",
             "native-follow", "server-trailing", "wave", "crawl", "crawl-side", "bed", "ride", "boat", "extra", "hunger", "jump",
             "firstperson", "firstperson-extra0", "extra0-restored", "gsit-sit", "gsit-crawl", "gsit-lay", "gsit-firstperson", "gsit-thirdperson", "gsit-undisguise", "gsit-redisguise", "gsit-reset", "resource-reload", "pack-disabled", "pack-restored", "local-off", "local-on", "npc", "npc-crawl", "npc-crawl-side",
-            "menu", "self-hidden", "self-hidden-extra0", "self-restored", "server-reload", "other-idle", "other-native-follow", "other-crawl", "other-bed",
+            "menu", "self-hidden", "self-hidden-extra0", "self-restored", "server-reload", "other-idle",
+            "other-item-01-hold", "other-item-01-swing", "other-item-01-use", "other-item-02-hold", "other-item-02-swing", "other-item-02-use", "other-native-follow", "other-crawl", "other-bed",
             "other-ride", "other-jump", "other-extra0", "other-range-out", "other-range-in", "other-undisguise", "other-native-move", "other-redisguise", "other-undisguise-again",
             "other-second-model", "other-second-undisguise", "other-first-model", "own-second-model", "own-second-undisguise", "own-first-model", "undisguise", "preview", "preview-end");
     private final ClientRuntime runtime;
@@ -79,6 +80,28 @@ public final class E2EHarness {
     private List<String> originalPackProfiles = List.of(), disabledPackProfiles = List.of();
     private String packExpectedInstance = "", packExpectedHash = "", packAuthorityError = "", packReloadError = "";
     private boolean packSelectionChanged;
+    private Map<String, Object> packPushBaseline = Map.of(), pushReconnectBaseline = Map.of();
+    private boolean pushReconnectConnecting, pushReconnectDisguiseIssued;
+    private String pushReconnectHash = "", pushReconnectPreviousInstance = "";
+    private long pushReconnectGeneration;
+    private int pushReconnectTicks, pushReconnectReadyAt = -1;
+    private boolean pushReconnectDisconnected;
+    private Map<String, Object> pushFaultBaseline = Map.of(), pushInvalidBaseline = Map.of();
+    private String pushFaultOriginalHash = "", pushFaultPreviousInstance = "";
+    private int pushFaultStableTicks;
+    private boolean pushFaultRequested;
+    private final Map<String, String> pushPreviousInstances = new LinkedHashMap<>();
+    private String ownSecondInitialInstance = "", ownSecondInitialHash = "", ownSecondSourceInstance = "";
+    private boolean ownSecondTargetRequested;
+    private long itemSubmissionBaseline, itemFrameBaseline, itemStageStartedAtMillis;
+    private boolean itemStageSucceeded;
+    private int itemDrawStableTicks;
+    private final Map<String,Map<String,float[]>> heldItemBaselines = new LinkedHashMap<>();
+    private Map<String,Object> itemLatestProof = Map.of();
+    private Map<String,Object> itemShieldExpectedSource = Map.of();
+    private boolean handsCleanupPending;
+    private int ownSecondReadyTicks;
+    private Map<String, Object> ownSecondSourceProof = Map.of();
     private long packReloadRequest, packReloadStartedAtMillis, packReloadCompletedAtMillis, packFrameBaseline, packDrawBaseline;
     private int packReloadCallbacks, packReadyAt = -1, packSettledTicks;
     private int packMissingSamples;
@@ -141,6 +164,10 @@ public final class E2EHarness {
                 }
                 return;
             }
+            if (stage >= 0 && STAGES.get(stage).equals("push-cache-reconnect")) {
+                pushReconnectTick(client);
+                return;
+            }
             if (client.world == null || client.player == null || client.getNetworkHandler() == null) {
                 if (++connectionTicks > 900) { check("realMultiplayer", false, "Did not join isolated Paper server"); finish(client); }
                 return;
@@ -172,6 +199,13 @@ public final class E2EHarness {
             }
             stageTicks++;
             String name = STAGES.get(stage);
+            if (name.equals("push-first-download")) {
+                if (stageTicks % 10 == 0) command(client, "mpatest " + PLAYER + " status");
+                if (stageTicks % 5 == 0) {
+                    JsonObject status = readPackAuthority(client);
+                    if (status != null) packAuthority = status;
+                }
+            }
             if(name.equals("native-follow") || name.equals("server-trailing")) {
                 client.options.forwardKey.setPressed(stageTicks>=15 && stageTicks<40);
                 if(name.equals("native-follow") && stageTicks>=17 && stageTicks<40) measureFollow(client,client.player);
@@ -234,8 +268,13 @@ public final class E2EHarness {
                 recordJumpFrame(client, name, client.player, own(client));
                 if (!captured && jumping && stageTicks >= 5) capture(client, name);
             }
+            if (name.startsWith("other-item-")) { itemDrawTick(client, name); return; }
             if (name.equals("resource-reload")) {
                 resourceReloadTick(client);
+                return;
+            }
+            if (name.equals("push-asset-failed") || name.equals("push-asset-recovered")) {
+                pushFaultTick(client, name);
                 return;
             }
             if (name.equals("pack-disabled") || name.equals("pack-restored")) {
@@ -244,6 +283,10 @@ public final class E2EHarness {
             }
             if (name.equals("other-extra0")) {
                 remoteAccessoryTick(client);
+                return;
+            }
+            if (name.equals("own-second-model")) {
+                ownSecondModelTick(client);
                 return;
             }
             if (name.equals("firstperson-extra0") || name.equals("self-hidden-extra0")) {
@@ -278,6 +321,9 @@ public final class E2EHarness {
     }
 
     private void next(MinecraftClient client) {
+        if (stage >= 0 && STAGES.get(stage).equals("other-item-02-use")) {
+            command(client, "mpatest MPAObserver hands-restore"); handsCleanupPending = false;
+        }
         client.options.forwardKey.setPressed(false);
         client.options.jumpKey.setPressed(false);
         if(stage>=0 && (STAGES.get(stage).equals("native-follow") || STAGES.get(stage).equals("other-native-follow"))) {
@@ -313,7 +359,15 @@ public final class E2EHarness {
         LOGGER.info("E2E stage {}", name);
         phase(client, name);
         if (!name.equals("bed")) command(client, "time set day");
+        if (name.startsWith("other-item-")) beginItemDraw(client, name);
         switch (name) {
+            case "push-first-download" -> {
+                packExpectedInstance = own(client).getFirst().instance();
+                packReloadCompletedAtMillis = System.currentTimeMillis(); packAuthority = null;
+                command(client, "mpatest " + PLAYER + " status");
+            }
+            case "push-cache-reconnect" -> beginPushReconnect(client);
+            case "push-asset-failed", "push-asset-recovered" -> beginPushFault(client, name);
             case "idle" -> command(client, "mpatest " + PLAYER + " reset");
             case "local-appearance-server-base" -> { runtime.disableLocalAppearance(); command(client, "mpatest " + PLAYER + " reset"); }
             case "local-appearance-own" -> {
@@ -383,7 +437,7 @@ public final class E2EHarness {
             case "npc" -> command(client, "mpatest " + PLAYER + " disguise ysm_02_jk");
             case "menu" -> {
                 command(client, "mpatest " + PLAYER + " reset");
-                runtime.preview("ysm_02_jk");
+                runtime.preview("openysm_default");
                 client.setScreen(new ActionsScreen(runtime));
             }
             case "self-hidden" -> runtime.options.showSelf = false;
@@ -429,11 +483,20 @@ public final class E2EHarness {
             case "other-redisguise" -> command(client, "mpatest MPAObserver disguise ysm_01_jk");
             case "other-second-model" -> command(client, "mpatest MPAObserver disguise ysm_02_jk");
             case "other-first-model" -> command(client, "mpatest MPAObserver disguise ysm_01_jk");
-            case "own-second-model" -> command(client, "mpatest " + PLAYER + " disguise ysm_02_jk");
+            case "own-second-model" -> {
+                var current = own(client).stream().findFirst().orElse(null);
+                ownSecondInitialInstance = current == null ? "" : current.instance();
+                ownSecondInitialHash = current == null ? "" : current.assetHash();
+                ownSecondSourceInstance = ""; ownSecondTargetRequested = false; ownSecondReadyTicks = 0;
+                ownSecondSourceProof = Map.of();
+                // server-reload leaves this player in ysm_02_jk. An identical disguise command is
+                // intentionally idempotent; establish a genuine different-model source first.
+                command(client, "mpatest " + PLAYER + " disguise ysm_01_jk");
+            }
             case "own-second-undisguise" -> command(client, "meplayeractions undisguise");
             case "own-first-model" -> command(client, "mpatest " + PLAYER + " disguise ysm_01_jk");
             case "undisguise" -> command(client, "meplayeractions undisguise");
-            case "preview" -> runtime.preview("ysm_02_jk");
+            case "preview" -> runtime.preview("openysm_default");
             case "preview-end" -> runtime.preview("off");
             default -> { }
         }
@@ -456,6 +519,19 @@ public final class E2EHarness {
                 "layers", binding.layers(), "tick", binding.serverTick(), "x", binding.x(), "y", binding.y(),
                 "z", binding.z(), "scale", binding.scale(), "hidePlayer", binding.hidePlayer())).toList());
         observation.put("renderer", diagnostic); observations.add(observation);
+        Map<String, Object> push = runtime.serverPushDiagnostics();
+        observation.put("serverPush", push);
+        observation.put("resourcePackIndexPresent", packIndexPresent(client));
+        if (name.equals("push-cache-reconnect")) observation.put("reconnect", Map.of(
+                "actualDisconnectObserved", pushReconnectDisconnected, "before", pushReconnectBaseline,
+                "previousInstance", pushReconnectPreviousInstance, "expectedHash", pushReconnectHash,
+                "ticks", pushReconnectTicks, "readyAt", pushReconnectReadyAt));
+        if (name.equals("push-asset-failed") || name.equals("push-asset-recovered"))
+            observation.put("assetFault", pushFaultEvidence(client, name));
+        if (name.equals("own-second-model")) observation.put("modelChangeSource", ownSecondSourceProof);
+        check(name + "NoAssetRequest", pushCount(push, "assetRequestPacketsSent") == 0,
+                "Real successful send counter for asset_request=" + pushCount(push, "assetRequestPacketsSent"));
+        checkPushLifecycle(client, name, push);
         if (name.equals("pack-disabled") || name.equals("pack-restored")) observation.put("packLifecycle", packEvidence(client, name, diagnostic));
         if (name.startsWith("local-appearance-")) {
             observation.put("localAppearance", runtime.localAppearance());
@@ -483,6 +559,24 @@ public final class E2EHarness {
                 "sleeping", other.isSleeping(), "vehicle", other.hasVehicle(), "x", other.getX(), "y", other.getY(), "z", other.getZ()));
         command(client, "mpatest " + (name.startsWith("other-") ? "MPAObserver" : PLAYER) + " status");
         switch (name) {
+            case "push-first-download" -> {
+                check("serverPushNegotiated", pushNegotiated(push), "Actual hello_ack mode/capabilities=" + push);
+                check("serverPushPlainMePack", !packIndexPresent(client)
+                                && client.getResourcePackManager().getEnabledIds().stream().anyMatch(id -> id.startsWith("file/"))
+                                && height > 0 && !bindings.isEmpty(),
+                        "Ordinary enabled ME resource pack has no MPA model index; actual own pushed mesh height=" + height
+                                + "; profiles=" + client.getResourcePackManager().getEnabledIds());
+                check("serverPushColdCacheDownloaded", pushCount(push, "offersReceived") > 0 && pushCount(push, "cacheMisses") > 0 && pushCount(push, "transfersBegun") > 0
+                                && pushCount(push, "transfersCompleted") > 0 && pushCount(push, "gpuPrepared") > 0
+                                && pushCount(push, "renderReadySent") > 0 && pushCount(push, "renderAcks") > 0,
+                        "Cold disposable clone proves offer/miss/complete data/SHA+parse/GPU/ready/ACK; actual counters=" + push);
+                JsonObject asset = packAuthority == null ? null : packAuthority.getAsJsonObject("clientAssetStatus");
+                check("serverPushDefaultJarAssetSource", asset != null && asset.has("readSucceeded") && asset.get("readSucceeded").getAsBoolean()
+                                && "ready".equals(asset.get("state").getAsString()) && "jar".equals(asset.get("source").getAsString())
+                                && packAuthorityMatches(client, true),
+                        "Fresh real ModelAssets result and viewer lease prove isolated initial OWN absence -> default plugin JAR asset: " + packAuthority);
+                observation.put("serverAuthority", packAuthority);
+            }
             case "server-trailing" -> {
                 var binding=bindings.stream().findFirst().orElse(null);
                 check("explicitTrailingMode",binding!=null && binding.motionSource().equals("server-timeline"),runtime.status().toString());
@@ -853,6 +947,249 @@ public final class E2EHarness {
         }
     }
 
+    private static long pushCount(Map<String, Object> diagnostics, String key) {
+        return diagnostics.get(key) instanceof Number count ? count.longValue() : -1;
+    }
+
+    private static List<Map<?, ?>> pushRows(Map<String, Object> diagnostics, String key) {
+        if (!(diagnostics.get(key) instanceof Collection<?> rows)) return List.of();
+        return rows.stream().filter(Map.class::isInstance).<Map<?, ?>>map(value -> (Map<?, ?>) value).toList();
+    }
+
+    private static boolean pushNegotiated(Map<String, Object> diagnostics) {
+        return Boolean.TRUE.equals(diagnostics.get("negotiated")) && "server-push".equals(diagnostics.get("assetMode"))
+                && diagnostics.get("capabilities") instanceof Collection<?> capabilities && capabilities.contains("server_push_models");
+    }
+
+    private static boolean samePushIdentity(Map<?, ?> row, ClientRuntime.RenderBinding binding) {
+        return binding.owner().toString().equals(row.get("owner")) && binding.instance().equals(row.get("instance"))
+                && binding.assetHash().equals(row.get("hash"));
+    }
+
+    private static boolean currentPushAuthorization(Map<String, Object> push) {
+        List<Map<?, ?>> raw = pushRows(push, "bindings");
+        // A granted hash can finish for another still-authorized owner of that same hash.
+        // The protocol tests verify its exact issuance identity; this check verifies current hash authority.
+        return pushRows(push, "activeOffers").stream().allMatch(offer -> raw.stream().anyMatch(binding ->
+                !String.valueOf(offer.get("hash")).isBlank() && offer.get("hash").equals(binding.get("hash"))));
+    }
+
+    private void checkPushLifecycle(MinecraftClient client, String name, Map<String, Object> push) {
+        List<Map<?, ?>> raw = pushRows(push, "bindings");
+        boolean renderedAuthorized = runtime.renderBindings().stream()
+                .filter(binding -> !binding.instance().equals("preview") && !binding.instance().startsWith("local-self:"))
+                .allMatch(binding -> raw.stream().anyMatch(row -> samePushIdentity(row, binding)
+                        && Boolean.TRUE.equals(row.get("active")) && Boolean.TRUE.equals(row.get("readySent"))
+                        && "ready".equals(row.get("serverAssetStatus"))));
+        check(name + "PushAuthorizationCurrent", currentPushAuthorization(push) && renderedAuthorized,
+                "In-flight hashes require a current raw server binding; actual server meshes require current owner/instance/hash and ready ACK: " + push);
+        UUID released = Set.of("other-range-out", "other-undisguise", "other-undisguise-again", "other-second-undisguise").contains(name)
+                ? OTHER : Set.of("own-second-undisguise", "undisguise", "preview", "preview-end").contains(name) ? client.player.getUuid() : null;
+        if (released != null) check(name + "PushOwnerReleased", raw.stream().noneMatch(row -> released.toString().equals(row.get("owner")))
+                        && runtime.renderBindings().stream().filter(binding -> !binding.instance().equals("preview") && !binding.instance().startsWith("local-self:"))
+                        .noneMatch(binding -> binding.owner().equals(released))
+                        && pushRows(push, "activeOffers").stream().filter(row -> released.toString().equals(row.get("owner")))
+                        .allMatch(offer -> raw.stream().anyMatch(row -> !released.toString().equals(row.get("owner")) && row.get("hash").equals(offer.get("hash")))),
+                "Released owner has no raw binding or server-render binding; retained shared-hash grants require another current authorized owner: owner=" + released + "; diagnostics=" + push);
+        String expected = switch (name) {
+            case "npc", "own-second-model", "other-second-model", "other-extra0" -> "ysm_02_jk";
+            case "own-first-model", "other-first-model", "other-redisguise", "gsit-redisguise" -> "ysm_01_jk";
+            default -> "";
+        };
+        if (!expected.isEmpty()) {
+            String owner = (name.startsWith("other-") ? OTHER : client.player.getUuid()).toString();
+            Map<?, ?> current = raw.stream().filter(row -> owner.equals(row.get("owner"))).findFirst().orElse(Map.of());
+            String previous = name.equals("own-second-model") ? ownSecondSourceInstance : pushPreviousInstances.getOrDefault(owner, "");
+            check(name + "PushNewInstance", expected.equals(current.get("modelId")) && Boolean.TRUE.equals(current.get("active"))
+                            && !previous.isEmpty() && !String.valueOf(current.get("instance")).equals(previous),
+                    "Requested model=" + expected + "; previous observed instance=" + previous + "; current=" + current);
+        }
+        for (Map<?, ?> row : raw) pushPreviousInstances.put(String.valueOf(row.get("owner")), String.valueOf(row.get("instance")));
+    }
+
+    private void ownSecondModelTick(MinecraftClient client) {
+        Map<String, Object> push = runtime.serverPushDiagnostics(), diagnostic = ModelRenderer.diagnostics();
+        Map<?, ?> raw = pushRows(push, "bindings").stream()
+                .filter(row -> client.player.getUuidAsString().equals(row.get("owner"))).findFirst().orElse(Map.of());
+        var binding = own(client).stream().findFirst().orElse(null);
+        String expected = ownSecondTargetRequested ? "ysm_02_jk" : "ysm_01_jk";
+        String previous = ownSecondTargetRequested ? ownSecondSourceInstance : ownSecondInitialInstance;
+        boolean ready = binding != null && samePushIdentity(raw, binding) && expected.equals(raw.get("modelId"))
+                && Boolean.TRUE.equals(raw.get("active")) && Boolean.TRUE.equals(raw.get("readySent"))
+                && "ready".equals(raw.get("serverAssetStatus")) && "jar".equals(raw.get("serverAssetSource"))
+                && !previous.isEmpty() && !binding.instance().equals(previous) && visibleModel(diagnostic, binding);
+        ownSecondReadyTicks = ready ? ownSecondReadyTicks + 1 : 0;
+        if (!ownSecondTargetRequested && ownSecondReadyTicks >= 3) {
+            ownSecondSourceInstance = binding.instance();
+            ownSecondSourceProof = Map.of("initialInstance", ownSecondInitialInstance, "initialHash", ownSecondInitialHash,
+                    "sourceInstance", binding.instance(), "sourceHash", binding.assetHash(),
+                    "sourceStageTick", stageTicks, "serverPush", push, "renderer", diagnostic);
+            fixtureFrames.add(Map.of("stage", "own-second-model-source", "proof", ownSecondSourceProof));
+            check("ownSecondModelDifferentSourceReady", !binding.assetHash().equals(ownSecondInitialHash),
+                    "Real ysm_01_jk source has fresh instance, different hash, current authorized JAR asset, ready ACK and actual mesh: " + ownSecondSourceProof);
+            // Capture the accepted source before issuing the target command, rather than using an
+            // unrelated earlier screenshot of this owner, which was already the target model.
+            ownSecondTargetRequested = true; ownSecondReadyTicks = 0;
+            command(client, "mpatest " + PLAYER + " disguise ysm_02_jk");
+        } else if (ownSecondTargetRequested && ownSecondReadyTicks >= 10 && stageTicks >= 30) {
+            check("ownSecondModelTargetHashAndSource", binding.assetHash().equals(ownSecondInitialHash),
+                    "Real ysm_02_jk returns to its original reference hash with a different instance from accepted ysm_01_jk, current JAR source, ready ACK and actual mesh: " + raw);
+            capture(client, "own-second-model"); next(client); return;
+        }
+        if (stageTicks > 240) {
+            check("ownSecondModelChangeCompleted", false,
+                    "Did not observe both actual authorized source and new target within 240 ticks; source=" + ownSecondSourceProof + "; current=" + push);
+            capture(client, "own-second-model"); next(client);
+        }
+    }
+
+    private void beginPushReconnect(MinecraftClient client) {
+        pushReconnectBaseline = runtime.serverPushDiagnostics();
+        var binding = own(client).stream().findFirst().orElse(null);
+        pushReconnectPreviousInstance = binding == null ? "" : binding.instance();
+        pushReconnectHash = binding == null ? "" : binding.assetHash();
+        pushReconnectGeneration = pushCount(pushReconnectBaseline, "generation");
+        pushReconnectConnecting = false; pushReconnectDisguiseIssued = false; pushReconnectDisconnected = false;
+        pushReconnectTicks = 0; pushReconnectReadyAt = -1;
+        check("serverPushReconnectPrerequisites", binding != null && pushNegotiated(pushReconnectBaseline)
+                        && pushCount(pushReconnectBaseline, "transfers") == 0 && ModelRenderer.has(pushReconnectHash),
+                "The first pushed model is acknowledged and no transfer is in flight: " + pushReconnectBaseline);
+        client.disconnect(new TitleScreen(), false);
+    }
+
+    private void pushReconnectTick(MinecraftClient client) {
+        pushReconnectTicks++;
+        if (client.world == null && client.player == null && client.getNetworkHandler() == null) pushReconnectDisconnected = true;
+        if (!pushReconnectConnecting && pushReconnectDisconnected && client.currentScreen instanceof TitleScreen
+                && client.getOverlay() == null && pushReconnectTicks >= 10) {
+            String address = System.getProperty("meplayeractions.e2e.server", "127.0.0.1:25591");
+            ConnectScreen.connect(client.currentScreen, client, ServerAddress.parse(address),
+                    new ServerInfo("MEPlayerActions cache reconnect", address, ServerInfo.ServerType.OTHER), false, null);
+            pushReconnectConnecting = true;
+        }
+        if (client.player != null && client.world != null && client.getNetworkHandler() != null) {
+            stageTicks++;
+            if (!pushReconnectDisguiseIssued) {
+                runtime.options.showSelf = true; client.options.setPerspective(Perspective.THIRD_PERSON_FRONT);
+                command(client, "mpatest " + PLAYER + " disguise ysm_01_jk");
+                pushReconnectDisguiseIssued = true;
+            }
+            Map<String, Object> push = runtime.serverPushDiagnostics();
+            var binding = own(client).stream().findFirst().orElse(null);
+            boolean ready = pushNegotiated(push) && pushCount(push, "generation") > pushReconnectGeneration
+                    && binding != null && !binding.instance().equals(pushReconnectPreviousInstance)
+                    && binding.assetHash().equals(pushReconnectHash) && visibleModel(ModelRenderer.diagnostics(), binding)
+                    && client.currentScreen == null && client.getOverlay() == null;
+            if (!ready) pushReconnectReadyAt = -1;
+            else if (pushReconnectReadyAt < 0) pushReconnectReadyAt = stageTicks;
+            if (stageTicks % 5 == 0) phase(client, "push-cache-reconnect");
+            if (ready && stageTicks >= pushReconnectReadyAt + 20) {
+                check("serverPushActualReconnect", pushReconnectDisconnected && pushReconnectConnecting
+                                && pushCount(push, "generation") > pushReconnectGeneration,
+                        "Actual world/network disconnect, ConnectScreen join, and newer runtime generation; before="
+                                + pushReconnectBaseline + "; after=" + push);
+                check("serverPushReconnectCacheHitNoDownload", pushCount(push, "cacheHits") > pushCount(pushReconnectBaseline, "cacheHits")
+                                && pushCount(push, "offersReceived") > pushCount(pushReconnectBaseline, "offersReceived")
+                                && pushCount(push, "gpuPrepared") > pushCount(pushReconnectBaseline, "gpuPrepared")
+                                && pushCount(push, "renderReadySent") > pushCount(pushReconnectBaseline, "renderReadySent")
+                                && pushCount(push, "transfersBegun") == pushCount(pushReconnectBaseline, "transfersBegun")
+                                && pushCount(push, "transfersCompleted") == pushCount(pushReconnectBaseline, "transfersCompleted")
+                                && pushCount(push, "cacheMisses") == pushCount(pushReconnectBaseline, "cacheMisses")
+                                && pushCount(push, "renderAcks") > pushCount(pushReconnectBaseline, "renderAcks"),
+                        "Fresh server offer validates cached raw model, prepares GPU and receives a new ACK without data transfer: " + push);
+                capture(client, "push-cache-reconnect"); next(client); return;
+            }
+        }
+        if (pushReconnectTicks > 600) {
+            check("serverPushActualReconnect", false, "Reconnect exceeded 600 ticks: " + runtime.serverPushDiagnostics());
+            finish(client);
+        }
+    }
+
+    private void beginPushFault(MinecraftClient client, String name) {
+        pushFaultBaseline = runtime.serverPushDiagnostics(); pushInvalidBaseline = Map.of(); pushFaultStableTicks = 0;
+        var binding = own(client).stream().findFirst().orElse(null);
+        if (name.equals("push-asset-failed")) {
+            pushFaultOriginalHash = binding == null ? "" : binding.assetHash();
+            pushFaultPreviousInstance = binding == null ? "" : binding.instance();
+            pushFaultRequested = true;
+        } else pushFaultPreviousInstance = packExpectedInstance;
+        packExpectedInstance = ""; packAuthority = null; packReloadCompletedAtMillis = System.currentTimeMillis();
+        command(client, "mpatest " + PLAYER + (name.equals("push-asset-failed") ? " push-fault" : " push-repair"));
+    }
+
+    private Map<String, Object> pushFaultEvidence(MinecraftClient client, String name) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("stage", name); row.put("stageTick", stageTicks); row.put("before", pushFaultBaseline);
+        row.put("invalidBarrier", pushInvalidBaseline); row.put("current", runtime.serverPushDiagnostics());
+        row.put("originalHash", pushFaultOriginalHash); row.put("previousInstance", pushFaultPreviousInstance);
+        row.put("expectedInstance", packExpectedInstance); row.put("stableTicks", pushFaultStableTicks);
+        row.put("serverAuthority", packAuthority); row.put("authorityRead", packAuthorityError);
+        row.put("renderer", ModelRenderer.diagnostics());
+        return row;
+    }
+
+    private void pushFaultTick(MinecraftClient client, String name) {
+        boolean failing = name.equals("push-asset-failed");
+        if (stageTicks % 10 == 0) command(client, "mpatest " + PLAYER + " status");
+        if (stageTicks % 5 == 0) {
+            JsonObject status = readPackAuthority(client);
+            if (status != null && !status.getAsJsonObject("clientSnapshot").get("instance").getAsString().equals(pushFaultPreviousInstance)) {
+                packAuthority = status; packExpectedInstance = status.getAsJsonObject("clientSnapshot").get("instance").getAsString();
+            }
+        }
+        Map<String, Object> push = runtime.serverPushDiagnostics();
+        Map<?, ?> raw = pushRows(push, "bindings").stream().filter(row -> client.player.getUuidAsString().equals(row.get("owner")))
+                .findFirst().orElse(Map.of());
+        JsonObject fault = packAuthority == null ? null : packAuthority.getAsJsonObject("assetFaultFixture");
+        JsonObject asset = packAuthority == null ? null : packAuthority.getAsJsonObject("clientAssetStatus");
+        boolean authoritative = fault != null && fault.has("readSucceeded") && fault.get("readSucceeded").getAsBoolean()
+                && asset != null && asset.has("readSucceeded") && asset.get("readSucceeded").getAsBoolean();
+        boolean sameInstance = !packExpectedInstance.isBlank() && packExpectedInstance.equals(raw.get("instance"));
+        boolean invalid = authoritative && "invalid".equals(asset.get("state").getAsString()) && "own".equals(asset.get("source").getAsString())
+                && fault.get("active").getAsBoolean() && sameInstance && "invalid".equals(raw.get("serverAssetStatus"))
+                && "own".equals(raw.get("serverAssetSource")) && "".equals(raw.get("hash"));
+        boolean noLocal = own(client).isEmpty() && !runtime.shouldHidePlayer(client.player.getUuid())
+                && ((List<?>) ModelRenderer.diagnostics().get("models")).stream().filter(ModelRenderer.FrameModel.class::isInstance)
+                .map(ModelRenderer.FrameModel.class::cast).noneMatch(model -> model.owner().equals(client.player.getUuidAsString()));
+        if (invalid && pushInvalidBaseline.isEmpty()) pushInvalidBaseline = push;
+        boolean quietInvalid = !pushInvalidBaseline.isEmpty()
+                && pushCount(push, "transfersBegun") == pushCount(pushInvalidBaseline, "transfersBegun")
+                && pushCount(push, "renderAcks") == pushCount(pushInvalidBaseline, "renderAcks")
+                && pushRows(push, "activeOffers").stream().noneMatch(row -> client.player.getUuidAsString().equals(row.get("owner")));
+        var restored = own(client).stream().findFirst().orElse(null);
+        boolean repaired = authoritative && !fault.get("active").getAsBoolean() && fault.get("restoredExactly").getAsBoolean()
+                && "ready".equals(asset.get("state").getAsString()) && sameInstance && restored != null
+                && restored.instance().equals(packExpectedInstance) && restored.assetHash().equals(pushFaultOriginalHash)
+                && visibleModel(ModelRenderer.diagnostics(), restored);
+        boolean settled = pushNegotiated(push) && packAuthorityMatches(client, !failing)
+                && (failing ? invalid && noLocal && quietInvalid : repaired);
+        pushFaultStableTicks = settled ? pushFaultStableTicks + 1 : 0;
+        if (stageTicks % 5 == 0) fixtureFrames.add(pushFaultEvidence(client, name));
+        if (stageTicks >= 60 && pushFaultStableTicks >= 15 || stageTicks > (failing ? 240 : 400)) {
+            if (failing) {
+                check("serverPushInvalidOwnAssetAuthoritative", invalid, "Real saved/created OWN {} plus actual plugin reload: " + packAuthority);
+                check("serverPushInvalidAssetFallback", settled && noLocal && packAuthorityMatches(client, false),
+                        "Server actual ME ownership and ME viewer visible, no lease or stale local own mesh for 15 ticks: " + pushFaultEvidence(client, name));
+                check("serverPushInvalidAssetNoStaleTransfer", quietInvalid && pushFaultStableTicks >= 15,
+                        "After invalid terminal state, no retry transfer, offer or stale render ACK: " + push);
+            } else {
+                check("serverPushFaultFixtureRestored", authoritative && fault.get("restoredExactly").getAsBoolean() && !fault.get("active").getAsBoolean(),
+                        "Original OWN bytes or original absence restored by guarded ignored helper: " + fault);
+                check("serverPushRepairRecovered", repaired && packAuthorityMatches(client, true) && pushFaultStableTicks >= 15,
+                        "Actual plugin reload creates a new authorized instance; matching original hash/GPU/mesh/lease/ACK: " + pushFaultEvidence(client, name));
+                check("serverPushRepairCacheNoDownload", repaired && pushCount(push, "cacheHits") > pushCount(pushFaultBaseline, "cacheHits")
+                                && pushCount(push, "transfersBegun") == pushCount(pushFaultBaseline, "transfersBegun")
+                                && pushCount(push, "gpuPrepared") > pushCount(pushFaultBaseline, "gpuPrepared")
+                                && pushCount(push, "renderReadySent") > pushCount(pushFaultBaseline, "renderReadySent")
+                                && pushCount(push, "renderAcks") > pushCount(pushFaultBaseline, "renderAcks"),
+                        "Valid original model is reused only after fresh repair authorization: " + push);
+                if (repaired && authoritative && fault.get("restoredExactly").getAsBoolean()) pushFaultRequested = false;
+            }
+            capture(client, name); next(client);
+        }
+    }
+
     private void beginPackDisable(MinecraftClient client) {
         var manager = client.getResourcePackManager();
         originalPackProfiles = List.copyOf(manager.getEnabledIds());
@@ -863,8 +1200,9 @@ public final class E2EHarness {
         packExpectedInstance = binding == null ? "" : binding.instance();
         packExpectedHash = binding == null ? "" : binding.assetHash();
         packMissingSamples = 0; packNoStaleReady = true;
-        check("packFallbackPrerequisites", binding != null && ModelRenderer.has(packExpectedHash)
-                        && packIndexPresent(client) && originalPackProfiles.stream().anyMatch(id -> !disabledPackProfiles.contains(id)),
+        check("serverPushPackReloadPrerequisites", binding != null && ModelRenderer.has(packExpectedHash)
+                        && !packIndexPresent(client) && pushNegotiated(runtime.serverPushDiagnostics())
+                        && originalPackProfiles.stream().anyMatch(id -> !disabledPackProfiles.contains(id)),
                 "Real enabled profiles=" + originalPackProfiles + "; keeping vanilla/required=" + disabledPackProfiles
                         + "; instance=" + packExpectedInstance + "; hash=" + packExpectedHash);
         manager.setEnabledProfiles(disabledPackProfiles);
@@ -877,6 +1215,10 @@ public final class E2EHarness {
         packAuthority = null; packAuthorityError = "Waiting for a fresh MPATestHelper owner status";
         packReloadCallbacks = 0; packReloadCompletedAtMillis = 0; packReloadError = "";
         packReloadStartedAtMillis = System.currentTimeMillis();
+        packPushBaseline = runtime.serverPushDiagnostics();
+        check(STAGES.get(stage).equals("pack-disabled") ? "serverPushPackDisabledQuiescent" : "serverPushPackRestoredQuiescent",
+                pushCount(packPushBaseline, "transfers") == 0 && pushRows(packPushBaseline, "activeOffers").isEmpty(),
+                "This unrelated-resource reload has no pending server download or decoder offer at its baseline: " + packPushBaseline);
         long request = ++packReloadRequest;
         reload = client.reloadResources();
         reload.whenComplete((unused, failure) -> {
@@ -908,24 +1250,21 @@ public final class E2EHarness {
             if (status != null) packAuthority = status;
         }
         var binding = own(client).stream().findFirst().orElse(null);
-        boolean noOwnModel = binding == null && !runtime.shouldHidePlayer(client.player.getUuid())
-                && ((List<?>) diagnostic.get("models")).stream().filter(ModelRenderer.FrameModel.class::isInstance)
-                .map(ModelRenderer.FrameModel.class::cast).noneMatch(model -> model.owner().equals(client.player.getUuidAsString()));
-        boolean previousAssetGone = !packExpectedHash.isEmpty() && !ModelRenderer.has(packExpectedHash);
-        if (disabling && freshFrames) {
-            packMissingSamples++;
-            packNoStaleReady &= noOwnModel && previousAssetGone;
-        }
+        Map<String, Object> push = runtime.serverPushDiagnostics();
+        if (freshFrames) { packMissingSamples++; packNoStaleReady &= currentPushAuthorization(push); }
         boolean matchingReady = binding != null && binding.instance().equals(packExpectedInstance)
                 && binding.assetHash().equals(packExpectedHash) && ModelRenderer.has(packExpectedHash)
                 && visibleModel(diagnostic, binding)
                 && ((Number) diagnostic.get("drawnBatches")).longValue() > packDrawBaseline;
-        boolean serverMatches = packAuthorityMatches(client, !disabling);
+        boolean serverMatches = packAuthorityMatches(client, true);
         boolean profilesMatch = List.copyOf(client.getResourcePackManager().getEnabledIds())
                 .equals(disabling ? disabledPackProfiles : originalPackProfiles);
-        boolean settled = freshFrames && runtime.serverBridgeReady() && profilesMatch && serverMatches
-                && (disabling ? !packIndexPresent(client) && noOwnModel && previousAssetGone && packNoStaleReady
-                : packIndexPresent(client) && matchingReady && packMissingSamples >= 10 && packNoStaleReady);
+        boolean noDownload = pushCount(push, "transfersBegun") == pushCount(packPushBaseline, "transfersBegun")
+                && pushCount(push, "transfersCompleted") == pushCount(packPushBaseline, "transfersCompleted");
+        boolean freshAck = pushCount(push, "renderReadySent") > pushCount(packPushBaseline, "renderReadySent")
+                && pushCount(push, "renderAcks") > pushCount(packPushBaseline, "renderAcks");
+        boolean settled = freshFrames && runtime.serverBridgeReady() && pushNegotiated(push) && profilesMatch && serverMatches
+                && !packIndexPresent(client) && matchingReady && packNoStaleReady && noDownload && freshAck;
         packSettledTicks = settled ? packSettledTicks + 1 : 0;
         if (settled && packReadyAt < 0) packReadyAt = stageTicks;
         if (stageTicks % 5 == 0) fixtureFrames.add(packEvidence(client, name, diagnostic));
@@ -935,34 +1274,36 @@ public final class E2EHarness {
                     "Real reload callbacks=" + packReloadCallbacks + "; started=" + packReloadStartedAtMillis
                             + "; completed=" + packReloadCompletedAtMillis + "; error=" + packReloadError);
             if (disabling) {
-                check("packDisabledRemovesInstalledIndex", profilesMatch && !packIndexPresent(client),
+                check("serverPushPackDisabledNoIndex", profilesMatch && !packIndexPresent(client),
                         "Enabled now=" + client.getResourcePackManager().getEnabledIds() + "; original=" + originalPackProfiles);
-                check("packDisabledDropsPreviousAsset", previousAssetGone && packMissingSamples >= 10 && packNoStaleReady,
-                        "Previous hash=" + packExpectedHash + "; actual absent-resource frame samples=" + packMissingSamples
-                                + "; no old cache reacquired ready=" + packNoStaleReady);
-                check("packDisabledNoLocalOwnRendering", freshFrames && noOwnModel && packSettledTicks >= 10,
+                check("serverPushPackDisabledModelRetained", matchingReady && packMissingSamples >= 10 && packNoStaleReady,
+                        "Embedded pushed asset survives unrelated ME pack removal with same instance/hash=" + packExpectedInstance + "/" + packExpectedHash);
+                check("serverPushPackDisabledFreshFrames", freshFrames && matchingReady && packSettledTicks >= 10,
                         "Extracted frames=" + frameNumber + "; post-reload baseline=" + packFrameBaseline + "; renderer=" + diagnostic);
-                check("packDisabledServerFallbackSameInstance", serverMatches && packSettledTicks >= 10,
+                check("serverPushPackDisabledOwnerLeaseSameInstance", serverMatches && packSettledTicks >= 10,
                         "Expected owner instance=" + packExpectedInstance + "; authority=" + packAuthority + "; read=" + packAuthorityError);
             } else {
-                check("packRestoredExactProfiles", profilesMatch && packIndexPresent(client),
+                check("packRestoredExactProfiles", profilesMatch && !packIndexPresent(client),
                         "Restored enabled profiles=" + client.getResourcePackManager().getEnabledIds() + "; original=" + originalPackProfiles);
                 check("packRestoredHashRevalidated", matchingReady && packMissingSamples >= 10 && packNoStaleReady,
                         "Expected instance/hash=" + packExpectedInstance + "/" + packExpectedHash
-                                + "; absent-resource samples=" + packMissingSamples + "; binding=" + binding);
+                                + "; actual post-reload frames=" + packMissingSamples + "; binding=" + binding);
                 check("packRestoredOwnerLeaseSameInstance", serverMatches && packSettledTicks >= 10,
                         "Fresh helper authority=" + packAuthority + "; read=" + packAuthorityError);
                 check("packRestoredFreshFrames", freshFrames && matchingReady && packSettledTicks >= 10,
                         "Extracted frames=" + frameNumber + "; post-reload baseline=" + packFrameBaseline + "; renderer=" + diagnostic);
                 if (completed && profilesMatch) packSelectionChanged = false;
             }
+            check(disabling ? "serverPushPackDisabledNoDownloadFreshAck" : "serverPushPackRestoredNoDownloadFreshAck",
+                    noDownload && freshAck && packSettledTicks >= 10,
+                    "No repeated network data; actual new ready+ACK after GPU/resource reload; before=" + packPushBaseline + "; after=" + push);
             capture(client, name);
             next(client);
         }
     }
 
     private static boolean packIndexPresent(MinecraftClient client) {
-        return client.getResourceManager().getResource(Identifier.of(PackModelLibrary.INDEX)).isPresent();
+        return client.getResourceManager().getResource(Identifier.of("meplayeractions", "models/index.json")).isPresent();
     }
 
     private Map<String, Object> packEvidence(MinecraftClient client, String name, Map<String, Object> diagnostic) {
@@ -975,12 +1316,203 @@ public final class E2EHarness {
         row.put("reloadCompletedAtMillis", packReloadCompletedAtMillis); row.put("reloadError", packReloadError);
         row.put("frameBaseline", packFrameBaseline); row.put("drawnBatchBaseline", packDrawBaseline);
         row.put("readyAtStageTick", packReadyAt); row.put("stableTicks", packSettledTicks);
-        row.put("noOldCacheReady", packNoStaleReady); row.put("missingResourceFrameSamples", packMissingSamples);
+        row.put("authorizationAlwaysCurrent", packNoStaleReady); row.put("postReloadFrameSamples", packMissingSamples);
+        row.put("pushBefore", packPushBaseline); row.put("pushAfter", runtime.serverPushDiagnostics());
         row.put("serverAuthority", packAuthority); row.put("authorityRead", packAuthorityError); row.put("renderer", diagnostic);
         return row;
     }
 
-    /** Read genuine helper telemetry from the frozen server's log; never infer leases from a client flag. */
+    /** Correlate actual queue submissions with independent native B actions and server inventory. */
+    private void beginItemDraw(MinecraftClient client, String name) {
+        Map<String,Object> diagnostic = ModelRenderer.diagnostics();
+        itemSubmissionBaseline = ((Number)diagnostic.get("submittedItems")).longValue();
+        itemFrameBaseline = ((Number)diagnostic.get("extractedFrames")).longValue();
+        itemStageStartedAtMillis = System.currentTimeMillis(); itemDrawStableTicks = 0; itemStageSucceeded = false; itemLatestProof = Map.of();
+        itemShieldExpectedSource = name.endsWith("-hold") || name.endsWith("-use")
+                ? readShieldModelSource(client, name.endsWith("-use")) : Map.of();
+        if (name.endsWith("-hold")) {
+            handsCleanupPending = true;
+            command(client, "mpatest MPAObserver hands " + itemModel(name));
+        }
+    }
+    private static String itemModel(String stage) { return stage.contains("-01-") ? "ysm_01_jk" : "ysm_02_jk"; }
+    private void itemDrawTick(MinecraftClient client, String name) {
+        JsonObject authority = itemAuthority(), observer = itemObserverProof(name);
+        JsonObject equipment = null, serverBinding = null;
+        if (authority != null && authority.has("equipmentActors")) for (var row : authority.getAsJsonArray("equipmentActors")) {
+            JsonObject actor = row.getAsJsonObject();
+            if (OTHER.toString().equals(actor.get("uuid").getAsString())) { equipment = actor; serverBinding = actor.getAsJsonObject("aViewerBinding"); break; }
+        }
+        String expected = itemModel(name);
+        var binding = otherBindings(client).stream().findFirst().orElse(null);
+        boolean serverEquipment = equipment != null && !equipment.get("serverMpaSessionPresent").getAsBoolean()
+                && "minecraft:iron_sword".equals(equipment.get("mainhand").getAsString())
+                && "minecraft:shield".equals(equipment.get("offhand").getAsString())
+                && equipment.getAsJsonArray("modelIds").asList().stream().anyMatch(value -> expected.equals(value.getAsString()));
+        boolean current = binding != null && serverBinding != null
+                && expected.equals(serverBinding.get("modelId").getAsString())
+                && binding.instance().equals(serverBinding.get("instance").getAsString())
+                && binding.assetHash().equals(serverBinding.get("hash").getAsString());
+        boolean nativeAction = observer != null && observer.get("actionObserved").getAsBoolean();
+        Map<String,Object> diagnostics = ModelRenderer.diagnostics();
+        Map<String,Map<String,Object>> hands = new LinkedHashMap<>();
+        if (current && diagnostics.get("submittedItemDraws") instanceof List<?> draws) for (Object value : draws) {
+            if (!(value instanceof Map<?,?> row)) continue;
+            if (!OTHER.toString().equals(row.get("owner")) || !binding.instance().equals(row.get("instance"))
+                    || !binding.assetHash().equals(row.get("hash")) || !Boolean.TRUE.equals(row.get("currentBindingValid"))
+                    || !Boolean.TRUE.equals(row.get("nativePresent")) || !OTHER.toString().equals(row.get("nativeEntityUuid"))
+                    || !Boolean.TRUE.equals(row.get("nonempty")) || itemNumber(row,"submission") <= itemSubmissionBaseline
+                    || itemNumber(row,"extractedFrame") <= itemFrameBaseline
+                    || !itemMatrix(row.get("locatorTransform")) || !itemMatrix(row.get("finalTransform"))) continue;
+            String hand = String.valueOf(row.get("hand"));
+            boolean mainRight = observer != null && "RIGHT".equals(observer.get("mainArm").getAsString());
+            String mainBone = mainRight ? "RightHandLocator" : "LeftHandLocator", offBone = mainRight ? "LeftHandLocator" : "RightHandLocator";
+            if (!(hand.equals("mainhand") && "minecraft:iron_sword".equals(row.get("item")) && mainBone.equals(row.get("bone"))
+                    || hand.equals("offhand") && "minecraft:shield".equals(row.get("item")) && offBone.equals(row.get("bone")))) continue;
+            if (observer == null || itemNumber(row,"nativeEntityId") != observer.get("entityId").getAsLong()) continue;
+            Map<String,Object> copied = new LinkedHashMap<>(); row.forEach((key,entry) -> copied.put(String.valueOf(key),entry)); hands.put(hand,copied);
+        }
+        boolean bothHands = hands.keySet().containsAll(Set.of("mainhand","offhand"));
+        boolean actionDraw = name.endsWith("-hold");
+        Map<String,float[]> baseline = heldItemBaselines.get(expected);
+        if (name.endsWith("-swing") && hands.containsKey("mainhand") && baseline != null) {
+            Map<String,Object> draw = hands.get("mainhand");
+            actionDraw = Boolean.TRUE.equals(draw.get("swinging")) && itemNumber(draw,"swingTicks") > 0
+                    && itemMatrixChanged(draw.get("locatorTransform"),baseline.get("mainhand"))
+                    && binding.layers().stream().anyMatch(layer -> layer.animation().startsWith("swing") || layer.animation().equals("attack"));
+        }
+        if (name.endsWith("-use") && hands.containsKey("offhand") && baseline != null) {
+            Map<String,Object> draw = hands.get("offhand");
+            actionDraw = Boolean.TRUE.equals(draw.get("usingItem")) && "OFF_HAND".equals(draw.get("activeHand"))
+                    && itemNumber(draw,"useTicks") >= 2 && itemMatrixChanged(draw.get("locatorTransform"),baseline.get("offhand"))
+                    && binding.layers().stream().anyMatch(layer -> layer.animation().startsWith("use_offhand"));
+        }
+        boolean verifyShieldModel = name.endsWith("-hold") || name.endsWith("-use");
+        boolean nativeShieldModel = !verifyShieldModel || itemResolvedShieldModel(hands.get("offhand"), itemShieldExpectedSource);
+        boolean valid = serverEquipment && current && nativeAction && bothHands && actionDraw && nativeShieldModel;
+        itemDrawStableTicks = valid ? itemDrawStableTicks + 1 : 0;
+        Map<String,Object> proof = new LinkedHashMap<>();
+        proof.put("stage",name); proof.put("stageTick",stageTicks); proof.put("expectedModel",expected);
+        proof.put("serverAuthority",authority); proof.put("unmoddedObserver",observer); proof.put("serverEquipment",serverEquipment);
+        proof.put("currentBinding",current); proof.put("bothHandsPostsubmit",bothHands); proof.put("nativeActionAndChangedLocator",actionDraw);
+        if (verifyShieldModel) {
+            proof.put("nativeShieldModelSource", itemShieldExpectedSource);
+            proof.put("nativeShieldModelResolved", nativeShieldModel);
+        }
+        proof.put("itemDraws",hands); proof.put("stableTicks",itemDrawStableTicks); itemLatestProof = proof;
+        if (stageTicks % 5 == 0) fixtureFrames.add(proof);
+        if (!itemStageSucceeded && stageTicks >= 20 && itemDrawStableTicks >= (name.endsWith("-swing") ? 1 : 3)) {
+            itemStageSucceeded = true;
+            check(name + "UnmoddedOwnerEquipment",serverEquipment,"Fresh actual Bukkit inventory, model id, and no MPA session: " + equipment);
+            check(name + "CurrentBindingPostsubmitBothHands",current && bothHands,"Two actual ItemRenderState.render queue submissions from current raw " + expected + " hash/instance and native B UUID/ID: " + hands);
+            check(name + "NativeActionMovesItemLocator",nativeAction && actionDraw,"Independent B native swing/use plus matching A postsubmit state and changed sampled HandLocator; B=" + observer);
+            if (verifyShieldModel) check(name + (name.endsWith("-use") ? "NativeBlockingShieldModelResolved" : "NativeHeldShieldModelResolved"),
+                    nativeShieldModel, "Actual native special-renderer layer transformation equals the enabled Minecraft model resource; source="
+                            + itemShieldExpectedSource + "; postsubmit shield=" + hands.get("offhand"));
+            if (name.endsWith("-hold")) {
+                Map<String,float[]> matrices = new LinkedHashMap<>(); hands.forEach((hand,draw) -> matrices.put(hand,((float[])draw.get("locatorTransform")).clone()));
+                heldItemBaselines.put(expected,matrices);
+            }
+            observations.add(proof); capture(client,name);
+        }
+        if (itemStageSucceeded && stageTicks >= 40) next(client);
+        else if (stageTicks >= 120) {
+            if (verifyShieldModel) check(name + (name.endsWith("-use") ? "NativeBlockingShieldModelResolved" : "NativeHeldShieldModelResolved"),
+                    nativeShieldModel, "Fixed deadline; actual native layer must equal the expected model resource; source="
+                            + itemShieldExpectedSource + "; postsubmit shield=" + hands.get("offhand"));
+            check(name + "ActualItemDraws",false,"Fixed 120tick deadline; real queue/authority/native evidence=" + itemLatestProof);
+            observations.add(proof); capture(client,name); next(client);
+        }
+    }
+    private JsonObject itemAuthority() {
+        try {
+            Path source = Path.of(String.valueOf(proof.get("serverSource"))).toAbsolutePath().normalize();
+            Path file = source.getParent().resolve("MPATestHelper/actor-authority.json");
+            JsonObject value = JsonParser.parseString(Files.readString(file)).getAsJsonObject();
+            long sampled = value.get("sampledAtMillis").getAsLong(), age = System.currentTimeMillis()-sampled;
+            if (sampled < itemStageStartedAtMillis || age < -1000 || age > 1500
+                    || !value.get("authorityReadSucceeded").getAsBoolean() || !value.get("ownerOnline").getAsBoolean()
+                    || !UUID.nameUUIDFromBytes(("OfflinePlayer:" + PLAYER).getBytes(StandardCharsets.UTF_8)).toString().equals(value.get("ownerUuid").getAsString())
+                    || !value.get("source").getAsString().startsWith("Ignored MPATestHelper authoritative Bukkit owner")
+                    || !value.get("handsFixtureActive").getAsBoolean()
+                    || (STAGES.get(this.stage).endsWith("-hold") && value.get("handsEquippedAtMillis").getAsLong() < itemStageStartedAtMillis)) return null;
+            return value;
+        } catch (Exception absent) { return null; }
+    }
+    private JsonObject itemObserverProof(String stage) {
+        try {
+            JsonObject value = JsonParser.parseString(Files.readString(output.resolve("observer-item-actions.json"))).getAsJsonObject();
+            long sample = value.get("sampledAtMillis").getAsLong(), age = System.currentTimeMillis()-sample;
+            if (sample < itemStageStartedAtMillis || age < -1000 || age > 1500 || !stage.equals(value.get("stage").getAsString())
+                    || !OTHER.toString().equals(value.get("owner").getAsString()) || value.get("installedMpa").getAsBoolean()
+                    || !value.get("helperSha256").getAsString().matches("[a-f0-9]{64}")
+                    || !"minecraft:iron_sword".equals(value.get("mainhand").getAsString())
+                    || !"minecraft:shield".equals(value.get("offhand").getAsString())
+                    || !Set.of("LEFT", "RIGHT").contains(value.get("mainArm").getAsString())
+                    || !value.get("source").getAsString().startsWith("Ignored observer Fabric native inventory/action")) return null;
+            return value;
+        } catch (Exception absent) { return null; }
+    }
+    private static long itemNumber(Map<?,?> row,String field) { return row.get(field) instanceof Number n ? n.longValue() : -1; }
+    private static boolean itemMatrix(Object value) {
+        if (!(value instanceof float[] matrix) || matrix.length != 16) return false;
+        for (float element : matrix) if (!Float.isFinite(element) || Math.abs(element)>1_000_000) return false;
+        return Math.abs(new org.joml.Matrix4f().set(matrix).determinant3x3())>1e-12;
+    }
+    private static boolean itemMatrixChanged(Object value,float[] before) {
+        if (!(value instanceof float[] now) || before == null || before.length != now.length) return false;
+        for(int i=0;i<now.length;i++) if(Math.abs(now[i]-before[i])>1e-5) return true;
+        return false;
+    }
+    private static Map<String,Object> readShieldModelSource(MinecraftClient client, boolean blocking) {
+        Identifier source = Identifier.of("minecraft", "models/item/" + (blocking ? "shield_blocking" : "shield") + ".json");
+        try (var reader = client.getResourceManager().getResource(source).orElseThrow().getReader()) {
+            JsonObject display = JsonParser.parseReader(reader).getAsJsonObject().getAsJsonObject("display");
+            Map<String,Object> contexts = new LinkedHashMap<>();
+            for (String context : List.of("thirdperson_lefthand", "thirdperson_righthand")) {
+                JsonObject transform = display.getAsJsonObject(context);
+                contexts.put(context, Map.of("rotationDegrees", itemSourceVector(transform, "rotation", 1),
+                        "translationBlocks", itemSourceVector(transform, "translation", 16),
+                        "scale", itemSourceVector(transform, "scale", 1)));
+            }
+            return Map.of("resource", source.toString(), "readSucceeded", true, "contexts", contexts);
+        } catch (Exception failure) {
+            return Map.of("resource", source.toString(), "readSucceeded", false, "error", failure.toString());
+        }
+    }
+    private static List<Double> itemSourceVector(JsonObject transform, String key, double divisor) {
+        var source = transform.getAsJsonArray(key);
+        if (source == null || source.size() != 3) throw new IllegalStateException("Missing native model transform " + key);
+        return source.asList().stream().map(value -> value.getAsDouble() / divisor).toList();
+    }
+    private static boolean itemResolvedShieldModel(Map<String,Object> draw, Map<String,Object> source) {
+        if (draw == null || !"minecraft:shield".equals(draw.get("item")) || !Boolean.TRUE.equals(source.get("readSucceeded"))
+                || !(source.get("contexts") instanceof Map<?,?> contexts)
+                || !(draw.get("resolvedLayers") instanceof List<?> layers)) return false;
+        String context = "LeftHandLocator".equals(draw.get("bone")) ? "thirdperson_lefthand" : "thirdperson_righthand";
+        if (!(contexts.get(context) instanceof Map<?,?> expected)) return false;
+        boolean shieldFound = false;
+        for (Object value : layers) {
+            if (!(value instanceof Map<?,?> layer)
+                    || !Boolean.TRUE.equals(layer.get("shieldSpecialRenderer"))) continue;
+            if (!context.equals(layer.get("displayContext"))
+                    || !itemVectorEquals(layer.get("rotationDegrees"), expected.get("rotationDegrees"))
+                    || !itemVectorEquals(layer.get("translationBlocks"), expected.get("translationBlocks"))
+                    || !itemVectorEquals(layer.get("scale"), expected.get("scale"))) return false;
+            shieldFound = true;
+        }
+        return shieldFound;
+    }
+    private static boolean itemVectorEquals(Object actual, Object expected) {
+        if (!(actual instanceof List<?> a) || !(expected instanceof List<?> e) || a.size() != 3 || e.size() != 3) return false;
+        for (int axis = 0; axis < 3; axis++) {
+            if (!(a.get(axis) instanceof Number av) || !(e.get(axis) instanceof Number ev)
+                    || !Double.isFinite(av.doubleValue()) || !Double.isFinite(ev.doubleValue())
+                    || Math.abs(av.doubleValue() - ev.doubleValue()) > 1e-5) return false;
+        }
+        return true;
+    }
+
     private JsonObject readPackAuthority(MinecraftClient client) {
         try {
             String serverSource = (String) proof.get("serverSource");
@@ -1004,7 +1536,8 @@ public final class E2EHarness {
                     catch (RuntimeException incompleteLine) { continue; }
                     if (!client.player.getUuidAsString().equals(status.get("owner").getAsString())) continue;
                     JsonObject snapshot = status.getAsJsonObject("clientSnapshot"), actor = status.getAsJsonObject("testActorAuthority");
-                    if (snapshot == null || actor == null || !packExpectedInstance.equals(snapshot.get("instance").getAsString())) continue;
+                    if (snapshot == null || actor == null || (!packExpectedInstance.isEmpty()
+                            && !packExpectedInstance.equals(snapshot.get("instance").getAsString()))) continue;
                     long sample = actor.get("sampledAtMillis").getAsLong();
                     if (sample < packReloadCompletedAtMillis || System.currentTimeMillis() - sample > 3_000) continue;
                     if (!actor.get("authorityReadSucceeded").getAsBoolean() || !actor.get("serverActualOwned").getAsBoolean()
@@ -1140,6 +1673,10 @@ public final class E2EHarness {
             actor.put("pose", client.player.getPose().name()); actor.put("onGround", client.player.isOnGround());
             actor.put("sleeping", client.player.isSleeping()); actor.put("vehicle", client.player.hasVehicle());
             actor.put("layers", own(client).stream().flatMap(binding -> binding.layers().stream()).map(layer -> layer.animation()).toList());
+            if (name.startsWith("push-")) {
+                actor.put("pushDelivery", runtime.serverPushDiagnostics());
+                actor.put("pushAuthority", packAuthority);
+            }
             own(client).stream().findFirst().ifPresent(binding -> actor.put("visualAnchor", Map.of("x", binding.x(), "y", binding.y(), "z", binding.z(), "bodyYaw", binding.bodyYaw())));
             if (name.startsWith("local-appearance-")) actor.put("privateAppearance", Map.of(
                     "enabled", runtime.localAppearance().enabled(), "modelId", runtime.localAppearance().modelId(),
@@ -1207,6 +1744,13 @@ public final class E2EHarness {
 
     private void finish(MinecraftClient client) {
         if (finished) return;
+        if (handsCleanupPending && client.player != null && client.getNetworkHandler() != null) {
+            command(client, "mpatest MPAObserver hands-restore"); handsCleanupPending = false;
+        }
+        if (pushFaultRequested && client.player != null && client.getNetworkHandler() != null) {
+            // This is an emergency cleanup request, never evidence that the repair gate passed.
+            command(client, "mpatest " + PLAYER + " push-repair");
+        }
         if (packSelectionChanged) {
             try {
                 client.getResourcePackManager().setEnabledProfiles(originalPackProfiles);
@@ -1218,21 +1762,57 @@ public final class E2EHarness {
             } catch (Exception failure) { check("packSelectionRestoredOnFailure", false, failure.toString()); }
             packSelectionChanged = false;
         }
+        check("serverPushNeverAssetRequested", pushCount(runtime.serverPushDiagnostics(), "assetRequestPacketsSent") == 0,
+                "Final real asset_request send count=" + pushCount(runtime.serverPushDiagnostics(), "assetRequestPacketsSent"));
         finished = true;
         try {
             Files.createDirectories(output);
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("passed", !checks.isEmpty() && checks.stream().allMatch(check -> Boolean.TRUE.equals(check.get("passed"))));
-            result.put("minecraft", "1.21.11"); result.put("clientVersion", "0.4.1");
+            result.put("minecraft", "1.21.11"); result.put("clientVersion", "0.4.2");
             result.put("testedClientSha256", proof.get("clientArtifactSha256")); result.put("testedServerSha256", proof.get("serverArtifactSha256"));
             result.put("artifactProof", proof);result.put("startedAtMillis", startedMillis);result.put("completedAtMillis", System.currentTimeMillis());
             result.put("checks", checks); result.put("screenshots", screenshots); result.put("observations", observations);
             result.put("screenshotCallbacks", screenshotCallbacks);
             result.put("fixtureFrames", fixtureFrames);
+            result.put("serverPushDelivery", serverPushDelivery());
             Files.writeString(output.resolve("results.json"), new GsonBuilder().setPrettyPrinting().create().toJson(result), StandardCharsets.UTF_8);
             LOGGER.info("E2E results written to {}", output.resolve("results.json"));
         } catch (Exception failure) { LOGGER.error("Cannot save E2E results", failure); }
         client.scheduleStop();
+    }
+
+    private Map<String, Object> serverPushDelivery() {
+        List<String> required = List.of("serverPushNegotiated", "serverPushPlainMePack", "serverPushColdCacheDownloaded", "serverPushDefaultJarAssetSource",
+                "serverPushReconnectPrerequisites", "serverPushActualReconnect", "serverPushReconnectCacheHitNoDownload",
+                "serverPushInvalidOwnAssetAuthoritative", "serverPushInvalidAssetFallback", "serverPushInvalidAssetNoStaleTransfer",
+                "serverPushFaultFixtureRestored", "serverPushRepairRecovered", "serverPushRepairCacheNoDownload",
+                "serverPushPackReloadPrerequisites", "serverPushPackDisabledQuiescent", "serverPushPackRestoredQuiescent", "packDisableReloadCompleted", "serverPushPackDisabledNoIndex",
+                "serverPushPackDisabledModelRetained", "serverPushPackDisabledFreshFrames", "serverPushPackDisabledOwnerLeaseSameInstance",
+                "serverPushPackDisabledNoDownloadFreshAck", "packRestoreReloadCompleted", "packRestoredExactProfiles",
+                "packRestoredHashRevalidated", "packRestoredOwnerLeaseSameInstance", "packRestoredFreshFrames",
+                "serverPushPackRestoredNoDownloadFreshAck", "serverPushNeverAssetRequested",
+                "other-range-outPushOwnerReleased", "other-undisguisePushOwnerReleased", "other-second-undisguisePushOwnerReleased",
+                "own-second-undisguisePushOwnerReleased", "undisguisePushOwnerReleased", "previewPushOwnerReleased",
+                "npcPushNewInstance", "other-second-modelPushNewInstance", "other-first-modelPushNewInstance",
+                "own-second-modelPushNewInstance", "own-first-modelPushNewInstance");
+        List<Map<String, Object>> relevant = checks.stream().filter(row -> String.valueOf(row.get("name")).contains("Push")
+                || String.valueOf(row.get("name")).contains("NoAssetRequest") || required.contains(row.get("name"))).toList();
+        boolean requiredPassed = required.stream().allMatch(name -> checks.stream().anyMatch(row -> name.equals(row.get("name")) && Boolean.TRUE.equals(row.get("passed"))));
+        Map<String, Object> report = new LinkedHashMap<>();
+        report.put("passed", requiredPassed && relevant.stream().allMatch(row -> Boolean.TRUE.equals(row.get("passed"))));
+        report.put("requiredChecks", required); report.put("checks", relevant);
+        report.put("finalDiagnostics", runtime.serverPushDiagnostics());
+        report.put("firstDownload", stageObservation("push-first-download"));
+        report.put("reconnect", stageObservation("push-cache-reconnect"));
+        report.put("fault", stageObservation("push-asset-failed")); report.put("recovery", stageObservation("push-asset-recovered"));
+        report.put("packReload", observations.stream().filter(row -> Set.of("pack-disabled", "pack-restored").contains(row.get("stage"))).toList());
+        report.put("authority", "Actual protocol counters, current raw server bindings/grants, real world meshes, and fresh server helper ModelAssets/viewer leases");
+        return report;
+    }
+
+    private Map<String, Object> stageObservation(String stageName) {
+        return observations.stream().filter(row -> stageName.equals(row.get("stage"))).findFirst().orElse(Map.of());
     }
 
     private static Map<String, Object> artifactProof() {

@@ -15,9 +15,16 @@ public record LocalMotionPolicy(Set<String> features, Map<String, Layer> clips, 
             "sneak", "swim", "flight", "elytra", "swing", "mining");
     private static final Set<String> STATES = Set.of("idle", "walk", "run", "jump", "fall", "sit", "sleep", "bed-sleep",
             "boat", "minecart", "ride", "ride-pig", "ladder-move", "ladder-idle", "crawl-idle", "crawl-walk", "crouch-idle", "crouch-walk", "swim-idle",
-            "swim-prone-idle", "swim-walk", "hover", "fly", "elytra", "swing-mainhand", "swing-offhand", "mining");
+            "swim-prone-idle", "swim-walk", "hover", "fly", "elytra", "swing-mainhand", "swing-offhand", "mining",
+            "death", "attacked", "riptide", "ladder-down");
     public LocalMotionPolicy { features = Set.copyOf(features); clips = Map.copyOf(clips); }
     public boolean enabled(String feature) { return features.contains(feature); }
+    /** A private action lock removes only movement cancellation from this policy snapshot. */
+    public LocalMotionPolicy withActionLock(boolean locked) {
+        if (!locked || !interruptMove) return this;
+        return new LocalMotionPolicy(features, clips, jumpMinTicks, landingGraceTicks, movementThreshold,
+                false, interruptPosture, flying, interaction, forcedPose, specialPose, anchorX, anchorY, anchorZ, anchorYaw);
+    }
     public Layer layer(String state, String layer, long started) {
         Layer clip = clips.get(state);
         return clip == null ? null : new Layer(layer, clip.animation(), started, clip.speed(), clip.loop(), clip.inTicks(), clip.outTicks());
@@ -28,6 +35,7 @@ public record LocalMotionPolicy(Set<String> features, Map<String, Layer> clips, 
                 {"sit","sit","minecart"},{"sleep","bed_sleep","sleep"},{"bed-sleep","bed_sleep","sleep"},
                 {"boat","boat","sit"},{"minecart","minecart","sit"},{"ride","ride","sit"},{"ride-pig","ride_pig","ride","sit"},
                 {"ladder-move","ladder_up","climb"},{"ladder-idle","ladder_stillness","ladder_up","climb"},
+                {"ladder-down","ladder_down","ladder_up","climb"},{"death","death"},{"attacked","attacked","hurt"},{"riptide","riptide"},
                 {"crawl-idle","climbing","crawl_idle","crawl"},{"crawl-walk","climb","crawl_walk","climbing","crawl"},
                 {"crouch-idle","sneaking","crouch_idle","sneak"},{"crouch-walk","sneak","crouch_walk","sneaking"},
                 {"swim-idle","swim_stand","swim_idle","swim"},{"swim-prone-idle","swim_idle","swim"},{"swim-walk","swim","swim_idle"},
@@ -37,7 +45,7 @@ public record LocalMotionPolicy(Set<String> features, Map<String, Layer> clips, 
         };
         Map<String,Layer> clips=new LinkedHashMap<>();
         for(String[] mapping:mappings)for(int i=1;i<mapping.length;i++)if(model.animations().contains(mapping[i])) {
-            String loop=Set.of("jump","swing-mainhand","swing-offhand").contains(mapping[0])?"ONCE"
+            String loop=Set.of("jump","swing-mainhand","swing-offhand","death","attacked").contains(mapping[0])?"ONCE"
                     :Set.of("sleep","bed-sleep").contains(mapping[0])?"HOLD":"LOOP";
             clips.put(mapping[0],new Layer("posture",mapping[i],0,1,loop,2,2));break;
         }

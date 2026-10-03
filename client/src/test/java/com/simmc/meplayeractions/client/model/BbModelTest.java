@@ -17,6 +17,21 @@ import static org.junit.jupiter.api.Assertions.*;
 class BbModelTest {
     private static final float EPS = 1e-5f;
 
+    @Test void nativeHandSlotsRemainVisibleAboveTheLegacyPostureAndBelowManualActions() {
+        JsonObject json=fixture();
+        addAnimation(json,"idle",1,constantFrame("position",16,0,0));
+        addAnimation(json,"hand",1,constantFrame("position",32,0,0));
+        addAnimation(json,"manual",1,constantFrame("position",64,0,0));
+        BbModel model=parse(json);
+        for(String slot:List.of("player.hold_mainhand","player.hold_offhand","player.swing","player.use")) {
+            var layers=List.of(layer(slot,"hand","HOLD",0,0),layer("posture","idle","HOLD",0,0));
+            assertEquals(4,model.sample(0,layers).getFirst().x(),EPS,slot);
+            var player=new AnimationPlayer(model);
+            assertEquals(4,player.sample(0,layers).getFirst().x(),EPS,slot);
+            assertEquals(5,model.sample(0,List.of(layers.get(0),layers.get(1),layer("manual","manual","HOLD",0,0))).getFirst().x(),EPS);
+        }
+    }
+
     @Test void shippedModelsParseAndEveryAnimationProducesFiniteUnitNormals() throws Exception {
         for (String name : List.of("ysm_01_jk", "ysm_02_jk")) {
             Path file = Path.of("../examples/models/" + name + ".bbmodel");

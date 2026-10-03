@@ -16,6 +16,9 @@ public final class ActionsScreen extends Screen {
     private boolean localMode, serverAvailable;
     private int page, rows;
     private List<ClientRuntime.Action> actions = List.of();
+    private com.simmc.meplayeractions.client.model.YsmModelProfile menuProfile;
+    private ModelActionMenu menu;
+    private List<ModelActionMenu.Entry> localEntries = List.of();
 
     public ActionsScreen(ClientRuntime runtime) {
         this(runtime, runtime.localAppearance().enabled() || !runtime.serverOwnModelReady(), null);
@@ -45,8 +48,15 @@ public final class ActionsScreen extends Screen {
         for (int index = page * pageSize; index < Math.min(actions.size(), (page + 1) * pageSize); index++) {
             var action = actions.get(index);
             int slot = index - page * pageSize;
-            var button = ButtonWidget.builder(Text.literal(action.label()), b -> play(action.id()))
-                    .dimensions(left + (slot % 3) * (col + 6), 100 + (slot / 3) * 24, col, 20).build();
+            String config = localMode && menu != null ? localEntries.get(index).configGroup() : "";
+            int actionWidth = config.isEmpty() ? col : col - 22;
+            var button = ButtonWidget.builder(Text.literal(textRenderer.trimToWidth(action.label(), Math.max(1, actionWidth - 8))), b -> play(action.id()))
+                    .dimensions(left + (slot % 3) * (col + 6), 100 + (slot / 3) * 24, actionWidth, 20).build();
+            if (!config.isEmpty()) {
+                var gear = ButtonWidget.builder(Text.literal("⚙"), b -> client.setScreen(new ModelConfigScreen(runtime, runtime.localAppearance().modelId(), config, this)))
+                        .dimensions(left + (slot % 3) * (col + 6) + actionWidth + 2, 100 + (slot / 3) * 24, 20, 20).build();
+                gear.setTooltip(Tooltip.of(Text.literal("作者模型配置；仅自己可见"))); addDrawableChild(gear);
+            }
             button.setTooltip(Tooltip.of(Text.literal(action.id() + (localMode ? " · 仅自己可见" : " · 服务器动作"))));
             addDrawableChild(button);
         }
@@ -60,7 +70,10 @@ public final class ActionsScreen extends Screen {
         bottom += 24;
         if (localMode) {
             addDrawableChild(ButtonWidget.builder(Text.literal("本地外观设置"), b -> openAppearance())
-                    .dimensions(left, bottom, 2 * col + 6, 20).build());
+                    .dimensions(left, bottom, col, 20).build());
+            addDrawableChild(ButtonWidget.builder(Text.literal("模型配置 / 皮肤"), b -> {
+                client.setScreen(new ModelConfigScreen(runtime, runtime.localAppearance().modelId(), this));
+            }).dimensions(left + col + 6, bottom, col, 20).build()).active = menuProfile != null;
             addDrawableChild(ButtonWidget.builder(Text.literal("回游戏查看"), b -> viewInWorld())
                     .dimensions(left + 2 * (col + 6), bottom, col, 20).build()).active = client != null && client.world != null;
         } else {
@@ -78,17 +91,29 @@ public final class ActionsScreen extends Screen {
         }).dimensions(left + col + 6, bottom, col, 20).build();
         self.setTooltip(Tooltip.of(Text.literal("控制本客户端第三人称中本人模型的显示。本地外观启用在模型设置中操作，其他玩家不受此开关影响。")));
         addDrawableChild(self);
-        addDrawableChild(ButtonWidget.builder(Text.literal(localMode ? "关闭菜单" : "本地外观设置"), b -> {
+        addDrawableChild(ButtonWidget.builder(Text.literal(localMode ? menu != null && menu.depth() > 0 ? "返回上级" : "关闭菜单" : "本地外观设置"), b -> {
             if (localMode) close(); else openAppearance();
         }).dimensions(left + 2 * (col + 6), bottom, col, 20).build());
     }
     private List<ClientRuntime.Action> currentActions() {
-        return localMode ? runtime.localActions()
-                : runtime.serverBridgeReady() && runtime.serverOwnModelReady() ? runtime.actions() : List.of();
+        if (!localMode) return runtime.serverBridgeReady() && runtime.serverOwnModelReady() ? runtime.actions() : List.of();
+        var profile = runtime.localModelProfile();
+        if (profile != menuProfile) {
+            menuProfile = profile; menu = null; page = 0;
+            try { if (profile != null && profile.isYsm()) menu = new ModelActionMenu(profile, client == null ? "zh_cn" : client.getLanguageManager().getLanguage()); }
+            catch (RuntimeException invalid) { }
+        }
+        if (menu == null) { localEntries = List.of(); return runtime.localActions(); }
+        localEntries = menu.entries(); return localEntries.stream().map(entry -> new ClientRuntime.Action(entry.id(), entry.label())).toList();
     }
-    private void switchMode(boolean local) { localMode = local; page = 0; clearAndInit(); }
+    private void switchMode(boolean local) { localMode = local; menu = null; menuProfile = null; page = 0; clearAndInit(); }
     private void play(String id) {
-        if (localMode) runtime.playLocal(id);
+        if (localMode) {
+            var entry = localEntries.stream().filter(value -> value.id().equals(id)).findFirst();
+            if (entry.isPresent() && (entry.get().category() || entry.get().back())) {
+                if (menu.enter(entry.get())) { page = 0; clearAndInit(); }
+            } else runtime.playLocal(id);
+        }
         else if (runtime.serverBridgeReady() && runtime.serverOwnModelReady()) runtime.request("play", id);
     }
     private void stop() {
@@ -118,7 +143,7 @@ public final class ActionsScreen extends Screen {
     @Override public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         context.fill(0, 0, width, height, 0xCC101823);
         context.drawCenteredTextWithShadow(textRenderer, title, width / 2, 12, 0xffffffff);
-        context.drawCenteredTextWithShadow(textRenderer, Text.literal(localMode ? "本地动作仅自己可见，不改变真实姿态" : "服务器动作由服务器同步给其他观看者"), width / 2, 31, 0xffc6d5ec);
+        context.drawCenteredTextWithShadow(textRenderer, Text.literal(textRenderer.trimToWidth(localMode ? "本地动作仅自己可见，不改变真实姿态" : "服务器动作由服务器同步给其他观看者", Math.max(1, width - 24))), width / 2, 31, 0xffc6d5ec);
         String status = localMode ? runtime.localAppearanceStatus()
                 : serverAvailable ? "已连接服务器模型" : "需要服务器支持，并先使用服务器伪装";
         context.drawCenteredTextWithShadow(textRenderer, Text.literal(textRenderer.trimToWidth(status, width - 24)), width / 2, 46, 0xffa4bbd6);
@@ -126,6 +151,15 @@ public final class ActionsScreen extends Screen {
                 Text.literal(localMode ? "打开本地外观设置，保存并启用一个模型" : "当前没有可用的服务器动作"), width / 2, 86, 0xffffd589);
         super.render(context, mouseX, mouseY, delta);
     }
-    @Override public void close() { if (client != null) client.setScreen(parent); }
+    public java.util.Map<String,Object> diagnostics() {
+        return java.util.Map.of("visibleActionIds",actions.stream().skip((long)page*rows*3).limit(rows*3).map(ClientRuntime.Action::id).toList(),
+                "localMode",localMode,"page",page);
+    }
+    @Override public void close() {
+        if (client != null) {
+            if (localMode && menu != null && menu.back()) { page = 0; clearAndInit(); }
+            else client.setScreen(parent);
+        }
+    }
     @Override public boolean shouldPause() { return false; }
 }

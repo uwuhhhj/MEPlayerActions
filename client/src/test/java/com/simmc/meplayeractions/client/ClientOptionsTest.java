@@ -7,6 +7,8 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
+import java.util.LinkedHashMap;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ClientOptionsTest {
@@ -96,5 +98,61 @@ class ClientOptionsTest {
             assertEquals(LocalAppearanceSettings.defaults(),loaded.localAppearance(),bad);
             assertFalse(loaded.enabled,"Existing local animation choice survives invalid appearance");
         }
+    }
+    @Test void modelProfilesPreserveAuthoredVariablesSkinsAndRadiosWithoutEnablingModel() {
+        Path path = directory.resolve("options.json"); var options = new ClientOptions(path);
+        var profile = new ClientOptions.ModelProfile("blue", Map.of("v.player_size", 3d, "variable.player_eye", -100d,
+                "v.roaming.red_bow_headdress", 1d, "v.眼睛.位置٢", -3d), Map.of("eye_config:0", 2));
+        assertTrue(options.updateModelProfile("ysm:sample", profile)); options.localActionLocked = true; options.save();
+        var loaded = new ClientOptions(path);
+        assertEquals(profile, loaded.modelProfile("ysm:sample")); assertTrue(loaded.localActionLocked);
+        assertFalse(loaded.localAppearance().enabled());
+        assertEquals(Map.of(), loaded.modelProfile("openysm_default").variables());
+        assertThrows(UnsupportedOperationException.class, () -> loaded.modelProfile("ysm:sample").variables().put("variable.x", 1d));
+        assertTrue(loaded.resetModelProfile("ysm:sample"));
+        assertEquals(ClientOptions.ModelProfile.defaults(), new ClientOptions(path).modelProfile("ysm:sample"));
+    }
+
+    @Test void profileValidationRejectsNonNumericAndUnsafeState() {
+        for (Map<String, Double> variables : List.of(Map.of("query.x", 1d), Map.of("variable.x", Double.NaN),
+                Map.of("variable.x", 1_000_001d), Map.of("temp.x", 1d)))
+            assertThrows(IllegalArgumentException.class, () -> new ClientOptions.ModelProfile("", variables, Map.of()));
+        assertThrows(IllegalArgumentException.class, () -> new ClientOptions.ModelProfile("../other", Map.of(), Map.of()));
+        assertThrows(IllegalArgumentException.class, () -> new ClientOptions.ModelProfile("", Map.of(), Map.of("x", 64)));
+    }
+
+    @Test void tooManyProfilesAndTotalByteBudgetPreserveLastSavedFile() throws Exception {
+        Path path = directory.resolve("options.json"); var options = new ClientOptions(path);
+        for (int i = 0; i < ClientOptions.MAX_MODEL_PROFILES; i++)
+            assertTrue(options.updateModelProfile("ysm:model" + i, ClientOptions.ModelProfile.defaults()));
+        byte[] last = Files.readAllBytes(path);
+        assertFalse(options.updateModelProfile("ysm:excess", ClientOptions.ModelProfile.defaults()));
+        assertArrayEquals(last, Files.readAllBytes(path));
+        Map<String, Double> large = new LinkedHashMap<>();
+        for (int i = 0; i < 128; i++) large.put("variable." + "a".repeat(105) + i, 123_456.123456d);
+        boolean rejected = false;
+        for (int i = 0; i < 32; i++) {
+            byte[] before = Files.readAllBytes(path);
+            var old = options.modelProfile("ysm:model" + i);
+            if (!options.updateModelProfile("ysm:model" + i, new ClientOptions.ModelProfile("", large, Map.of()))) {
+                assertEquals(old, options.modelProfile("ysm:model" + i));
+                assertArrayEquals(before, Files.readAllBytes(path)); rejected = true; break;
+            }
+        }
+        assertTrue(rejected); assertTrue(Files.size(path) < 65_536);
+    }
+
+    @Test void invalidProfileSectionFailsClosedWithoutChangingRenderOptions() throws Exception {
+        Path path = directory.resolve("options.json");
+        Files.writeString(path, "{\"enabled\":false,\"modelProfiles\":{\"ysm:sample\":{\"textureId\":\"blue\",\"variables\":{\"query.x\":1}}}}");
+        var loaded = new ClientOptions(path); assertFalse(loaded.enabled);
+        assertEquals(ClientOptions.ModelProfile.defaults(), loaded.modelProfile("ysm:sample"));
+    }
+
+    @Test void ioFailureRollsBackProfileInMemory() throws Exception {
+        Path blocked = directory.resolve("folder"); Files.createDirectory(blocked);
+        var options = new ClientOptions(blocked);
+        assertFalse(options.updateModelProfile("ysm:sample", new ClientOptions.ModelProfile("blue", Map.of("v.x", 2d), Map.of())));
+        assertEquals(ClientOptions.ModelProfile.defaults(), options.modelProfile("ysm:sample"));
     }
 }

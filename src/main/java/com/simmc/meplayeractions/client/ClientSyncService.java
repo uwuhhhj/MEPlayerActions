@@ -25,7 +25,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     private static final Pattern ANIMATION_NAME = Pattern.compile("[a-zA-Z0-9_.:/-]{1,128}");
     private static final Pattern MODEL_ID = Pattern.compile("[a-z0-9_-]{1,64}"), HASH = Pattern.compile("[a-f0-9]{64}");
     private static final Set<String> ACTIONS = Set.of("play", "stop", "sit", "crawl", "reset");
-    private static final Set<String> CAPABILITIES = Set.of("local_render", "resource_pack_models");
+    private static final Set<String> CAPABILITIES = Set.of("local_render", "resource_pack_models", "server_push_models");
     private final JavaPlugin plugin;
     private final Supplier<List<StateSnapshot>> snapshots;
     private final Consumer<ActionRequest> actionRequests;
@@ -63,7 +63,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     }
     @Override public void close() {
         if (maintenanceTask != null) { maintenanceTask.cancel(); maintenanceTask = null; }
-        clearSessions("plugin_stopping"); running = false; var messenger = plugin.getServer().getMessenger();
+        clearSessions("plugin_stopping"); assets.invalidate(); running = false; var messenger = plugin.getServer().getMessenger();
         try { messenger.unregisterIncomingPluginChannel(plugin, CHANNEL, this); }
         finally { messenger.unregisterOutgoingPluginChannel(plugin, CHANNEL); }
     }
@@ -95,10 +95,17 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         JsonObject end = envelope("snapshot_end"); end.addProperty("snapshotId", id); send(player, end);
     }
     public String status(Player player) {
-        if (!running || !configuredEnabled) return "disabled (ME rendering)";
+        String diagnostic = readSnapshots().stream().filter(snapshot -> snapshot.owner().equals(player.getUniqueId()))
+                .findFirst().map(snapshot -> {
+                    ModelAssets.Status asset = assets.status(snapshot.modelId());
+                    return "；本人资产 " + snapshot.modelId() + "=" + (snapshot.localRenderable() ? asset.state() : "server-only")
+                            + "；来源 " + asset.source() + "；原因 " + (snapshot.localRenderable() ? asset.reason() : "当前伪装不允许客户端接管");
+                }).orElse("");
+        if (!running || !configuredEnabled) return "disabled（服务器渲染）" + diagnostic;
         Session session = sessions.get(player.getUniqueId());
-        return session == null ? "未握手（ME 渲染）" : "local-render v3；客户端 " + session.clientVersion
-                + "；可见实例 " + session.bindings.size() + "；已确认本地渲染 " + session.leases.size();
+        return (session == null ? "未握手（服务器渲染）" : "local-render v3；客户端 " + session.clientVersion
+                + "；资产模式 " + session.assetMode() + "；可见实例 " + session.bindings.size()
+                + "；已确认本地渲染 " + session.leases.size()) + diagnostic;
     }
     @Override public void onPluginMessageReceived(String channel, Player player, byte[] bytes) {
         if (!CHANNEL.equals(channel) || !running || !configuredEnabled || bytes == null || bytes.length == 0 || bytes.length > maxPayload) return;
@@ -118,25 +125,27 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             long now = System.nanoTime(); Session previous = sessions.get(player.getUniqueId());
             if (!limits.allowHello(player.getUniqueId(), now)) return;
             if (previous != null) endSession(player.getUniqueId(), player, previous, "new_handshake");
-            Session session = new Session(player.getUniqueId(), inbound.packModels()); session.clientVersion = inbound.clientVersion();
+            Session session = new Session(player.getUniqueId(), inbound.packModels(), inbound.pushModels()); session.clientVersion = inbound.clientVersion();
             sessions.put(player.getUniqueId(), session); JsonObject ack = envelope("hello_ack");
             ack.addProperty("mode", "local-render"); ack.addProperty("serverTick", currentTick());
-            ack.addProperty("assetMode", session.packModels ? "resource-pack" : "legacy-download");
+            ack.addProperty("assetMode", session.assetMode());
             ack.addProperty("heartbeatTicks", HEARTBEAT_TICKS); ack.addProperty("leaseTicks", RenderLeases.LEASE_TICKS);
             ack.addProperty("maxPayload", maxPayload); ack.addProperty("requestCooldownTicks", requestCooldownTicks);
             JsonArray capabilities = new JsonArray(); capabilities.add("local_render");
-            if (session.packModels) capabilities.add("resource_pack_models"); ack.add("capabilities", capabilities);
+            if (session.pushModels) capabilities.add("server_push_models");
+            else if (session.packModels) capabilities.add("resource_pack_models"); ack.add("capabilities", capabilities);
             if (send(player, ack)) sendSnapshot(player); return;
         }
         Session session = sessions.get(player.getUniqueId()); if (session == null) return; long tick = currentTick();
         switch (inbound.type()) {
             case "asset_request" -> requestAsset(player, session, inbound, tick);
+            case "asset_status" -> assetStatus(player, session, inbound, tick);
             case "render_ready" -> ready(player, session, inbound.binding(), tick);
             case "render_failed" -> {
                 if (session.leases.contains(inbound.binding())) {
                     session.leases.remove(inbound.binding().owner()); restore(player.getUniqueId(), inbound.binding());
                     sendUnbind(player, inbound.binding().owner(), inbound.binding().instance(), "render_failed");
-                    session.bindings.remove(inbound.binding().owner());
+                    session.bindings.remove(inbound.binding().owner()); cancelUnauthorizedOffers(player, session, tick);
                 }
             }
             case "render_heartbeat" -> session.leases.renew(inbound.bindings(), tick);
@@ -167,8 +176,97 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         }
         session.leases.ready(binding, tick); JsonObject ack = envelope("render_ack"); addBinding(ack, binding);
         if (!send(viewer, ack)) { session.leases.remove(binding.owner()); restore(viewer.getUniqueId(), binding); }
+        else if (session.pushModels) {
+            session.offers.ready(binding.hash()); limits.pushRenderReady(viewer.getUniqueId(), binding.hash());
+            removeOfferTransfers(session, binding.hash());
+        }
+    }
+    private void assetStatus(Player viewer, Session session, Inbound inbound, long tick) {
+        if (!session.pushModels) { sendError(viewer, "asset_status_wrong_mode"); return; }
+        PushAssetOffers.Offer offer = session.offers.find(inbound.hash());
+        if (offer == null || !offer.id().equals(inbound.offerId()) || !authorizedHash(viewer, session, inbound.hash())) return;
+        PushAssetOffers.Feedback feedback = session.offers.feedback(inbound.offerId(), inbound.hash(), inbound.assetStatus(), tick);
+        if (feedback == PushAssetOffers.Feedback.REJECTED) cancelOffer(viewer, session, offer, "asset_rejected");
+        // Late/repeated feedback is harmless, including cached that arrived after an already verified ready.
+        // cached is not a render lease. missing is queued by the server maintenance pump.
+    }
+    private boolean authorizedHash(Player viewer, Session session, String hash) {
+        return !hash.isEmpty() && authorizedHashes(viewer, session, readSnapshots()).contains(hash);
+    }
+    private Set<String> authorizedHashes(Player viewer, Session session, List<StateSnapshot> current) {
+        Set<String> result = new HashSet<>();
+        if (viewer == null) return result;
+        for (StateSnapshot snapshot : current) {
+            BoundState bound = session.bindings.get(snapshot.owner());
+            if (snapshot.localRenderable() && bound != null && !bound.hash().isEmpty() && bound.instance().equals(snapshot.instance())
+                    && bound.modelId().equals(snapshot.modelId()) && canObserve(viewer, snapshot.owner())) result.add(bound.hash());
+        }
+        return result;
+    }
+    private void offerAsset(Player viewer, Session session, UUID owner, BoundState bound, long tick, List<StateSnapshot> currentStates) {
+        if (!session.pushModels || bound.hash().isEmpty() || !session.offers.canIssue(bound.hash())) return;
+        if (session.bindings.entrySet().stream().anyMatch(entry -> entry.getValue().hash().equals(bound.hash())
+                && session.leases.contains(new RenderLeases.Binding(entry.getKey(), entry.getValue().instance(), bound.hash())))) return;
+        Set<UUID> instances = new HashSet<>();
+        // Use every current server instance for this hash: choosing another alias must not reset attempts.
+        for (StateSnapshot current : currentStates) if (current.localRenderable() && canObserve(viewer, current.owner())) {
+            var asset = assets.get(current.modelId());
+            if (asset.isPresent() && asset.get().hash().equals(bound.hash())) instances.add(current.instance());
+        }
+        if (!instances.contains(bound.instance()) || !limits.canPushOffer(session.viewer, bound.hash(), instances, tick)) return;
+        PushAssetOffers.Offer offer = session.offers.issue(owner, bound.instance(), bound.modelId(), bound.hash(), tick);
+        if (offer == null) return;
+        JsonObject packet = envelope("asset_offer"); packet.addProperty("owner", owner.toString());
+        packet.addProperty("instance", bound.instance().toString()); packet.addProperty("modelId", bound.modelId());
+        addOffer(packet, offer);
+        if (sendPacket(viewer, packet, false) == SendResult.SENT)
+            limits.pushOfferSent(session.viewer, bound.hash(), instances, tick);
+        else session.offers.remove(bound.hash());
+    }
+    private void maintainOffers(Player viewer, Session session, long tick, Set<String> authorized) {
+        if (!session.pushModels) return;
+        expireOffers(viewer, session, tick, authorized);
+        for (PushAssetOffers.Offer offer : session.offers.missing()) {
+            if (!authorized.contains(offer.hash())) { cancelOffer(viewer, session, offer, "asset_not_authorized"); continue; }
+            var asset = assets.get(offer.modelId()).filter(value -> value.hash().equals(offer.hash()));
+            if (asset.isEmpty()) {
+                for (BoundState bound : session.bindings.values()) if (bound.hash().equals(offer.hash())) {
+                    asset = assets.get(bound.modelId()).filter(value -> value.hash().equals(offer.hash()));
+                    if (asset.isPresent()) break;
+                }
+            }
+            if (asset.isEmpty()) { cancelOffer(viewer, session, offer, "asset_unavailable"); continue; }
+            if (!limits.reserveTransfer(session.viewer)) continue;
+            if (!limits.allowAsset(session.viewer, offer.hash(), tick)) { limits.releaseTransfer(session.viewer); continue; }
+            if (!session.offers.start(offer)) { limits.releaseTransfer(session.viewer); continue; }
+            session.transfers.add(new Transfer(asset.get(), Math.min(9000, (maxPayload - 512) * 3 / 4), offer));
+        }
+    }
+    private void cancelUnauthorizedOffers(Player viewer, Session session, long tick) {
+        expireOffers(viewer, session, tick, authorizedHashes(viewer, session, readSnapshots()));
+    }
+    private void expireOffers(Player viewer, Session session, long tick, Set<String> authorized) {
+        for (PushAssetOffers.Cancelled cancelled : session.offers.expire(tick, offer -> authorized.contains(offer.hash())))
+            cancelOffer(viewer, session, cancelled.offer(), cancelled.reason());
+    }
+    private void cancelOffer(Player viewer, Session session, PushAssetOffers.Offer offer, String reason) {
+        PushAssetOffers.Offer current = session.offers.find(offer.hash());
+        if (current != null && current.id().equals(offer.id())) session.offers.remove(offer.hash());
+        removeOfferTransfers(session, offer.hash());
+        JsonObject packet = envelope("asset_cancel"); addOffer(packet, offer); packet.addProperty("reason", reason); send(viewer, packet);
+    }
+    private void removeOfferTransfers(Session session, String hash) {
+        Iterator<Transfer> iterator = session.transfers.iterator();
+        while (iterator.hasNext()) {
+            Transfer transfer = iterator.next();
+            if (transfer.offer != null && transfer.offer.hash().equals(hash)) { iterator.remove(); limits.releaseTransfer(session.viewer); }
+        }
+    }
+    private static void addOffer(JsonObject packet, PushAssetOffers.Offer offer) {
+        packet.addProperty("offerId", offer.id().toString()); packet.addProperty("hash", offer.hash());
     }
     private void requestAsset(Player viewer, Session session, Inbound inbound, long tick) {
+        if (session.pushModels) { sendError(viewer, "asset_server_push_mode"); return; }
         if (session.packModels) { sendError(viewer, "asset_resource_pack_mode"); return; }
         if (session.bindings.entrySet().stream().noneMatch(e -> e.getValue().modelId().equals(inbound.modelId())
                 && e.getValue().hash().equals(inbound.hash()) && canObserve(viewer, e.getKey()))) {
@@ -186,7 +284,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     private void maintainSessions() {
         limits.pruneOffline(id -> { Player viewer = Bukkit.getPlayer(id); return viewer != null && viewer.isOnline(); });
         if (!configuredEnabled || sessions.isEmpty()) return; long tick = currentTick();
-        List<StateSnapshot> current = tick % 2 == 0 ? readSnapshots() : List.of();
+        List<StateSnapshot> current = readSnapshots();
         boolean heartbeat = tickDistance(tick, lastHeartbeatTick) >= HEARTBEAT_TICKS; if (heartbeat) lastHeartbeatTick = tick;
         for (var entry : List.copyOf(sessions.entrySet())) {
             Player viewer = Bukkit.getPlayer(entry.getKey()); Session session = entry.getValue();
@@ -194,48 +292,63 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             for (var expired : session.leases.expired(tick)) {
                 restore(viewer.getUniqueId(), expired); sendUnbind(viewer, expired.owner(), expired.instance(), "render_lease_expired"); session.bindings.remove(expired.owner());
             }
-            if (tick % 2 == 0) reconcile(viewer, session, current); pumpAssets(viewer, session);
+            if (tick % 2 == 0) reconcile(viewer, session, current);
+            Set<String> authorized = session.pushModels ? authorizedHashes(viewer, session, current) : Set.of();
+            maintainOffers(viewer, session, tick, authorized); pumpAssets(viewer, session, authorized);
             if (heartbeat) { JsonObject message = envelope("heartbeat"); message.addProperty("serverTick", tick);
                 message.addProperty("leaseTicks", RenderLeases.LEASE_TICKS); send(viewer, message); }
         }
     }
-    private void pumpAssets(Player viewer, Session session) {
+    private void pumpAssets(Player viewer, Session session, Set<String> authorized) {
         int sentChunks = 0;
         while (sentChunks < 2 && !session.transfers.isEmpty()) {
             Transfer transfer = session.transfers.peek();
-            if (session.bindings.entrySet().stream().noneMatch(e -> e.getValue().modelId().equals(transfer.asset.modelId())
+            if (transfer.offer != null && (!session.offers.transferring(transfer.offer) || !authorized.contains(transfer.asset.hash()))) {
+                cancelOffer(viewer, session, transfer.offer, "asset_not_authorized"); continue;
+            }
+            if (transfer.offer == null && session.bindings.entrySet().stream().noneMatch(e -> e.getValue().modelId().equals(transfer.asset.modelId())
                     && e.getValue().hash().equals(transfer.asset.hash()) && canObserve(viewer, e.getKey()))) {
                 removeTransfer(session); continue;
             }
             if (!transfer.started) {
-                JsonObject begin = envelope("asset_begin"); begin.addProperty("modelId", transfer.asset.modelId()); begin.addProperty("hash", transfer.asset.hash());
+                JsonObject begin = envelope("asset_begin"); begin.addProperty("modelId", transfer.offer == null ? transfer.asset.modelId() : transfer.offer.modelId());
+                begin.addProperty("hash", transfer.asset.hash()); if (transfer.offer != null) addOffer(begin, transfer.offer);
                 begin.addProperty("rawBytes", transfer.asset.rawBytes()); begin.addProperty("compressedBytes", transfer.asset.compressed().length);
                 begin.addProperty("chunks", transfer.asset.chunks(transfer.chunkBytes));
                 SendResult result = sendPacket(viewer, begin, true);
                 if (result == SendResult.DEFERRED) return;
-                if (result == SendResult.FAILED) { removeTransfer(session); continue; } transfer.started = true;
+                if (result == SendResult.FAILED) { failTransfer(viewer, session, transfer); continue; } transfer.started = true;
+                if (transfer.offer != null) session.offers.progress(transfer.offer, currentTick());
             }
             if (transfer.index == transfer.asset.chunks(transfer.chunkBytes)) {
                 JsonObject end = envelope("asset_end"); end.addProperty("hash", transfer.asset.hash());
+                if (transfer.offer != null) addOffer(end, transfer.offer);
                 SendResult result = sendPacket(viewer, end, true);
                 if (result == SendResult.DEFERRED) return;
-                removeTransfer(session); continue;
+                if (result == SendResult.FAILED) failTransfer(viewer, session, transfer);
+                else { if (transfer.offer != null) session.offers.delivered(transfer.offer, currentTick()); removeTransfer(session); }
+                continue;
             }
             JsonObject chunk = envelope("asset_chunk"); chunk.addProperty("hash", transfer.asset.hash()); chunk.addProperty("index", transfer.index);
+            if (transfer.offer != null) addOffer(chunk, transfer.offer);
             chunk.addProperty("data", Base64.getEncoder().encodeToString(transfer.asset.chunk(transfer.index, transfer.chunkBytes)));
             SendResult result = sendPacket(viewer, chunk, true);
             if (result == SendResult.DEFERRED) return;
-            if (result == SendResult.FAILED) { removeTransfer(session); continue; } sentChunks++; transfer.index++;
+            if (result == SendResult.FAILED) { failTransfer(viewer, session, transfer); continue; } sentChunks++; transfer.index++;
+            if (transfer.offer != null) session.offers.progress(transfer.offer, currentTick());
         }
     }
     private void removeTransfer(Session session) { session.transfers.remove(); limits.releaseTransfer(session.viewer); }
+    private void failTransfer(Player viewer, Session session, Transfer transfer) {
+        if (transfer.offer == null) removeTransfer(session); else cancelOffer(viewer, session, transfer.offer, "asset_send_failed");
+    }
     private List<StateSnapshot> readSnapshots() {
         try { return List.copyOf(snapshots.get()); }
         catch (RuntimeException exception) { plugin.getLogger().log(Level.WARNING, "Cannot obtain client snapshot", exception); return List.of(); }
     }
     private void reconcile(Player viewer, Session session, List<StateSnapshot> current) {
         Set<UUID> visible = new HashSet<>();
-        for (StateSnapshot snapshot : current) if (canObserve(viewer, snapshot.owner())) { visible.add(snapshot.owner()); sendState(viewer, session, snapshot); }
+        for (StateSnapshot snapshot : current) if (canObserve(viewer, snapshot.owner())) { visible.add(snapshot.owner()); sendState(viewer, session, snapshot, current); }
         for (UUID owner : List.copyOf(session.bindings.keySet())) if (!visible.contains(owner)) removeBinding(viewer, session, owner, "not_visible_or_active");
     }
     private boolean canObserve(Player viewer, UUID ownerId) {
@@ -245,12 +358,19 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
                 && viewer.getLocation().distanceSquared(owner.getLocation()) <= viewDistanceBlocks * viewDistanceBlocks);
     }
     private void sendState(Player viewer, Session session, StateSnapshot snapshot) {
+        sendState(viewer, session, snapshot, session.pushModels ? readSnapshots() : List.of());
+    }
+    private void sendState(Player viewer, Session session, StateSnapshot snapshot, List<StateSnapshot> current) {
         String hash = snapshot.localRenderable() ? assets.get(snapshot.modelId()).map(ModelAssets.Asset::hash).orElse("") : "";
+        ModelAssets.Status assetStatus = assets.status(snapshot.modelId());
         BoundState previous = session.bindings.get(snapshot.owner());
         if (previous != null && (!previous.instance().equals(snapshot.instance()) || !previous.hash().equals(hash)))
             removeBinding(viewer, session, snapshot.owner(), "instance_or_asset_changed");
         JsonObject state = envelope("state"); state.addProperty("owner", snapshot.owner().toString()); state.addProperty("instance", snapshot.instance().toString());
         state.addProperty("modelId", snapshot.modelId()); state.addProperty("assetHash", hash); state.addProperty("sequence", snapshot.sequence());
+        state.addProperty("assetStatus", snapshot.localRenderable() ? assetStatus.state() : "server-only");
+        state.addProperty("assetReason", snapshot.localRenderable() ? assetStatus.reason() : "当前伪装不允许客户端接管");
+        state.addProperty("assetSource", assetStatus.source());
         state.addProperty("serverTick", snapshot.serverTick()); state.addProperty("world", snapshot.world().toString());
         state.addProperty("x", snapshot.x()); state.addProperty("y", snapshot.y()); state.addProperty("z", snapshot.z());
         state.addProperty("bodyYaw", snapshot.bodyYaw()); state.addProperty("headYaw", snapshot.headYaw()); state.addProperty("headPitch", snapshot.headPitch());
@@ -277,7 +397,10 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             return;
         }
         session.payloadFailures.remove(snapshot.owner());
-        if (send(viewer, state)) session.bindings.put(snapshot.owner(), new BoundState(snapshot.instance(), snapshot.modelId(), hash));
+        if (send(viewer, state)) {
+            BoundState bound = new BoundState(snapshot.instance(), snapshot.modelId(), hash);
+            session.bindings.put(snapshot.owner(), bound); offerAsset(viewer, session, snapshot.owner(), bound, currentTick(), current);
+        }
         else removeBinding(viewer, session, snapshot.owner(), "state_send_failed");
     }
     static String truncateLabel(String label) {
@@ -296,6 +419,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     private void removeBinding(Player viewer, Session session, UUID owner, String reason) {
         var lease = session.leases.remove(owner); if (lease != null) restore(session.viewer, lease);
         BoundState previous = session.bindings.remove(owner); if (previous != null && viewer != null) sendUnbind(viewer, owner, previous.instance(), reason);
+        if (session.pushModels) cancelUnauthorizedOffers(viewer, session, currentTick());
     }
     private void restore(UUID viewer, RenderLeases.Binding binding) {
         try { renderControl.set(viewer, binding.owner(), binding.instance(), false); }
@@ -308,6 +432,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     private void endSession(UUID id, Player viewer, Session session, String reason) {
         for (UUID owner : List.copyOf(session.bindings.keySet())) removeBinding(viewer, session, owner, reason);
         for (var binding : session.leases.clear()) restore(id, binding);
+        for (PushAssetOffers.Offer offer : session.offers.clear()) cancelOffer(viewer, session, offer, reason);
         session.transfers.clear(); limits.releaseTransfers(id); sessions.remove(id);
     }
     private void clearSessions(String reason) {
@@ -335,8 +460,8 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         String text;
         try { text = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString(); }
         catch (CharacterCodingException exception) { throw new IOException("Invalid UTF-8", exception); }
-        int protocol = -1; String type = "", version = "unspecified", action = "", argument = "", modelId = "", hash = "";
-        UUID owner = null, instance = null; List<RenderLeases.Binding> bindings = List.of(); Set<String> fields = new HashSet<>(), capabilities = new HashSet<>();
+        int protocol = -1; String type = "", version = "unspecified", action = "", argument = "", modelId = "", hash = "", assetStatus = "";
+        UUID owner = null, instance = null, offerId = null; List<RenderLeases.Binding> bindings = List.of(); Set<String> fields = new HashSet<>(), capabilities = new HashSet<>();
         try (JsonReader reader = new JsonReader(new StringReader(text))) {
             reader.setStrictness(Strictness.STRICT); reader.beginObject();
             while (reader.hasNext()) {
@@ -352,6 +477,8 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
                     case "argument" -> argument = readString(reader, 128);
                     case "modelId" -> modelId = readString(reader, 64);
                     case "hash" -> hash = readString(reader, 64);
+                    case "offerId" -> offerId = readUuid(reader);
+                    case "status" -> assetStatus = readString(reader, 16);
                     case "owner" -> owner = readUuid(reader);
                     case "instance" -> instance = readUuid(reader);
                     case "bindings" -> bindings = readBindings(reader);
@@ -375,6 +502,9 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
                 if (!ACTIONS.contains(action) || (action.equals("play") ? !ANIMATION_NAME.matcher(argument).matches() : !argument.isEmpty())) throw new IllegalArgumentException("Invalid action request"); }
             case "asset_request" -> { allowed = Set.of("protocol", "type", "modelId", "hash");
                 if (!MODEL_ID.matcher(modelId).matches() || !HASH.matcher(hash).matches()) throw new IllegalArgumentException("Invalid asset key"); }
+            case "asset_status" -> { allowed = Set.of("protocol", "type", "offerId", "hash", "status");
+                if (offerId == null || !HASH.matcher(hash).matches() || !Set.of("cached", "missing", "rejected").contains(assetStatus))
+                    throw new IllegalArgumentException("Invalid asset feedback"); }
             case "render_ready", "render_failed" -> { allowed = Set.of("protocol", "type", "owner", "instance", "hash");
                 if (owner == null || instance == null || !HASH.matcher(hash).matches()) throw new IllegalArgumentException("Incomplete render binding"); }
             case "render_heartbeat" -> { allowed = Set.of("protocol", "type", "bindings");
@@ -382,7 +512,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             default -> throw new IllegalArgumentException("Unknown message type");
         }
         if (!allowed.containsAll(fields)) throw new IllegalArgumentException("Field not allowed for message");
-        return new Inbound(protocol, type, version, capabilities.contains("resource_pack_models"), action, argument, modelId, hash,
+        return new Inbound(protocol, type, version, capabilities.contains("resource_pack_models"), capabilities.contains("server_push_models"), action, argument, modelId, hash, offerId, assetStatus,
                 owner == null ? null : new RenderLeases.Binding(owner, instance, hash), bindings);
     }
     private static List<RenderLeases.Binding> readBindings(JsonReader reader) throws IOException {
@@ -470,20 +600,23 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     public record AnimationInfo(String id, String label) {}
     public record ActionRequest(Player player, String action, String argument) {}
     @FunctionalInterface public interface RenderControl { boolean set(UUID viewer, UUID owner, UUID instance, boolean enabled); }
-    private record Inbound(int protocol, String type, String clientVersion, boolean packModels, String action, String argument, String modelId,
-            String hash, RenderLeases.Binding binding, List<RenderLeases.Binding> bindings) {}
+    private record Inbound(int protocol, String type, String clientVersion, boolean packModels, boolean pushModels, String action, String argument, String modelId,
+            String hash, UUID offerId, String assetStatus, RenderLeases.Binding binding, List<RenderLeases.Binding> bindings) {}
     private record BoundState(UUID instance, String modelId, String hash) {}
     private static final class Session {
-        final UUID viewer; final boolean packModels;
-        Session(UUID viewer, boolean packModels) { this.viewer = viewer; this.packModels = packModels; }
+        final UUID viewer; final boolean packModels, pushModels;
+        Session(UUID viewer, boolean packModels, boolean pushModels) { this.viewer = viewer; this.packModels = packModels; this.pushModels = pushModels; }
+        String assetMode() { return pushModels ? "server-push" : packModels ? "resource-pack" : "legacy-download"; }
         final Map<UUID, BoundState> bindings = new HashMap<>(); final RenderLeases leases = new RenderLeases();
+        final PushAssetOffers offers = new PushAssetOffers();
         final Deque<Transfer> transfers = new ArrayDeque<>();
         final Set<UUID> payloadFailures = new HashSet<>();
         String clientVersion = "unspecified"; long snapshotId;
     }
     private static final class Transfer {
-        final ModelAssets.Asset asset; final int chunkBytes; int index; boolean started;
-        Transfer(ModelAssets.Asset asset, int chunkBytes) { this.asset = asset; this.chunkBytes = chunkBytes; }
+        final ModelAssets.Asset asset; final int chunkBytes; final PushAssetOffers.Offer offer; int index; boolean started;
+        Transfer(ModelAssets.Asset asset, int chunkBytes) { this(asset, chunkBytes, null); }
+        Transfer(ModelAssets.Asset asset, int chunkBytes, PushAssetOffers.Offer offer) { this.asset = asset; this.chunkBytes = chunkBytes; this.offer = offer; }
     }
     private enum SendResult { SENT, DEFERRED, FAILED }
 }

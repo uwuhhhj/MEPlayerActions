@@ -3,12 +3,21 @@ package com.simmc.meplayeractions.client;
 import com.google.gson.*;
 import com.simmc.meplayeractions.client.model.BbModel;
 import com.simmc.meplayeractions.client.model.BbModel.Layer;
+import com.simmc.meplayeractions.client.model.YsmModelProfile;
+import com.simmc.meplayeractions.expression.Molang;
+import com.simmc.meplayeractions.client.ui.ModelConfigSchema;
 import com.simmc.meplayeractions.client.network.*;
 import com.simmc.meplayeractions.client.render.ModelRenderer;
+import com.simmc.meplayeractions.client.effects.YsmModelEffects;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.EntityPose;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.EquipmentSlot;
+import net.minecraft.entity.LivingEntity;
+import net.minecraft.item.ItemStack;
+import net.minecraft.registry.Registries;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.vehicle.AbstractBoatEntity;
 import net.minecraft.entity.vehicle.AbstractMinecartEntity;
@@ -34,18 +43,29 @@ public final class ClientRuntime {
     private final Map<UUID,Binding> bindings=new LinkedHashMap<>();
     private final Map<String,BbModel> assets=new LinkedHashMap<>(16,0.75f,true);
     private final Set<String> packAssets=new HashSet<>();
-    private final Map<String,AssetTransfer> transfers=new HashMap<>();
-    private final Map<String,Long> transferTimes=new HashMap<>(),failedAssets=new HashMap<>();
-    private final Set<String> loading=new HashSet<>(),requested=new HashSet<>();
+    private final Set<String> serverAssets=new HashSet<>();
+    private final ServerPushAuthorization pushAuthorization=new ServerPushAuthorization();
+    private final Map<String,Long> failedAssets=new HashMap<>();
+    private final Set<String> loading=new HashSet<>();
     private final ThreadPoolExecutor decoder=new ThreadPoolExecutor(1,1,0,TimeUnit.MILLISECONDS,new LinkedBlockingQueue<>(8),
             r->{Thread t=new Thread(r,"MPA-model-loader");t.setDaemon(true);return t;});
     private final ThreadPoolExecutor previewDecoder=new ThreadPoolExecutor(1,1,0,TimeUnit.MILLISECONDS,new LinkedBlockingQueue<>(8),
             r->{Thread t=new Thread(r,"MPA-preview-loader");t.setDaemon(true);return t;});
     private final Path cache=FabricLoader.getInstance().getGameDir().resolve("config/meplayeractions/cache");
+    private final ServerModelCache serverModelCache=new ServerModelCache(cache);
     private final LocalModelLibrary localModelLibrary=new LocalModelLibrary(
             FabricLoader.getInstance().getConfigDir().resolve("meplayeractions/models"));
+    private final Map<String,LocalModelLibrary.Loaded> localProfiles=new LinkedHashMap<>(16,.75f,true);
+    private record EffectKey(UUID owner,UUID entity) { }
+    private record EffectState(YsmModelEffects effects,Entity entity,String instance,String hash,YsmModelProfile profile) { }
+    private final Map<EffectKey,EffectState> modelEffects=new LinkedHashMap<>();
     public final ClientOptions options;
     private boolean connected,acknowledged;
+    private boolean pushNegotiated,unsupportedHandshake;
+    private String serverAssetMode="";
+    private List<String> serverCapabilities=List.of();
+    private long pushOffersReceived,pushCacheHits,pushCacheMisses,pushTransfersBegun,pushTransfersCompleted,
+            pushGpuPrepared,pushReadySent,pushRenderAcks,pushAssetRequests,pushCancelled,pushRejected;
     private long generation,lastHello,lastHeartbeat,lastReceived;
     private long localTick;
     private int leaseTicks=100,maxPayload=16_000;
@@ -68,8 +88,11 @@ public final class ClientRuntime {
     }
     public void joined() { reset(); connected=true; world=client.world; }
     public void reset() {
+        closeModelEffects();
+        VanillaYsmQueries.reset();
         releaseBindings();abortTransfers();connected=false;acknowledged=false;
-        loading.clear(); requested.clear(); failedAssets.clear(); assets.clear(); packAssets.clear(); clock.reset();
+        loading.clear(); failedAssets.clear(); assets.clear(); packAssets.clear(); serverAssets.clear(); clock.reset();
+        pushNegotiated=false;unsupportedHandshake=false;serverAssetMode="";serverCapabilities=List.of();
         lastHello=0;lastHeartbeat=0;lastReceived=0;previewId="";previewHash="";previewManual="";previewPose="";
         localSelf=null;localAppearanceError="";localAppearanceRetryAfter=0;
         ownAppearanceMissingSince=0;lastAppearanceSnapshotRequest=0;
@@ -85,13 +108,14 @@ public final class ClientRuntime {
         // This private mode is independent of the server handshake and also runs in single player.
         ensureLocalAppearance();
         updateLocalAppearanceMotion();
+        tickModelEffects();
         if (!connected || client.getNetworkHandler()==null) return;
         if (acknowledged && now-lastReceived>leaseTicks*50_000_000L) {
-            releaseBindings();abortTransfers();acknowledged=false;lastHello=0;lastError="服务器同步已超时，恢复服务器显示";
+            releaseBindings();abortTransfers();acknowledged=false;pushNegotiated=false;lastHello=0;lastError="服务器同步已超时，恢复服务器显示";
         }
-        if (options.enabled && !acknowledged && now-lastHello>3*SECOND && ClientPlayNetworking.canSend(ActionPayload.ID)) {
-            JsonObject hello=WireJson.envelope("hello");hello.addProperty("clientVersion","0.4.1");
-            JsonArray caps=new JsonArray();caps.add("local_render");caps.add("resource_pack_models");hello.add("capabilities",caps);
+        if (options.enabled && !acknowledged && !unsupportedHandshake && now-lastHello>3*SECOND && ClientPlayNetworking.canSend(ActionPayload.ID)) {
+            JsonObject hello=WireJson.envelope("hello");hello.addProperty("clientVersion",clientVersion());
+            JsonArray caps=new JsonArray();caps.add("local_render");caps.add("server_push_models");hello.add("capabilities",caps);
             send(hello);lastHello=now;
         }
         if (acknowledged && options.enabled) {
@@ -103,7 +127,7 @@ public final class ClientRuntime {
                         && !binding.active && !binding.unsupported && now-binding.lastReady>SECOND
                         && now-failedAssets.getOrDefault(binding.hash,0L)>30*SECOND) {
                     JsonObject ready=identity("render_ready",binding);
-                    if(send(ready)){binding.readySent=true;binding.lastReady=now;}
+                    if(send(ready)){binding.readySent=true;binding.lastReady=now;binding.assetState="等待服务器渲染确认";pushReadySent++;}
                 }
             }
             if (now-lastHeartbeat>SECOND) {
@@ -121,8 +145,7 @@ public final class ClientRuntime {
                 }
             }
         }
-        for (String hash:List.copyOf(requested)) if(!loading.contains(hash) && now-transferTimes.getOrDefault(hash,now)>15*SECOND)
-            failAsset(hash,"模型下载超时");
+        prunePushOffers(now);
         if(!options.followServerTimeline && client.world!=null) for(Binding binding:bindings.values()) {
             BbModel model=assets.get(binding.hash);PlayerEntity player=client.world.getPlayerByUuid(binding.owner);
             if(model!=null && player!=null && usable(binding,now)) entityBinding(binding,model,player);
@@ -135,39 +158,58 @@ public final class ClientRuntime {
             long now=System.nanoTime();
             if(type.equals("hello_ack")) {
                 if (!WireJson.string(json,"mode",32).equals("local-render")) throw new IllegalArgumentException("Server mode");
+                List<String> caps=readCapabilities(json);
+                String mode=json.has("assetMode")?WireJson.string(json,"assetMode",32):"";
+                if(!ServerPushAuthorization.acceptsHandshake(mode,caps)) {
+                    releaseBindings();abortTransfers();acknowledged=false;pushNegotiated=false;
+                    unsupportedHandshake=true;
+                    serverAssetMode=mode;serverCapabilities=caps;lastHello=now;
+                    lastError="服务器未协商模型主动推送，请升级 MEPlayerActions 服务端到 0.4.2；保持服务器显示";
+                    return;
+                }
                 leaseTicks=(int)WireJson.integer(json,"leaseTicks",20,400);
                 maxPayload=(int)WireJson.integer(json,"maxPayload",384,32_766);
                 localAppearanceVisibility.serverSessionStarted();
                 releaseBindings();abortTransfers();
                 clock.observe(WireJson.integer(json,"serverTick",0,0xffff_ffffL),now);
+                serverAssetMode=mode;serverCapabilities=caps;pushNegotiated=true;unsupportedHandshake=false;
                 acknowledged=true;lastReceived=now;lastError="";return;
             }
-            if(!acknowledged) return;
+            if(!acknowledged) {
+                if(type.equals("error")) {
+                    String code=WireJson.string(json,"code",64);
+                    if(lastHello!=0 && Set.of("unsupported_protocol","invalid_payload","unsupported_capability").contains(code)) {
+                        unsupportedHandshake=true;
+                        lastError="服务器不支持模型主动推送，请升级 MEPlayerActions 服务端到 0.4.2（"+code+"）；保持服务器显示";
+                    } else lastError="服务器："+code;
+                }
+                return;
+            }
             switch(type) {
                 case "state" -> state(json,now);
                 case "render_ack" -> {
                     Binding binding=matching(json);
                     if(binding!=null && binding.readySent && assets.containsKey(binding.hash) && ModelRenderer.has(binding.hash))
-                        binding.active=true;
+                        {binding.active=true;binding.assetState="本地渲染";binding.assetError="";pushRenderAcks++;}
                 }
                 case "unbind" -> {
                     UUID owner=UUID.fromString(WireJson.string(json,"owner",36));
                     String instance=WireJson.string(json,"instance",36);
                     Binding binding=bindings.get(owner);
-                    if(binding!=null && binding.instance.equals(instance)) bindings.remove(owner);
+                    if(binding!=null && binding.instance.equals(instance)) {bindings.remove(owner);closeModelEffects(owner);}
+                    prunePushOffers(now);
                     String reason=WireJson.string(json,"reason",128);
                     if(client.player!=null && owner.equals(client.player.getUuid()))localAppearanceVisibility.serverUnbound(instance,reason);
                     if(Set.of("plugin-close","plugin_stopping","sync_disabled","session_ended").contains(reason)) {
-                        releaseBindings();abortTransfers();acknowledged=false;lastHello=0;
+                        releaseBindings();abortTransfers();acknowledged=false;pushNegotiated=false;lastHello=0;
                     }
                 }
                 case "heartbeat" -> clock.observe(WireJson.integer(json,"serverTick",0,0xffff_ffffL),now);
+                case "asset_offer" -> acceptOffer(json,now);
                 case "asset_begin" -> begin(json,now);
-                case "asset_chunk" -> {
-                    String hash=WireJson.hash(json,"hash");AssetTransfer transfer=transfers.get(hash);
-                    if(transfer!=null) {transfer.put((int)WireJson.integer(json,"index",0,AssetTransfer.MAX_CHUNKS-1),WireJson.string(json,"data",12_000));transferTimes.put(hash,now);}
-                }
-                case "asset_end" -> finish(WireJson.hash(json,"hash"));
+                case "asset_chunk" -> pushChunk(json,now);
+                case "asset_end" -> finish(json,now);
+                case "asset_cancel" -> cancelOffer(json);
                 case "error" -> {
                     String code=WireJson.string(json,"code",64);lastError="服务器："+code;
                     if((code.equals("render_unavailable") || code.equals("render_not_authorized")) && json.has("owner")) {
@@ -183,7 +225,7 @@ public final class ClientRuntime {
         } catch(Exception exception) {
             lastError="同步包校验失败，恢复服务器显示";
             MEPlayerActionsClient.LOGGER.warn("Rejected MPA packet: {}",exception.toString());
-            releaseBindings();abortTransfers();acknowledged=false;lastHello=System.nanoTime();
+            releaseBindings();abortTransfers();acknowledged=false;pushNegotiated=false;lastHello=System.nanoTime();
         }
     }
     private void state(JsonObject json,long now) {
@@ -224,7 +266,7 @@ public final class ClientRuntime {
             actions.add(new Action(id,WireJson.string(label,"label",256)));
         }
         Binding binding=bindings.get(owner);
-        if(binding==null || !binding.instance.equals(instance) || !binding.hash.equals(hash)) {
+        if(binding==null || !binding.instance.equals(instance) || !binding.hash.equals(hash) || !binding.modelId.equals(modelId)) {
             if(binding!=null) failed(binding,"");
             if(binding==null && bindings.size()>=64) return;
             binding=new Binding(owner,instance,modelId,hash);bindings.put(owner,binding);
@@ -236,12 +278,26 @@ public final class ClientRuntime {
         binding.layerTimeline.add(tick,binding.layers);
         binding.motion=motion;binding.localServerLayers=binding.localClock.accept(tick,localTick,binding.layers);
         binding.hidePlayer=hide;binding.actions=List.copyOf(actions);binding.lastPacket=now;
+        binding.serverAssetStatus=json.has("assetStatus")?WireJson.string(json,"assetStatus",64):"";
+        binding.serverAssetReason=json.has("assetReason")?WireJson.string(json,"assetReason",256):"";
+        binding.serverAssetSource=json.has("assetSource")?WireJson.string(json,"assetSource",128):"";
         BbModel loaded=assets.get(hash);
         binding.unsupported=loaded!=null && layers.stream().anyMatch(layer->!loaded.animations().contains(layer.animation()));
         if(binding.unsupported)failed(binding,"客户端模型缺少对应动画，请更新服务器 bbmodel");
         clock.observe(rawTick,now);
-        if(!hash.isEmpty() && !assets.containsKey(hash) && !loading.contains(hash) && !requested.contains(hash)
-                && now-failedAssets.getOrDefault(hash,0L)>30*SECOND) tryCached(modelId,hash);
+        if(hash.isEmpty()) {
+            binding.assetState=switch(binding.serverAssetStatus) {
+                case "pending" -> "服务器正在准备模型";
+                case "missing" -> "服务器缺少客户端原模型";
+                case "invalid" -> "服务器原模型无效";
+                case "server-only" -> "该模型仅服务器渲染";
+                default -> "服务器模型资产不可用";
+            };
+            binding.assetError=binding.serverAssetReason.isEmpty()?"服务端未提供客户端原模型，保持服务器显示":binding.serverAssetReason;
+        } else if(!assets.containsKey(hash) && binding.assetState.equals("等待服务器模型")) {
+            binding.assetError="";
+        }
+        prunePushOffers(now);
     }
     private static Map<String,Double> readAccessoryState(JsonObject json) {
         JsonElement value=json.get("accessories");
@@ -264,61 +320,230 @@ public final class ClientRuntime {
             }
         },id,hash);
     }
-    /** Assets follow a server binding, but every byte comes from an installed resource pack. */
-    private void tryCached(String modelId,String hash) {
-        if(loading.size()>=4)return;
-        loading.add(hash);long epoch=generation;
+    private static String clientVersion() {
+        return FabricLoader.getInstance().getModContainer("meplayeractions")
+                .map(mod->mod.getMetadata().getVersion().getFriendlyString()).orElse("0.4.2");
+    }
+    private static List<String> readCapabilities(JsonObject json) {
+        JsonArray values=json.getAsJsonArray("capabilities");
+        if(values==null || values.size()>16)throw new IllegalArgumentException("Server capabilities");
+        Set<String> result=new LinkedHashSet<>();
+        for(JsonElement value:values) {
+            if(!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString())throw new IllegalArgumentException("Capability type");
+            String capability=value.getAsString();
+            if(!capability.matches("[a-z_]{1,64}") || !result.add(capability))throw new IllegalArgumentException("Capability value");
+        }
+        return List.copyOf(result);
+    }
+    private static UUID offerId(JsonObject json) {
+        String value=WireJson.string(json,"offerId",36);UUID id=UUID.fromString(value);
+        if(!id.toString().equals(value))throw new IllegalArgumentException("Offer UUID");
+        return id;
+    }
+    private List<ServerPushAuthorization.Identity> pushBindings() {
+        return bindings.values().stream().filter(binding->!binding.hash.isEmpty())
+                .map(binding->new ServerPushAuthorization.Identity(binding.owner,binding.instance,binding.modelId,binding.hash)).toList();
+    }
+    private boolean currentPush(ServerPushAuthorization.Offer offer,long epoch) {
+        return epoch==generation && pushNegotiated && acknowledged && client.world==world
+                && pushAuthorization.current(offer,pushBindings(),System.nanoTime());
+    }
+    private void pushState(String hash,String state,String error) {
+        for(Binding binding:bindings.values())if(binding.hash.equals(hash)) {
+            binding.assetState=state;binding.assetError=error;
+        }
+    }
+    private boolean assetStatus(ServerPushAuthorization.Offer offer,String status) {
+        JsonObject feedback=WireJson.envelope("asset_status");
+        feedback.addProperty("offerId",offer.offerId().toString());feedback.addProperty("hash",offer.identity().hash());
+        feedback.addProperty("status",status);return send(feedback);
+    }
+    private void acceptOffer(JsonObject json,long now) {
+        if(!pushNegotiated)throw new IllegalArgumentException("Unnegotiated server push");
+        var identity=new ServerPushAuthorization.Identity(UUID.fromString(WireJson.string(json,"owner",36)),
+                WireJson.string(json,"instance",36),WireJson.modelId(json),WireJson.hash(json,"hash"));
+        var offer=new ServerPushAuthorization.Offer(offerId(json),identity);pushOffersReceived++;
+        try {
+            if(!pushAuthorization.offer(offer,pushBindings(),now))return;
+        } catch(IllegalArgumentException rejected) {
+            pushRejected++;assetStatus(offer,"rejected");return;
+        }
+        String hash=identity.hash();long epoch=generation;
+        BbModel prepared=assets.get(hash);
+        if(prepared!=null && ModelRenderer.has(hash)) {
+            completePush(offer,prepared,true,epoch);return;
+        }
+        loading.add(hash);pushState(hash,"正在校验服务器模型缓存","");
         try {decoder.execute(()->{
-            LocalModelLibrary.Loaded loaded=null;String failure="";
-            try {loaded=loadPackModel(modelId,hash);}
-            catch(Exception exception) {failure=exception.getMessage();}
-            var result=loaded;String reason=failure;
+            BbModel model=null;
+            try {
+                var cached=serverModelCache.readValidated(hash);
+                if(cached.isPresent())model=BbModel.parse(cached.get());
+            } catch(RuntimeException corrupt) {
+                MEPlayerActionsClient.LOGGER.debug("Server model cache parse rejected {}",hash.substring(0,12),corrupt);
+            }
+            var result=model;
             client.execute(()->{
-                if(epoch!=generation)return;
-                loading.remove(hash);
-                if(result!=null) {packAssets.add(hash);install(hash,result.model());}
-                else failAsset(hash,"请启用服务器完整资源包："+reason);
+                if(!currentPush(offer,epoch))return;
+                if(result!=null) {completePush(offer,result,true,epoch);return;}
+                pushCacheMisses++;pushState(hash,"正在下载服务器模型","");
+                pushAuthorization.missing(offer,pushBindings(),System.nanoTime());
+                if(!assetStatus(offer,"missing"))rejectPush(offer,"无法反馈服务器模型缓存状态");
             });
-        });} catch(RejectedExecutionException busy) {loading.remove(hash);}
+        });} catch(RejectedExecutionException busy) {rejectPush(offer,"服务器模型缓存校验队列已满");}
+    }
+    private void completePush(ServerPushAuthorization.Offer offer,BbModel model,boolean cached,long epoch) {
+        if(!currentPush(offer,epoch))return;
+        String hash=offer.identity().hash();pushState(hash,"准备服务器模型渲染","");
+        install(hash,model);
+        boolean supported=bindings.values().stream().filter(binding->binding.hash.equals(hash)).anyMatch(binding->!binding.unsupported);
+        if(!assets.containsKey(hash) || !ModelRenderer.has(hash) || !supported) {
+            rejectPush(offer,"服务器模型无法准备渲染或缺少对应动画");return;
+        }
+        failedAssets.remove(hash);loading.remove(hash);pushGpuPrepared++;
+        if(cached) {
+            if(!assetStatus(offer,"cached")){rejectPush(offer,"无法确认已校验的服务器模型缓存");return;}
+            pushCacheHits++;
+        } else pushTransfersCompleted++;
+        serverAssets.add(hash);pushState(hash,"等待服务器渲染确认","");pushAuthorization.remove(offer);
+    }
+    private void rejectPush(ServerPushAuthorization.Offer offer,String reason) {
+        if(!pushAuthorization.remove(offer))return;
+        pushRejected++;loading.remove(offer.identity().hash());assetStatus(offer,"rejected");
+        failAsset(offer.identity().hash(),reason);pushState(offer.identity().hash(),"服务器模型同步失败",reason);
+    }
+    private void prunePushOffers(long now) {
+        for(var offer:pushAuthorization.prune(pushBindings(),now)) {
+            pushCancelled++;loading.remove(offer.identity().hash());assetStatus(offer,"rejected");
+            pushState(offer.identity().hash(),"等待服务器模型","模型推送已取消或超时，保持服务器显示");
+        }
     }
     public Set<String> resourcesReloaded() {
-        abortTransfers();failedAssets.clear();
-        Set<String> refresh=Set.copyOf(packAssets);
+        closeModelEffects();
+        // Server-pushed models own embedded textures and remain valid across an unrelated RP reload.
+        // Invalidate only resource/private preview callbacks; do not discard in-flight push grants.
+        previewRequest++;previewPending=false;localAppearanceRequest++;localAppearancePending=false;failedAssets.clear();
+        Set<String> refresh=new HashSet<>(packAssets);refresh.removeAll(serverAssets);
         refresh.forEach(assets::remove);packAssets.clear();
         if(refresh.contains(previewHash)){previewHash="";previewId="";}
         return refresh;
     }
     /** Independent browser decoding; it never creates a world binding or acknowledges a server lease. */
     public CompletableFuture<LocalModelLibrary.Loaded> loadLocalPreview(String id) {
+        String texture=localTextureSelection(id);
         try {return CompletableFuture.supplyAsync(()->{
-            try {return localModelLibrary.load(id,options.defaultBlueTexture);}
+            try {return localModelLibrary.load(id,texture.isEmpty()?null:texture);}
             catch(IOException failure) {throw new CompletionException(failure);}
-        },previewDecoder);} catch(RejectedExecutionException busy) {return CompletableFuture.failedFuture(busy);}
+        },previewDecoder).thenApply(loaded->{client.execute(()->rememberLocalProfile(id,loaded));return loaded;});}
+        catch(RejectedExecutionException busy) {return CompletableFuture.failedFuture(busy);}
+    }
+    private String localTextureSelection(String id) {
+        String texture=options.modelProfile(id).textureId();
+        if(texture.isEmpty() && id.equals("openysm_default") && options.defaultBlueTexture)texture="blue";
+        return texture;
+    }
+    private void rememberLocalProfile(String id,LocalModelLibrary.Loaded loaded) {
+        localProfiles.put(id,loaded);while(localProfiles.size()>12)localProfiles.remove(localProfiles.keySet().iterator().next());
+    }
+    public YsmModelProfile localModelProfile(){return localModelProfile(localAppearance().modelId());}
+    public YsmModelProfile localModelProfile(String id){
+        if(localSelf!=null && localSelf.modelId.equals(id))return localSelf.profile;
+        var loaded=localProfiles.get(id);return loaded==null?YsmModelProfile.empty():loaded.profile();
+    }
+    public YsmModelProfile modelProfile(UUID owner){return localAppearanceActive() && owner.equals(client.player.getUuid())?localSelf.profile:YsmModelProfile.empty();}
+    public PlayerEntity nativePlayer(UUID owner){return client.world==null?null:client.world.getPlayerByUuid(owner);}
+    public RenderBinding appearanceBinding(UUID owner){return animationBindings().stream().filter(binding->binding.owner().equals(owner)).findFirst().orElse(null);}
+    public boolean localActionLocked(){return options.localActionLocked;}
+    public void setLocalActionLocked(boolean locked){options.localActionLocked=locked;options.save();}
+    public Map<String,Double> localModelVariables(String id){
+        var loaded=localProfiles.get(id);BbModel model=loaded==null?null:loaded.model();
+        if(model==null && localSelf!=null && localSelf.modelId.equals(id))model=assets.get(localSelf.hash);
+        Map<String,Double> values=new LinkedHashMap<>();
+        if(model!=null)values.putAll(model.initialVariables());
+        if(client.player!=null && localAppearanceActive() && localSelf.modelId.equals(id))values.putAll(ModelRenderer.expressionVariables(client.player.getUuid()));
+        if(id.equals("openysm_default"))values.put("variable.roaming.red_bow_headdress",options.defaultHeaddress?1d:0d);
+        values.putAll(options.modelProfile(id).variables());return Map.copyOf(values);
+    }
+    public boolean runLocalScript(String id,String script){
+        return script!=null && runLocalScripts(id,List.of(script),options.modelProfile(id).radioSelections());
+    }
+    public boolean runLocalScripts(String id,List<String> scripts,Map<String,Integer> radios){
+        if(!LocalAppearanceSettings.isValidModelId(id)||scripts==null||radios==null||scripts.size()>128)return false;
+        if(scripts.stream().anyMatch(Objects::isNull)||scripts.stream().mapToLong(String::length).sum()>32768)return false;
+        try{
+            var schema=ModelConfigSchema.from(localModelProfile(id),client.options.language);
+            if(schema.variables().isEmpty())return false;
+            var context=new Molang.Context();context.frame(Map.of());localModelVariables(id).forEach(context::set);
+            for(String script:scripts){
+                var program=Molang.compile(script);
+                if(program.references().stream().anyMatch(name->!name.startsWith("variable.")&&!name.startsWith("temp.")&&!name.startsWith("math.")))return false;
+                program.evaluate(context);
+            }
+            Map<String,Double> values=new LinkedHashMap<>(options.modelProfile(id).variables());
+            for(String key:schema.variables())if(context.has(key))values.put(key,context.get(key));
+            var previous=options.modelProfile(id);
+            return options.updateModelProfile(id,new ClientOptions.ModelProfile(previous.textureId(),values,radios));
+        }catch(RuntimeException invalid){MEPlayerActionsClient.LOGGER.debug("Private model configuration rejected: {}",invalid.getMessage());return false;}
+    }
+    public boolean selectLocalTexture(String id,String texture){
+        var profile=localModelProfile(id);
+        if(texture==null||profile.textures().stream().noneMatch(choice->choice.id().equals(texture)))return false;
+        var previous=options.modelProfile(id);
+        if(!options.updateModelProfile(id,new ClientOptions.ModelProfile(texture,previous.variables(),previous.radioSelections())))return false;
+        localProfiles.remove(id);
+        if(localSelf!=null && localSelf.modelId.equals(id)){invalidateLocalAppearance();ensureLocalAppearance();}
+        return true;
     }
     public Path localModelDirectory() {return localModelLibrary.directory();}
     public void refreshLocalAppearance() {invalidateLocalAppearance();ensureLocalAppearance();}
     private void begin(JsonObject json,long now) {
         String hash=WireJson.hash(json,"hash");
-        if(!requested.contains(hash) || transfers.size()>=4) throw new IllegalArgumentException("Unexpected asset transfer");
-        AssetTransfer transfer=new AssetTransfer(WireJson.modelId(json),hash,(int)WireJson.integer(json,"rawBytes",1,AssetTransfer.MAX_RAW),
-                (int)WireJson.integer(json,"compressedBytes",1,AssetTransfer.MAX_COMPRESSED),(int)WireJson.integer(json,"chunks",1,AssetTransfer.MAX_CHUNKS));
-        if(transfers.putIfAbsent(hash,transfer)!=null) throw new IllegalArgumentException("Duplicate asset transfer");
-        transferTimes.put(hash,now);
+        pushAuthorization.begin(offerId(json),hash,WireJson.modelId(json),(int)WireJson.integer(json,"rawBytes",1,AssetTransfer.MAX_RAW),
+                (int)WireJson.integer(json,"compressedBytes",1,AssetTransfer.MAX_COMPRESSED),
+                (int)WireJson.integer(json,"chunks",1,AssetTransfer.MAX_CHUNKS),pushBindings(),now);
+        pushTransfersBegun++;pushState(hash,"正在下载服务器模型","");
     }
-    private void finish(String hash) {
-        AssetTransfer transfer=transfers.remove(hash);transferTimes.remove(hash);
-        if(transfer==null) return;
-        loading.add(hash);long epoch=generation;
-        decoder.execute(()->{
+    private void pushChunk(JsonObject json,long now) {
+        pushAuthorization.chunk(offerId(json),WireJson.hash(json,"hash"),
+                (int)WireJson.integer(json,"index",0,AssetTransfer.MAX_CHUNKS-1),
+                WireJson.string(json,"data",12_000),pushBindings(),now);
+    }
+    private void cancelOffer(JsonObject json) {
+        UUID id=offerId(json);String hash=WireJson.hash(json,"hash"),reason=WireJson.string(json,"reason",128);
+        var offer=pushAuthorization.find(id).orElse(null);
+        if(offer==null)return;
+        if(!offer.identity().hash().equals(hash))throw new IllegalArgumentException("Cancel offer hash");
+        if(pushAuthorization.remove(offer)) {
+            pushCancelled++;loading.remove(hash);
+            pushState(hash,"等待服务器模型","服务器取消模型推送："+reason+"；保持服务器显示");
+        }
+    }
+    private void finish(JsonObject json,long now) {
+        UUID id=offerId(json);String hash=WireJson.hash(json,"hash");
+        AssetTransfer transfer=pushAuthorization.end(id,hash,pushBindings(),now);
+        var offer=pushAuthorization.find(id).orElseThrow();long epoch=generation;
+        loading.add(hash);pushState(hash,"正在校验下载模型","");
+        try {decoder.execute(()->{
             try {
                 byte[] raw=transfer.finish();BbModel model=BbModel.parse(raw);
-                try {Files.createDirectories(cache);Files.write(cache.resolve(hash+".bbmodel"),raw);pruneCache();}
-                catch(IOException exception) {MEPlayerActionsClient.LOGGER.debug("Cache write skipped: {}",exception.toString());}
-                client.execute(()->{if(epoch==generation){loading.remove(hash);requested.remove(hash);install(hash,model);}});
+                client.execute(()->{
+                    if(!currentPush(offer,epoch))return;
+                    completePush(offer,model,false,epoch);
+                    // Only a successfully prepared, still-authorized model may enter the disk cache.
+                    // Cache I/O remains off the Minecraft thread, and precedes later cache reads on this executor.
+                    if(assets.containsKey(hash) && ModelRenderer.has(hash) && !failedAssets.containsKey(hash)) {
+                        try {decoder.execute(()->{
+                            try {serverModelCache.writeValidated(hash,raw);}
+                            catch(IOException failure) {MEPlayerActionsClient.LOGGER.debug("Server model cache write skipped {}: {}",hash.substring(0,12),failure.toString());}
+                        });} catch(RejectedExecutionException busy) {
+                            MEPlayerActionsClient.LOGGER.debug("Server model cache write queue full {}",hash.substring(0,12));
+                        }
+                    }
+                });
             } catch(Exception exception) {
-                client.execute(()->{if(epoch==generation)failAsset(hash,"模型加载失败："+exception.getMessage());});
+                client.execute(()->{if(currentPush(offer,epoch))rejectPush(offer,"服务器模型校验失败："+exception.getMessage());});
             }
-        });
+        });} catch(RejectedExecutionException busy) {rejectPush(offer,"服务器模型解析队列已满");}
     }
     private void install(String hash,BbModel model) {
         if(assets.size()>=16 && !assets.containsKey(hash) && !evictInactive()) {failAsset(hash,"同时显示的模型过多，保持服务器显示");return;}
@@ -327,7 +552,7 @@ public final class ClientRuntime {
                 while(evictInactive()) if(ModelRenderer.prepare(hash,model))break;
                 if(!ModelRenderer.has(hash))throw new IllegalStateException("Texture preparation failed");
             }
-            assets.put(hash,model);lastError="";
+            assets.put(hash,model);if(!unsupportedHandshake)lastError="";
             for(Binding binding:bindings.values())if(binding.hash.equals(hash)) {
                 binding.unsupported=binding.layers.stream().anyMatch(layer->!model.animations().contains(layer.animation()));
                 if(binding.unsupported)failed(binding,"客户端模型缺少对应动画，请更新服务器 bbmodel");
@@ -343,22 +568,14 @@ public final class ClientRuntime {
         while(iterator.hasNext()) {
             String hash=iterator.next().getKey();
             if(active.contains(hash))continue;
-            iterator.remove();ModelRenderer.release(hash);return true;
+            iterator.remove();packAssets.remove(hash);serverAssets.remove(hash);ModelRenderer.release(hash);return true;
         }
         return false;
     }
     private void failAsset(String hash,String reason) {
-        transfers.remove(hash);transferTimes.remove(hash);requested.remove(hash);loading.remove(hash);
+        loading.remove(hash);
         failedAssets.put(hash,System.nanoTime());lastError=reason;
-        for(Binding binding:bindings.values()) if(binding.hash.equals(hash)) failed(binding,"");
-    }
-    private void pruneCache() throws IOException {
-        try(var stream=Files.list(cache)) {
-            List<Path> paths=stream.filter(p->p.getFileName().toString().matches("[0-9a-f]{64}\\.bbmodel")).sorted(Comparator.comparingLong((Path p)->{
-                try{return Files.getLastModifiedTime(p).toMillis();}catch(IOException e){return 0L;}
-            }).reversed()).toList();
-            long total=0;for(Path path:paths) {total+=Files.size(path);if(total>128L*1024*1024)Files.deleteIfExists(path);}
-        }
+        for(Binding binding:bindings.values()) if(binding.hash.equals(hash)) {failed(binding,"");binding.assetState="服务器模型同步失败";binding.assetError=reason;}
     }
     private Binding matching(JsonObject json) {
         Binding binding=bindings.get(UUID.fromString(WireJson.string(json,"owner",36)));
@@ -373,20 +590,24 @@ public final class ClientRuntime {
         JsonObject json=identityFields(binding);json.addProperty("protocol",3);json.addProperty("type",type);return json;
     }
     private void failed(Binding binding,String reason) {
+        closeModelEffects(binding.owner);
         if(binding.readySent) send(identity("render_failed",binding));
-        binding.active=false;binding.readySent=false;if(!reason.isEmpty())lastError=reason;
+        binding.active=false;binding.readySent=false;
+        if(!reason.isEmpty()){lastError=reason;binding.assetState="保持服务器显示";binding.assetError=reason;}
     }
     private void releaseBindings() {for(Binding binding:bindings.values())failed(binding,"");bindings.clear();}
     private void abortTransfers() {
         generation++;previewRequest++;previewPending=false;decoder.getQueue().clear();
         localAppearanceRequest++;localAppearancePending=false;
-        transfers.clear();transferTimes.clear();loading.clear();requested.clear();
+        pushCancelled+=pushAuthorization.diagnostics().size();pushAuthorization.clear();loading.clear();
     }
     private boolean send(JsonObject json) {
         if(!connected || client.getNetworkHandler()==null || !ClientPlayNetworking.canSend(ActionPayload.ID))return false;
         byte[] bytes=json.toString().getBytes(StandardCharsets.UTF_8);
         if(bytes.length>maxPayload){lastError="动作数据超过频道负载限制";return false;}
-        try {ClientPlayNetworking.send(new ActionPayload(bytes));return true;}
+        try {ClientPlayNetworking.send(new ActionPayload(bytes));
+            if(json.has("type") && json.get("type").getAsString().equals("asset_request"))pushAssetRequests++;
+            return true;}
         catch(RuntimeException exception) {lastError="服务器动作频道不可用";return false;}
     }
     private void sendHeartbeats() {
@@ -415,7 +636,7 @@ public final class ClientRuntime {
     public void toggleEnabled() {
         if(options.enabled) releaseBindings();
         abortTransfers();
-        options.enabled=!options.enabled;options.save();acknowledged=false;lastHello=0;
+        options.enabled=!options.enabled;options.save();acknowledged=false;pushNegotiated=false;unsupportedHandshake=false;lastHello=0;
     }
     public Collection<RenderBinding> renderBindings() {
         return animationBindings().stream().filter(binding -> shouldShowModel(binding.owner())).toList();
@@ -482,8 +703,104 @@ public final class ClientRuntime {
         return binding==null?Map.of():binding.accessories;
     }
     public Map<String,Double> localParameters(UUID owner) {
-        return localAppearanceActive() && owner.equals(client.player.getUuid()) && localAppearance().modelId().equals("openysm_default")
-                ? Map.of("variable.roaming.red_bow_headdress", options.defaultHeaddress ? 1d : 0d) : Map.of();
+        if(!localAppearanceActive() || !owner.equals(client.player.getUuid()))return Map.of();
+        Map<String,Double> values=new LinkedHashMap<>();
+        if(localSelf.modelId.equals("openysm_default"))values.put("variable.roaming.red_bow_headdress",options.defaultHeaddress?1d:0d);
+        values.putAll(options.modelProfile(localSelf.modelId).variables());return Map.copyOf(values);
+    }
+    public void configureExpressionContext(UUID owner,Molang.Context context){
+        PlayerEntity player=nativePlayer(owner);Binding binding=bindings.get(owner);
+        int food=player==client.player&&player!=null?player.getHungerManager().getFoodLevel():binding==null?20:binding.foodLevel;
+        VanillaYsmQueries.populate(client,player,food,modelProfile(owner).selectedTexture(),context);
+        context.query("ysm.is_first_person",player!=null && player==client.player && client.options.getPerspective().isFirstPerson()?1d:0d);
+        Molang.FunctionResolver nativeFunctions=context.functionResolver();
+        RenderBinding appearance=appearanceBinding(owner);
+        YsmModelEffects frameEffects=appearance==null || player==null?null:
+                frameEffects(owner,player,appearance.instance(),appearance.assetHash(),modelProfile(owner));
+        installFrameEffects(context,nativeFunctions,frameEffects);
+        Binding motion=localAppearanceActive()&&owner.equals(client.player.getUuid())?localSelf:binding;
+        if(motion!=null)for(String controller:motion.localMotion.pausedControllers())context.query("ysm.pause."+controller,1d);
+    }
+    public void configureComponentExpressionContext(UUID owner,Entity entity,String componentHash,Molang.Context context){
+        YsmModelProfile profile=modelProfile(owner);
+        var component=profile.components().stream().filter(value->value.hash().equals(componentHash)).findFirst().orElse(null);
+        VanillaYsmQueries.populateEntity(client,entity,20,component==null?"":component.selectedTexture(),context);
+        context.query("ysm.is_first_person",component!=null && component.kind().equals("fp_arm")?1d:0d);
+        Molang.FunctionResolver nativeFunctions=context.functionResolver();
+        RenderBinding appearance=appearanceBinding(owner);
+        YsmModelEffects effects=appearance==null || entity==null || component==null?null:
+                frameEffects(owner,entity,appearance.instance(),componentHash,profile);
+        installFrameEffects(context,nativeFunctions,effects);
+    }
+    private YsmModelEffects frameEffects(UUID owner,Entity entity,String instance,String hash,YsmModelProfile profile){
+        EffectKey key=new EffectKey(owner,entity.getUuid());EffectState state=modelEffects.get(key);
+        if(state!=null && (state.entity()!=entity || !state.instance().equals(instance) || !state.hash().equals(hash))){
+            state.effects().close();modelEffects.remove(key);state=null;
+        }
+        if(state==null){
+            if(modelEffects.size()>=256)return null;
+            state=new EffectState(new YsmModelEffects(client),entity,instance,hash,profile);modelEffects.put(key,state);
+        }
+        state.effects().update(entity,instance,hash,profile);return state.effects();
+    }
+    private static void installFrameEffects(Molang.Context context,Molang.FunctionResolver nativeFunctions,YsmModelEffects effects){
+        context.functions((function,arguments)->switch(function) {
+            case "ysm.play_sound","ysm.stop_sound","ysm.stop_all_sounds","ysm.particle","ysm.abs_particle" ->
+                    effects!=null && Boolean.TRUE.equals(effects.handle(function,arguments));
+            default -> nativeFunctions==null?0d:nativeFunctions.call(function,arguments);
+        });
+    }
+    private void tickModelEffects() {
+        Map<UUID,RenderBinding> current=new HashMap<>();
+        for(RenderBinding binding:animationBindings())current.put(binding.owner(),binding);
+        for(EffectKey key:List.copyOf(modelEffects.keySet())) {
+            RenderBinding binding=current.get(key.owner());EffectState state=modelEffects.get(key);
+            boolean valid=binding!=null && binding.instance().equals(state.instance())
+                    && (key.owner().equals(key.entity())?binding.assetHash().equals(state.hash()):
+                        modelProfile(key.owner()).components().stream().anyMatch(component->component.hash().equals(state.hash())));
+            if(!valid || state.entity().isRemoved() || state.entity().getEntityWorld()!=client.world){
+                state.effects().close();modelEffects.remove(key);continue;
+            }
+            state.effects().update(state.entity(),state.instance(),state.hash(),state.profile());
+        }
+    }
+    private void closeModelEffects(UUID owner) {
+        for(EffectKey key:List.copyOf(modelEffects.keySet()))if(key.owner().equals(owner)){
+            modelEffects.remove(key).effects().close();
+        }
+    }
+    private void closeModelEffects() {
+        modelEffects.values().forEach(state->state.effects().close());modelEffects.clear();
+    }
+    public Map<String,Object> modelEffectsDiagnostics() {
+        Map<String,Object> result=new LinkedHashMap<>();
+        modelEffects.forEach((key,state)->result.put(key.owner().equals(key.entity())?key.owner().toString():key.owner()+"/"+key.entity(),state.effects().diagnostics()));
+        return Map.copyOf(result);
+    }
+    public VanillaYsmAnimations.VanillaState vanillaState(UUID owner){
+        PlayerEntity player=nativePlayer(owner);if(player==null)return VanillaYsmAnimations.VanillaState.NONE;
+        var vehicle=player.getVehicle();Set<String> tags=new LinkedHashSet<>();
+        if(vehicle!=null)vehicle.getType().getRegistryEntry().streamTags().limit(128).forEach(tag->tags.add(tag.id().toString()));
+        return new VanillaYsmAnimations.VanillaState(player.isDead(),player.hurtTime,player.isUsingRiptide(),player.isSleeping(),player.isSwimming(),
+                vanillaItem(player.getMainHandStack()),vanillaItem(player.getOffHandStack()),
+                !player.isUsingItem()?VanillaYsmAnimations.Hand.NONE:player.getActiveHand()==Hand.OFF_HAND?VanillaYsmAnimations.Hand.OFF:VanillaYsmAnimations.Hand.MAIN,
+                // Native item components can shorten max use time while its remaining ticks are unchanged.
+                Math.max(0,player.getItemUseTime()),!player.handSwinging?VanillaYsmAnimations.Hand.NONE:player.preferredHand==Hand.OFF_HAND?VanillaYsmAnimations.Hand.OFF:VanillaYsmAnimations.Hand.MAIN,
+                // Vanilla starts a swing at -1 before its first tick; keep the active hand at frame zero.
+                Math.max(0,player.handSwingTicks),player.fishHook!=null,vehicle==null?"":Registries.ENTITY_TYPE.getId(vehicle.getType()).toString(),tags,
+                vehicle!=null&&vehicle.isAlive(),vehicle instanceof LivingEntity living&&!living.getEquippedStack(EquipmentSlot.SADDLE).isEmpty());
+    }
+    private static VanillaYsmAnimations.ItemState vanillaItem(ItemStack stack){
+        if(stack.isEmpty())return VanillaYsmAnimations.ItemState.EMPTY;
+        String id=Registries.ITEM.getId(stack.getItem()).toString();Set<String> tags=new LinkedHashSet<>();
+        stack.streamTags().limit(128).forEach(tag->tags.add(tag.id().toString()));
+        String kind="";
+        for(String tool:List.of("sword","axe","pickaxe","shovel","hoe","shield","crossbow","bow","fishing_rod"))if(tags.contains("minecraft:"+tool+"s")||tags.contains("c:"+tool+"s")||id.equals("minecraft:"+tool)){kind=tool;break;}
+        if(kind.isEmpty() && (id.equals("minecraft:trident")||tags.contains("c:tridents")))kind="spear";
+        if(kind.isEmpty() && (id.endsWith("_spear")||tags.contains("minecraft:spears")||tags.contains("c:spears")))kind="lance";
+        if(kind.isEmpty() && (id.equals("minecraft:splash_potion")||id.equals("minecraft:lingering_potion")))kind="throwable_potion";
+        if(kind.isEmpty() && id.equals("minecraft:mace"))kind="mace";
+        return new VanillaYsmAnimations.ItemState(id,tags,kind,stack.getUseAction().name().toLowerCase(Locale.ROOT),false,VanillaYsmQueries.charged(stack),ItemStack.hashCode(stack));
     }
     private RenderBinding entityBinding(Binding binding,BbModel model,PlayerEntity player) {
         float delta=client.getRenderTickCounter().getTickProgress(false);
@@ -491,6 +808,7 @@ public final class ClientRuntime {
         float bodyYaw=MathHelper.lerpAngleDegrees(delta,player.lastBodyYaw,player.bodyYaw);
         float headYaw=MathHelper.lerpAngleDegrees(delta,player.lastHeadYaw,player.headYaw),headPitch=player.getPitch(delta);
         LocalMotionPolicy policy=binding.motion;
+        if(binding==localSelf)policy=policy.withActionLock(options.localActionLocked);
         boolean own=player==client.player,bedSleeping=false;
         if(policy.specialPose().isEmpty() && player.isSleeping()) {
             var bed=player.getSleepingPosition().orElse(null);
@@ -517,8 +835,8 @@ public final class ClientRuntime {
         binding.localMotion.update(localTick,new EntityAnimationController.Sample(current.x,current.y,current.z,player.isOnGround(),
                 bedSleeping,player.getPose()==EntityPose.SWIMMING || policy.forcedPose().equals("crawl"),player.isTouchingWater(),own?player.getAbilities().flying:policy.flying(),
                 player.isGliding(),player.isSneaking() || player.getPose()==EntityPose.CROUCHING || policy.forcedPose().equals("sneak"),player.isSprinting(),riding,player.handSwinging,player.handSwingTicks,
-                player.preferredHand==Hand.OFF_HAND,own && client.interactionManager!=null && client.interactionManager.isBreakingBlock(),own,player.isClimbing()),
-                policy,binding.localServerLayers);
+                player.preferredHand==Hand.OFF_HAND,own && client.interactionManager!=null && client.interactionManager.isBreakingBlock(),own,player.isClimbing(),vanillaState(player.getUuid())),
+                policy,binding.localServerLayers,model.animations());
         return new RenderBinding(binding.owner,binding.instance,binding.hash,model,binding.localMotion.layers(),localTick+delta,
                 pos.x,pos.y,pos.z,bodyYaw,headYaw,headPitch,binding.scale,binding.hidePlayer,own?"local-player":"tracked-player");
     }
@@ -552,7 +870,8 @@ public final class ClientRuntime {
         }
         if(previewHash.equals(hash)){previewId="";previewHash="";}
     }
-    public void releaseAll() {releaseBindings();}
+    /** Pause GPU leases for texture reload while retaining protocol identities and pending downloads. */
+    public void releaseAll() {for(Binding binding:bindings.values())failed(binding,"");}
 
     public boolean serverBridgeReady() {
         return connected && acknowledged && options.enabled && client.getNetworkHandler()!=null
@@ -564,6 +883,28 @@ public final class ClientRuntime {
     }
     /** Counts only server gameplay requests, so private action previews can prove that none were sent. */
     public long requestPacketsSent() {return requestPacketsSent;}
+    /** Actual protocol/cache/GPU events, with cumulative counters surviving reconnects. */
+    public Map<String,Object> serverPushDiagnostics() {
+        Map<String,Object> result=new LinkedHashMap<>();
+        result.put("assetMode",serverAssetMode);result.put("capabilities",serverCapabilities);
+        result.put("negotiated",pushNegotiated);result.put("generation",generation);
+        result.put("unsupportedHandshake",unsupportedHandshake);
+        result.put("offersReceived",pushOffersReceived);result.put("cacheHits",pushCacheHits);result.put("cacheMisses",pushCacheMisses);
+        result.put("transfersBegun",pushTransfersBegun);result.put("transfersCompleted",pushTransfersCompleted);
+        result.put("gpuPrepared",pushGpuPrepared);result.put("renderReadySent",pushReadySent);result.put("renderAcks",pushRenderAcks);
+        result.put("assetRequestPacketsSent",pushAssetRequests);result.put("cancelled",pushCancelled);result.put("rejected",pushRejected);
+        result.put("activeOffers",pushAuthorization.diagnostics());result.put("transfers",pushAuthorization.receiving());
+        result.put("bindings",bindings.values().stream().map(binding->{
+            Map<String,Object> values=new LinkedHashMap<>();
+            values.put("owner",binding.owner.toString());values.put("instance",binding.instance);values.put("modelId",binding.modelId);
+            values.put("hash",binding.hash);values.put("active",binding.active);values.put("readySent",binding.readySent);
+            values.put("assetState",binding.assetState);values.put("assetError",binding.assetError);
+            values.put("serverAssetStatus",binding.serverAssetStatus);values.put("serverAssetReason",binding.serverAssetReason);
+            values.put("serverAssetSource",binding.serverAssetSource);
+            return Map.copyOf(values);
+        }).toList());
+        return Map.copyOf(result);
+    }
     public LocalAppearanceSettings localAppearance() {return options.localAppearance();}
     public Path localAppearanceSettingsPath() {return options.path();}
 
@@ -616,12 +957,13 @@ public final class ClientRuntime {
         if(animation==null || !localAppearancePrepared())return false;
         BbModel model=assets.get(localSelf.hash);
         if(!model.animations().contains(animation) || animation.startsWith("parallel") || animation.startsWith("pre_parallel"))return false;
-        localSelf.localServerLayers=List.of(new Layer("manual",animation,localTick,1,"ONCE",2,2));
+        localSelf.localServerLayers=List.of(new Layer("manual",animation,localTick,1,model.animationLoop(animation),2,2));
         return true;
     }
     public void stopLocal() {if(localSelf!=null)localSelf.localServerLayers=List.of();}
 
     private void invalidateLocalAppearance() {
+        if(localSelf!=null)closeModelEffects(localSelf.owner);
         localAppearanceRequest++;localAppearancePending=false;localSelf=null;
         localAppearanceError="";localAppearanceRetryAfter=0;
     }
@@ -641,12 +983,12 @@ public final class ClientRuntime {
         var settings=localAppearance();
         if(!options.enabled || !settings.enabled() || client.world==null || client.player==null
                 || localAppearancePrepared() || localAppearancePending || System.nanoTime()<localAppearanceRetryAfter)return;
-        String id=settings.modelId();UUID owner=client.player.getUuid();long token=++localAppearanceRequest,epoch=generation;
+        String id=settings.modelId(),texture=localTextureSelection(id);UUID owner=client.player.getUuid();long token=++localAppearanceRequest,epoch=generation;
         localAppearancePending=true;
         try {
             decoder.execute(()->{
                 try {
-                    var loaded=localModelLibrary.load(id,options.defaultBlueTexture);
+                    var loaded=localModelLibrary.load(id,texture.isEmpty()?null:texture);
                     client.execute(()->{
                         if(token!=localAppearanceRequest || epoch!=generation)return;
                         localAppearancePending=false;
@@ -656,6 +998,7 @@ public final class ClientRuntime {
                             localAppearanceError="本地模型纹理加载失败";localAppearanceRetryAfter=System.nanoTime()+30*SECOND;return;
                         }
                         localSelf=new Binding(owner,"local-self:"+token,id,loaded.hash());
+                        rememberLocalProfile(id,loaded);localSelf.profile=loaded.profile();
                         localSelf.motion=localMotionPolicy(loaded.model());localSelf.hidePlayer=true;
                         localAppearanceError="";localAppearanceRetryAfter=0;
                     });
@@ -677,7 +1020,7 @@ public final class ClientRuntime {
         BbModel model=assets.get(localSelf.hash);
         if(!localSelf.localServerLayers.isEmpty()) {
             Layer manual=localSelf.localServerLayers.get(0);
-            if(localTick>manual.startedAtTick()+model.animationLengthTicks(manual.animation())+manual.outTicks())stopLocal();
+            if(manual.loop().equals("ONCE") && localTick>manual.startedAtTick()+model.animationLengthTicks(manual.animation())+manual.outTicks())stopLocal();
         }
         entityBinding(localSelf,model,client.player);
     }
@@ -702,14 +1045,19 @@ public final class ClientRuntime {
     public List<String> status() {
         long active=bindings.values().stream().filter(b->b.active).count();
         List<String> text=new ArrayList<>();
-        text.add("客户端 0.4.1 · "+(acknowledged?"已连接动作服务器":"等待服务器 / 本地预览"));
-        text.add("已接管 "+active+" / "+bindings.size()+" 个模型 · 资产 "+assets.size()+" · 资源包加载 "+loading.size());
+        text.add("客户端 "+clientVersion()+" · "+(acknowledged?"已连接动作服务器":"等待服务器 / 本地预览")
+                +" · 资产模式 "+(serverAssetMode.isEmpty()?"未协商":serverAssetMode));
+        text.add("已接管 "+active+" / "+bindings.size()+" 个模型 · 资产 "+assets.size()+" · 模型加载 "+loading.size());
         text.add((options.followServerTimeline?"服务器拖后轨迹 · 缓冲 "+options.interpolationTicks+" tick":"客户端实体即时跟随 · 无额外位置缓冲")
                 +" · 本人模型 "+(options.showSelf?"显示":"隐藏"));
         if(localAppearance().enabled())text.add("本地外观："+localAppearance().modelId()+" · "+localAppearanceStatus());
         if(!previewId.isEmpty())text.add("本地预览："+previewId);
         Binding own=client.player==null?null:bindings.get(client.player.getUuid());
-        if(own!=null){text.add("模型："+own.modelId+" · "+(own.active?"本地渲染":own.readySent?"等待确认":"加载中"));
+        if(own!=null){text.add("模型："+own.modelId+" · "+own.assetState+" · hash "+(own.hash.isEmpty()?"无":own.hash.substring(0,12)));
+            if(!own.assetError.isEmpty())text.add("模型错误："+own.assetError);
+            if(!own.serverAssetStatus.isEmpty())text.add("服务器资产："+own.serverAssetStatus
+                    +(own.serverAssetSource.isEmpty()?"":" · 来源 "+own.serverAssetSource));
+            if(!own.serverAssetReason.isEmpty() && !own.serverAssetReason.equals(own.assetError))text.add("服务器资产原因："+own.serverAssetReason);
             text.add("动画："+(options.followServerTimeline?own.layers:own.localMotion.layers()).stream()
                     .map(l->l.layer()+"="+l.animation()).reduce((a,b)->a+" / "+b).orElse("基础姿态"));}
         if(!lastError.isEmpty())text.add(lastError);
@@ -781,8 +1129,10 @@ public final class ClientRuntime {
         final EntityAnimationController localMotion=new EntityAnimationController();
         final LocalLayerClock localClock=new LocalLayerClock();
         LocalMotionPolicy motion;List<Layer> localServerLayers=List.of();
+        YsmModelProfile profile=YsmModelProfile.empty();
         long sequence=-1,lastPacket,lastReady;boolean readySent,active,hidePlayer,unsupported;float scale=1;
         int foodLevel=20;
+        String assetState="等待服务器模型",assetError="",serverAssetStatus="",serverAssetReason="",serverAssetSource="";
         Map<String,Double> accessories=Map.of();
         List<Layer> layers=List.of();List<Action> actions=List.of();
         Binding(UUID owner,String instance,String modelId,String hash){this.owner=owner;this.instance=instance;this.modelId=modelId;this.hash=hash;}

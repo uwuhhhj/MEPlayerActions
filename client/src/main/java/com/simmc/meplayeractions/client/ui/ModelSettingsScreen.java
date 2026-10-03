@@ -13,6 +13,8 @@ import net.minecraft.client.option.Perspective;
 import net.minecraft.text.Text;
 import java.math.BigDecimal;
 import java.util.Map;
+import java.util.LinkedHashMap;
+import java.util.Set;
 
 /** Actual common appearance settings and supported model parameters, with no invented controls. */
 public final class ModelSettingsScreen extends Screen {
@@ -27,7 +29,8 @@ public final class ModelSettingsScreen extends Screen {
     private int left, top, bottom, panelWidth, previewWidth, right, rightWidth;
     private int previewX, previewY, previewW, previewH, drawnPreviewCount, controlHeight = 20, labelGap = 11;
     private TextFieldWidget scale, offsetX, offsetY, offsetZ;
-    private ButtonWidget enabled, showSelf, headdress, skin;
+    private ButtonWidget enabled, showSelf, headdress, skin, authorConfig;
+    private Set<String> formVariables = Set.of();
 
     public ModelSettingsScreen(ClientRuntime runtime, String id, Screen parent) {
         super(Text.literal("模型详情 / 设置"));
@@ -52,7 +55,7 @@ public final class ModelSettingsScreen extends Screen {
         previewWidth = Math.max(88, Math.min(260, panelWidth * 34 / 100));
         right = left + previewWidth + 6; rightWidth = panelWidth - previewWidth - 6;
         previewX = left + 4; previewY = top + 30; previewW = previewWidth - 8;
-        previewH = Math.max(30, bottom - previewY - 30);
+        previewH = Math.max(30, bottom - previewY - 54);
         int innerX = right + 6, innerW = rightWidth - 12, half = (innerW - 4) / 2;
         int available = bottom - top;
         controlHeight = height < 230 ? 18 : 20; labelGap = height < 230 ? 9 : 11;
@@ -86,6 +89,10 @@ public final class ModelSettingsScreen extends Screen {
             runtime.disableLocalAppearance(); draftEnabled = false; updateToggleLabels(); message = "已恢复服务器显示或原版人物";
         }, "立即关闭本地外观，恢复服务器显示或原版人物");
         button("返回", left, height - 27, 52, this::close, "返回上一页；未保存的缩放与位置不应用");
+        authorConfig = button("作者配置 / 皮肤…", left + 4, bottom - 49, previewWidth - 8, () -> {
+            client.setScreen(new ModelConfigScreen(runtime, modelId, this));
+        }, "作者定义的 checkbox、range、radio 和原始皮肤；按模型保存，仅自己可见");
+        authorConfig.active = loaded != null;
         loadPreview();
     }
 
@@ -114,6 +121,11 @@ public final class ModelSettingsScreen extends Screen {
         runtime.loadLocalPreview(id).whenComplete((model, error) -> client.execute(() -> {
             if (!activeView || request != previewRequest || !modelId.equals(id)) return;
             pending = false; loaded = model; previewError = error == null ? "" : LocalAppearanceScreen.loadError(error);
+            if (loaded != null) {
+                try { formVariables = ModelConfigSchema.from(loaded.profile(), client.getLanguageManager().getLanguage()).variables(); }
+                catch (RuntimeException invalid) { formVariables = Set.of(); }
+            }
+            if (authorConfig != null) authorConfig.active = loaded != null;
         }));
     }
 
@@ -122,16 +134,30 @@ public final class ModelSettingsScreen extends Screen {
     public void setDraftShowSelf(boolean value) { draftShowSelf = value; updateToggleLabels(); }
     public int drawnPreviewCount() { return drawnPreviewCount; }
     public Map<String, Object> previewDiagnostics() { return preview.diagnostics(); }
-    public boolean defaultHeaddress() { return runtime.options.defaultHeaddress; }
+    public Map<String, Object> previewDiagnostics(float minU, float minV, float maxU, float maxV) {
+        return preview.diagnostics(minU, minV, maxU, maxV);
+    }
+    public boolean defaultHeaddress() {
+        return runtime.localModelVariables("openysm_default").getOrDefault("variable.roaming.red_bow_headdress", runtime.options.defaultHeaddress ? 1d : 0d) > 0;
+    }
     public void toggleDefaultHeaddress() {
         if (!modelId.equals("openysm_default")) return;
-        runtime.options.defaultHeaddress = !runtime.options.defaultHeaddress;
+        boolean next = !defaultHeaddress();
+        if (!runtime.runLocalScript(modelId, "v.roaming.red_bow_headdress=" + (next ? "1" : "0") + ";")) {
+            message = "头饰设置未保存，请等待模型加载完成"; return;
+        }
+        runtime.options.defaultHeaddress = next;
         runtime.options.save(); updateToggleLabels(); message = "头饰设置已保存，仅自己可见";
     }
-    public boolean defaultBlueTexture() { return runtime.options.defaultBlueTexture; }
+    public boolean defaultBlueTexture() {
+        String texture = runtime.options.modelProfile("openysm_default").textureId();
+        return texture.isEmpty() ? runtime.options.defaultBlueTexture : texture.equals("blue");
+    }
     public void toggleDefaultTexture() {
         if (!modelId.equals("openysm_default")) return;
-        runtime.options.defaultBlueTexture = !runtime.options.defaultBlueTexture; runtime.options.save();
+        boolean next = !defaultBlueTexture();
+        if (!runtime.selectLocalTexture(modelId, next ? "blue" : "default")) { message = "皮肤设置未保存"; return; }
+        runtime.options.defaultBlueTexture = next; runtime.options.save();
         runtime.refreshLocalAppearance(); loaded = null; pending = false; previewError = ""; previewRequest++; preview.clear();
         updateToggleLabels(); loadPreview(); message = "皮肤设置已保存，仅自己可见";
     }
@@ -169,6 +195,9 @@ public final class ModelSettingsScreen extends Screen {
         } catch (IllegalArgumentException exception) { message = exception.getMessage(); return false; }
     }
     private void restoreDefaults() {
+        if (!runtime.options.resetModelProfile(modelId) || !runtime.options.resetModelProfile("openysm_default")) {
+            message = "重置未保存，请检查配置文件"; return;
+        }
         runtime.options.defaultHeaddress = true; runtime.options.defaultBlueTexture = false;
         var defaults = LocalAppearanceSettings.defaults(); runtime.updateLocalAppearance(defaults);
         loadDraft(defaults); loaded = null; pending = false; previewError = ""; previewRequest++; preview.clear();
@@ -190,12 +219,13 @@ public final class ModelSettingsScreen extends Screen {
         clipped(context, modelLabel, left + 6, top + 6, previewWidth - 12, 0xfff3f6ff);
         clipped(context, LocalAppearanceScreen.sourceLabel(modelId) + " · " + modelId, left + 6, top + 18, previewWidth - 12, 0xff92b9df);
         if (loaded != null) {
-            Map<String, Double> parameters = modelId.equals("openysm_default")
-                    ? Map.of("variable.roaming.red_bow_headdress", defaultHeaddress() ? 1d : 0d) : Map.of();
-            if (preview.render(context, loaded.model(), modelId + ":" + loaded.hash(), previewX, previewY, previewW, previewH, yaw, pitch, ticks + delta, parameters)) drawnPreviewCount++;
+            Map<String, Double> parameters = new LinkedHashMap<>();
+            Map<String, Double> values = runtime.localModelVariables(modelId);
+            for (String variable : formVariables) if (values.containsKey(variable)) parameters.put(variable, values.get(variable));
+            if (preview.render(context, loaded.model(), modelId + ":" + loaded.hash(), previewX, previewY, previewW, previewH, yaw, pitch, ticks + delta, parameters, loaded.previewAnimation(), loaded.profile())) drawnPreviewCount++;
             clipped(context, loaded.model().cubeCount() + " 方块 · " + loaded.model().animations().size() + " 动作", left + 6, bottom - 25, previewWidth - 12, 0xffc6d5e7);
         } else clipped(context, previewError.isEmpty() ? "正在加载模型…" : previewError, previewX + 3, previewY + previewH / 2, previewW - 6, 0xffffc685);
-        clipped(context, "拖动旋转 · 自动居中", left + 6, bottom - 13, previewWidth - 12, 0xffa7b5c8);
+        clipped(context, rotationDisabled() ? "作者固定正面视角" : "拖动旋转 · 自动居中", left + 6, bottom - 13, previewWidth - 12, 0xffa7b5c8);
         if (scale != null) {
             clipped(context, "缩放（0.05–8）", scale.getX(), scale.getY() - labelGap, scale.getWidth(), 0xffc6d5e7);
             clipped(context, "X 位置", offsetX.getX(), offsetX.getY() - labelGap, offsetX.getWidth(), 0xffc6d5e7);
@@ -206,14 +236,19 @@ public final class ModelSettingsScreen extends Screen {
         super.render(context, mouseX, mouseY, delta);
     }
     private boolean insidePreview(double x, double y) { return x >= previewX && x < previewX + previewW && y >= previewY && y < previewY + previewH; }
+    private boolean rotationDisabled() { return loaded != null && ModelPreview.rotationDisabled(loaded.profile()); }
     @Override public boolean mouseClicked(Click click, boolean doubled) {
         if (click.button() == 0 && insidePreview(click.x(), click.y())) {
+            if (rotationDisabled()) { rotating = false; return true; }
             rotating = true; if (doubled) { yaw = 0; pitch = -8; } return true;
         }
         return super.mouseClicked(click, doubled);
     }
     @Override public boolean mouseDragged(Click click, double dx, double dy) {
-        if (rotating && click.button() == 0) { yaw = (yaw + (float) dx * 1.5f) % 360; pitch = Math.max(-65, Math.min(65, pitch + (float) dy)); return true; }
+        if (rotating && click.button() == 0) {
+            if (rotationDisabled()) { rotating = false; return true; }
+            yaw = (yaw + (float) dx * 1.5f) % 360; pitch = Math.max(-65, Math.min(65, pitch + (float) dy)); return true;
+        }
         return super.mouseDragged(click, dx, dy);
     }
     @Override public boolean mouseReleased(Click click) {

@@ -3,6 +3,7 @@ package com.simmc.meplayeractions.client;
 import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -10,6 +11,40 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ConnectionLimitsTest {
     private static final UUID VIEWER = new UUID(0, 1);
     private static final long SECOND = 1_000_000_000L;
+
+    @Test void pushOffersArePacedAndRehelloCannotResetThreeFailureAttempts() {
+        var limits = new ConnectionLimits(); var instances = Set.of(new UUID(0, 20));
+        assertTrue(limits.canPushOffer(VIEWER, "hash", instances, 0)); limits.pushOfferSent(VIEWER, "hash", instances, 0);
+        assertFalse(limits.canPushOffer(VIEWER, "other", instances, 9));
+        assertTrue(limits.canPushOffer(VIEWER, "other", instances, 10));
+        assertFalse(limits.canPushOffer(VIEWER, "hash", instances, 99));
+        for (int tick : new int[]{100, 200}) {
+            limits.releaseTransfers(VIEWER);
+            assertTrue(limits.canPushOffer(VIEWER, "hash", instances, tick)); limits.pushOfferSent(VIEWER, "hash", instances, tick);
+        }
+        limits.releaseTransfers(VIEWER); assertFalse(limits.canPushOffer(VIEWER, "hash", instances, 300));
+        assertFalse(limits.canPushOffer(VIEWER, "hash", instances, 5000));
+        assertTrue(limits.canPushOffer(VIEWER, "hash", Set.of(new UUID(0, 21)), 5000));
+        limits.pushRenderReady(VIEWER, "hash"); assertTrue(limits.canPushOffer(VIEWER, "hash", instances, 5000));
+    }
+    @Test void switchingExistingSameHashAliasesDoesNotManufactureNewRetryGenerations() {
+        var limits = new ConnectionLimits(); UUID first = new UUID(0, 20), second = new UUID(0, 21);
+        var both = Set.of(first, second); limits.pushOfferSent(VIEWER, "hash", both, 0);
+        limits.pushOfferSent(VIEWER, "hash", both, 100); limits.pushOfferSent(VIEWER, "hash", both, 200);
+        assertFalse(limits.canPushOffer(VIEWER, "hash", Set.of(second), 300));
+        assertFalse(limits.canPushOffer(VIEWER, "hash", Set.of(first), 300));
+        assertFalse(limits.canPushOffer(VIEWER, "hash", Set.of(second, new UUID(0, 22)), 300));
+        assertTrue(limits.canPushOffer(VIEWER, "hash", Set.of(new UUID(0, 22)), 300));
+    }
+    @Test void offerCooldownHandlesTickWrapAndOnlyActualDisconnectClearsFailures() {
+        var limits = new ConnectionLimits(); var instances = Set.of(new UUID(0, 20));
+        limits.pushOfferSent(VIEWER, "hash", instances, 0xfffffff0L);
+        assertFalse(limits.canPushOffer(VIEWER, "hash", instances, 0x53));
+        assertTrue(limits.canPushOffer(VIEWER, "hash", instances, 0x54));
+        limits.pushOfferSent(VIEWER, "hash", instances, 0x54); limits.pushOfferSent(VIEWER, "hash", instances, 0xb8);
+        limits.releaseTransfers(VIEWER); assertFalse(limits.canPushOffer(VIEWER, "hash", instances, 0x11c));
+        limits.forget(VIEWER); assertTrue(limits.canPushOffer(VIEWER, "hash", instances, 0x11c));
+    }
 
     @Test void endingOrReplacingSessionReleasesWorkButRetainsEveryConnectionLimit() {
         ConnectionLimits limits = new ConnectionLimits();

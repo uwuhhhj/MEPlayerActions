@@ -6,7 +6,12 @@
     "EntityRenderStateMixin",
     "EntityRendererMixin",
     "EntityRenderManagerMixin",
-    "PlayerArmRendererMixin"
+    "PlayerArmRendererMixin",
+    "HeldItemRendererMixin",
+    "ItemRenderStateAccessor",
+    "ItemLayerRenderStateAccessor",
+    "SoundLoaderMixin",
+    "PersistentProjectileEntityInvoker"
   ],
   "injectors": {
     "defaultRequire": 1

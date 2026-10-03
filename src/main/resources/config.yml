@@ -224,9 +224,10 @@ menu:
     surprised: 惊讶
 
 client-sync:
-  # 客户端协议 v2。仅在模型/纹理加载成功且服务器确认 ready 后按观众切换本地渲染。
+  # 客户端协议 v3；0.4.2 默认由服务器向当前可见伪装的观众主动推送完整模型。
+  # 客户端只反馈服务器授权的缓存状态，模型/纹理加载成功且服务器确认 ready 后按观众切换本地渲染。
   # 未安装模组、资产失败、断开或 100 tick 无渲染续租时继续/恢复 ME。
-  # 本地模型原始资源依次读取本插件 models/、ME blueprints/、插件内置示例。
+  # 原始模型依次读取本插件 models/、插件 JAR 内置示例、ME blueprints/；不修改 ME/CE 资源包流程。
   enabled: true
   max-payload-bytes: 16000
   request-cooldown-ticks: 4

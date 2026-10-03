@@ -1,6 +1,8 @@
 package com.simmc.meplayeractions.client.mixin;
 
 import com.simmc.meplayeractions.client.render.HiddenPlayerRenderState;
+import com.simmc.meplayeractions.client.render.ComponentRenderState;
+import com.simmc.meplayeractions.client.render.YsmComponentRenderer;
 import net.minecraft.client.render.command.OrderedRenderCommandQueue;
 import net.minecraft.client.render.entity.EntityRenderManager;
 import net.minecraft.client.render.entity.state.EntityRenderState;
@@ -17,6 +19,7 @@ public abstract class EntityRenderManagerMixin {
             at = @At("HEAD"), cancellable = true)
     private void meplayeractions$hidePlayerAndEquipment(EntityRenderState state, CameraRenderState camera,
             double x, double y, double z, MatrixStack matrices, OrderedRenderCommandQueue queue, CallbackInfo ci) {
-        if (((HiddenPlayerRenderState) state).meplayeractions$isHidden()) ci.cancel();
+        if (((HiddenPlayerRenderState) state).meplayeractions$isHidden()
+                || YsmComponentRenderer.replaces(((ComponentRenderState) state).meplayeractions$entityUuid())) ci.cancel();
     }
 }

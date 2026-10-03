@@ -2,6 +2,7 @@ package com.simmc.meplayeractions.client;
 
 import com.simmc.meplayeractions.client.network.AssetTransfer;
 import com.simmc.meplayeractions.client.model.YsmFolderModel;
+import com.simmc.meplayeractions.client.model.YsmFolderFixtures;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
@@ -41,12 +42,7 @@ class LocalModelLibraryTest {
 
     @Test void pickerSupportsSafeYsmFoldersAndTheirRealPlayerAnimations() throws Exception {
         Path directory=Files.createDirectory(temporary.resolve("models")); Path folder=directory.resolve("我的 YSM 模型");
-        for(String asset:List.of("ysm.json","models/main.json","animations/main.animation.json","animations/extra.animation.json","textures/default.png")) {
-            Path target=folder.resolve(asset);Files.createDirectories(target.getParent());
-            try(var input=YsmFolderModel.class.getResourceAsStream("/assets/meplayeractions/builtin/openysm_default/"+asset)) {
-                assertNotNull(input);Files.write(target,input.readAllBytes());
-            }
-        }
+        YsmFolderFixtures.copyDefault(folder);
         var library=new LocalModelLibrary(directory);
         assertEquals(List.of("openysm_default","ysm:我的 YSM 模型"),library.models().stream().map(LocalModelLibrary.Entry::id).toList());
         var bundled=library.load("openysm_default");var local=library.load("ysm:我的 YSM 模型");
@@ -61,5 +57,17 @@ class LocalModelLibraryTest {
         assertEquals(original.model().animations(),blue.model().animations());
         assertEquals(original.model().sample(7,List.of()),blue.model().sample(7,List.of()));
         assertFalse(java.util.Arrays.equals(original.model().textures().getFirst().png(),blue.model().textures().getFirst().png()));
+    }
+
+    @Test void arbitraryYsmSkinIsSelectedByItsOwnProfileRatherThanTheLegacyDefaultToggle() throws Exception {
+        Path directory = Files.createDirectory(temporary.resolve("models"));
+        YsmFolderFixtures.copyDefault(directory.resolve("author")); var library = new LocalModelLibrary(directory);
+        var original = library.load("ysm:author"); var blue = library.load("ysm:author", "blue");
+        assertTrue(original.profile().isYsm()); assertEquals("default", original.profile().selectedTexture());
+        assertEquals("blue", blue.profile().selectedTexture()); assertNotEquals(original.hash(), blue.hash());
+        assertEquals(List.of("default", "blue"), blue.profile().textures().stream().map(texture -> texture.id()).toList());
+        assertThrows(IOException.class, () -> library.load("ysm:author", "../outside.png"));
+        assertThrows(IOException.class, () -> library.load("ysm:author", "unknown"));
+        assertEquals(blue.hash(), library.load("openysm_default", true).hash());
     }
 }

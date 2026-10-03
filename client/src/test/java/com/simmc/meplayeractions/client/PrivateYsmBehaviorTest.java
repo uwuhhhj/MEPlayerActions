@@ -33,12 +33,19 @@ class PrivateYsmBehaviorTest {
         assertNotEquals(a,b,"The setting must change real geometry rather than only a label");
         assertEquals(1d,visible.expressionVariables().get("variable.roaming.red_bow_headdress"));
         assertEquals(0d,hidden.expressionVariables().get("variable.roaming.red_bow_headdress"));
-        assertEquals(a,visible.sample(0,layers,0,0,Map.of(),Map.of(),Map.of("variable.roaming.red_bow_headdress",1d)));
+        var repeatedVisible=visible.sample(0,layers,0,0,Map.of(),Map.of(),Map.of("variable.roaming.red_bow_headdress",1d));
+        var repeatedHidden=hidden.sample(0,layers,0,0,Map.of(),Map.of(),Map.of("variable.roaming.red_bow_headdress",0d));
+        assertNotEquals(repeatedVisible,repeatedHidden,"Per-frame bone queries must retain the saved visibility choice");
+        assertEquals(1d,visible.expressionVariables().get("variable.roaming.red_bow_headdress"));
+        assertEquals(0d,hidden.expressionVariables().get("variable.roaming.red_bow_headdress"));
     }
     @Test void privateParametersCannotInjectQueriesOrCode() throws Exception {
         var player=new AnimationPlayer(BbModel.parse(YsmFolderModel.bundledDefault()));
         for (var invalid : List.of(Map.of("query.is_flying",1d),Map.of("variable.roaming.a;query.foo",1d),
-                Map.of("variable.roaming.bow",Double.NaN),Map.of("variable.roaming.bow",2d)))
+                Map.of("variable.roaming.bow",Double.NaN),Map.of("variable.roaming.bow",1_000_001d)))
             assertThrows(IllegalArgumentException.class,()->player.sample(0,List.of(),0,0,Map.of(),Map.of(),invalid));
+        player.sample(0,List.of(),0,0,Map.of(),Map.of(),Map.of("variable.roaming.bow",2d));
+        assertEquals(2d,player.expressionVariables().get("variable.roaming.bow"),
+                "Author range/radio variables are finite numeric values rather than only booleans");
     }
 }

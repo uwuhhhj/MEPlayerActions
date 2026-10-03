@@ -1,9 +1,12 @@
 package com.simmc.meplayeractions.client;
 
 import java.util.HashMap;
+import java.util.Collections;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Predicate;
 
@@ -18,6 +21,7 @@ final class ConnectionLimits {
     static final int TRANSFERS_PER_CLIENT = 2;
     static final int GLOBAL_TRANSFERS = 32;
     static final int ASSET_COOLDOWN_TICKS = 100;
+    static final int PUSH_OFFER_INTERVAL_TICKS = 10, PUSH_MAX_ATTEMPTS = 3, PUSH_MAX_RECORDS = 64;
     private static final long SECOND_NANOS = 1_000_000_000L;
 
     private final Map<UUID, Connection> connections = new HashMap<>();
@@ -55,6 +59,31 @@ final class ConnectionLimits {
         if (connection.assetRequests.containsKey(hash)) return false;
         connection.assetRequests.put(hash, tick);
         return true;
+    }
+
+    /** A new hello cannot reset offer pacing or the attempts for an unchanged server instance. */
+    boolean canPushOffer(UUID viewer, String hash, Set<UUID> instances, long tick) {
+        Connection connection = connection(viewer);
+        if (connection.offerInitialized && tickDistance(tick, connection.lastOfferTick) < PUSH_OFFER_INTERVAL_TICKS) return false;
+        PushAttempt previous = connection.pushAttempts.get(hash);
+        return previous == null || tickDistance(tick, previous.lastTick) >= ASSET_COOLDOWN_TICKS
+                && (Collections.disjoint(previous.instances, instances) || previous.attempts < PUSH_MAX_ATTEMPTS);
+    }
+
+    void pushOfferSent(UUID viewer, String hash, Set<UUID> instances, long tick) {
+        Connection connection = connection(viewer);
+        PushAttempt previous = connection.pushAttempts.remove(hash);
+        int attempts = previous != null && !Collections.disjoint(previous.instances, instances) ? previous.attempts + 1 : 1;
+        connection.pushAttempts.put(hash, new PushAttempt(instances, tick, attempts));
+        while (connection.pushAttempts.size() > PUSH_MAX_RECORDS)
+            connection.pushAttempts.remove(connection.pushAttempts.keySet().iterator().next());
+        connection.offerInitialized = true; connection.lastOfferTick = tick;
+    }
+
+    /** Only an authorized render_ready resets failure attempts; cached feedback cannot do it. */
+    void pushRenderReady(UUID viewer, String hash) {
+        Connection connection = connection(viewer); PushAttempt previous = connection.pushAttempts.get(hash);
+        if (previous != null) connection.pushAttempts.put(hash, new PushAttempt(previous.instances, previous.lastTick, 0));
     }
 
     boolean reserveTransfer(UUID viewer) {
@@ -128,9 +157,13 @@ final class ConnectionLimits {
         final Window inbound = new Window(), outbound = new Window();
         final RequestCooldown requests = new RequestCooldown();
         final Map<String, Long> assetRequests = new HashMap<>();
-        long lastHelloAt;
-        boolean helloInitialized;
+        final Map<String, PushAttempt> pushAttempts = new LinkedHashMap<>();
+        long lastHelloAt, lastOfferTick;
+        boolean helloInitialized, offerInitialized;
         int transfers;
+    }
+    private record PushAttempt(Set<UUID> instances, long lastTick, int attempts) {
+        private PushAttempt { instances = Set.copyOf(instances); }
     }
     private static final class Window {
         long startedAt;

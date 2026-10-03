@@ -4,12 +4,14 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import posixpath
 from pathlib import Path
 import re
 import shutil
 import struct
 import xml.etree.ElementTree as ET
 import zipfile
+from urllib.parse import quote
 
 PROJECT = Path(__file__).resolve().parents[1]
 WORKSPACE = PROJECT.parents[1]
@@ -52,6 +54,49 @@ def write_zip(path: Path, entries: dict[str, bytes]) -> None:
         assert set(archive.namelist()) == set(entries)
         for name, expected in entries.items():
             assert archive.read(name) == expected, f"Stale entry: {name}"
+
+
+def rebase_documentation(entries: dict[str, bytes], version: str, prefix: str = "") -> None:
+    """Keep navigation local; source links omitted from an installer point to its release tag."""
+    origins = {}
+    protocol = PROJECT / "src/main/java/com/simmc/meplayeractions/client/CLIENT_PROTOCOL.md"
+    for entry in entries:
+        relative = entry.removeprefix(prefix)
+        origin = protocol if relative == "docs/CLIENT_PROTOCOL.md" else PROJECT / relative
+        if origin.is_file():
+            origins[entry] = origin.resolve()
+    destinations = {}
+    for entry, origin in sorted(origins.items(), key=lambda row: len(row[0]), reverse=True):
+        destinations[origin] = entry
+
+    def present(target: str) -> bool:
+        return target in entries or any(entry.startswith(target.rstrip("/") + "/") for entry in entries)
+
+    link = re.compile(r"(\[[^\]\n]*\]\()([^\s)]+)(\))")
+    for entry, origin in origins.items():
+        if not entry.endswith(".md"):
+            continue
+
+        def replace(match: re.Match) -> str:
+            href = match.group(2)
+            if href.startswith("#") or ":" in href:
+                return match.group(0)
+            path, separator, fragment = href.partition("#")
+            archive_target = posixpath.normpath(posixpath.join(posixpath.dirname(entry), path))
+            if present(archive_target):
+                return match.group(0)
+            target = (origin.parent / path).resolve()
+            assert target.exists() and target.is_relative_to(PROJECT), f"Missing documentation source: {entry}: {href}"
+            mapped = destinations.get(target)
+            if mapped:
+                corrected = posixpath.relpath(mapped, posixpath.dirname(entry))
+            else:
+                kind = "tree" if target.is_dir() else "blob"
+                corrected = f"https://github.com/uwuhhhj/MEPlayerActions/{kind}/v{version}/" \
+                    + quote(target.relative_to(PROJECT).as_posix(), safe="/")
+            return match.group(1) + corrected + (separator + fragment if separator else "") + match.group(3)
+
+        entries[entry] = link.sub(replace, entries[entry].decode("utf-8")).encode("utf-8")
 
 
 def main() -> None:
@@ -171,10 +216,13 @@ def main() -> None:
         "docs/CLIENT_PROTOCOL.md": protocol.read_bytes(),
         "docs/CLIENT_RESOURCE_PACK.md": (PROJECT / "docs/CLIENT_RESOURCE_PACK.md").read_bytes(),
         "THIRD_PARTY_NOTICES.md": (PROJECT / "THIRD_PARTY_NOTICES.md").read_bytes(),
-        "tools/build_client_resource_pack.py": (PROJECT / "tools/build_client_resource_pack.py").read_bytes(),
     }
+    for doc in sorted((PROJECT / "docs").glob("*.md")):
+        install[f"docs/{doc.name}"] = doc.read_bytes()
     for model_id in model_ids:
-        install[f"plugins/MEPlayerActions/models/{model_id}.bbmodel"] = (PROJECT / f"examples/models/{model_id}.bbmodel").read_bytes()
+        # Shipped raw models already live inside the server JAR. An installation must not
+        # create persistent overrides which shadow a later JAR upgrade.
+        install[f"examples/models/{model_id}.bbmodel"] = (PROJECT / f"examples/models/{model_id}.bbmodel").read_bytes()
         install[f"plugins/ModelEngine/blueprints/meplayeractions/{model_id}.bbmodel"] = (PROJECT / f"examples/blueprints/{model_id}.bbmodel").read_bytes()
         install[f"docs/{model_id}.manifest.json"] = (PROJECT / f"examples/models/{model_id}.manifest.json").read_bytes()
     # The tutorial link remains usable after unpacking the installation ZIP.
@@ -248,6 +296,8 @@ def main() -> None:
         if path.suffix in {".log", ".pyc"}:
             continue
         source_entries[f"MEPlayerActions/client/{relative.as_posix()}"] = path.read_bytes()
+    rebase_documentation(install, version)
+    rebase_documentation(source_entries, version, "MEPlayerActions/")
 
     delivered_jar = DIST / jar.name
     install_zip = DIST / f"{name}-install.zip"
@@ -294,13 +344,35 @@ def main() -> None:
             "local-appearance-actionNoServerRequest", "localAppearanceLocalActionLayer",
             "localAppearanceRestoresServerBinding", "localAppearanceDisableNoServerRequest"):
         assert game_checks.get(check_name) is True, f"Missing lifecycle regression proof: {check_name}"
-    for check_name in ("packFallbackPrerequisites", "packDisableReloadCompleted",
-                       "packDisabledRemovesInstalledIndex", "packDisabledDropsPreviousAsset",
-                       "packDisabledNoLocalOwnRendering", "packDisabledServerFallbackSameInstance",
-                       "packRestoreReloadCompleted", "packRestoredExactProfiles",
-                       "packRestoredHashRevalidated", "packRestoredOwnerLeaseSameInstance",
-                       "packRestoredFreshFrames"):
-        assert game_checks.get(check_name) is True, f"Missing unified-resource-pack lifecycle proof: {check_name}"
+    # Push delivery is verified by the runtime harness against an ordinary ME pack.
+    assert game_report.get("serverPushDelivery", {}).get("passed") is True, \
+        "Missing server-push first-download, reconnect/cache and authorization proof"
+    for check_name in (
+            "serverPushNegotiated", "serverPushPlainMePack", "serverPushColdCacheDownloaded",
+            "serverPushDefaultJarAssetSource", "serverPushActualReconnect",
+            "serverPushReconnectCacheHitNoDownload", "serverPushInvalidOwnAssetAuthoritative",
+            "serverPushInvalidAssetFallback", "serverPushInvalidAssetNoStaleTransfer",
+            "serverPushFaultFixtureRestored", "serverPushRepairRecovered",
+            "serverPushRepairCacheNoDownload", "serverPushPackDisabledNoIndex",
+            "serverPushPackDisabledModelRetained", "serverPushPackDisabledFreshFrames",
+            "serverPushPackDisabledOwnerLeaseSameInstance", "serverPushPackDisabledNoDownloadFreshAck",
+            "packRestoredHashRevalidated", "packRestoredOwnerLeaseSameInstance",
+            "packRestoredFreshFrames", "serverPushPackRestoredNoDownloadFreshAck",
+            "serverPushNeverAssetRequested", "other-range-outPushOwnerReleased",
+            "other-undisguisePushOwnerReleased", "own-second-modelPushNewInstance"):
+        assert game_checks.get(check_name) is True, f"Missing server-push acceptance proof: {check_name}"
+    for item_stage in ("other-item-01-hold", "other-item-01-swing", "other-item-01-use",
+                       "other-item-02-hold", "other-item-02-swing", "other-item-02-use"):
+        for suffix in ("UnmoddedOwnerEquipment", "CurrentBindingPostsubmitBothHands", "NativeActionMovesItemLocator"):
+            assert game_checks.get(item_stage + suffix) is True, f"Missing native remote-owner held-item proof: {item_stage + suffix}"
+        assert observer_checks.get(item_stage + "UnmoddedNativeEquipmentAction") is True, \
+            f"Missing independent unmodded-owner action proof: {item_stage}"
+    assert observer_checks.get("unmoddedNativeItemStagesAllObserved") is True, "Incomplete unmodded-owner item stages"
+    assert observer_checks.get("ownSecondModelCurrentAuthorityStableGeometry") is True, "Missing actual second-model readiness proof from the unmodded viewer"
+    for item_model in ("01", "02"):
+        for stage, suffix in (("hold", "NativeHeldShieldModelResolved"), ("use", "NativeBlockingShieldModelResolved")):
+            check_name = f"other-item-{item_model}-{stage}{suffix}"
+            assert game_checks.get(check_name) is True, f"Missing actual native shield model branch proof: {check_name}"
     assert observer_checks.get("AUndisguiseRestoresNativePlayerForUnmoddedB") is True
     for check_name in ("privateAppearanceBServerModelBaseline",
                        "local-appearance-ownBServerModelAndTransformUnchanged",
@@ -372,6 +444,34 @@ def main() -> None:
                        "wheel-uiStandaloneControlsInBounds", "standaloneGalleryPreviewAfterReload",
                        "ui-reload-uiStandaloneControlsInBounds", "ui-reload-uiStandaloneGalleryPreview"):
         assert standalone_checks.get(check_name) is True, f"Missing independent-client regression proof: {check_name}"
+    for check_name in (
+            "standaloneBuiltinPreviewSourceEvidence", "standaloneGallerySameSelectionCallback", "standaloneGalleryFirstEntryProgressesOnce",
+            "standaloneGalleryPreviewClockStable", "standaloneGalleryEyeAtlasSourceBounds",
+            "standaloneGalleryMainAndThumbnailEyes", "standaloneGalleryEyesAfterReload",
+            "standaloneModelSettingsEyes", "standaloneFirstPersonYsmArmMesh",
+            "standaloneWheelActionLockIndependent", "standaloneWheelActionLockRestored",
+            "standaloneWheelAuthorConfigEntry", "standaloneAuthorConfigSource",
+            "standaloneAuthorConfigDraftPrivate", "standaloneAuthorConfigApplyPrivate",
+            "standaloneAuthorConfigChangesWorldGeometry", "standaloneAuthorConfigRestoreCallback",
+            "standaloneAuthorConfigRestoredGeometry", "standaloneAuthorConfigCloseCallback",
+            "standaloneGalleryAuthorGuiLayers", "standaloneGalleryAuthorRotationLocked",
+            "standaloneModelSettingsAuthorGuiLayers", "standaloneModelSettingsAuthorRotationLocked",
+            "standaloneGalleryAuthorGuiLayersAfterReload",
+            "standaloneVehicleComponentActualOwnerAndBinding", "standaloneVehicleComponentActualDraw",
+            "standaloneProjectileComponentActualOwnerAndBinding", "standaloneProjectileComponentActualDraw",
+            "standaloneComponentFixtureCleanup",
+            "standaloneYsmEffectsFixtureUsesCurrentBinding", "standaloneYsmEffectsTimelineStarted",
+            "standaloneYsmSoundTimelineCallsNativeBackend", "standaloneYsmParticleTimelineCallsNativeBackend",
+            "standaloneYsmCustomOggStreamActuallyOpened", "standaloneYsmCustomLoopSoundActuallyPlaying",
+            "standaloneYsmNativePackSoundActuallyPlaying", "standaloneYsmParticlesActuallySpawned",
+            "standaloneYsmStopSoundScoped", "standaloneYsmStopAllScoped", "standaloneYsmEffectsReloadCleanup",
+            "standaloneYsmEffectsResetCleanup", "standaloneYsmEffectsOriginalProfileRestored",
+            "standaloneYsmEffectsNoServerRequests", "standaloneYsmEffectsFixtureCleaned",
+            "standaloneYsmEffectsActiveScreenshot"):
+        assert standalone_checks.get(check_name) is True, f"Missing local YSM migration proof: {check_name}"
+    assert standalone_report.get("guiPreviewRegression", {}).get("passed") is True, \
+        "Missing real GUI preview/eyes/entry acceptance"
+    assert standalone_report.get("modelEffects", {}).get("passed") is True, "Missing actual sound/particle lifecycle acceptance"
     standalone_launch = read_json(standalone_report_path.parent / "launch.json")
     assert standalone_launch["clientJarSha256"].lower() == digest(client_jar), "Independent launch used another JAR"
     standalone_server_path = PROJECT / "build/standalone-server/standalone-proof.json"
@@ -382,6 +482,13 @@ def main() -> None:
         and standalone_server["serverStartupComplete"] is True and standalone_server["listenersLoopbackOnly"] is True, \
         "Independent client must be tested on a running empty-plugin server"
     evidence = {"standalone/server-proof.json": standalone_server_path.read_bytes()}
+    for log_source in standalone_server.get("runtimeLogSources", []):
+        if str(log_source.get("kind", "")).startswith("archived startup"):
+            log_path = Path(log_source["path"]).resolve()
+            assert log_path.is_relative_to((PROJECT / "build/standalone-server/logs").resolve())
+            assert log_path.name.endswith(".log.gz") and log_path.stat().st_size <= 10 * 1024 * 1024
+            assert digest(log_path) == log_source["sha256"].lower(), "Archived empty-server startup log changed"
+            evidence[f"standalone/runtime-logs/{log_path.name}"] = log_path.read_bytes()
     evidence["two-client/window-layout.json"] = layout_path.read_bytes()
     for label, report_path, report, current in (
             ("client", game_report_path, game_report, game_current),
@@ -435,67 +542,37 @@ def main() -> None:
 
     import subprocess, sys
     subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", str(PROJECT / "tools/tests"), "-v"], check=True, cwd=PROJECT)
-    full_pack = PROJECT / f"build/unified-resource-pack/MEPlayerActions-{version}-e2e-unified.zip"
-    pack_audit = PROJECT / f"build/unified-resource-pack/MEPlayerActions-{version}-e2e-unified.audit.json"
-    assert full_pack.is_file() and pack_audit.is_file(), "Tested unified resource pack required"
-    audit = read_json(pack_audit)
-    assert audit["version"] == 1 and audit["packFile"] == full_pack.name \
-        and audit["packSha256"] == digest(full_pack), "Resource-pack audit describes another ZIP"
-    assert audit["zipIntegrity"] is True and audit["deterministicReverseModelOrder"] is True \
-        and audit["clientDuplicatePngEntries"] == 0, "Resource-pack audit failed"
-    assert {model["modelId"] for model in audit["models"]} == set(MODEL_IDS) \
-        and all(model["rawHashVerified"] is True and model["restoredOriginalBytes"] is True
-                for model in audit["models"]), "Incomplete model hash/reconstruction audit"
-    assert all(change["pixelsEqual"] is True for change in audit["pixelEquivalentEncodingChanges"]) \
-        and audit["preservedEngineEntries"] + len(audit["pixelEquivalentEncodingChanges"]) == audit["engineEntryCount"], \
-        "Unaccounted changes to engine assets"
-    preserved_engine = Path(audit["preservedCurrentEngineZip"])
-    assert preserved_engine.is_file() and digest(preserved_engine) == audit["engineInputSha256"], "Missing audited engine input"
-    with zipfile.ZipFile(full_pack) as pack:
-        assert pack.testzip() is None
-        normalization = json.loads(pack.read("assets/meplayeractions/models/normalization.json"))
-        assert normalization["version"] == 1 and normalization["enginePackSha256"] == audit["engineInputSha256"] \
-            and normalization["pngEncodingRewrites"] == audit["pixelEquivalentEncodingChanges"], "Stale PNG normalization audit"
-        from build_client_resource_pack import decoded_png_identity
-        rewrites = {change["assetPath"]: change for change in audit["pixelEquivalentEncodingChanges"]}
-        with zipfile.ZipFile(preserved_engine) as original:
-            original_names = [name for name in original.namelist() if not name.endswith("/")]
-            assert len(original_names) == audit["engineEntryCount"]
-            for asset_name in original_names:
-                before, after = original.read(asset_name), pack.read(asset_name)
-                if asset_name not in rewrites:
-                    assert before == after, f"Changed engine resource: {asset_name}"
-                else:
-                    change = rewrites[asset_name]
-                    assert hashlib.sha256(before).hexdigest() == change["originalPngSha256"] \
-                        and hashlib.sha256(after).hexdigest() == change["sourcePngSha256"]
-                    assert decoded_png_identity(before) == decoded_png_identity(after) \
-                        == (change["width"], change["height"], change["rgbaSha256"]), f"Changed texture pixels: {asset_name}"
-        index = json.loads(pack.read("assets/meplayeractions/models/index.json"))
-        assert index["version"] == 1
-        indexed = {entry["modelId"]: entry for entry in index["models"]}
-        for model_id in MODEL_IDS:
-            assert indexed[model_id]["hashSha256"] == digest(PROJECT / f"examples/models/{model_id}.bbmodel")
-        assert not any(name.startswith("assets/meplayeractions/textures/") for name in pack.namelist()), "Duplicated example textures"
+    engine_pack = PROJECT / "build/e2e-server/plugins/ModelEngine/resource pack.zip"
+    assert engine_pack.is_file(), "Ordinary ME resource pack used by acceptance is required"
+    engine_pack_hash = digest(engine_pack)
+    with zipfile.ZipFile(engine_pack) as pack:
+        assert pack.testzip() is None, "Invalid ordinary ME acceptance pack"
+        assert "pack.mcmeta" in pack.namelist()
+        assert not any(entry.startswith("assets/meplayeractions/") for entry in pack.namelist()), \
+            "Push acceptance accidentally relied on MPA resources in the ME pack"
+        assert any(entry.startswith("assets/modelengine/") for entry in pack.namelist())
     for launch in (game_launch, observer_launch):
-        assert launch.get("resourcePackSha256") == digest(full_pack), "Game acceptance did not use this unified resource pack"
-    install[f"resourcepacks/MEPlayerActions-{version}-resource-pack.zip"] = full_pack.read_bytes()
-    evidence["resource-pack/audit.json"] = pack_audit.read_bytes()
-    delivered_pack = DIST / f"MEPlayerActions-{version}-resource-pack.zip"
+        assert launch.get("resourcePackSha256") == engine_pack_hash, "Acceptance used another ME pack"
+    evidence["resource-pack/ordinary-me-pack-proof.json"] = (json.dumps({
+        "sha256": engine_pack_hash, "mpaIndexAbsent": True,
+        "generationOwner": "ModelEngine", "serverPushDelivery": game_report["serverPushDelivery"],
+    }, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
 
     # Do not create apparently deliverable artifacts until every acceptance gate passes.
     DIST.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(jar, delivered_jar)
     shutil.copyfile(client_jar, delivered_client)
-    shutil.copyfile(full_pack, delivered_pack)
     write_zip(install_zip, install)
     write_zip(source_zip, source_entries)
-    write_zip(client_install_zip, {f"mods/{client_jar.name}": client_jar.read_bytes(),
+    client_install = {f"mods/{client_jar.name}": client_jar.read_bytes(),
                                    "README.md": install["README.md"],
                                    "ARCHITECTURE.md": architecture.read_bytes(),
                                    "docs/CLIENT_PROTOCOL.md": protocol.read_bytes(),
                                    "docs/CLIENT_RESOURCE_PACK.md": (PROJECT / "docs/CLIENT_RESOURCE_PACK.md").read_bytes(),
-                                   "THIRD_PARTY_NOTICES.md": (PROJECT / "THIRD_PARTY_NOTICES.md").read_bytes()})
+                                   **{f"docs/{doc.name}": doc.read_bytes() for doc in (PROJECT / "docs").glob("*.md")},
+                                   "THIRD_PARTY_NOTICES.md": (PROJECT / "THIRD_PARTY_NOTICES.md").read_bytes()}
+    rebase_documentation(client_install, version)
+    write_zip(client_install_zip, client_install)
     assert digest(delivered_jar) == digest(jar)
     assert digest(delivered_client) == digest(client_jar)
     assert evidence_zip is not None, "Missing two-client evidence bundle"
@@ -522,7 +599,9 @@ def main() -> None:
         "compiled_source_fingerprint": fingerprint.hexdigest(),
         "compiled_class_count": len(classes), "animations": animation_names,
         "models": model_facts,
-        "unified_resource_pack": {"path": str(delivered_pack), "sha256": digest(delivered_pack), "shared_example_textures": True, "tool_tests": 16},
+        "server_model_delivery": {"mode": "server-push", "capability": "server_push_models",
+                                  "ordinary_me_pack_sha256": engine_pack_hash, "mpa_index_required": False,
+                                  "acceptance": game_report["serverPushDelivery"]},
         "ysm_physics_step_seconds": .01,
         "runtime_expressions": "Per-instance bounded interpreter; frame-based client and tick-based ModelEngine",
         "compatibility_modpack": game_launch.get("sourceModpack"),
@@ -541,7 +620,7 @@ def main() -> None:
             [PROJECT.parent / "ModelEngine-R4.1.1.jar", *sorted((PROJECT / "build/deps").glob("paper-api-*.jar"))]
             if p.is_file()},
         "artifacts": {p.name: {"sha256": digest(p), "bytes": p.stat().st_size}
-                      for p in (delivered_jar, install_zip, source_zip, delivered_client, client_install_zip, evidence_zip, delivered_pack)
+                      for p in (delivered_jar, install_zip, source_zip, delivered_client, client_install_zip, evidence_zip)
                       if p is not None},
         "zip_integrity_and_content_match": True, "dependency_jars_included": False,
         "in_game_verified": game_passed,
@@ -552,7 +631,7 @@ def main() -> None:
         "observer_validation_current_for_artifacts": observer_current,
         "game_validation": report_summary(game_report),
         "observer_game_validation": report_summary(observer_report),
-        "resource_pack_in_install_zip": True,
+        "resource_pack_in_install_zip": False,
         "client_local_rendering_implemented": True,
     }
     validation_path = DIST / f"{name}-validation.json"

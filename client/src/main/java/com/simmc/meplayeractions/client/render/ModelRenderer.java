@@ -24,6 +24,7 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.RotationAxis;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.util.Arm;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -49,6 +50,8 @@ public final class ModelRenderer {
     private static volatile long drawnBatches;
     private static volatile long extractedFrames;
     private static volatile Map<String, Object> cameraInfo = Map.of();
+    private static volatile List<Map<String, Object>> itemInfo = List.of();
+    private static volatile List<Map<String, Object>> submittedItemDraws = List.of();
     private static ClientRuntime runtime;
     private static boolean registered;
 
@@ -77,7 +80,7 @@ public final class ModelRenderer {
         try {
             long existingPixels = pixelCount();
             long assetPixels = 0;
-            List<BbModel.Vertex> basis = model.sample(0, List.of());
+            List<BbModel.Vertex> basis = model.basisVertices();
             if (basis.isEmpty() || basis.size() % 4 != 0) {
                 throw new IllegalArgumentException("Model has no complete visible quad geometry");
             }
@@ -132,9 +135,13 @@ public final class ModelRenderer {
     }
 
     public static Map<String, Object> diagnostics() {
-        return Map.of("textures", ASSETS.size(), "gpuPixels", pixelCount(), "drawnBatches", drawnBatches,
-                "firstPersonSelfSkipped", firstPersonSkipped, "models", frameModels, "camera", cameraInfo,
-                "extractedFrames", extractedFrames);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("textures", ASSETS.size()); result.put("gpuPixels", pixelCount()); result.put("drawnBatches", drawnBatches);
+        result.put("firstPersonSelfSkipped", firstPersonSkipped); result.put("models", frameModels); result.put("camera", cameraInfo);
+        result.put("extractedFrames", extractedFrames); result.put("items", itemInfo); result.put("submittedItems", YsmItemRenderer.submittedItems());
+        result.put("submittedItemDraws", submittedItemDraws); result.put("submittedEquipment", YsmEquipmentRenderer.submittedEquipment());
+        result.put("components", YsmComponentRenderer.diagnostics());
+        return Map.copyOf(result);
     }
 
     /** Read-only instance state for isolated in-game expression checks. */
@@ -157,6 +164,9 @@ public final class ModelRenderer {
         if (asset == null) return;
         frame = List.of();
         frameModels = List.of();
+        itemInfo = List.of();
+        submittedItemDraws = List.of();
+        YsmComponentRenderer.clear();
         PLAYERS.entrySet().removeIf(entry -> {
             if (!entry.getKey().hash().equals(hash)) return false;
             entry.getValue().reset();
@@ -192,6 +202,9 @@ public final class ModelRenderer {
         }
         frame = List.of();
         frameModels = List.of();
+        itemInfo = List.of();
+        submittedItemDraws = List.of();
+        YsmComponentRenderer.clear();
         PLAYERS.values().forEach(AnimationPlayer::reset);
         PLAYERS.clear();
         ASSETS.values().forEach(asset -> asset.textures().values().forEach(
@@ -212,6 +225,9 @@ public final class ModelRenderer {
         if (activeRuntime == null || context.world() == null) {
             frame = List.of();
             frameModels = List.of();
+            itemInfo = List.of();
+            submittedItemDraws = List.of();
+            YsmComponentRenderer.clear();
             firstPersonSkipped = 0;
             extractedFrames++;
             return;
@@ -225,6 +241,8 @@ public final class ModelRenderer {
                 "localPlayer", localOwner == null ? "" : localOwner.toString(), "x", camera.x, "y", camera.y, "z", camera.z);
         List<FrozenModel> nextFrame = new ArrayList<>();
         List<FrameModel> modelInfo = new ArrayList<>();
+        List<Map<String, Object>> nextItemInfo = new ArrayList<>();
+        YsmComponentRenderer.beginExtraction(activeRuntime, context);
         int skipped = 0;
         Set<InstanceKey> live = new HashSet<>();
         for (ClientRuntime.RenderBinding binding : activeRuntime.animationBindings()) {
@@ -237,9 +255,12 @@ public final class ModelRenderer {
             live.add(key);
             try {
                 AnimationPlayer player = PLAYERS.computeIfAbsent(key, ignored -> new AnimationPlayer(binding.model()));
+                player.configureFrame(expressions -> activeRuntime.configureExpressionContext(binding.owner(), expressions));
                 List<BbModel.Vertex> vertices = player.sample(binding.serverTick(), binding.layers(),
                         binding.headYaw() - binding.bodyYaw(), binding.headPitch(), activeRuntime.expressionQueries(binding.owner()),
                         activeRuntime.accessoryState(binding.owner()), activeRuntime.localParameters(binding.owner()));
+                try { YsmComponentRenderer.extractArms(activeRuntime, binding); }
+                catch (RuntimeException failure) { LOGGER.warn("Cannot prepare first-person arms for {}: {}", binding.owner(), failure.toString()); }
                 // Hidden self rendering still advances timeline scripts and spring state.
                 if (firstPerson && (binding.owner().equals(cameraOwner) || binding.owner().equals(localOwner))) {
                     skipped++;
@@ -261,8 +282,30 @@ public final class ModelRenderer {
                         asset.textures().get(index).layer(), List.copyOf(mesh))));
                 int light = WorldRenderer.getLightmapCoordinates(context.world(),
                         BlockPos.ofFloored(binding.x(), binding.y() + Math.max(0.25, binding.scale()), binding.z()));
+                List<YsmItemRenderer.Attachment> items = List.of();
+                List<YsmEquipmentRenderer.Attachment> equipment = List.of();
+                var nativePlayer = activeRuntime.nativePlayer(binding.owner());
+                try {
+                    items = YsmItemRenderer.extract(nativePlayer, player);
+                    equipment = YsmEquipmentRenderer.extract(nativePlayer, player);
+                } catch (RuntimeException failure) { LOGGER.warn("Cannot extract equipment for {}: {}", binding.owner(), failure.toString()); }
+                Map<String, Object> itemSource = new LinkedHashMap<>();
+                itemSource.put("owner", binding.owner().toString()); itemSource.put("instance", binding.instance()); itemSource.put("hash", binding.assetHash());
+                itemSource.put("currentBindingValid", true); itemSource.put("motionSource", binding.motionSource());
+                itemSource.put("nativePresent", nativePlayer != null);
+                if (nativePlayer != null) {
+                    itemSource.put("nativeEntityUuid", nativePlayer.getUuid().toString()); itemSource.put("nativeEntityId", nativePlayer.getId());
+                    itemSource.put("swinging", nativePlayer.handSwinging); itemSource.put("swingTicks", nativePlayer.handSwingTicks);
+                    itemSource.put("usingItem", nativePlayer.isUsingItem()); itemSource.put("useTicks", nativePlayer.getItemUseTime());
+                    itemSource.put("activeHand", nativePlayer.isUsingItem() ? nativePlayer.getActiveHand().name() : "");
+                }
+                if (!items.isEmpty() || !equipment.isEmpty()) {
+                    Map<String, Object> info = new LinkedHashMap<>(itemSource);
+                    info.put("attachments", YsmItemRenderer.diagnostics(items)); info.put("equipment", YsmEquipmentRenderer.diagnostics(equipment));
+                    nextItemInfo.add(Map.copyOf(info));
+                }
                 nextFrame.add(new FrozenModel(binding.x() - camera.x, binding.y() - camera.y,
-                        binding.z() - camera.z, binding.bodyYaw(), binding.scale(), light, List.copyOf(meshes)));
+                        binding.z() - camera.z, binding.bodyYaw(), binding.scale(), light, List.copyOf(meshes), items, equipment, Map.copyOf(itemSource)));
                 Box geometry = geometryBounds(binding, vertices);
                 modelInfo.add(new FrameModel(binding.owner().toString(), binding.assetHash(), vertices.size(),
                         geometry.minY, geometry.maxY, binding.bodyYaw(), 180 - binding.bodyYaw(),
@@ -280,6 +323,8 @@ public final class ModelRenderer {
         });
         frame = List.copyOf(nextFrame);
         frameModels = List.copyOf(modelInfo);
+        itemInfo = List.copyOf(nextItemInfo);
+        YsmComponentRenderer.finishExtraction();
         firstPersonSkipped = skipped;
         // Keep this monotonic through reload/clear so lifecycle checks can require a fresh frame.
         extractedFrames++;
@@ -322,6 +367,7 @@ public final class ModelRenderer {
     }
 
     private static void submit(WorldRenderContext context) {
+        List<Map<String, Object>> itemDraws = new ArrayList<>();
         for (FrozenModel model : frame) {
             MatrixStack matrices = context.matrices();
             matrices.push();
@@ -334,10 +380,50 @@ public final class ModelRenderer {
                     context.commandQueue().submitCustom(matrices, texture.layer(),
                             (entry, consumer) -> emit(entry, consumer, texture.vertices(), model.light()));
                 }
+                for (Map<String, Object> draw : YsmItemRenderer.submit(model.items(), matrices, context.commandQueue(), model.light())) {
+                    Map<String, Object> proof = new LinkedHashMap<>(model.itemSource());
+                    proof.putAll(draw); proof.put("extractedFrame", extractedFrames);
+                    itemDraws.add(Map.copyOf(proof));
+                }
+                YsmEquipmentRenderer.submit(model.equipment(), matrices, context.commandQueue(), model.light());
             } finally {
                 matrices.pop();
             }
         }
+        submittedItemDraws = List.copyOf(itemDraws);
+        YsmComponentRenderer.submit(context);
+    }
+
+    /** Component meshes use the same prepared texture atlas and budgets as the primary model. */
+    static boolean submitMesh(String hash, List<BbModel.Vertex> vertices, MatrixStack matrices,
+                              net.minecraft.client.render.command.OrderedRenderCommandQueue queue, int light) {
+        return submitMesh(hash, vertices, matrices, queue, light, ignored -> { });
+    }
+    static boolean submitMesh(String hash, List<BbModel.Vertex> vertices, MatrixStack matrices,
+                              net.minecraft.client.render.command.OrderedRenderCommandQueue queue, int light,
+                              java.util.function.IntConsumer emitted) {
+        PreparedAsset asset = ASSETS.get(hash);
+        if (asset == null || vertices.isEmpty()) return false;
+        Map<Integer, List<BbModel.Vertex>> meshes = new LinkedHashMap<>();
+        for (int i = 0; i + 3 < vertices.size(); i += 4) {
+            List<BbModel.Vertex> face = vertices.subList(i, i + 4);
+            int texture = face.get(0).texture();
+            if (!asset.textures().containsKey(texture) || face.stream().anyMatch(v -> v.texture() != texture)) continue;
+            meshes.computeIfAbsent(texture, ignored -> new ArrayList<>()).addAll(face);
+        }
+        meshes.forEach((index, mesh) -> {
+            List<BbModel.Vertex> frozen = List.copyOf(mesh);
+            queue.submitCustom(matrices, asset.textures().get(index).layer(), (entry, consumer) -> {
+                emit(entry, consumer, frozen, light);
+                emitted.accept(frozen.size());
+            });
+        });
+        return !meshes.isEmpty();
+    }
+
+    public static boolean renderFirstPersonArm(Arm arm, MatrixStack matrices,
+            net.minecraft.client.render.command.OrderedRenderCommandQueue queue, int light) {
+        return YsmComponentRenderer.renderArm(arm, matrices, queue, light);
     }
 
     private static void emit(MatrixStack.Entry entry, VertexConsumer consumer, List<BbModel.Vertex> vertices, int light) {
@@ -355,5 +441,6 @@ public final class ModelRenderer {
     private record InstanceKey(UUID owner, String instance, String hash) { }
     private record FrozenTexture(RenderLayer layer, List<BbModel.Vertex> vertices) { }
     private record FrozenModel(double x, double y, double z, float yaw, float scale, int light,
-                               List<FrozenTexture> textures) { }
+                               List<FrozenTexture> textures, List<YsmItemRenderer.Attachment> items,
+                               List<YsmEquipmentRenderer.Attachment> equipment, Map<String, Object> itemSource) { }
 }

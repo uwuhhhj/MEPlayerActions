@@ -2,6 +2,7 @@ package com.simmc.meplayeractions.client;
 
 import com.simmc.meplayeractions.client.model.BbModel;
 import com.simmc.meplayeractions.client.model.YsmFolderModel;
+import com.simmc.meplayeractions.client.model.YsmModelProfile;
 import com.simmc.meplayeractions.client.network.AssetTransfer;
 import java.io.IOException;
 import java.io.InputStream;
@@ -16,7 +17,10 @@ import java.util.List;
 /** Private models use one bounded renderer; server-distributed models are not bundled client choices. */
 public final class LocalModelLibrary {
     public record Entry(String id, String label) { }
-    public record Loaded(String hash, BbModel model) { }
+    public record Loaded(String hash, BbModel model, String previewAnimation, YsmModelProfile profile) {
+        public Loaded(String hash, BbModel model) { this(hash, model, "", YsmModelProfile.empty()); }
+        public Loaded(String hash, BbModel model, String previewAnimation) { this(hash, model, previewAnimation, YsmModelProfile.empty()); }
+    }
     private final Path directory;
 
     public LocalModelLibrary(Path directory) { this.directory = directory.toAbsolutePath().normalize(); }
@@ -45,9 +49,16 @@ public final class LocalModelLibrary {
     }
 
     public Loaded load(String id, boolean alternateDefaultTexture) throws IOException {
+        return load(id, alternateDefaultTexture && "openysm_default".equals(id) ? "blue" : null);
+    }
+
+    public Loaded load(String id, String textureId) throws IOException {
         if (!LocalAppearanceSettings.isValidModelId(id)) throw new IOException("无效的本地模型选择");
         byte[] raw;
+        String previewAnimation = "";
+        YsmModelProfile profile = YsmModelProfile.empty();
         if (id.startsWith("local:")) {
+            if (textureId != null && !textureId.isEmpty()) throw new IOException("独立 BBModel 没有 YSM 皮肤列表");
             checkDirectory();
             Path file = directory.resolve(id.substring(6)).normalize();
             if (!file.getParent().equals(directory) || !Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)
@@ -57,17 +68,20 @@ public final class LocalModelLibrary {
             try (InputStream input = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) { raw = read(input); }
         } else if (id.startsWith("ysm:")) {
             checkDirectory();
-            raw = YsmFolderModel.read(directory.resolve(id.substring(4)));
+            var imported = YsmFolderModel.readWithProfile(directory.resolve(id.substring(4)), textureId);
+            raw = imported.raw(); previewAnimation = imported.previewAnimation(); profile = imported.profile();
         } else {
-            raw = YsmFolderModel.bundledDefault(alternateDefaultTexture);
+            var imported = YsmFolderModel.bundledDefaultWithProfile(textureId);
+            raw = imported.raw(); previewAnimation = imported.previewAnimation(); profile = imported.profile();
         }
-        return new Loaded(AssetTransfer.hash(raw), BbModel.parse(raw));
+        return new Loaded(AssetTransfer.hash(raw), BbModel.parse(raw), previewAnimation, profile);
     }
 
     private void checkDirectory() throws IOException {
         for (Path ancestor = directory; ancestor != null; ancestor = ancestor.getParent()) {
             BasicFileAttributes attributes = Files.readAttributes(ancestor, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-            if (!attributes.isDirectory() || attributes.isSymbolicLink() || attributes.isOther())
+            if (!attributes.isDirectory() || attributes.isSymbolicLink() || attributes.isOther()
+                    || !ancestor.toRealPath().equals(ancestor.toRealPath(LinkOption.NOFOLLOW_LINKS)))
                 throw new IOException("本地模型目录及其上级必须是普通目录，不能包含链接");
         }
     }

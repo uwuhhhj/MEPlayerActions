@@ -1,6 +1,7 @@
 package com.simmc.meplayeractions.client.mixin;
 
 import com.simmc.meplayeractions.client.render.HiddenPlayerRenderState;
+import com.simmc.meplayeractions.client.render.ComponentRenderState;
 import com.simmc.meplayeractions.client.render.ModelRenderer;
 import net.minecraft.client.render.entity.EntityRenderer;
 import net.minecraft.client.render.entity.state.EntityRenderState;
@@ -17,6 +18,7 @@ public abstract class EntityRendererMixin {
     @Inject(method = "updateRenderState(Lnet/minecraft/entity/Entity;Lnet/minecraft/client/render/entity/state/EntityRenderState;F)V",
             at = @At("TAIL"))
     private void meplayeractions$captureHidden(Entity entity, EntityRenderState state, float tickDelta, CallbackInfo ci) {
+        ((ComponentRenderState) state).meplayeractions$entityUuid(entity.getUuid());
         ((HiddenPlayerRenderState) state).meplayeractions$setHidden(entity instanceof PlayerEntity
                 && state instanceof PlayerEntityRenderState && ModelRenderer.shouldHidePlayer(entity.getUuid()));
     }

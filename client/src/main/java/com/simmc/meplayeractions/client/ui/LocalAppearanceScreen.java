@@ -167,8 +167,13 @@ public final class LocalAppearanceScreen extends Screen {
     public int loadedPreviewCount() { return (int) previews.values().stream().filter(entry -> entry.loaded != null).count(); }
     public int drawnPreviewCount() { return drawnPreviewCount; }
     public Map<String, Object> previewDiagnostics() { return preview.diagnostics(); }
+    public Map<String, Object> previewDiagnostics(float minU, float minV, float maxU, float maxV) {
+        return preview.diagnostics(minU, minV, maxU, maxV);
+    }
     public boolean browseModel(String id) {
         if (models.stream().noneMatch(model -> model.id().equals(id))) return false;
+        var entry = previews.get(id);
+        if (!selectedId.equals(id) && entry != null && entry.loaded != null) preview.restart(key(id, entry.loaded));
         selectedId = id; message = "仅浏览，点击使用才应用"; yaw = 0; pitch = -8;
         rebuildGrid(); return true;
     }
@@ -239,14 +244,14 @@ public final class LocalAppearanceScreen extends Screen {
         clipped(context, sourceLabel(selectedId) + (runtime.localAppearance().enabled() && runtime.localAppearance().modelId().equals(selectedId) ? " · 使用中" : " · 浏览"), left + 6, top + 17, previewWidth - 12, 0xff92b9df);
         var entry = previews.get(selectedId);
         if (entry != null && entry.loaded != null) {
-            boolean rendered = preview.render(context, entry.loaded.model(), key(selectedId, entry.loaded), previewX, previewY, previewW, previewH, yaw, pitch, ticks + delta, parameters(selectedId));
+            boolean rendered = preview.render(context, entry.loaded.model(), key(selectedId, entry.loaded), previewX, previewY, previewW, previewH, yaw, pitch, ticks + delta, parameters(selectedId), entry.loaded.previewAnimation(), entry.loaded.profile());
             if (rendered) drawnPreviewCount++;
             if (!rendered) clipped(context, "预览暂不可用", previewX + 3, previewY + previewH / 2, previewW - 6, 0xffffc685);
         } else {
             String text = entry != null && !entry.error.isEmpty() ? entry.error : selectedId.isEmpty() ? "没有可用模型" : "正在加载模型…";
             clipped(context, text, previewX + 3, previewY + previewH / 2, previewW - 6, 0xffffc685);
         }
-        clipped(context, "拖动旋转 · 双击回正", left + 6, bottom - 57, previewWidth - 12, 0xffa7b5c8);
+        clipped(context, rotationDisabled() ? "作者固定正面视角" : "拖动旋转 · 双击回正", left + 6, bottom - 57, previewWidth - 12, 0xffa7b5c8);
         if (visible.isEmpty()) clipped(context, favoritesOnly ? "暂无符合条件的收藏" : "没有符合条件的模型", right + 8, gridTop + 20, rightWidth - 16, 0xffbccce0);
         context.drawCenteredTextWithShadow(textRenderer, (page + 1) + " / " + pageCount(), right + rightWidth / 2, bottom - 15, 0xffe6ecf4);
         String status = message.isEmpty() ? runtime.localAppearanceStatus() : message;
@@ -255,17 +260,25 @@ public final class LocalAppearanceScreen extends Screen {
     }
 
     private boolean insidePreview(double x, double y) { return x >= previewX && x < previewX + previewW && y >= previewY && y < previewY + previewH; }
+    private boolean rotationDisabled() {
+        var entry = previews.get(selectedId);
+        return entry != null && entry.loaded != null && ModelPreview.rotationDisabled(entry.loaded.profile());
+    }
     private Map<String, Double> parameters(String id) {
         return id.equals("openysm_default") ? Map.of("variable.roaming.red_bow_headdress", runtime.options.defaultHeaddress ? 1d : 0d) : Map.of();
     }
     @Override public boolean mouseClicked(Click click, boolean doubled) {
         if (click.button() == 0 && insidePreview(click.x(), click.y())) {
+            if (rotationDisabled()) { rotating = false; return true; }
             rotating = true; if (doubled) { yaw = 0; pitch = -8; } return true;
         }
         return super.mouseClicked(click, doubled);
     }
     @Override public boolean mouseDragged(Click click, double dx, double dy) {
-        if (rotating && click.button() == 0) { yaw = (yaw + (float) dx * 1.5f) % 360; pitch = Math.max(-65, Math.min(65, pitch + (float) dy)); return true; }
+        if (rotating && click.button() == 0) {
+            if (rotationDisabled()) { rotating = false; return true; }
+            yaw = (yaw + (float) dx * 1.5f) % 360; pitch = Math.max(-65, Math.min(65, pitch + (float) dy)); return true;
+        }
         return super.mouseDragged(click, dx, dy);
     }
     @Override public boolean mouseReleased(Click click) {
@@ -298,7 +311,7 @@ public final class LocalAppearanceScreen extends Screen {
             var entry = previews.get(model.id());
             int imageHeight = Math.max(8, getHeight() - 28);
             if (entry != null && entry.loaded != null) {
-                if (preview.render(context, entry.loaded.model(), key(model.id(), entry.loaded), getX() + 2, getY() + 2, getWidth() - 4, imageHeight - 2, 0, -8, ticks + delta, parameters(model.id()))) drawnPreviewCount++;
+                if (preview.render(context, entry.loaded.model(), key(model.id(), entry.loaded), getX() + 2, getY() + 2, getWidth() - 4, imageHeight - 2, 0, -8, ticks + delta, parameters(model.id()), entry.loaded.previewAnimation(), entry.loaded.profile())) drawnPreviewCount++;
                 else clipped(context, "预览不可用", getX() + 5, getY() + imageHeight / 2, getWidth() - 10, 0xffffc685);
             } else clipped(context, entry != null && !entry.error.isEmpty() ? "加载失败" : "加载中…", getX() + 5, getY() + imageHeight / 2, getWidth() - 10, 0xffc1cedc);
             clipped(context, model.label(), getX() + 4, getBottom() - 24, getWidth() - 8, 0xfff3f6ff);
