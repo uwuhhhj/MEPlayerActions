@@ -1,12 +1,14 @@
 # MEPlayerActions 整体设计架构
 
-本文依据当前工作区 0.3.2 的服务端插件、Fabric 客户端及测试代码整理，描述已实现的机制。目标环境为 Paper / Minecraft 1.21.11、ModelEngine R4.1.1、Java 21；GSit 为可选姿态后端。构建版本、协议版本与配置版本分别由 `pom.xml` / `client/build.gradle`、`ClientSyncService.PROTOCOL` / `WireJson`、`config-version` 决定；当前三者分别为 0.3.2、3、3，不应混用。
+本文依据当前工作区 0.4.0 的服务端插件、Fabric 客户端及测试代码整理，描述已实现的机制。客户端目标为 Fabric / Minecraft 1.21.11、Java 21；服务端插件目标为 Paper 1.21.11、ModelEngine R4.1.1，GSit 为可选姿态后端。构建版本、协议版本与配置版本分别由 `pom.xml` / `client/build.gradle`、`ClientSyncService.PROTOCOL` / `WireJson`、`config-version` 决定；当前三者分别为 0.4.0、3、3，不应混用。
 
 使用说明见 [README](README.md)，消息字段、限制和错误码见 [客户端协议](src/main/java/com/simmc/meplayeractions/client/CLIENT_PROTOCOL.md)。本文中的源码链接以仓库根目录为基准，源码阅读不等同于本次完成实机验收。
 
 ## 1. 系统目标与职责边界
 
-MEPlayerActions 在真实玩家实体上创建或接管 ModelEngine 模型，并把玩家状态映射成动画。真实位置、碰撞、载具和能力仍由 Paper 及姿态后端管理；视觉延迟和模型缩放只改变显示。客户端是可选的观看者渲染增强，不要求所有被观看者安装模组。
+服务端插件在真实玩家实体上创建或接管 ModelEngine 模型，并把玩家状态映射成动画。真实位置、碰撞、载具和能力仍由 Paper 及姿态后端管理；视觉延迟和模型缩放只改变显示。Fabric 客户端拥有独立的模型解释器、动画控制器和渲染器；多人伪装时，它也是可选的观看者渲染增强，不要求所有被观看者安装模组。
+
+客户端 `fabric.mod.json` 只声明 Fabric Loader、Minecraft、Java 和 Fabric API，Gradle 不引用 ModelEngine 或 Bukkit API。共享源码限于表达式和不依赖服务器 API 的配置类型。ModelEngine、Paper 和 GSit 的版本耦合位于当前服务端适配器中，不能推导为客户端的硬依赖。
 
 | 层级 | 负责 | 主要输入与输出 |
 | --- | --- | --- |
@@ -17,6 +19,16 @@ MEPlayerActions 在真实玩家实体上创建或接管 ModelEngine 模型，并
 | Fabric 客户端 | 解析支持的 `.bbmodel`、采样动画、上传纹理、本地绘制和动作面板 | 原版 `PlayerEntity`、服务器许可、本地渲染命令 |
 
 本插件创建的伪装使用独立视觉枢轴，不把玩家挂载到模型上。`attach` 接管已有的 `state_machine` 模型，仅添加受管动作层，不取得原模型的销毁、观众或渲染替换所有权。
+
+### 本地自己的外观与服务器多人伪装
+
+`LocalAppearanceSettings` 保存本机自己的模型选择、均匀缩放和世界 X/Y/Z 偏移（方块单位、Y 正值向上），默认关闭、默认模型为 `ysm_02_jk`。配置写入 `config/meplayeractions-client.json` 的 `localAppearance`，不发送给服务器；进出世界保留配置并重新准备本地实例。模型来源为 JAR 内置两套模型或 `config/meplayeractions/models/` 的单个 `.bbmodel`，同样经过 `BbModel` 格式、原始大小和纹理预算校验，不支持外部贴图或任意路径。
+
+本地实例仅替换本机看到的自己，按本机玩家实体运行姿态、交互和模型脚本，无需服务器绑定或握手。显式启用的本地外观优先于服务器自己的模型显示，服务器自己的绑定和租约继续独立维护，其他玩家的模型仍服从服务器许可。关闭本地外观后恢复已有的服务器本人模型，或显示原版人物；本地模型加载失败不能阻断服务器多人接管。
+
+`options.enabled` 为客户端渲染总开关，本地外观和服务器接管均遵守；启用本地外观时同步打开总开关。关闭本地外观只关闭本地 profile，不修改总开关或服务器绑定。加载失败保留配置、显示错误，并恢复服务器/原版显示，按 30 秒间隔退避重试。本人饥饿、手持物和运动输入取本机实体，附件脚本不读取服务器本人 `a/b`。
+
+N 面板的“本地外观”及 `/mpaclient settings` 提供模型、缩放和偏移设置；本地动作只调用本地播放/停止。服务器动作和真实姿态走原有 v3 请求及权限校验，界面只在服务器同步和本人模型就绪后启用。本轮交付基础独立客户端设置，完整 OpenYSM 界面和功能对齐留待后续迭代；其他引擎的服务端适配器也尚未实现，未来接入应复用下文 v3 约定。
 
 ## 2. 组件与数据流
 
@@ -52,7 +64,9 @@ flowchart LR
         Model[BbModel / AnimationPlayer]
         Renderer[ModelRenderer / 冻结帧 / 绘制命令]
         UI[N 面板 / mpaclient]
+        Local[本地外观设置 / 内置与本地 bbmodel]
         Runtime --> Motion
+        Local --> Runtime
         Entity --> Motion
         Runtime --> Timeline
         Motion --> Model
@@ -91,7 +105,8 @@ flowchart LR
 | 模型与动画 | 有限格式解析、骨骼矩阵、关键帧插值、叠层和连续过渡 | [BbModel](client/src/main/java/com/simmc/meplayeractions/client/model/BbModel.java)、[AnimationPlayer](client/src/main/java/com/simmc/meplayeractions/client/model/AnimationPlayer.java) |
 | 绘制 | 纹理预算、帧提取、视锥裁剪、冻结顶点、提交绘制命令 | [ModelRenderer](client/src/main/java/com/simmc/meplayeractions/client/render/ModelRenderer.java) |
 | 原人物隐藏 | 记录隐藏标记，取消玩家与装备绘制，并控制第一人称手臂 | [mixin/](client/src/main/java/com/simmc/meplayeractions/client/mixin/) |
-| 界面与选项 | 分页动作面板、本地渲染开关、自显与拖后设置、示例预览 | [ActionsScreen](client/src/main/java/com/simmc/meplayeractions/client/ui/ActionsScreen.java)、[ClientOptions](client/src/main/java/com/simmc/meplayeractions/client/ClientOptions.java) |
+| 本地模型库 | 内置模型与专用目录的单文件模型，读取后使用同一受限解析器 | [LocalModelLibrary](client/src/main/java/com/simmc/meplayeractions/client/LocalModelLibrary.java) |
+| 界面与选项 | 本地外观设置、分页动作面板、渲染总开关、自显；拖后参数保留在配置中 | [LocalAppearanceScreen](client/src/main/java/com/simmc/meplayeractions/client/ui/LocalAppearanceScreen.java)、[ActionsScreen](client/src/main/java/com/simmc/meplayeractions/client/ui/ActionsScreen.java)、[ClientOptions](client/src/main/java/com/simmc/meplayeractions/client/ClientOptions.java)、[LocalAppearanceSettings](client/src/main/java/com/simmc/meplayeractions/client/LocalAppearanceSettings.java) |
 
 ## 3. 动作会话与每 tick 控制
 
@@ -202,9 +217,11 @@ sequenceDiagram
 
 通信使用 Minecraft plugin messaging / Fabric custom payload 的 `meplayeractions:main`，没有额外 HTTP 服务或数据库。协议 v3 不兼容 v1/v2；两端使用严格 UTF-8 JSON。客户端请求只能操作发送者自身，`play / stop / sit / crawl / reset` 转回服务端 `handleAction`，继续走命令权限、模型与动作校验。
 
+v3 的线格式不传 ModelEngine 对象、骨骼实体 ID 或引擎名称。`owner`、`instance`、`assetHash`、动画层、运动映射和接管租约描述的是玩家视觉实例。其他服务端模型引擎可以实现同一协议，提供客户端支持的 `.bbmodel`、映射已支持的动作状态、保留可用的原版玩家追踪，并在 ready/ack、失败和超时时切换自己的观众显示；满足这些约定后无需因更换引擎更新客户端。本仓库当前提供的是 ModelEngine 适配器，尚未实现其他引擎后端。新模型格式、状态枚举或协议语义超出 v3 范围时仍需另行适配。
+
 `state` 是完整状态，主要包含实例身份、视觉位置/朝向、缩放、人物隐藏、自显、三个动画层、动作目录和 `motion` 策略。缺席的层要退出；动作目录不代表免权限许可，服务器在执行时再校验。快照边界目前由客户端校验后接收，`ClientRuntime` 不做基于 `snapshot_end` 的原子批量提交，日常绑定清理由 `unbind` 和租约完成。
 
-`ModelAssets` 的资产查找顺序为本插件 `models/<id>.bbmodel` → ME `blueprints/` 的匹配文件名 → 匹配 `model_identifier` → JAR 内置模型。读文件、计算 hash 和压缩在服务器异步任务中完成；准备中及失败项保留 ME。结果（含失败）缓存在当前服务实例中，更新模型后需插件 reload。hash 针对原始 JSON 字节，压缩和 Base64 仅用于传输。
+当前服务端 `ModelAssets` 的资产查找顺序为本插件 `models/<id>.bbmodel` → JAR 内置表达式模型 → ME `blueprints/` 的匹配文件名 → 匹配 `model_identifier`。读文件、计算 hash 和压缩在服务器异步任务中完成；准备中及失败项保留 ME。结果（含失败）缓存在当前服务实例中，更新模型后需插件 reload。hash 针对原始 JSON 字节，压缩和 Base64 仅用于传输；这份目录规则不是其他引擎适配器必须使用的目录。
 
 客户端在后台线程读取缓存、解压、校验和解析，使用 `generation` 拒绝断开、世界切换或重载后到达的旧后台结果。纹理注册回到 Minecraft 主线程，准备成功后才允许发送 ready。
 
@@ -229,9 +246,17 @@ sequenceDiagram
 
 客户端实现独立的 cube 骨骼渲染器，不依赖 OpenYSM 或 GeckoLib。支持内联 `outliner`、逐面 UV、内嵌 PNG、数值型位置/旋转/缩放轨道、linear / step / catmullrom 插值，以及 ONCE / LOOP / HOLD 播放。读取格式范围为 3.2 及以上 3.x、4.x、内联骨骼的 5.0。
 
-外部贴图、mesh、box UV、cube rescale、分离 `groups` 表、脚本/表达式、效果通道和 5.1 以后格式会拒绝加载。编辑器中的惰性占位元数据不执行；涉及运行时轨道的脚本也不执行。客户端不实现通用 ME 特殊骨骼行为、动态物理、脚本动画或技能系统，不能由服务端能加载模型推断客户端能等价播放。
+外部贴图、mesh、box UV、cube rescale、分离 `groups` 表、外部粒子/音效通道和 5.1 以后格式仍拒绝加载。数字轨道支持受限 Molang：变量赋值、条件、度数三角函数、算术、常用数学函数与模型需要的 YSM/query/ctrl 输入。解释器有长度、深度、运算预算和有限数约束，不执行 Java、文件、网络或宿主代码。
 
-`ysm_01_jk_player` / `ysm_01_jk_npc` 提供本地渲染示例及卧倒、床睡眠等轨道；`ysm_02_jk` 是保留原骨架、贴图和动画的基准模型，含 YSM 表达式/脚本，供当前 ME 回退路径验证，不宣称客户端实现 YSM 动态物理。`LegacyNpcAnimations` 可为旧 NPC 实例会话补齐已知轨道而不修改共享 blueprint，客户端原始资产仍需具备实际播放的动画。
+`ysm_01_jk` / `ysm_02_jk` 保留各自几何、贴图、枢轴和原始尺寸。`tools/prepare_models.py` 以原始 ysm_07_jk 和基准模型补齐动作，把旧 UUID 按唯一且完全一致的骨骼名迁移；缺失的外部骨骼轨道记录在 manifest 中。原模型位于 `examples/models`，含 60 个动画与脚本；`ModelBaker` 生成 `examples/blueprints` 的 57 个数值动画供 ME 导入。不生成 NPC/player 变体。
+
+`AnimationPlayer` 每个实例分别保存表达式变量、时间线事件进度和弹簧状态，使用原模型 parallel1 初始化与 parallel2 的 10 ms 固定积分步骤。pre_parallel 层在姿态前，parallel0 配饰层在姿态后。实际实体移动、垂直速度、转身、头部朝向、主副手与饥饿值作为输入；远端饥饿值由服务器同步。跳跃、床睡眠等动画拥有 Root 旋转，渲染器仅应用世界 yaw。
+
+第一人称及客户端本人隐藏只跳过绘制，保留实例脚本和物理推进。服务器伪装的帽子/花朵 `variable.roaming.a/b` 由服务器当前实例同步，客户端在事件后、几何前应用，保证新观众与重新进入观看距离时状态一致；纯本地外观自行执行附件脚本，不读取服务器本人附件状态。弹簧变量继续按模型实例独立计算。服务器物理使用实际坐标差并按采样间隔归一，传送和换世界清零运动输入。
+
+`YsmAnimations` 为每次伪装创建独立 BlueprintAnimation 和动态关键帧，不修改共享 ME 蓝图。主线程更新物理与输入，异步 ME 动画线程读取不可变快照；辅助层使用预留优先级，释放时仅停止自己持有的属性。无模组观众仍使用 ME 的 20 TPS 更新，不能等同于客户端每帧渲染。
+
+这是针对示例模型的表达式与动作实现，不是 OpenYSM 全部功能、外部模组接口、通用粒子或技能系统的替代。
 
 `BbModel` 解析为不可变模型，`AnimationPlayer` 按 owner / instance / hash 持有独立的层过渡状态。姿态与手动层按有关键帧的通道覆盖，交互层叠加；指定 `h_` / `hi_` 前缀头骨（无此类骨骼时查找 `head`）接受相对头部朝向，手动头骨旋转可衰减自动视线。
 
@@ -243,7 +268,7 @@ sequenceDiagram
 4. `BEFORE_ENTITIES` 应用相机相对位置、身体 yaw 和统一缩放，向 `RenderCommandQueue` 提交 `entityCutoutNoCull` 自定义几何。
 5. Mixin 按已确认且仍有效的绑定隐藏原玩家与装备，`PlayerArmRendererMixin` 控制第一人称手臂。
 
-资源重载先释放绑定、恢复 ME，再重新注册纹理，重新 ready/ack 后接管。渲染或纹理恢复失败释放相应绑定并退避重试；断开和世界变化清理动画状态及 GPU 纹理。`showSelf` 控制本地本人模型显示，不扩大服务器允许的可见性。
+资源重载先释放服务器绑定、恢复后端显示，再重新注册纹理；服务器实例重新 ready/ack 后接管。本地外观配置保留，纹理准备成功后继续本地显示，不需要服务器 ACK。渲染或纹理恢复失败释放相应实例并退避重试；断开和世界变化清理动画状态及 GPU 纹理，持久本地配置在下个世界重新应用。`showSelf` 控制本地本人模型显示，不扩大服务器允许的多人可见性。
 
 ## 8. 真实姿态与状态所有权
 
@@ -276,10 +301,10 @@ ME 模型及玩家基础状态也有所有权记录：释放受管动画句柄�
 | --- | --- | --- |
 | 服务端 Maven | [pom.xml](pom.xml) | Java 21、Paper API 1.21.11、ModelEngine R4.1.1 本地依赖；Gson/Netty 由运行环境提供 |
 | 客户端 Gradle | [build.gradle](client/build.gradle)、[fabric.mod.json](client/src/main/resources/fabric.mod.json) | Gradle Wrapper 9.2.0、Loom 1.13.6、Yarn 1.21.11+build.3、Loader 0.18.4、Fabric API 0.140.2+1.21.11 |
-| 示例资产准备 | [prepare_example_model.py](tools/prepare_example_model.py) | 派生模型和可追溯 manifest；构建将示例放入两端 JAR |
+| 示例资产准备 | [prepare_models.py](tools/prepare_models.py) | 保留两套外貌、补齐动作并生成 ME 数值蓝图及可追溯 manifest；构建将原模型放入两端 JAR |
 | 发布打包 | [package_release.py](tools/package_release.py) | 校验构建、模型和验收证据，输出工作区 `dist/` |
 
-普通构建流程见 README。发布脚本是验收与打包入口，不会代替 Maven/Gradle 构建，也不会自动完成两客户端游戏测试。它检查两端输入早于 JAR、测试报告覆盖当前测试源码且无失败/错误/跳过、JAR 元数据与 Java 字节码版本、模型清单/hash，以及安装 ZIP 的文件内容和完整性。
+在项目根执行 `mvn package`，在 `client/` 执行 Gradle Wrapper 的 `build`，完成实机验收后在项目根执行 `python tools/package_release.py`。发布脚本是验收与打包入口，不会代替 Maven/Gradle 构建，也不会自动完成 A/B 及独立客户端游戏测试。它检查两端输入早于 JAR、测试报告覆盖当前测试源码且无失败/错误/跳过、JAR 元数据与 Java 字节码版本、模型清单/hash，以及安装 ZIP 的文件内容和完整性。
 
 发布还依赖以下已有报告和证明文件；修改运行时代码并重建 JAR 后，旧证据不能代表新构建：
 
@@ -289,8 +314,10 @@ ME 模型及玩家基础状态也有所有权记录：释放受管动画句柄�
 | `client/build/test-results/test/TEST-*.xml` | 客户端单元测试 |
 | `client/build/e2e/results.json` 与同目录 `launch.json` | 安装 MPA 的客户端游戏验收，绑定实际两端 JAR hash |
 | `client/build/observer-test/results/observer-results.json` 与同目录 `launch.json` | 未安装 MPA 模组的观众验收 |
+| `client/build/standalone-e2e/results.json` 与同目录 `launch.json` | 无服务器插件与无 v3 连接的独立客户端验收，绑定实际客户端 JAR hash，覆盖本地设置、动作、重载及关闭恢复 |
+| `build/standalone-server/standalone-proof.json` | 已启动的空插件测试服证明：没有插件 JAR，日志确认零插件，仅监听本机回环地址 |
 | 报告引用的 PNG 截图 | 最新构建对应的显示证据 |
-| `build/e2e-server/matrix-proof.json`（存在时） | 服务器场景矩阵证据，同样检查服务端 hash |
+| `build/e2e-server/matrix-proof.json` | 必需的服务器场景矩阵证据，两端 JAR hash 和服务端单测数量须匹配 |
 
 `E2EHarness` 仅在 `-Dmeplayeractions.e2e=true` 时注册，它是测试入口，不作为普通玩家界面功能。当前源码中的单元测试覆盖下列边界，但“有测试代码”不等于本次已运行或已通过：
 
@@ -299,7 +326,7 @@ ME 模型及玩家基础状态也有所有权记录：释放受管动画句柄�
 | 状态、移动、跳跃、交互、床与视觉历史、参数、目录 | [服务端 action 测试](src/test/java/com/simmc/meplayeractions/action/) |
 | 配置、中文名称与命令布局 | [config 测试](src/test/java/com/simmc/meplayeractions/config/)、[command 测试](src/test/java/com/simmc/meplayeractions/command/) |
 | 姿态判定、GSit 锚点、假人可见性、飞行与药水恢复 | [gameplay 测试](src/test/java/com/simmc/meplayeractions/gameplay/) |
-| 观众、旧 NPC、原版包处理与恢复范围 | [me 测试](src/test/java/com/simmc/meplayeractions/me/) |
+| 观众、实例动画、原版包处理与恢复范围 | [me 测试](src/test/java/com/simmc/meplayeractions/me/) |
 | 入包边界、资产、租约、冷却 | [服务端 client 测试](src/test/java/com/simmc/meplayeractions/client/) |
 | 本地动作、展示时间、模型采样及客户端协议 | [客户端测试](client/src/test/java/com/simmc/meplayeractions/client/) |
 
@@ -308,7 +335,7 @@ ME 模型及玩家基础状态也有所有权记录：释放受管动画句柄�
 ## 11. 修改时应保持的约束
 
 1. 观众许可、真实姿态和权限由服务器决定；客户端请求不得指定任意 owner 或执行任意命令。
-2. 本地资产和 GPU 准备成功且收到精确 ACK 后才绘制；未知格式、追踪通道失败或外来模型共存时保持 ME。
+2. 服务器多人实例须在资产和 GPU 准备成功且收到精确 ACK 后才绘制；未知格式、追踪通道失败或外来模型共存时保持服务器后端显示。纯本地自己的外观使用独立本地生命周期，不申请服务器租约。
 3. 即时跟随不叠加服务器历史缓冲；拖后模式的位置和动画必须采样同一展示时间。
 4. 坐标、姿态和锚点含义要在两端一致；原生床与 GSit 躺下、陆地爬行与水平游泳须分别处理。
 5. 状态缺席表示层退出，旧实例消息不能续新实例；相同动作序号的位置更新仍应接收。

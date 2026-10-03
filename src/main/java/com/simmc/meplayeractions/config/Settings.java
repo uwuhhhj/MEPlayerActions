@@ -22,7 +22,7 @@ public final class Settings {
             cooldownTicks, maxManualTicks, clientMaxPayload, clientCooldownTicks, swingTicks, miningTimeoutTicks,
             visualDelayTicks, jumpMinTicks, jumpLandingTicks;
     public final boolean hideSelf, adoptOriginal, syncEnabled, interruptMove, interruptDamage,
-            interruptPosture, rawPlay, allowFlight, clientEnabled, legacyNpcCrawlMigrated, visualSnapPostures;
+            interruptPosture, rawPlay, allowFlight, clientEnabled, visualSnapPostures;
     public final double visualMaxDistance;
     public final double clientViewDistance;
     public final boolean showSelf;
@@ -39,7 +39,7 @@ public final class Settings {
                                double speed, String permission, int maxTicks) {}
 
     private Settings(FileConfiguration c) {
-        defaultModel = id(c.getString("models.default", "ysm_01_jk_player"));
+        defaultModel = id(c.getString("models.default", "ysm_01_jk"));
         Set<String> models = new LinkedHashSet<>();
         for (String name : c.getStringList("models.allowed")) models.add(id(name));
         if (models.isEmpty()) throw new IllegalArgumentException("models.allowed 至少需要一个模型");
@@ -57,10 +57,10 @@ public final class Settings {
         animationInterval = integer(c, "controller.animation-update-interval-ticks", 1, 1, 20);
         inTicks = integer(c, "controller.transition-in-ticks", 2, 0, 100);
         outTicks = integer(c, "controller.transition-out-ticks", 2, 0, 100);
-        posturePriority = integer(c, "controller.posture-priority", 100, 1, 10000);
+        posturePriority = integer(c, "controller.posture-priority", 100, 5, 10000);
         interactionPriority = integer(c, "controller.interaction-priority", 150, 1, 10000);
         manualPriority = integer(c, "controller.manual-priority", 200, 1, 10000);
-        if (interactionPriority <= posturePriority || manualPriority <= interactionPriority)
+        if (interactionPriority <= posturePriority || manualPriority <= interactionPriority + 1)
             throw new IllegalArgumentException("优先级须满足 posture-priority < interaction-priority < manual-priority");
         swingTicks = integer(c, "controller.swing-duration-ticks", 8, 1, 100);
         miningTimeoutTicks = integer(c, "controller.mining-timeout-ticks", 12, 2, 1200);
@@ -101,27 +101,11 @@ public final class Settings {
         defaults.putIfAbsent(ActionState.MINING, List.of("mining", "dig", "attack", "use_mainhand"));
         defaults.putIfAbsent(ActionState.FALL, List.of("fall", "jump", "idle"));
         defaults.putIfAbsent(ActionState.SWIM_PRONE_IDLE, List.of("swim_prone_idle", "swim"));
-        if (configVersionFor(c) < 3 && defaults.getOrDefault(ActionState.JUMP, List.of()).equals(List.of("jump")))
-            defaults.put(ActionState.JUMP, List.of("player_jump", "jump"));
         ConfigurationSection profile = c.getConfigurationSection("animations.models");
-        boolean migrated = false;
-        int configVersion = configVersionFor(c);
         if (profile != null) for (String model : profile.getKeys(false)) {
-            if (!profile.isConfigurationSection(model))
-                throw new IllegalArgumentException("animations.models." + model + " 必须是动画状态配置节");
-            var mappings = parseAnimations(profile.getConfigurationSection(model));
-            // Versions 1/2 shipped NPC crawl as []. Restore only that known legacy
-            // default; version 3 and all other explicit per-model disables remain valid.
-            if (configVersion < 3 && model.equals("ysm_01_jk_npc")) {
-                for (ActionState state : List.of(ActionState.CRAWL_IDLE, ActionState.CRAWL_WALK)) {
-                    if (mappings.containsKey(state) && mappings.get(state).isEmpty()) {
-                        mappings.remove(state); migrated = true;
-                    }
-                }
-            }
-            animationMaps.put(id(model), mappings);
+            if (!profile.isConfigurationSection(model)) throw new IllegalArgumentException("animations.models." + model);
+            animationMaps.put(id(model), parseAnimations(profile.getConfigurationSection(model)));
         }
-        legacyNpcCrawlMigrated = migrated;
         ConfigurationSection tuning = c.getConfigurationSection("animation-settings");
         if (tuning != null) for (String key : tuning.getKeys(false)) {
             if (!ANIMATION_FIELDS.contains(key) || !tuning.isConfigurationSection(key))

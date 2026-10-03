@@ -1,13 +1,13 @@
 config-version: 3
 
 models:
-  default: ysm_01_jk_player
-  allowed: [ysm_01_jk_player, ysm_01_jk_npc, ysm_02_jk]
+  default: ysm_01_jk
+  allowed: [ysm_01_jk, ysm_02_jk]
 
 disguise:
   scale: 1.0
   hide-self: true
-  # 默认向本人渲染模型；false 避免第一人称遮挡，也会隐藏本人第三人称的模型。
+  # 默认向本人渲染模型；客户端第一人称自动隐藏。false 也会隐藏本人第三人称的模型。
   show-self: true
   # 其他玩家与真实玩家脚底的三维距离必须严格小于此值，范围 0.1–256 格。
   view-distance: 8.0
@@ -85,20 +85,23 @@ animations:
     idle: [idle]
     walk: [walk]
     run: [run, walk]
-    jump: [player_jump, jump]
-    fall: [fall, jump, idle]
+    jump: [jump, player_jump]
+    fall: [fall, jump]
     sit: [sit]
     # GSit 躺下接触地面；原生床使用独立状态及床顶锚点/朝向。
     sleep: [bed_sleep, sleep, lay]
     bed-sleep: [bed_sleep, sleep, lay]
-    boat: [sit_boat, boat, sit]
-    minecart: [sit_minecart, minecart, sit]
+    boat: [boat, sit]
+    minecart: [minecart, sit]
     ride: [ride, sit]
-    crawl-idle: [crawl_idle, crawl_walk]
-    crawl-walk: [crawl_walk, crawl_idle]
-    crouch-idle: [crouch_idle]
-    crouch-walk: [crouch_walk, crouch_idle]
-    swim-idle: [swim_idle, swim]
+    ride-pig: [ride_pig, ride, sit]
+    ladder-move: [ladder_up]
+    ladder-idle: [ladder_stillness]
+    crawl-idle: [climbing, crawl_idle]
+    crawl-walk: [climb, crawl_walk]
+    crouch-idle: [sneaking, crouch_idle]
+    crouch-walk: [sneak, crouch_walk]
+    swim-idle: [swim_stand, swim_idle, swim]
     # 漂浮直立与水平游泳停住是两种姿态；后者不能回退到直立 swim_idle。
     swim-prone-idle: [swim_prone_idle, swim]
     swim-walk: [swim, swim_idle]
@@ -106,24 +109,10 @@ animations:
     fly: [fly, hover]
     elytra: [elytra_fly, fly]
     # 原生左键摆臂与 /meplayeractions play wave（主动挥手）独立；此层只映射模型已有动画。
-    swing-mainhand: [attack, swing, use_mainhand]
+    swing-mainhand: [swing_hand, attack, use_mainhand]
     swing-offhand: [attack_offhand, use_offhand]
     mining: [mining, dig, attack, use_mainhand]
-  models:
-    ysm_02_jk:
-      # 基准模型自身的 Root 已经卧倒，保留原轨道；climb/climbing 在此模型中是陆地趴下/爬行。
-      crawl-idle: [climb]
-      crawl-walk: [climbing, climb]
-      crouch-idle: [sneak]
-      crouch-walk: [sneaking, sneak]
-      swim-idle: [swim_stand, swim]
-      swing-mainhand: [swing_hand, use_mainhand]
-      mining: [swing_hand, use_mainhand]
-    ysm_01_jk_npc:
-      # 0.2.1 安装包为 NPC 模型新增真正的卧倒轨道，保留原有直立 climb 动作。
-      # 更新时须同时安装包内两个 bbmodel，再 /meg reload models。
-      crawl-idle: [crawl_idle, crawl_walk]
-      crawl-walk: [crawl_walk, crawl_idle]
+  models: {}
 
 # 按状态设置速度、ONCE/LOOP/HOLD、入场和退场混合 tick。
 # 未配置状态继承 controller 的过渡时间，速度为 1。
@@ -205,7 +194,20 @@ menu:
     sit: 坐下
     sleep: 卷曲睡眠
     bed_sleep: 横卧睡眠
-    climb: 攀爬动作
+    climb: 爬行移动
+    climbing: 趴下待机
+    sneak: 潜行移动
+    sneaking: 潜行待机
+    boat: 船中坐姿
+    minecart: 矿车坐姿
+    ride: 骑乘
+    ride_pig: 骑猪
+    elytra_fly: 鞘翅滑翔
+    fall: 下落
+    mining: 挖掘
+    swing_hand: 主手挥臂
+    ladder_up: 向上攀梯
+    ladder_stillness: 攀梯停留
     climb_idle: 攀爬待机
     crawl_idle: 趴下待机
     crawl_walk: 爬行移动

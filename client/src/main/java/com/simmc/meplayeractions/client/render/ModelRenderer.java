@@ -47,6 +47,7 @@ public final class ModelRenderer {
     private static volatile List<FrameModel> frameModels = List.of();
     private static volatile int firstPersonSkipped;
     private static volatile long drawnBatches;
+    private static volatile long extractedFrames;
     private static volatile Map<String, Object> cameraInfo = Map.of();
     private static ClientRuntime runtime;
     private static boolean registered;
@@ -132,7 +133,14 @@ public final class ModelRenderer {
 
     public static Map<String, Object> diagnostics() {
         return Map.of("textures", ASSETS.size(), "gpuPixels", pixelCount(), "drawnBatches", drawnBatches,
-                "firstPersonSelfSkipped", firstPersonSkipped, "models", frameModels, "camera", cameraInfo);
+                "firstPersonSelfSkipped", firstPersonSkipped, "models", frameModels, "camera", cameraInfo,
+                "extractedFrames", extractedFrames);
+    }
+
+    /** Read-only instance state for isolated in-game expression checks. */
+    public static Map<String, Double> expressionVariables(UUID owner) {
+        return PLAYERS.entrySet().stream().filter(entry -> entry.getKey().owner().equals(owner))
+                .map(entry -> entry.getValue().expressionVariables()).findFirst().orElse(Map.of());
     }
 
     public record FrameModel(String owner, String hash, int vertices, double minY, double maxY,
@@ -205,6 +213,7 @@ public final class ModelRenderer {
             frame = List.of();
             frameModels = List.of();
             firstPersonSkipped = 0;
+            extractedFrames++;
             return;
         }
         Vec3d camera = context.camera().getCameraPos();
@@ -218,7 +227,7 @@ public final class ModelRenderer {
         List<FrameModel> modelInfo = new ArrayList<>();
         int skipped = 0;
         Set<InstanceKey> live = new HashSet<>();
-        for (ClientRuntime.RenderBinding binding : activeRuntime.renderBindings()) {
+        for (ClientRuntime.RenderBinding binding : activeRuntime.animationBindings()) {
             PreparedAsset asset = ASSETS.get(binding.assetHash());
             if (asset == null || !validTransform(binding)) {
                 activeRuntime.renderFailed(binding.owner(), binding.instance(), binding.assetHash(), "Invalid render transform or missing texture");
@@ -226,14 +235,17 @@ public final class ModelRenderer {
             }
             InstanceKey key = new InstanceKey(binding.owner(), binding.instance(), binding.assetHash());
             live.add(key);
-            if (firstPerson && (binding.owner().equals(cameraOwner) || binding.owner().equals(localOwner))) {
-                skipped++;
-                continue;
-            }
             try {
                 AnimationPlayer player = PLAYERS.computeIfAbsent(key, ignored -> new AnimationPlayer(binding.model()));
                 List<BbModel.Vertex> vertices = player.sample(binding.serverTick(), binding.layers(),
-                        binding.headYaw() - binding.bodyYaw(), binding.headPitch());
+                        binding.headYaw() - binding.bodyYaw(), binding.headPitch(), activeRuntime.expressionQueries(binding.owner()),
+                        activeRuntime.accessoryState(binding.owner()));
+                // Hidden self rendering still advances timeline scripts and spring state.
+                if (firstPerson && (binding.owner().equals(cameraOwner) || binding.owner().equals(localOwner))) {
+                    skipped++;
+                    continue;
+                }
+                if (!activeRuntime.shouldShowModel(binding.owner())) continue;
                 Box bounds = bounds(binding, vertices);
                 if (vertices.isEmpty() || !context.frustum().isVisible(bounds)) continue;
                 Map<Integer, List<BbModel.Vertex>> byTexture = new LinkedHashMap<>();
@@ -269,6 +281,8 @@ public final class ModelRenderer {
         frame = List.copyOf(nextFrame);
         frameModels = List.copyOf(modelInfo);
         firstPersonSkipped = skipped;
+        // Keep this monotonic through reload/clear so lifecycle checks can require a fresh frame.
+        extractedFrames++;
     }
 
     private static boolean validTransform(ClientRuntime.RenderBinding binding) {

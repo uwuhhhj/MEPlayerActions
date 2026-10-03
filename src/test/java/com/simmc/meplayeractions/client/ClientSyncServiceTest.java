@@ -10,6 +10,9 @@ import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -33,15 +36,33 @@ class ClientSyncServiceTest {
         assertTrue(safe.codePoints().noneMatch(Character::isISOControl));
     }
     @Test void smallPayloadDropsMenuDirectoryButKeepsTransformAndLayersOrRejectsOversizedState() {
-        var state = com.google.gson.JsonParser.parseString("{\"protocol\":3,\"type\":\"state\",\"owner\":\"00000000-0000-0000-0000-000000000001\",\"instance\":\"00000000-0000-0000-0000-000000000002\",\"modelId\":\"ysm_01_jk_player\",\"assetHash\":\"" + "a".repeat(64)
+        var state = com.google.gson.JsonParser.parseString("{\"protocol\":3,\"type\":\"state\",\"owner\":\"00000000-0000-0000-0000-000000000001\",\"instance\":\"00000000-0000-0000-0000-000000000002\",\"modelId\":\"ysm_01_jk\",\"assetHash\":\"" + "a".repeat(64)
                 + "\",\"sequence\":12,\"serverTick\":12345,\"world\":\"00000000-0000-0000-0000-000000000003\",\"x\":1,\"y\":64,\"z\":2,\"bodyYaw\":90,\"headYaw\":100,\"headPitch\":10,\"scale\":1.5,\"hidePlayer\":true,\"showSelf\":true,\"layers\":[{\"layer\":\"posture\",\"animation\":\"crawl_idle\",\"startedAtTick\":12340,\"speed\":1,\"loop\":\"LOOP\",\"inTicks\":2,\"outTicks\":2}],\"animations\":[]}").getAsJsonObject();
         var menu = new com.google.gson.JsonArray();
         for (int i = 0; i < 29; i++) { var entry = new com.google.gson.JsonObject(); entry.addProperty("id", "anim_" + i); entry.addProperty("label", "中文动作".repeat(16)); menu.add(entry); }
+        state.add("accessories",ClientSyncService.accessoriesJson(Map.of("a",1d,"b",1d)));
         state.add("animations", menu); assertTrue(ClientSyncService.fitStatePacket(state, 1024));
         assertEquals(0, state.getAsJsonArray("animations").size()); assertEquals(1, state.getAsJsonArray("layers").size());
+        assertEquals(1,state.getAsJsonObject("accessories").get("a").getAsDouble());
         assertEquals(64, state.get("y").getAsInt());
         for (int i = 0; i < 8; i++) state.getAsJsonArray("layers").add(state.getAsJsonArray("layers").get(0).deepCopy());
         assertTrue(!ClientSyncService.fitStatePacket(state, 1024));
+    }
+    @Test void accessorySnapshotsAreImmutableFiniteAndContainOnlyTheTwoSourceFlags() {
+        var source=new java.util.HashMap<>(Map.of("a",1d,"b",0d));var snapshot=accessorySnapshot(source);
+        source.put("a",0d);assertEquals(1,snapshot.accessories().get("a"));
+        assertThrows(UnsupportedOperationException.class,()->snapshot.accessories().put("b",1d));
+        var wire=ClientSyncService.accessoriesJson(snapshot.accessories());
+        assertEquals(2,wire.size());assertEquals(1,wire.get("a").getAsDouble());assertEquals(0,wire.get("b").getAsDouble());
+        assertEquals(0,ClientSyncService.accessoriesJson(accessorySnapshot(Map.of()).accessories()).size());
+        for(var invalid:List.of(Map.of("a",Double.NaN,"b",0d),Map.of("a",Double.POSITIVE_INFINITY,"b",0d),
+                Map.of("a",-1d,"b",0d),Map.of("a",0d,"b",2d),Map.of("a",1d),Map.of("a",1d,"b",1d,"l1_p0",25d)))
+            assertThrows(IllegalArgumentException.class,()->accessorySnapshot(invalid));
+    }
+    private static ClientSyncService.StateSnapshot accessorySnapshot(Map<String,Double> accessories) {
+        var motion=new ClientSyncService.MotionState(List.of(),List.of(),17,6,.025,true,true,false,"","","",0,0,0,0);
+        return new ClientSyncService.StateSnapshot(UUID.randomUUID(),UUID.randomUUID(),"ysm_01_jk",1,100,List.of(),
+                UUID.randomUUID(),0,64,0,0,0,0,1,true,true,List.of(),true,motion,accessories);
     }
 
     @ParameterizedTest
@@ -78,8 +99,8 @@ class ClientSyncServiceTest {
     }
     @Test void acceptsExactAssetAndReadyKeysAndBoundedHeartbeatBindings() throws IOException {
         String hash = "a".repeat(64), owner = "00000000-0000-0000-0000-000000000001", instance = "00000000-0000-0000-0000-000000000002";
-        Object asset = decode("{\"protocol\":3,\"type\":\"asset_request\",\"modelId\":\"ysm_01_jk_player\",\"hash\":\"" + hash + "\"}");
-        assertEquals(hash, field(asset, "hash")); assertEquals("ysm_01_jk_player", field(asset, "modelId"));
+        Object asset = decode("{\"protocol\":3,\"type\":\"asset_request\",\"modelId\":\"ysm_01_jk\",\"hash\":\"" + hash + "\"}");
+        assertEquals(hash, field(asset, "hash")); assertEquals("ysm_01_jk", field(asset, "modelId"));
         String binding = "\"owner\":\"" + owner + "\",\"instance\":\"" + instance + "\",\"hash\":\"" + hash + "\"";
         for (String type : new String[]{"render_ready", "render_failed"}) {
             Object ready = decode("{\"protocol\":3,\"type\":\"" + type + "\"," + binding + "}"); assertEquals(type, field(ready, "type"));
@@ -90,7 +111,7 @@ class ClientSyncServiceTest {
     @Test void rejectsAssetPathTraversalMalformedHashesAndExcessiveOrDuplicateReadyBindings() {
         String hash = "a".repeat(64), owner = "00000000-0000-0000-0000-000000000001", instance = "00000000-0000-0000-0000-000000000002";
         assertRejected("{\"protocol\":3,\"type\":\"asset_request\",\"modelId\":\"../private\",\"hash\":\"" + hash + "\"}");
-        assertRejected("{\"protocol\":3,\"type\":\"asset_request\",\"modelId\":\"ysm_01_jk_player\",\"hash\":\"" + hash.toUpperCase() + "\"}");
+        assertRejected("{\"protocol\":3,\"type\":\"asset_request\",\"modelId\":\"ysm_01_jk\",\"hash\":\"" + hash.toUpperCase() + "\"}");
         assertRejected("{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[]}");
         String binding = "{\"owner\":\"" + owner + "\",\"instance\":\"" + instance + "\",\"hash\":\"" + hash + "\"}";
         assertRejected("{\"protocol\":3,\"type\":\"render_heartbeat\",\"bindings\":[" + binding + "," + binding + "]}");

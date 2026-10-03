@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import shutil
@@ -15,10 +16,28 @@ WORKSPACE = PROJECT.parents[1]
 DIST = WORKSPACE / "dist"
 NAMESPACE = {"m": "http://maven.apache.org/POM/4.0.0"}
 ZIP_TIME = (2026, 10, 3, 0, 0, 0)
+MODEL_IDS = ("ysm_01_jk", "ysm_02_jk")
 
 
 def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def read_json(path: Path) -> dict:
+    # Acceptance helpers may run in either Windows PowerShell or PowerShell 7.
+    return json.loads(path.read_text(encoding="utf-8-sig"))
+
+
+def numeric_axis(value: object) -> bool:
+    # Blockbench stores channel values as numeric strings; expressions must be absent in ME assets.
+    if type(value) not in (int, float, str):
+        return False
+    if isinstance(value, str) and not re.fullmatch(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?", value.strip()):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (ValueError, OverflowError):
+        return False
 
 
 def write_zip(path: Path, entries: dict[str, bytes]) -> None:
@@ -45,6 +64,7 @@ def main() -> None:
     compiler_inputs = [PROJECT / "pom.xml"]
     compiler_inputs += sorted((PROJECT / "src/main/java").rglob("*.java"))
     compiler_inputs += sorted((PROJECT / "src/main/resources").rglob("*"))
+    compiler_inputs += sorted((PROJECT / "examples/models").glob("*.bbmodel"))
     compiler_inputs = [p for p in compiler_inputs if p.is_file()]
     assert all(p.stat().st_mtime_ns <= jar.stat().st_mtime_ns for p in compiler_inputs), \
         "Source changed after the JAR; rerun mvn package"
@@ -82,13 +102,13 @@ def main() -> None:
             b"${version}", version.encode("utf-8"))
         assert archive.read("plugin.yml") == expected_descriptor, "Stale plugin metadata"
         assert archive.read("config.yml") == (PROJECT / "src/main/resources/config.yml").read_bytes()
-        for model_file in (PROJECT / "examples/blueprints/npc").glob("*.bbmodel"):
+        for model_file in (PROJECT / "examples/models").glob("*.bbmodel"):
             assert archive.read(f"models/{model_file.name}") == model_file.read_bytes(), "Stale server client asset"
         classes = [n for n in archive.namelist() if n.endswith(".class")]
         assert "com/simmc/meplayeractions/MEPlayerActionsPlugin.class" in classes
         assert "com/simmc/meplayeractions/action/DisguiseOptions.class" in classes
         assert "com/simmc/meplayeractions/gameplay/DisguiseEffects.class" in classes
-        assert "com/simmc/meplayeractions/me/LegacyNpcAnimations.class" in classes
+        assert "com/simmc/meplayeractions/me/YsmAnimations.class" in classes
         assert all(n.startswith("com/simmc/meplayeractions/") for n in classes), "Dependency classes were bundled"
         assert not any(n.endswith(".jar") for n in archive.namelist()), "Dependency JAR was bundled"
         for class_name in classes:
@@ -98,82 +118,60 @@ def main() -> None:
             compiled = PROJECT / "target/classes" / class_name
             assert compiled.read_bytes() == data, f"Stale compiled class: {class_name}"
 
-    model = PROJECT / "examples/blueprints/npc/ysm_01_jk_player.bbmodel"
-    manifest = PROJECT / "examples/blueprints/npc/ysm_01_jk_player.manifest.json"
-    facts = json.loads(manifest.read_text(encoding="utf-8"))
-    assert digest(model) == facts["derived_model"]["sha256"]
-    parsed_model = json.loads(model.read_text(encoding="utf-8"))
-    animation_names = [a["name"] for a in parsed_model["animations"]]
-    assert len(animation_names) == len(set(animation_names)) == 29
-    assert {"idle", "walk", "sit", "crawl_idle", "crawl_walk", "wave", "fly", "hover", "bed_sleep"} <= set(animation_names)
-    for source_name in ("npc_source", "original_v9_source"):
-        source = PROJECT.parent / facts[source_name]["path"]
-        if source.exists():
-            assert digest(source) == facts[source_name]["sha256"], "Original model changed"
-
-    npc_model = PROJECT / "examples/blueprints/npc/ysm_01_jk_npc.bbmodel"
-    npc_manifest = npc_model.with_suffix(".manifest.json")
-    npc_facts = json.loads(npc_manifest.read_text(encoding="utf-8"))
-    assert digest(npc_model) == npc_facts["derived_model"]["sha256"]
-    npc_parsed = json.loads(npc_model.read_text(encoding="utf-8"))
-    npc_names = [a["name"] for a in npc_parsed["animations"]]
-    assert len(npc_names) == len(set(npc_names)) == 30
-    assert {"climb", "climb_idle", "crawl_idle", "crawl_walk", "player_jump", "bed_sleep"} <= set(npc_names)
-    npc_source = PROJECT.parent / npc_facts["npc_source"]["path"]
-    if npc_source.exists():
-        original_npc = json.loads(npc_source.read_text(encoding="utf-8"))
-        assert npc_parsed["animations"][:26] == original_npc["animations"]
-        assert all(npc_parsed[f] == original_npc[f] for f in ("elements", "outliner", "textures", "resolution"))
-
-    # Record the user-supplied crawl reference when available in this workspace.
-    # It is evidence, not an installation dependency or an asset to overwrite.
-    reference_path = PROJECT.parent / "JK酒狐/JK酒狐_ME通用精简.bbmodel"
-    reference_comparison = None
-    if reference_path.is_file():
-        reference_hash = digest(reference_path)
-        reference_model = json.loads(reference_path.read_text(encoding="utf-8"))
-        def root_pose(parsed: dict, clip_name: str) -> dict:
-            clip = next(a for a in parsed["animations"] if a["name"] == clip_name)
-            track = next(t for t in clip["animators"].values() if t["name"] == "Root")
-            return {channel: [float(next(f for f in track["keyframes"] if f["channel"] == channel)
-                                   ["data_points"][0][axis]) for axis in ("x", "y", "z")]
-                    for channel in ("rotation", "position")}
-        scale = facts["position_scale_derived_from_sit"]
-        compared = {}
-        for source_name, target_name in (("climbing", "crawl_idle"), ("climb", "crawl_walk")):
-            source_pose = root_pose(reference_model, source_name)
-            target_pose = root_pose(npc_parsed, target_name)
-            assert source_pose["rotation"] == target_pose["rotation"]
-            assert all(abs(a * scale - b) < 0.0000001 for a, b in
-                       zip(source_pose["position"], target_pose["position"]))
-            compared[target_name] = {"reference_clip": source_name, "reference_root": source_pose,
-                                     "npc_root": target_pose}
-        assert digest(reference_path) == reference_hash
-        reference_comparison = {"source": reference_path.relative_to(PROJECT.parent).as_posix(), "sha256": reference_hash,
-                                "npc_position_scale": scale, "root_tracks_match": True, "clips": compared}
-
+    model_facts = {}
+    model_ids = MODEL_IDS
+    for directory in ("models", "blueprints"):
+        assert {p.stem for p in (PROJECT / "examples" / directory).glob("*.bbmodel")} == set(model_ids), \
+            f"Unexpected example models in {directory}"
+    for model_id in model_ids:
+        raw_path = PROJECT / f"examples/models/{model_id}.bbmodel"
+        fact = read_json(raw_path.with_suffix(".manifest.json"))
+        raw_model = read_json(raw_path)
+        baked_path = PROJECT / f"examples/blueprints/{model_id}.bbmodel"
+        baked = read_json(baked_path)
+        assert fact["model_id"] == model_id and raw_model["model_identifier"] == model_id
+        assert digest(raw_path) == fact["raw_sha256"], f"Stale manifest: {model_id}"
+        assert fact["geometry_and_original_size_preserved"] is True
+        assert raw_model["mpa_runtime"]["original_size"] is True
+        assert raw_model["mpa_runtime"]["physics_step_seconds"] == .01
+        assert len(raw_model["animations"]) == 60 and len(baked["animations"]) == 57
+        raw_names = [action["name"] for action in raw_model["animations"]]
+        baked_names = [action["name"] for action in baked["animations"]]
+        assert raw_names == fact["animations"] and len(set(raw_names)) == len(raw_names)
+        assert len(set(baked_names)) == len(baked_names)
+        assert set(baked_names) == set(raw_names) - {"pre_parallel0", "parallel1", "parallel2"}
+        assert all(raw_model[key] == baked[key] for key in ("elements", "outliner", "textures", "resolution"))
+        for action in baked["animations"]:
+            for animator in action["animators"].values():
+                for frame in animator["keyframes"]:
+                    for point in frame["data_points"]:
+                        for axis in ("x", "y", "z"):
+                            assert numeric_axis(point[axis]), \
+                                f"Non-numeric ME keyframe: {model_id}/{action['name']}/{axis}"
+        appearance = PROJECT.parent / fact["appearance_source"]
+        if appearance.exists():
+            assert digest(appearance) == fact["appearance_sha256"], f"Appearance source changed: {model_id}"
+            source_appearance = read_json(appearance)
+            assert all(raw_model[key] == source_appearance[key] for key in ("elements", "outliner", "resolution")), \
+                f"Original model geometry was changed: {model_id}"
+        animation_source = WORKSPACE / "dist/ysm_07_jk.bbmodel"
+        if animation_source.exists():
+            assert digest(animation_source) == fact["animation_source_sha256"], "Original animation source changed"
+        fact["baked_sha256"] = digest(baked_path)
+        model_facts[model_id] = fact
+    animation_names = model_facts["ysm_01_jk"]["animations"]
+    assert len(set(animation_names)) == 60
     protocol = PROJECT / "src/main/java/com/simmc/meplayeractions/client/CLIENT_PROTOCOL.md"
-    reference = PROJECT / "examples/blueprints/npc/ysm_02_jk.bbmodel"
-    reference_manifest = json.loads(reference.with_suffix(".manifest.json").read_text(encoding="utf-8"))
-    reference_source = PROJECT.parent / reference_manifest["source"]["path"]
-    assert digest(reference_source) == reference_manifest["source"]["sha256"]
-    assert digest(reference) == reference_manifest["derived_model"]["sha256"]
-    reference_original = json.loads(reference_source.read_text(encoding="utf-8"))
-    reference_export = json.loads(reference.read_text(encoding="utf-8"))
-    assert reference_export["model_identifier"] == "ysm_02_jk"
-    assert all(reference_original.get(key) == reference_export.get(key) for key in ("elements", "outliner", "textures", "animations"))
     install = {
         f"plugins/{name}.jar": jar.read_bytes(),
         "plugins/MEPlayerActions/config.yml": (PROJECT / "src/main/resources/config.yml").read_bytes(),
-        "plugins/ModelEngine/blueprints/npc/ysm_01_jk_player.bbmodel": model.read_bytes(),
-        "plugins/ModelEngine/blueprints/npc/ysm_01_jk_npc.bbmodel": npc_model.read_bytes(),
-        "plugins/ModelEngine/blueprints/npc/ysm_02_jk.bbmodel": (PROJECT / "examples/blueprints/npc/ysm_02_jk.bbmodel").read_bytes(),
         "README.md": (PROJECT / "README.md").read_bytes(),
         "docs/CLIENT_PROTOCOL.md": protocol.read_bytes(),
-        "docs/ysm_01_jk_player.manifest.json": manifest.read_bytes(),
-        "docs/ysm_01_jk_npc.manifest.json": npc_manifest.read_bytes(),
-        "docs/ysm_02_jk.manifest.json": (PROJECT / "examples/blueprints/npc/ysm_02_jk.manifest.json").read_bytes(),
     }
+    for model_id in model_ids:
+        install[f"plugins/MEPlayerActions/models/{model_id}.bbmodel"] = (PROJECT / f"examples/models/{model_id}.bbmodel").read_bytes()
+        install[f"plugins/ModelEngine/blueprints/meplayeractions/{model_id}.bbmodel"] = (PROJECT / f"examples/blueprints/{model_id}.bbmodel").read_bytes()
+        install[f"docs/{model_id}.manifest.json"] = (PROJECT / f"examples/models/{model_id}.manifest.json").read_bytes()
     # The tutorial link remains usable after unpacking the installation ZIP.
     install["README.md"] = install["README.md"].replace(
         b"src/main/java/com/simmc/meplayeractions/client/CLIENT_PROTOCOL.md", b"docs/CLIENT_PROTOCOL.md")
@@ -196,7 +194,9 @@ def main() -> None:
     assert client_jar.is_file(), "Run client gradlew build first"
     client_inputs = [client / p for p in ("build.gradle", "settings.gradle", "gradle.properties")]
     client_inputs += [p for p in (client / "src/main").rglob("*") if p.is_file()]
-    client_inputs += list((PROJECT / "examples/blueprints/npc").glob("*.bbmodel"))
+    client_inputs += list((PROJECT / "examples/models").glob("*.bbmodel"))
+    client_inputs += list((PROJECT / "src/main/java/com/simmc/meplayeractions/expression").glob("*.java"))
+    client_inputs += [PROJECT / "src/main/java/com/simmc/meplayeractions/config/AnimationLabels.java"]
     assert all(p.stat().st_mtime_ns <= client_jar.stat().st_mtime_ns for p in client_inputs), "Client source changed after JAR"
     client_totals = dict(tests=0, failures=0, errors=0, skipped=0)
     client_reports = list((client / "build/test-results/test").glob("TEST-*.xml"))
@@ -218,8 +218,10 @@ def main() -> None:
         assert metadata["version"] == version and metadata["id"] == "meplayeractions"
         assert metadata["environment"] == "client" and metadata["depends"]["minecraft"] == "~1.21.11"
         assert metadata["depends"]["java"] == ">=21"
+        assert set(metadata["depends"]) == {"fabricloader", "minecraft", "java", "fabric-api"}, \
+            "Independent client acquired a server engine dependency"
         assert not any(n.endswith(".jar") for n in archive.namelist()), "Unexpected bundled client dependency"
-        for model_file in (PROJECT / "examples/blueprints/npc").glob("*.bbmodel"):
+        for model_file in (PROJECT / "examples/models").glob("*.bbmodel"):
             assert archive.read(f"assets/meplayeractions/models/{model_file.name}") == model_file.read_bytes()
         client_classes = [n for n in archive.namelist() if n.endswith(".class")]
         assert "com/simmc/meplayeractions/client/MEPlayerActionsClient.class" in client_classes
@@ -228,30 +230,21 @@ def main() -> None:
             assert magic == 0xCAFEBABE and minor == 0 and major == 65, f"Not Java 21: {name_in_jar}"
     for path in client.rglob("*"):
         relative = path.relative_to(client)
-        if not path.is_file() or any(part in {"build", ".gradle", "run", "__pycache__"} for part in relative.parts):
+        if not path.is_file() or any(part in {"build", ".gradle", "run", "logs", "__pycache__"} for part in relative.parts):
             continue
         if path.suffix in {".log", ".pyc"}:
             continue
         source_entries[f"MEPlayerActions/client/{relative.as_posix()}"] = path.read_bytes()
 
-    DIST.mkdir(parents=True, exist_ok=True)
     delivered_jar = DIST / jar.name
-    shutil.copyfile(jar, delivered_jar)
     install_zip = DIST / f"{name}-install.zip"
     source_zip = DIST / f"{name}-source.zip"
-    write_zip(install_zip, install)
-    write_zip(source_zip, source_entries)
-    assert digest(delivered_jar) == digest(jar)
     delivered_client = DIST / client_jar.name
-    shutil.copyfile(client_jar, delivered_client)
     client_install_zip = DIST / f"MEPlayerActions-Client-{version}-install.zip"
-    write_zip(client_install_zip, {f"mods/{client_jar.name}": client_jar.read_bytes(),
-                                   "README.md": (PROJECT / "README.md").read_bytes()})
-    assert digest(delivered_client) == digest(client_jar)
     game_report_path = client / "build/e2e/results.json"
-    game_report = json.loads(game_report_path.read_text(encoding="utf-8")) if game_report_path.is_file() else None
+    game_report = read_json(game_report_path) if game_report_path.is_file() else None
     observer_report_path = client / "build/observer-test/results/observer-results.json"
-    observer_report = json.loads(observer_report_path.read_text(encoding="utf-8")) if observer_report_path.is_file() else None
+    observer_report = read_json(observer_report_path) if observer_report_path.is_file() else None
     tested_at = max(jar.stat().st_mtime_ns, client_jar.stat().st_mtime_ns)
     game_current = bool(game_report and game_report_path.stat().st_mtime_ns >= tested_at)
     observer_current = bool(observer_report and observer_report_path.stat().st_mtime_ns >= tested_at)
@@ -262,57 +255,144 @@ def main() -> None:
     game_launch_path = game_report_path.parent / "launch.json"
     observer_launch_path = observer_report_path.parent / "launch.json"
     assert game_passed and observer_passed, "Fresh, passing two-client game reports are required"
+    assert game_report["clientVersion"] == version and game_report["minecraft"] == "1.21.11"
+    assert observer_report.get("complete") is True and observer_report["minecraft"] == "1.21.11"
+    assert game_report["artifactProof"]["clientFromJar"] is True, "Client acceptance ran from development classes"
     game_checks = {check["name"]: check["passed"] for check in game_report["checks"]}
     observer_checks = {check["name"]: check["passed"] for check in observer_report["checks"]}
+    assert game_checks and all(check["passed"] is True for check in game_report["checks"]), "Client report contains a failed check"
+    assert observer_checks and all(check["passed"] is True for check in observer_report["checks"]), "Observer report contains a failed check"
     for check_name in (
             "other-undisguiseRestoresNativePlayer", "undisguisedRemoteKeepsMoving",
-            "other-undisguise-againRestoresNativePlayer", "other-second-modelReferenceModelFallsBackToMe",
+            "other-undisguise-againRestoresNativePlayer", "other-second-modelReferenceModelLocalWithExpressions",
             "other-second-undisguiseRestoresNativePlayer", "other-first-modelLocalModelReturns",
-            "own-second-modelReferenceModelFallsBackToMe", "ownSecondUndisguiseRestoresPlayer",
-            "ownFirstModelReturnsAfterReference"):
+            "own-second-modelReferenceModelLocalWithExpressions", "ownSecondUndisguiseRestoresPlayer",
+            "ownFirstModelReturnsAfterReference", "boatDedicatedLocalClip", "extraDedicatedLocalClip", "hungerExpressionRuntime",
+            "firstPersonAccessoryTimelineRuns", "thirdPersonAccessoryStatePersists",
+            "hiddenSelfAccessoryTimelineRuns", "hiddenSelfAccessoryStatePersists",
+            "remoteAccessoryStateBeforeRange", "remoteAccessoryStateAfterRange",
+            "localAppearanceServerBaseline", "local-appearance-ownPrivateModelAndTransform",
+            "local-appearance-ownRemoteBindingUnchanged", "local-appearance-ownNoServerRequest",
+            "local-appearance-actionPrivateModelAndTransform", "local-appearance-actionRemoteBindingUnchanged",
+            "local-appearance-actionNoServerRequest", "localAppearanceLocalActionLayer",
+            "localAppearanceRestoresServerBinding", "localAppearanceDisableNoServerRequest"):
         assert game_checks.get(check_name) is True, f"Missing lifecycle regression proof: {check_name}"
     assert observer_checks.get("AUndisguiseRestoresNativePlayerForUnmoddedB") is True
-    game_launch = json.loads(game_launch_path.read_text(encoding="utf-8"))
-    observer_launch = json.loads(observer_launch_path.read_text(encoding="utf-8"))
+    for check_name in ("privateAppearanceBServerModelBaseline",
+                       "local-appearance-ownBServerModelAndTransformUnchanged",
+                       "local-appearance-actionBServerModelAndTransformUnchanged",
+                       "local-appearance-offBServerModelAndTransformUnchanged"):
+        assert observer_checks.get(check_name) is True, f"Missing private appearance observer proof: {check_name}"
+    game_launch = read_json(game_launch_path)
+    observer_launch = read_json(observer_launch_path)
     assert game_launch["clientJarSha256"].lower() == digest(client_jar), "Game run used another client JAR"
     assert game_launch["serverJarSha256"].lower() == digest(jar), "Game run used another server JAR"
     assert game_report["testedClientSha256"].lower() == digest(client_jar), "Loaded client differs from launch proof"
     assert game_report["testedServerSha256"].lower() == digest(jar), "Server report differs from launch proof"
+    assert game_report["artifactProof"]["clientArtifactSha256"].lower() == digest(client_jar)
+    assert game_report["artifactProof"]["serverArtifactSha256"].lower() == digest(jar)
+    assert observer_launch["serverJarSha256"].lower() == digest(jar), "Observer run used another server JAR"
+    assert observer_launch.get("mpaClientInstalled") is False
+    assert observer_report["observerHelperSha256"].lower() == observer_launch["helperJarSha256"].lower(), \
+        "Observer loaded another acceptance helper"
+    observed_hashes = observer_report["observedArtifactHashes"]
+    assert observed_hashes["clientArtifactSha256"].lower() == digest(client_jar)
+    assert observed_hashes["serverArtifactSha256"].lower() == digest(jar)
     assert not any("MEPlayerActions-Client" in mod for mod in observer_launch["mods"]), \
         "Observer run accidentally installed the client mod"
-    evidence = {}
+    standalone_report_path = client / "build/standalone-e2e/results.json"
+    assert standalone_report_path.is_file(), "Independent client acceptance report required"
+    standalone_report = read_json(standalone_report_path)
+    standalone_tested_at = client_jar.stat().st_mtime_ns
+    assert standalone_report_path.stat().st_mtime_ns >= standalone_tested_at, "Stale independent client report"
+    assert standalone_report.get("passed") is True and standalone_report.get("checks") \
+        and all(check.get("passed") is True for check in standalone_report["checks"]), "Independent client acceptance failed"
+    assert standalone_report.get("testedClientSha256", "").lower() == digest(client_jar), "Independent client used another JAR"
+    assert standalone_report.get("scope") == "standalone-no-server-plugins" \
+        and standalone_report.get("runtimeServerConnected") is False \
+        and standalone_report.get("serverChannelAvailable") is False \
+        and standalone_report.get("artifactProof", {}).get("clientFromJar") is True, "Independent run used a server bridge"
+    standalone_checks = {check["name"]: check["passed"] for check in standalone_report["checks"]}
+    for check_name in ("standaloneNoServerChannel", "standaloneNoServerBridge", "standaloneLocalModelVisible",
+                       "transformStandaloneTransform", "standaloneLocalActionLayer", "standaloneProfileSaved",
+                       "standaloneSavedProfileReloaded", "standaloneResourceReload", "standaloneDisableRestoresNative",
+                       "standaloneAllStagesCaptured", "standaloneBridgeStayedDisconnected",
+                       "standaloneSettingsUiScreen", "standaloneSettingsUiProfileAndModel",
+                       "settings-uiStandaloneControlsInBounds", "standaloneActionsUiSeparateModes",
+                       "local-actions-uiStandaloneControlsInBounds", "standaloneActionsUiUsesLocalApi"):
+        assert standalone_checks.get(check_name) is True, f"Missing independent-client regression proof: {check_name}"
+    standalone_launch = read_json(standalone_report_path.parent / "launch.json")
+    assert standalone_launch["clientJarSha256"].lower() == digest(client_jar), "Independent launch used another JAR"
+    standalone_server_path = PROJECT / "build/standalone-server/standalone-proof.json"
+    standalone_server = read_json(standalone_server_path)
+    assert standalone_server_path.stat().st_mtime_ns >= standalone_tested_at, "Stale empty-server proof"
+    assert standalone_server["pluginJarCount"] == 0 and standalone_server["unexpectedNestedJarCount"] == 0 \
+        and standalone_server["forbiddenPluginsAbsentFromRuntimeLog"] is True and standalone_server["zeroPluginsConfirmedByLog"] is True \
+        and standalone_server["serverStartupComplete"] is True and standalone_server["listenersLoopbackOnly"] is True, \
+        "Independent client must be tested on a running empty-plugin server"
+    evidence = {"standalone/server-proof.json": standalone_server_path.read_bytes()}
     for label, report_path, report, current in (
             ("client", game_report_path, game_report, game_current),
-            ("observer-without-mpa", observer_report_path, observer_report, observer_current)):
+            ("observer-without-mpa", observer_report_path, observer_report, observer_current),
+            ("standalone", standalone_report_path, standalone_report, True)):
         if not current:
             continue
         evidence[f"{label}/results.json"] = report_path.read_bytes()
         evidence[f"{label}/launch.json"] = (report_path.parent / "launch.json").read_bytes()
-        for relative in report.get("screenshots", []):
+        screenshots = report.get("screenshots", [])
+        assert screenshots, f"No validation screenshots: {label}"
+        for relative in screenshots:
             assert isinstance(relative, str)
             screenshot = (report_path.parent / relative).resolve()
             assert screenshot.is_relative_to(report_path.parent.resolve()) and screenshot.suffix == ".png"
             assert screenshot.is_file(), f"Missing validation screenshot: {relative}"
-            assert screenshot.stat().st_mtime_ns >= tested_at, f"Stale validation screenshot: {relative}"
-            evidence[f"{label}/{relative}"] = screenshot.read_bytes()
+            screenshot_minimum_time = standalone_tested_at if label == "standalone" else tested_at
+            assert screenshot.stat().st_mtime_ns >= screenshot_minimum_time, f"Stale validation screenshot: {relative}"
+            pixels = screenshot.read_bytes()
+            assert pixels.startswith(b"\x89PNG\r\n\x1a\n"), f"Invalid PNG screenshot: {relative}"
+            evidence[f"{label}/{relative}"] = pixels
     evidence_zip = None
     if evidence:
         for filename in ("model-bounds-probe.txt", "model-bounds-corrected.txt", "animation-axes-research.md"):
             evidence_file = client / "build/observer-test" / filename
-            if evidence_file.is_file():
+            if evidence_file.is_file() and evidence_file.stat().st_mtime_ns >= tested_at:
                 evidence[f"model-coordinate-checks/{filename}"] = evidence_file.read_bytes()
         server_proof_path = PROJECT / "build/e2e-server/matrix-proof.json"
-        if server_proof_path.is_file():
-            server_proof = json.loads(server_proof_path.read_text(encoding="utf-8"))
-            assert server_proof["serverJarSha256"].lower() == digest(jar), "Stale server matrix proof"
-            assert server_proof["passed"] is True, "Server matrix proof failed"
-            evidence["server/matrix-proof.json"] = server_proof_path.read_bytes()
+        assert server_proof_path.is_file(), "Server acceptance matrix proof required"
+        server_proof = read_json(server_proof_path)
+        assert server_proof_path.stat().st_mtime_ns >= tested_at, "Stale server matrix proof timestamp"
+        assert server_proof["serverJarSha256"].lower() == digest(jar), "Stale server matrix proof"
+        assert server_proof["clientJarSha256"].lower() == digest(client_jar), "Server matrix used another client JAR"
+        assert server_proof["serverTests"] == totals["tests"], "Server matrix has outdated unit test totals"
+        assert server_proof["passed"] is True and server_proof["checks"] \
+            and all(check["passed"] is True for check in server_proof["checks"]), "Server matrix proof failed"
+        evidence["server/matrix-proof.json"] = server_proof_path.read_bytes()
         evidence["tested-artifacts.json"] = (json.dumps({
             "minecraft": "1.21.11", "server_sha256": digest(jar), "client_sha256": digest(client_jar),
             "client_passed": game_passed, "observer_without_mpa_passed": observer_passed,
         }, indent=2) + "\n").encode("utf-8")
+        for relative in ("client/build/e2e/launch_client.py", "client/build/observer-test/src/ObserverHarness.java",
+                         "client/build/observer-test/build_observer.ps1", "build/e2e-server/write-matrix-proof.ps1",
+                         "build/standalone-server/start-standalone.ps1", "build/standalone-server/write-standalone-proof.ps1",
+                         "build/e2e-helper/MPATestHelper.java", "build/e2e-helper/build_helper.ps1",
+                         "build/e2e-helper/plugin.yml", "build/e2e-helper/classpath.txt"):
+            fixture = PROJECT / relative
+            assert fixture.is_file(), f"Missing acceptance fixture: {relative}"
+            evidence[f"fixtures/{relative}"] = fixture.read_bytes()
         evidence_zip = DIST / f"{name}-tests.zip"
-        write_zip(evidence_zip, evidence)
+
+    # Do not create apparently deliverable artifacts until every acceptance gate passes.
+    DIST.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(jar, delivered_jar)
+    shutil.copyfile(client_jar, delivered_client)
+    write_zip(install_zip, install)
+    write_zip(source_zip, source_entries)
+    write_zip(client_install_zip, {f"mods/{client_jar.name}": client_jar.read_bytes(),
+                                   "README.md": (PROJECT / "README.md").read_bytes()})
+    assert digest(delivered_jar) == digest(jar)
+    assert digest(delivered_client) == digest(client_jar)
+    assert evidence_zip is not None, "Missing two-client evidence bundle"
+    write_zip(evidence_zip, evidence)
 
     def report_summary(report: dict | None) -> dict | None:
         if report is None:
@@ -334,8 +414,12 @@ def main() -> None:
                           "renderer": "RenderCommandQueue custom geometry", "protocol": 3},
         "compiled_source_fingerprint": fingerprint.hexdigest(),
         "compiled_class_count": len(classes), "animations": animation_names,
-        "npc_animations": npc_names, "npc_original_animations_preserved": True,
-        "legacy_npc_session_compatibility": ["crawl_idle", "crawl_walk", "player_jump"],
+        "models": model_facts,
+        "ysm_physics_step_seconds": .01,
+        "runtime_expressions": "Per-instance bounded interpreter; frame-based client and tick-based ModelEngine",
+        "compatibility_modpack": game_launch.get("sourceModpack"),
+        "compatibility_mods": game_launch.get("mods"),
+        "compatibility_runtime_overrides": game_launch.get("compatibilityOverrides", []),
         "owned_disguise_anchor": "shared visual history; player feet, native bed center/top, or GSit seat contact plane; no player mounting",
         "owned_disguise_audience": {"show_self_default": True, "strict_distance_blocks_default": 8,
                                     "max_other_viewers_default": 10, "selection": "nearest tracked eligible players, UUID tie break",
@@ -345,7 +429,6 @@ def main() -> None:
         "organized_subcommands": ["help", "disguise", "undisguise", "models", "attach", "menu", "animations",
                                    "play", "stop", "reset", "pose", "sync", "status", "reload"],
         "bundled_animation_labels": "Chinese defaults, with configuration overrides and custom action label precedence",
-        "crawl_reference_comparison": reference_comparison,
         "compile_dependency_hashes": {p.name: digest(p) for p in
             [PROJECT.parent / "ModelEngine-R4.1.1.jar", *sorted((PROJECT / "build/deps").glob("paper-api-*.jar"))]
             if p.is_file()},
@@ -355,6 +438,8 @@ def main() -> None:
         "zip_integrity_and_content_match": True, "dependency_jars_included": False,
         "in_game_verified": game_passed,
         "two_client_in_game_verified": game_passed and observer_passed,
+        "standalone_client_verified": True,
+        "standalone_game_validation": report_summary(standalone_report),
         "game_validation_current_for_artifacts": game_current,
         "observer_validation_current_for_artifacts": observer_current,
         "game_validation": report_summary(game_report),

@@ -18,7 +18,7 @@ class CommandLayoutTest {
         assertArrayEquals(new String[]{"sit"}, CommandLayout.normalize(new String[]{"pose", "sit"}));
         assertArrayEquals(new String[]{"crawl"}, CommandLayout.normalize(new String[]{"POSE", "CRAWL"}));
         assertArrayEquals(new String[]{"fly", "off"}, CommandLayout.normalize(new String[]{"pose", "fly", "off"}));
-        String[] command = {"disguise", "ysm_01_jk_npc", "scale=1.5", "show-self=false"};
+        String[] command = {"disguise", "ysm_02_jk", "scale=1.5", "show-self=false"};
         assertArrayEquals(command, CommandLayout.normalize(command));
         assertArrayEquals(new String[]{"help"}, CommandLayout.normalize(new String[]{}));
         for (String root : List.of("sit", "crawl", "fly", "list", "debug", "action", "wave"))

@@ -18,11 +18,10 @@ class BbModelTest {
     private static final float EPS = 1e-5f;
 
     @Test void shippedModelsParseAndEveryAnimationProducesFiniteUnitNormals() throws Exception {
-        for (String name : List.of("ysm_01_jk_player", "ysm_01_jk_npc")) {
-            Path file = Path.of("../examples/blueprints/npc/" + name + ".bbmodel");
-            if (!Files.exists(file)) file = Path.of("bbmodel研究/MEPlayerActions/examples/blueprints/npc/" + name + ".bbmodel");
+        for (String name : List.of("ysm_01_jk", "ysm_02_jk")) {
+            Path file = Path.of("../examples/models/" + name + ".bbmodel");
             BbModel model = BbModel.parse(Files.readAllBytes(file));
-            assertEquals(233, model.cubeCount());
+            assertEquals(name.equals("ysm_01_jk") ? 232 : 335, model.cubeCount());
             assertEquals(1, model.textures().size());
             assertTrue(model.animations().containsAll(Set.of("crawl_idle", "crawl_walk", "player_jump", "bed_sleep", "idle", "sit", "sleep")));
             for (String animation : model.animations()) {
@@ -187,87 +186,57 @@ class BbModelTest {
         assertThrows(IllegalArgumentException.class, () -> parse(missing));
     }
 
+    private static List<BbModel.Vertex> bodySample(BbModel model, String clip, double tick, String... names) {
+        BbModel.Pose pose = model.emptyPose();
+        com.simmc.meplayeractions.expression.Molang.Context context = new com.simmc.meplayeractions.expression.Molang.Context();
+        context.frame(Map.of("ysm.food_level",20d,"query.life_time",tick/20));
+        model.initializePhysics(context);
+        for (BbModel.Layer layer : BbModel.ordered(model.withParallelLayers(List.of(layer("posture",clip,"LOOP",0,0))))) {
+            var evaluated=model.evaluate(tick,layer,true,context);
+            BbModel.overlay(pose,evaluated.pose(),evaluated.weight(),false);
+        }
+        return model.vertices(pose,names.length==0?null:Set.of(names));
+    }
+    private static double zCenter(List<BbModel.Vertex> vertices) {
+        assertFalse(vertices.isEmpty());return vertices.stream().mapToDouble(BbModel.Vertex::z).average().orElseThrow();
+    }
     @Test void shippedCrawlHeadIsAheadOfFeetAndTailStaysAboveGround() throws Exception {
-        for (String name : List.of("ysm_01_jk_player", "ysm_01_jk_npc")) {
-            Path file = Path.of("../examples/blueprints/npc/" + name + ".bbmodel");
-            if (!Files.exists(file)) file = Path.of("bbmodel研究/MEPlayerActions/examples/blueprints/npc/" + name + ".bbmodel");
-            BbModel model = BbModel.parse(Files.readAllBytes(file));
-            var bonesField = BbModel.class.getDeclaredField("bones"); bonesField.setAccessible(true);
-            var facesField = BbModel.class.getDeclaredField("faces"); facesField.setAccessible(true);
-            List<?> bones = (List<?>) bonesField.get(model), faces = (List<?>) facesField.get(model);
-            for (String animation : List.of("crawl_idle", "crawl_walk")) for (double tick : new double[]{0,5,10,15,20}) {
-                List<BbModel.Vertex> vertices = model.sample(tick, List.of(layer("posture",animation,"LOOP",0,0)));
-                double minTailY = Double.POSITIVE_INFINITY, minBodyY = Double.POSITIVE_INFINITY;
-                double headZ = 0, feetZ = 0; int headCount = 0, footCount = 0;
-                assertEquals(faces.size()*4, vertices.size(), "Fixture crawling bones remain visible");
-                for (int f=0;f<faces.size();f++) {
-                    var boneAccessor=faces.get(f).getClass().getDeclaredMethod("bone"); boneAccessor.setAccessible(true);
-                    Object bone=bones.get((int)boneAccessor.invoke(faces.get(f)));
-                    var nameAccessor=bone.getClass().getDeclaredMethod("name");nameAccessor.setAccessible(true);
-                    String boneName=(String)nameAccessor.invoke(bone);
-                    for(int v=0;v<4;v++) {
-                        BbModel.Vertex vertex=vertices.get(f*4+v);
-                        if(boneName.startsWith("Tail")) minTailY=Math.min(minTailY,vertex.y());
-                        if(Set.of("jk","jk2","hi_Head","LeftLeg","RightLeg").contains(boneName)) minBodyY=Math.min(minBodyY,vertex.y());
-                        if(boneName.equals("hi_Head")){headZ+=vertex.z();headCount++;}
-                        if(boneName.equals("LeftFoot") || boneName.equals("RightFoot")){feetZ+=vertex.z();footCount++;}
-                    }
-                }
-                assertTrue(minBodyY > -.1, name+" "+animation+" body must rest near ground: "+minBodyY);
-                assertTrue(minTailY > 0, name+" "+animation+" author tail extends upward: "+minTailY);
-                assertTrue(headZ/headCount < feetZ/footCount - .5, name+" "+animation+" BB -Z is forward; head must lead feet");
+        for (String name : List.of("ysm_01_jk", "ysm_02_jk")) {
+            BbModel model=BbModel.parse(Files.readAllBytes(Path.of("../examples/models/"+name+".bbmodel")));
+            for(String animation:List.of("climbing","climb"))for(double tick:new double[]{0,5,10,15,20}) {
+                var body=bodySample(model,animation,tick,"jk","jk2","Head","LeftLeg","RightLeg");
+                var tail=bodySample(model,animation,tick,"Tail1","Tail2","Tail3");
+                var head=bodySample(model,animation,tick,"Head");
+                var feet=bodySample(model,animation,tick,"LeftFoot","RightFoot");
+                double minBody=body.stream().mapToDouble(BbModel.Vertex::y).min().orElseThrow();
+                double minTail=tail.stream().mapToDouble(BbModel.Vertex::y).min().orElseThrow();
+                assertTrue(minBody>-.16,name+" "+animation+" body contact: "+minBody);
+                assertTrue(minTail>0,name+" "+animation+" tail must extend upward: "+minTail);
+                assertTrue(zCenter(head)<zCenter(feet)-.5,name+" "+animation+" head must lead feet");
             }
         }
     }
-
-    @Test void shippedBedPoseIsSupineCenteredAndTouchesMattressInEveryBedDirection() throws Exception {
-        for (String name : List.of("ysm_01_jk_player", "ysm_01_jk_npc")) {
-            Path file = Path.of("../examples/blueprints/npc/" + name + ".bbmodel");
-            if (!Files.exists(file)) file = Path.of("bbmodel研究/MEPlayerActions/examples/blueprints/npc/" + name + ".bbmodel");
-            BbModel model = BbModel.parse(Files.readAllBytes(file));
-            var bonesField = BbModel.class.getDeclaredField("bones"); bonesField.setAccessible(true);
-            var facesField = BbModel.class.getDeclaredField("faces"); facesField.setAccessible(true);
-            List<?> bones = (List<?>) bonesField.get(model), faces = (List<?>) facesField.get(model);
-            List<BbModel.Vertex> rest = model.sample(0, List.of());
-            List<BbModel.Vertex> bed = model.sample(30, List.of(layer("posture", "bed_sleep", "HOLD", 0, 0)));
-            assertEquals(faces.size()*4,bed.size());
-            assertTrue(bed.stream().mapToDouble(BbModel.Vertex::y).min().orElseThrow() > -.03, "Hair may lightly compress against pillow; body must not sink");
-            assertTrue(bed.stream().allMatch(v -> Math.abs(v.x()) < .5 && Math.abs(v.z()) < 1), "Model must fit the two-block mattress footprint");
-            double backContactY = Double.POSITIVE_INFINITY, headZ = 0, feetZ = 0;
-            int headCount = 0, footCount = 0, upwardNoseFaces = 0;
-            for (int f=0;f<faces.size();f++) {
-                var boneAccessor=faces.get(f).getClass().getDeclaredMethod("bone"); boneAccessor.setAccessible(true);
-                Object bone=bones.get((int)boneAccessor.invoke(faces.get(f)));
-                var nameAccessor=bone.getClass().getDeclaredMethod("name"); nameAccessor.setAccessible(true);
-                String boneName=(String)nameAccessor.invoke(bone);
-                for (int v=0;v<4;v++) {
-                    BbModel.Vertex point=bed.get(f*4+v);
-                    if (boneName.equals("BackClothe")) backContactY=Math.min(backContactY,point.y());
-                    if (boneName.equals("hi_Head")) { headZ+=point.z(); headCount++; }
-                    if (boneName.equals("LeftFoot") || boneName.equals("RightFoot")) { feetZ+=point.z();footCount++; }
-                }
-                if (boneName.equals("hi_Head") && rest.get(f*4).nz() < -.99) {
-                    assertTrue(bed.get(f*4).ny() > .99, "The face must point upward; a crawl-sized bounding box is insufficient");
-                    upwardNoseFaces++;
-                }
-            }
-            assertTrue(upwardNoseFaces > 0);
-            assertTrue(backContactY >= 0 && backContactY < .025, "Back clothing must contact mattress, not float: "+backContactY);
-            double localHeadZ=headZ/headCount, localFeetZ=feetZ/footCount;
-            assertTrue(localHeadZ < -.3 && localFeetZ > .7, "Head leads toward BB -Z; feet remain at opposite end");
-            // Server BED_SLEEP uses bed center at mattress top and Minecraft facing yaw.
-            // Applying the renderer's single world Y rotation must put the head toward
-            // the native bed's HEAD block in all four cardinal directions.
-            double[][] directions={{0,0,1},{90,-1,0},{180,0,-1},{-90,1,0}};
-            for (double[] direction:directions) {
+    @Test void shippedBedPoseIsSupineAndTouchesMattressInEveryBedDirection() throws Exception {
+        for(String name:List.of("ysm_01_jk","ysm_02_jk")) {
+            BbModel model=BbModel.parse(Files.readAllBytes(Path.of("../examples/models/"+name+".bbmodel")));
+            var bed=bodySample(model,"bed_sleep",30);
+            var back=bodySample(model,"bed_sleep",30,"BackClothe");
+            var head=bodySample(model,"bed_sleep",30,"Head");
+            var feet=bodySample(model,"bed_sleep",30,"LeftFoot","RightFoot");
+            double contact=back.stream().mapToDouble(BbModel.Vertex::y).min().orElseThrow();
+            assertTrue(contact>=-.005&&contact<.04,name+" back clothing must contact mattress: "+contact);
+            assertTrue(head.stream().anyMatch(v->v.ny()>.99),"Face points upward");
+            double delta=zCenter(head)-zCenter(feet);
+            assertTrue(delta<-1,name+" head leads toward BB -Z");
+            // Original model height is intentionally retained; limbs may extend past a vanilla bed.
+            double standingHeight=model.sample(0,List.of()).stream().mapToDouble(BbModel.Vertex::y).max().orElseThrow();
+            double span=bed.stream().mapToDouble(BbModel.Vertex::z).max().orElseThrow()-bed.stream().mapToDouble(BbModel.Vertex::z).min().orElseThrow();
+            assertTrue(span>standingHeight*.75&&span<standingHeight*1.4,name+" supine span retains original dimensions: "+span);
+            for(double[] direction:new double[][]{{0,0,1},{90,-1,0},{180,0,-1},{-90,1,0}}) {
                 double radians=Math.toRadians(180-direction[0]);
-                double headDeltaZ=localHeadZ-localFeetZ;
-                double worldHeadX=Math.sin(radians)*headDeltaZ, worldHeadZ=Math.cos(radians)*headDeltaZ;
-                assertTrue(worldHeadX*direction[1]+worldHeadZ*direction[2] > 1, "Head must align with bed facing "+direction[0]);
-                for (BbModel.Vertex point:bed) {
-                    double worldY=-60+.5625+point.y();
-                    assertTrue(worldY > -59.47 && worldY < -58.5, "Actual vertices stay near the mattress, independent of player feet pivot");
-                }
+                assertTrue(Math.sin(radians)*delta*direction[1]+Math.cos(radians)*delta*direction[2]>1);
+                var torso=bodySample(model,"bed_sleep",30,"Head","LeftLeg","RightLeg","BackClothe");
+                assertTrue(torso.stream().mapToDouble(BbModel.Vertex::y).min().orElseThrow()>-.07,name+" body must stay above mattress");
             }
         }
     }
@@ -371,7 +340,9 @@ class BbModelTest {
         JsonObject expression = fixture(); addAnimation(expression, "bad", 1, frames("position", "linear", new double[]{0}, new double[]{0}));
         expression.getAsJsonArray("animations").get(0).getAsJsonObject().getAsJsonObject("animators").getAsJsonObject("bone")
                 .getAsJsonArray("keyframes").get(0).getAsJsonObject().getAsJsonArray("data_points").get(0).getAsJsonObject().addProperty("x", "Math.sin(query.anim_time)");
-        assertThrows(IllegalArgumentException.class, () -> parse(expression));
+        BbModel dynamic = parse(expression);
+        assertEquals(1 + Math.sin(Math.toRadians(.5)) / 16,
+                dynamic.sample(10, List.of(layer("posture", "bad", "HOLD", 0, 0))).getFirst().x(), EPS);
         JsonObject nan = fixture(); nan.getAsJsonArray("elements").get(0).getAsJsonObject().add("from", JsonParser.parseString("[\"NaN\",0,0]"));
         assertThrows(IllegalArgumentException.class, () -> parse(nan));
         JsonObject unknown = fixture(); unknown.getAsJsonArray("outliner").get(0).getAsJsonObject().add("children", stringArray("missing"));

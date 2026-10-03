@@ -62,6 +62,7 @@ public final class ActionController {
         StateSelector.Sample sample;
         boolean inputInterrupt;
         MovementSampler movement = new MovementSampler();
+        final PositionMotion actualMotion = new PositionMotion();
         final InteractionTracker interactions;
         final JumpTracker jump = new JumpTracker();
         final VisualTimeline visual = new VisualTimeline();
@@ -96,7 +97,7 @@ public final class ActionController {
     public List<String> models() { return bridge.modelIds().stream().filter(settings.allowedModels::contains).toList(); }
     public boolean controlled(Player player) { return sessions.containsKey(player.getUniqueId()); }
     public String modelId(Player player) { return requireSession(player).attachment.modelId(); }
-    public List<String> animations(Player player) { return requireSession(player).animations; }
+    public List<String> animations(Player player) { return requireSession(player).animations.stream().filter(id -> !id.startsWith("parallel") && !id.startsWith("pre_parallel")).toList(); }
 
     public void disguise(Player player, String modelId) {
         disguise(player, DisguiseOptions.defaults(modelId, settings));
@@ -137,7 +138,7 @@ public final class ActionController {
             session.effects.apply(options.effects(), clock); update(player, session); changed(session);
             if (!bridge.compatibilityAnimations(attachment).isEmpty()) {
                 String diagnosis = bridge.compatibilityDiagnosis(attachment);
-                player.sendMessage("§e[动作] " + diagnosis + "；爬行复用 climb/climb_idle 的手脚并恢复卧倒 Root。");
+                player.sendMessage("§e[动作] " + diagnosis + "。");
                 plugin.getLogger().info(player.getName() + "：" + diagnosis);
             }
         }
@@ -349,6 +350,7 @@ public final class ActionController {
                 if (bridge.updateAudience(s.attachment)) changed(s);
                 s.effects.tick(clock);
                 update(player, s, false);
+                bridge.updateExpressions(s.attachment,clock,settings.posturePriority,settings.manualPriority);
             }
             catch (RuntimeException ex) {
                 if (!Objects.equals(ex.getMessage(), s.failure)) plugin.getLogger().warning("动作更新失败 " + s.player.getName() + ": " + ex.getMessage());
@@ -408,12 +410,13 @@ public final class ActionController {
                 || s.lastVisualLocation.distanceSquared(location) > settings.visualMaxDistance * settings.visualMaxDistance)) {
             s.jump.reset(); s.visual.clear();
         }
-        double rise = s.lastVisualLocation != null && s.lastVisualLocation.getWorld() == location.getWorld()
-                ? location.getY() - s.lastVisualLocation.getY() : 0;
+        double rise = s.actualMotion.sample(location.getWorld().getUID(), location.getX(), location.getY(), location.getZ(),
+                location.getYaw(), clock).y();
         s.lastVisualLocation = location;
         boolean blocked = sample.sitting() || sample.crawling() || sample.sleeping()
                 || sample.vehicle() != StateSelector.Vehicle.NONE || sample.flying() || sample.gliding()
                 || sample.swimming() || sample.inWater() || !syncEnabled(player, SyncFeature.JUMP);
+        blocked |= player.isClimbing();
         ActionState air = s.jump.sample(player.isOnGround(), rise, blocked, clock, s.jumpDuration, settings.jumpLandingTicks);
         var bed = sample.bedSleeping() ? s.bedAnchor : null;
         var gsit = bed == null && (sample.sitting() || sample.sleeping() || sample.crawling()) ? s.gsitAnchor : null;
@@ -431,6 +434,9 @@ public final class ActionController {
         if (!immediate && clock < s.nextAnimation) return;
         s.nextAnimation = clock + settings.animationInterval;
         ActionState next = StateSelector.select(s.visualFrame.pose(), f -> syncEnabled(player, f), s.visualFrame.air());
+        if ((sample.postureKey().equals("standing") || sample.postureKey().equals("sneak")) && player.isClimbing())
+            next = syncEnabled(player, SyncFeature.MOVEMENT) ? Math.abs(rise) > settings.movementThreshold ? ActionState.LADDER_MOVE : ActionState.LADDER_IDLE : null;
+        if (next == ActionState.RIDE && player.getVehicle() instanceof org.bukkit.entity.Pig) next = ActionState.RIDE_PIG;
         boolean newJump = next == ActionState.JUMP && s.appliedJumpCycle != s.visualFrame.jumpCycle();
         if (newJump || next != s.state || (s.posture == null && next != null && settings.playback(next).loop() != LoopMode.ONCE
                 && settings.animation(s.attachment.modelId(), next, s.animations) != null)) {
@@ -530,7 +536,8 @@ public final class ActionController {
                 visual == null ? model.getYBodyRot() : visual.bodyYaw(),
                 visual == null ? model.getYHeadRot() : visual.headYaw(),
                 visual == null ? model.getXHeadRot() : visual.headPitch(), model.getScale().x(),
-                s.options.hideSelf(), s.options.showSelf(), animations, bridge.supportsLocalRendering(s.attachment), motion(s, location));
+                s.options.hideSelf(), s.options.showSelf(), animations, bridge.supportsLocalRendering(s.attachment), motion(s, location),
+                bridge.accessories(s.attachment));
     }
     private MotionState motion(Session s, Location location) {
         List<String> features = Arrays.stream(SyncFeature.values()).filter(f -> syncEnabled(s.player, f)).map(SyncFeature::key).toList();

@@ -7,7 +7,13 @@ import java.util.*;
 public final class EntityAnimationController {
     public record Sample(double x, double y, double z, boolean grounded, boolean bedSleeping, boolean prone,
                          boolean inWater, boolean flying, boolean gliding, boolean sneaking, boolean sprinting,
-                         String vehicle, boolean swinging, int swingTick, boolean offhand, boolean mining, boolean localPlayer) {}
+                         String vehicle, boolean swinging, int swingTick, boolean offhand, boolean mining, boolean localPlayer, boolean climbing) {
+        public Sample(double x,double y,double z,boolean grounded,boolean bedSleeping,boolean prone,boolean inWater,
+                      boolean flying,boolean gliding,boolean sneaking,boolean sprinting,String vehicle,boolean swinging,
+                      int swingTick,boolean offhand,boolean mining,boolean localPlayer) {
+            this(x,y,z,grounded,bedSleeping,prone,inWater,flying,gliding,sneaking,sprinting,vehicle,swinging,swingTick,offhand,mining,localPlayer,false);
+        }
+    }
     private Sample previous;
     private long lastTick = Long.MIN_VALUE, postureStarted, jumpStarted, landed = -1, swingStarted;
     private boolean jumping;
@@ -21,7 +27,7 @@ public final class EntityAnimationController {
         boolean discontinuity = previous == null || tick < lastTick || dx * dx + dy * dy + dz * dz > 16 || tick - lastTick > 40;
         if (discontinuity) { jumping = false; landed = -1; state = ""; suppressedManual = ""; }
         boolean moving = !discontinuity && (dx * dx + dz * dz > policy.movementThreshold() * policy.movementThreshold()
-                || sample.flying && Math.abs(dy) > policy.movementThreshold());
+                || (sample.flying || sample.climbing) && Math.abs(dy) > policy.movementThreshold());
         String posture = posture(sample, policy);
         boolean blocked = !posture.equals("standing") && !posture.equals("sneak") || !policy.enabled("jump");
         boolean newJump = !discontinuity && !blocked && previous.grounded && !sample.grounded && dy > .03;
@@ -79,6 +85,7 @@ public final class EntityAnimationController {
         if (sample.flying) return "flight";
         if (sample.prone && sample.inWater) return "swim-prone";
         if (sample.inWater && !sample.grounded) return "swim";
+        if (sample.climbing) return "ladder";
         return sample.sneaking ? "sneak" : "standing";
     }
     private static String select(Sample sample, LocalMotionPolicy p, String posture, boolean moving, String air) {
@@ -86,7 +93,8 @@ public final class EntityAnimationController {
             case "bed-sleep", "sleep" -> p.enabled("sleep") ? posture : "";
             case "sit" -> p.enabled("sit") ? "sit" : "";
             case "crawl" -> p.enabled("crawl") ? moving ? "crawl-walk" : "crawl-idle" : "";
-            case "boat", "minecart", "ride" -> p.enabled("ride") ? posture : "";
+            case "boat", "minecart", "ride", "ride-pig" -> p.enabled("ride") ? posture : "";
+            case "ladder" -> p.enabled("movement") ? moving ? "ladder-move" : "ladder-idle" : "";
             case "elytra" -> p.enabled("elytra") ? "elytra" : "";
             case "flight" -> p.enabled("flight") ? moving ? "fly" : "hover" : "";
             case "swim-prone" -> p.enabled("swim") ? moving ? "swim-walk" : "swim-prone-idle" : "";

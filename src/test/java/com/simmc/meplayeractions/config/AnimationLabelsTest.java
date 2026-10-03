@@ -15,8 +15,8 @@ class AnimationLabelsTest {
     }
     @Test void everyBundledPlayerAndNpcAnimationHasChineseFallbackWithoutConfigEdits() throws Exception {
         var c = config(); c.set("menu", null); var settings = Settings.load(c);
-        for (String model : java.util.List.of("ysm_01_jk_npc", "ysm_01_jk_player")) {
-            var root = JsonParser.parseString(Files.readString(Path.of("examples/blueprints/npc/" + model + ".bbmodel"))).getAsJsonObject();
+        for (String model : java.util.List.of("ysm_02_jk", "ysm_01_jk")) {
+            var root = JsonParser.parseString(Files.readString(Path.of("examples/blueprints/" + model + ".bbmodel"))).getAsJsonObject();
             for (var element : root.getAsJsonArray("animations")) {
                 String id = element.getAsJsonObject().get("name").getAsString();
                 String label = settings.animationLabel(id);

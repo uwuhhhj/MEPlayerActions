@@ -60,7 +60,7 @@ class ModelAudienceTest {
         }
         ModelAudience audience(boolean self, double distance, int cap) {
             people.put(owner.id, owner.player);
-            return new ModelAudience(new DisguiseOptions("ysm_01_jk_npc", 1, true, 2, self, distance, cap, List.of()), people::get);
+            return new ModelAudience(new DisguiseOptions("ysm_02_jk", 1, true, 2, self, distance, cap, List.of()), people::get);
         }
     }
     @Test void strictThreeDimensionalBoundaryAndNearestCapApplyToActualTracker() {

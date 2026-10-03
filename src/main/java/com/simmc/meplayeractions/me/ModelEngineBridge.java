@@ -14,15 +14,18 @@ import com.ticxo.modelengine.api.model.bone.BoneBehaviorTypes;
 import com.ticxo.modelengine.api.model.bone.type.PlayerLimb;
 import com.ticxo.modelengine.api.model.bone.type.UserLimb;
 import com.ticxo.modelengine.api.nms.entity.wrapper.TrackedEntity;
+import com.ticxo.modelengine.api.nms.network.CancelType;
 import com.ticxo.modelengine.api.utils.config.ConfigProperty;
 import com.ticxo.modelengine.api.utils.data.io.SavedData;
 import com.ticxo.modelengine.core.animation.handler.StateMachineHandler;
 import com.simmc.meplayeractions.action.DisguiseOptions;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
+import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -120,10 +123,28 @@ public final class ModelEngineBridge {
                         .ifPresent(limb -> ((UserLimb) limb).setTexture(player));
             });
             sessions.put(player.getUniqueId(), session);
+            if (hideSelf) {
+                Session hiddenSession = session;
+                reconcileHiddenNative(hiddenSession);
+                // ME can queue restored pairing packets while replacing a disguise.
+                // Reconcile again after that transition, using the live lease and
+                // session rather than deleting a copy granted to a new local renderer.
+                Bukkit.getScheduler().runTask(JavaPlugin.getProvidingPlugin(ModelEngineBridge.class),
+                        NativeEntityHiding.afterTick(hiddenSession, () -> sessions.get(player.getUniqueId()),
+                                () -> isHiddenSession(hiddenSession), () -> {
+                                    try { reconcileHiddenNative(hiddenSession); }
+                                    catch (RuntimeException failure) {
+                                        Bukkit.getLogger().warning("隐藏原版玩家同步未能完成：" + failure.getMessage());
+                                    }
+                                }));
+            }
             return attachment;
         } catch (RuntimeException | LinkageError failure) {
             try {
-                if (session != null) cleanUp(session);
+                if (session != null) {
+                    sessions.remove(player.getUniqueId(), session);
+                    cleanUp(session);
+                }
                 else if (createdEntity && entity.getModels().isEmpty()
                         && ModelEngineAPI.getModeledEntity(player.getUniqueId()) == entity) {
                     ModelEngineAPI.removeModeledEntity(player.getUniqueId());
@@ -215,20 +236,41 @@ public final class ModelEngineBridge {
             try {
                 if (nativeEntities == null) nativeEntities = new NativeEntityRelay();
                 if (!nativeEntities.enable(viewer, attachment.playerId(), session.player.getEntityId(), !session.entity.isBaseEntityVisible())) return false;
+                session.nativeRenderers.add(viewer);
                 if (!session.entity.isBaseEntityVisible()) {
                     session.nativeViewers.add(viewer);
                     ModelEngineAPI.getEntityHandler().forceSpawn(session.entity.getBase(), Bukkit.getPlayer(viewer));
                 }
             } catch (RuntimeException failure) {
                 if (nativeEntities != null) nativeEntities.disable(viewer, attachment.playerId());
+                session.nativeRenderers.remove(viewer);
                 Bukkit.getLogger().warning("客户端原版实体同步未能启用，保持 ME：" + failure.getMessage());
                 return false;
             }
         } else if (!enabled && nativeEntities != null) nativeEntities.disable(viewer, attachment.playerId());
+        if (!enabled) session.nativeRenderers.remove(viewer);
         session.audience.localRendering(viewer, enabled);
         session.audience.update(session.player, tracked(session));
         if (session.entity.getBase().getData() instanceof BukkitEntityData data) data.syncUpdate();
         return true;
+    }
+    private boolean isHiddenSession(Session session) {
+        return sessions.get(session.attachment.playerId()) == session && !session.released
+                && session.attachment.owned() && isAttached(session.attachment) && !session.entity.isBaseEntityVisible();
+    }
+    private void reconcileHiddenNative(Session session) {
+        requireMainThread();
+        if (!isHiddenSession(session)) return;
+        // ME's async model audience is narrower than Paper's native tracking and
+        // can miss a cached original player during a same-tick model replacement.
+        // Its protected despawn clears the entity and held equipment together.
+        for (Player viewer : NativeEntityHiding.recipients(session.player, session.nativeRenderers::contains)) {
+            // A foreign pivot may need the invisible native entity as its mount.
+            // Respect ME's live INVIS/SHOW result instead of treating it as HIDE.
+            if (ModelEngineAPI.shouldShow(viewer, session.player.getEntityId()) != CancelType.HIDE) continue;
+            session.nativeViewers.add(viewer.getUniqueId());
+            ModelEngineAPI.getEntityHandler().forceDespawn(session.entity.getBase(), viewer);
+        }
     }
     private static TrackedEntity tracked(Session session) {
         return session.entity.getBase().getData() instanceof BukkitEntityData data ? data.getTracked() : null;
@@ -245,11 +287,30 @@ public final class ModelEngineBridge {
     public String compatibilityDiagnosis(Attachment attachment) {
         return requireSession(attachment).compatibility.diagnosis();
     }
+    public Map<String,Double> accessories(Attachment attachment) {
+        requireMainThread();
+        return requireSession(attachment).compatibility.accessories();
+    }
     private static BlueprintAnimation animation(Session session, String name) {
-        BlueprintAnimation clip = session.attachment.activeModel().getBlueprint().getAnimations().get(name);
-        if (clip == null) clip = session.compatibility.clips().get(name);
+        BlueprintAnimation clip = session.compatibility.clips().get(name);
+        if (clip == null) clip = session.attachment.activeModel().getBlueprint().getAnimations().get(name);
         if (clip == null) throw new IllegalArgumentException("模型没有动画：" + name);
         return clip;
+    }
+    public void updateExpressions(Attachment attachment,long tick,int posturePriority,int manualPriority) {
+        Session session=requireSession(attachment);Rotation r=rotation(attachment);
+        int ambientPriority=posturePriority-4;
+        for(String name:List.of("pre_parallel1","pre_parallel2","pre_parallel3","parallel0")) {
+            int priority=name.equals("parallel0")?manualPriority-1:ambientPriority++;
+            if(!session.compatibility.clips().containsKey(name))continue;
+            OwnedAnimation current=session.layers.get(priority);
+            if(current==null||current.isFinished())play(attachment,priority,name,0,0,1,BlueprintAnimation.LoopMode.LOOP,true);
+        }
+        Map<String,Double> active=new LinkedHashMap<>();
+        session.layers.entrySet().stream().sorted(Map.Entry.comparingByKey()).map(Map.Entry::getValue)
+                .filter(animation->!animation.property.isEnded()).forEach(animation->active.put(animation.animation,animation.property.getTime()));
+        if(active.isEmpty())active.put("idle",0d);
+        session.compatibility.update(session.player,tick,r.bodyYaw(),r.headYaw(),r.headPitch(),active);
     }
 
     /** Owns one property per reserved priority; refuses layers occupied by other code. */
@@ -307,6 +368,7 @@ public final class ModelEngineBridge {
     private void cleanUp(Session session) {
         RuntimeException failure = null;
         if (nativeEntities != null) nativeEntities.removeOwner(session.attachment.playerId());
+        session.nativeRenderers.clear();
         for (OwnedAnimation action : List.copyOf(session.ownedAnimations)) {
             try { action.stop(true); }
             catch (RuntimeException problem) { failure = accumulate(failure, problem); }
@@ -356,12 +418,12 @@ public final class ModelEngineBridge {
                 ModelEngineAPI.getEntityHandler().setForcedInvisible(session.player, session.previousForcedInvisible);
             } else ModelEngineAPI.getEntityHandler().clearForcedInvisible(session.attachment.playerId());
         }
-        // Ending the local lease removed its native tracking copy while ME still hid the base.
-        // Restoring visibility alone does not make Paper pair the already-tracked player again.
-        // Resend only to former local viewers still admitted by vanilla/ME tracking, after
-        // the audience predicate and forced-invisible state have both been restored.
+        // Local lease retirement and explicit hiding both remove native copies.
+        // ME's async audience can omit a still-tracked player outside the model cap.
+        // Resend only previously removed copies still admitted by vanilla tracking,
+        // after the audience predicate and forced-invisible state are restored.
         if ((noForeignModel && current.isBaseEntityVisible()) || current == null) {
-            for (Player viewer : NativeEntityRestoration.recipients(session.player, session.nativeViewers, tracked(session), Bukkit::getPlayer)) {
+            for (Player viewer : NativeEntityRestoration.recipients(session.player, session.nativeViewers)) {
                 try { ModelEngineAPI.getEntityHandler().forceSpawn(session.entity.getBase(), viewer); }
                 catch (RuntimeException problem) { failure = accumulate(failure, problem); }
             }
@@ -444,8 +506,10 @@ public final class ModelEngineBridge {
         final boolean previousForcedInvisible;
         final Map<Integer, OwnedAnimation> layers = new HashMap<>();
         final List<OwnedAnimation> ownedAnimations = new ArrayList<>();
+        // History for cleanup is separate from the current native relay leases.
         final java.util.Set<UUID> nativeViewers = new java.util.HashSet<>();
-        final LegacyNpcAnimations.Result compatibility;
+        final java.util.Set<UUID> nativeRenderers = new java.util.HashSet<>();
+        final YsmAnimations compatibility;
         boolean assignedBaseVisible;
         boolean changedBaseVisible;
         boolean changedPlayerMode;
@@ -458,7 +522,7 @@ public final class ModelEngineBridge {
             this.attachment = attachment;
             this.player = player;
             this.entity = entity;
-            compatibility = LegacyNpcAnimations.create(attachment.activeModel().getBlueprint());
+            compatibility = new YsmAnimations(attachment.activeModel().getBlueprint());
             previousBaseVisible = entity.isBaseEntityVisible();
             previousPlayerMode = entity.getBase().getBodyRotationController().isPlayerMode();
             previousForcedInvisible = ModelEngineAPI.getEntityHandler().isForcedInvisible(player);

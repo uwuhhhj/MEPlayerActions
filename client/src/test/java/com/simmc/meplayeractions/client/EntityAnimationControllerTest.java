@@ -10,7 +10,7 @@ class EntityAnimationControllerTest {
     private static final Set<String> FEATURES=Set.of("movement","sprint","jump","sit","sleep","ride","crawl","sneak","swim","flight","elytra","swing","mining");
     private static LocalMotionPolicy policy(Set<String> enabled,String special,String interaction) {
         Map<String,Layer> clips=new LinkedHashMap<>();
-        for(String state:List.of("idle","walk","run","jump","fall","sit","sleep","bed-sleep","boat","minecart","ride",
+        for(String state:List.of("idle","walk","run","jump","fall","sit","sleep","bed-sleep","boat","minecart","ride","ride-pig","ladder-move","ladder-idle",
                 "crawl-idle","crawl-walk","crouch-idle","crouch-walk","swim-idle","swim-prone-idle","swim-walk","hover","fly","elytra","swing-mainhand","swing-offhand","mining"))
             clips.put(state,new Layer("posture","custom_"+state.replace('-','_'),0,1,"LOOP",2,2));
         return new LocalMotionPolicy(enabled,clips,17,6,.025,true,true,false,interaction,"",special,0,1.2,0,90);
@@ -62,13 +62,31 @@ class EntityAnimationControllerTest {
         c.update(101,sample(0,64,false,false,false,"minecart",false,false,0,false,false),p,List.of());assertEquals("custom_minecart",c.layers().getFirst().animation());
     }
     @Test void nativeTakeoffStartsImmediatelyFinishesBoundedTailAndLedgesAreFalls() {
-        var c=new EntityAnimationController();var p=policy(FEATURES,"","");
-        c.update(100,normal(0,64,true,true),p,List.of());
-        c.update(101,normal(0,64.42,false,true),p,List.of());assertEquals("jump",c.state());assertEquals(101,c.layers().getFirst().startedAtTick());
-        c.update(108,normal(0,64,true,true),p,List.of());assertEquals("jump",c.state());
-        c.update(113,normal(0,64,true,true),p,List.of());assertEquals("jump",c.state());
-        c.update(114,normal(0,64,true,true),p,List.of());assertEquals("idle",c.state());
-        c.update(115,normal(0,63.8,false,true),p,List.of());assertEquals("fall",c.state());
+        for(boolean own:List.of(true,false)) {
+            var c=new EntityAnimationController();var p=policy(FEATURES,"","");
+            c.update(100,normal(0,64,true,own),p,List.of());
+            c.update(101,normal(0,64.42,false,own),p,List.of());assertEquals("jump",c.state());assertEquals(101,c.layers().getFirst().startedAtTick());
+            c.update(108,normal(0,64,true,own),p,List.of());assertEquals("jump",c.state());
+            c.update(113,normal(0,64,true,own),p,List.of());assertEquals("jump",c.state());
+            c.update(114,normal(0,64,true,own),p,List.of());assertEquals("idle",c.state());
+            c.update(115,normal(0,63.8,false,own),p,List.of());assertEquals("fall",c.state());
+        }
+    }
+    @Test void dismountTeleportAndVelocityDoNotReplaceGroundedTakeoffEvidence() {
+        // The old A/B fixture teleported from a boat four blocks away and applied upward
+        // velocity in the same server tick. This is a discontinuity, not a sampled jump.
+        for(boolean own:List.of(true,false)) {
+            var c=new EntityAnimationController();var p=policy(FEATURES,"","");
+            c.update(100,sample(4.5,-60.4125,false,false,false,"boat",own,false,0,false,false),p,List.of());
+            c.update(101,normal(.5,-59.58,false,own),p,List.of());assertEquals("fall",c.state());
+            c.update(102,normal(.5,-59.25,false,own),p,List.of());assertEquals("fall",c.state());
+            c.update(112,normal(.5,-60,true,own),p,List.of());assertEquals("idle",c.state());
+            c.update(113,normal(.5,-60,true,own),p,List.of());
+            c.update(114,normal(.5,-59.58,false,own),p,List.of());
+            assertEquals("jump",c.state());assertEquals(114,c.layers().getFirst().startedAtTick());
+            c.update(126,normal(.5,-60,true,own),p,List.of());assertEquals("jump",c.state());
+            c.update(131,normal(.5,-60,true,own),p,List.of());assertEquals("idle",c.state());
+        }
     }
     @Test void teleportsDoNotBecomeJumpsOrWalkCycles() {
         var c=new EntityAnimationController();var p=policy(FEATURES,"","");
@@ -116,5 +134,30 @@ class EntityAnimationControllerTest {
         json.addProperty("anchorX",0);json.addProperty("anchorY",1.2);json.addProperty("anchorZ",0);json.addProperty("anchorYaw",90);
         assertEquals("sleep",LocalMotionPolicy.read(json).specialPose());
         json.getAsJsonArray("features").add("arbitrary_feature");assertThrows(IllegalArgumentException.class,()->LocalMotionPolicy.read(json));
+    }
+    @Test void completeServerMappingsAreAcceptedAndDriveLadderAndPigPoses() {
+        var source=policy(FEATURES,"","");
+        JsonObject json=new JsonObject();JsonArray features=new JsonArray(),clips=new JsonArray();
+        source.features().forEach(features::add);json.add("features",features);json.add("clips",clips);
+        source.clips().forEach((state,clip)->{
+            JsonObject item=new JsonObject();item.addProperty("state",state);item.addProperty("animation",clip.animation());
+            item.addProperty("speed",clip.speed());item.addProperty("loop",clip.loop());
+            item.addProperty("inTicks",clip.inTicks());item.addProperty("outTicks",clip.outTicks());clips.add(item);
+        });
+        json.addProperty("specialPose","");json.addProperty("interaction","");json.addProperty("forcedPose","");
+        json.addProperty("jumpMinTicks",17);json.addProperty("landingGraceTicks",6);json.addProperty("movementThreshold",.025);
+        json.addProperty("interruptMove",true);json.addProperty("interruptPosture",true);json.addProperty("flying",false);
+        for(String name:List.of("anchorX","anchorY","anchorZ","anchorYaw"))json.addProperty(name,0);
+        LocalMotionPolicy parsed=LocalMotionPolicy.read(json);
+        assertEquals(27,parsed.clips().size());
+        var controller=new EntityAnimationController();
+        controller.update(100,new EntityAnimationController.Sample(0,64,0,false,false,false,false,false,false,false,false,
+                "",false,0,false,false,true,true),parsed,List.of());
+        assertEquals("ladder-idle",controller.state());assertEquals("custom_ladder_idle",controller.layers().getFirst().animation());
+        controller.update(101,new EntityAnimationController.Sample(0,64.1,0,false,false,false,false,false,false,false,false,
+                "",false,0,false,false,true,true),parsed,List.of());
+        assertEquals("ladder-move",controller.state());assertEquals("custom_ladder_move",controller.layers().getFirst().animation());
+        controller.update(102,sample(0,64.1,false,false,false,"ride-pig",true,false,0,false,false),parsed,List.of());
+        assertEquals("ride-pig",controller.state());assertEquals("custom_ride_pig",controller.layers().getFirst().animation());
     }
 }

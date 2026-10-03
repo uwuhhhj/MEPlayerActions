@@ -3,7 +3,7 @@
   "id": "meplayeractions",
   "version": "${version}",
   "name": "MEPlayerActions Client",
-  "description": "ModelEngine 玩家伪装的本地骨骼动画、平滑显示与中文动作面板。",
+  "description": "独立本地玩家外观、骨骼动画与中文设置面板；通过 v3 协议显示服务器同步的玩家模型。",
   "authors": ["SIMMC", "Loliiiico"],
   "contact": {"sources": "https://github.com/uwuhhhj/MEPlayerActions"},
   "environment": "client",

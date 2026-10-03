@@ -4,6 +4,7 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.simmc.meplayeractions.client.network.ActionPayload;
 import com.simmc.meplayeractions.client.render.ModelRenderer;
 import com.simmc.meplayeractions.client.ui.ActionsScreen;
+import com.simmc.meplayeractions.client.ui.LocalAppearanceScreen;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
@@ -38,11 +39,24 @@ public final class MEPlayerActionsClient implements ClientModInitializer {
         }});
         ClientCommandRegistrationCallback.EVENT.register((dispatcher,registry)->dispatcher.register(literal("mpaclient")
                 .executes(ctx->{client.setScreen(new ActionsScreen(runtime));return 1;})
+                .then(literal("settings").executes(ctx->{client.setScreen(new LocalAppearanceScreen(runtime));return 1;}))
+                .then(literal("local")
+                        .executes(ctx->{client.setScreen(new LocalAppearanceScreen(runtime));return 1;})
+                        .then(literal("off").executes(ctx->{runtime.disableLocalAppearance();return 1;}))
+                        .then(literal("reset").executes(ctx->{runtime.updateLocalAppearance(LocalAppearanceSettings.defaults());return 1;}))
+                        .then(literal("stop").executes(ctx->{runtime.stopLocal();return 1;}))
+                        .then(literal("model").then(argument("model",StringArgumentType.greedyString())
+                                .suggests((ctx,builder)->{runtime.localModels().forEach(model->builder.suggest(model.id()));return builder.buildFuture();})
+                                .executes(ctx->{runtime.selectLocalModel(StringArgumentType.getString(ctx,"model"));return 1;})))
+                        .then(literal("play").then(argument("animation",StringArgumentType.word())
+                                .suggests((ctx,builder)->{runtime.localActions().forEach(action->builder.suggest(action.id()));return builder.buildFuture();})
+                                .executes(ctx->{boolean played=runtime.playLocal(StringArgumentType.getString(ctx,"animation"));
+                                    if(!played)ctx.getSource().sendFeedback(Text.literal("先启用本地外观，并选择可用动作"));return played?1:0;}))))
                 .then(literal("status").executes(ctx->{runtime.status().forEach(line->ctx.getSource().sendFeedback(Text.literal(line)));return 1;}))
                 .then(literal("toggle").executes(ctx->{runtime.toggleEnabled();return 1;}))
                 .then(literal("preview").then(argument("model",StringArgumentType.word())
-                        .suggests((ctx,builder)->{builder.suggest("ysm_01_jk_npc");builder.suggest("ysm_01_jk_player");builder.suggest("off");return builder.buildFuture();})
+                        .suggests((ctx,builder)->{builder.suggest("ysm_02_jk");builder.suggest("ysm_01_jk");builder.suggest("off");return builder.buildFuture();})
                         .executes(ctx->{runtime.preview(StringArgumentType.getString(ctx,"model"));return 1;})))));
-        LOGGER.info("MEPlayerActions Client 0.3.2 initialized for Minecraft 1.21.11 (local bone rendering, protocol 3)");
+        LOGGER.info("MEPlayerActions Client 0.4.0 initialized for Minecraft 1.21.11 (local bone rendering, protocol 3)");
     }
 }

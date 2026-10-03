@@ -56,6 +56,9 @@ final class ModelAssets {
         try {
             Path own = ownModels.resolve(id + ".bbmodel");
             if (Files.isRegularFile(own)) return Optional.of(read(id, own));
+            try (InputStream resource = plugin.getResource("models/" + id + ".bbmodel")) {
+                if (resource != null) return Optional.of(pack(id, readBounded(resource)));
+            }
             if (engineBlueprints != null) {
                 Path blueprints = engineBlueprints;
                 if (Files.isDirectory(blueprints)) {
@@ -79,9 +82,6 @@ final class ModelAssets {
                         }
                     }
                 }
-            }
-            try (InputStream resource = plugin.getResource("models/" + id + ".bbmodel")) {
-                if (resource != null) return Optional.of(pack(id, readBounded(resource)));
             }
             plugin.getLogger().warning("客户端模型资产未找到：" + id + "；保持 ModelEngine 渲染");
         } catch (IOException | RuntimeException exception) {

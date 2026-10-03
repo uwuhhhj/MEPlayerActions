@@ -237,6 +237,9 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         state.addProperty("x", snapshot.x()); state.addProperty("y", snapshot.y()); state.addProperty("z", snapshot.z());
         state.addProperty("bodyYaw", snapshot.bodyYaw()); state.addProperty("headYaw", snapshot.headYaw()); state.addProperty("headPitch", snapshot.headPitch());
         state.addProperty("scale", snapshot.scale()); state.addProperty("hidePlayer", snapshot.hidePlayer()); state.addProperty("showSelf", snapshot.showSelf());
+        Player owner = org.bukkit.Bukkit.getPlayer(snapshot.owner());
+        state.addProperty("foodLevel", owner == null ? 20 : owner.getFoodLevel());
+        state.add("accessories", accessoriesJson(snapshot.accessories()));
         state.add("motion", motionJson(snapshot.motion()));
         JsonArray layers = new JsonArray();
         for (LayerState layer : snapshot.layers()) {
@@ -410,6 +413,9 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         value.addProperty("anchorY", motion.anchorY()); value.addProperty("anchorZ", motion.anchorZ()); value.addProperty("anchorYaw", motion.anchorYaw());
         return value;
     }
+    static JsonObject accessoriesJson(Map<String,Double> accessories) {
+        JsonObject result=new JsonObject();accessories.forEach(result::addProperty);return result;
+    }
     /** Immediate client entity presentation is independent of the ME visual-follow history. */
     public record MotionState(List<String> features, List<LayerState> clips, int jumpMinTicks, int landingGraceTicks,
                               double movementThreshold, boolean interruptMove, boolean interruptPosture, boolean flying, String interaction, String forcedPose,
@@ -418,10 +424,21 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     }
     public record StateSnapshot(UUID owner, UUID instance, String modelId, long sequence, long serverTick, List<LayerState> layers,
             UUID world, double x, double y, double z, double bodyYaw, double headYaw, double headPitch, double scale,
-            boolean hidePlayer, boolean showSelf, List<AnimationInfo> animations, boolean localRenderable, MotionState motion) {
+            boolean hidePlayer, boolean showSelf, List<AnimationInfo> animations, boolean localRenderable, MotionState motion,
+            Map<String,Double> accessories) {
+        public StateSnapshot(UUID owner, UUID instance, String modelId, long sequence, long serverTick, List<LayerState> layers,
+                UUID world, double x, double y, double z, double bodyYaw, double headYaw, double headPitch, double scale,
+                boolean hidePlayer, boolean showSelf, List<AnimationInfo> animations, boolean localRenderable, MotionState motion) {
+            this(owner,instance,modelId,sequence,serverTick,layers,world,x,y,z,bodyYaw,headYaw,headPitch,scale,
+                    hidePlayer,showSelf,animations,localRenderable,motion,Map.of());
+        }
         public StateSnapshot {
             Objects.requireNonNull(owner); Objects.requireNonNull(instance); Objects.requireNonNull(modelId); Objects.requireNonNull(world);
             layers = List.copyOf(layers); animations = List.copyOf(animations); Objects.requireNonNull(motion);
+            accessories=Map.copyOf(accessories);
+            if(!accessories.isEmpty() && (!accessories.keySet().equals(Set.of("a","b"))
+                    || accessories.values().stream().anyMatch(value->!Double.isFinite(value)||value<0||value>1)))
+                throw new IllegalArgumentException("Invalid accessory state");
             if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z) || !Double.isFinite(bodyYaw) || !Double.isFinite(headYaw)
                     || !Double.isFinite(headPitch) || !Double.isFinite(scale) || scale <= 0) throw new IllegalArgumentException("Invalid visual transform");
         }

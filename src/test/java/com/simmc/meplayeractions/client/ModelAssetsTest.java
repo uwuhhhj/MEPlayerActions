@@ -8,8 +8,8 @@ import java.util.zip.GZIPInputStream;
 import static org.junit.jupiter.api.Assertions.*;
 class ModelAssetsTest {
     @Test void shippedGeometryTexturesAndAnimationsRoundTripThroughBoundedOrderedChunks() throws Exception {
-        for (String id : List.of("ysm_01_jk_player", "ysm_01_jk_npc")) {
-            byte[] raw = Files.readAllBytes(Path.of("examples/blueprints/npc", id + ".bbmodel"));
+        for (String id : List.of("ysm_01_jk", "ysm_02_jk")) {
+            byte[] raw = Files.readAllBytes(Path.of("examples/blueprints", id + ".bbmodel"));
             var asset = ModelAssets.pack(id, raw); assertEquals(raw.length, asset.rawBytes());
             assertEquals(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(raw)), asset.hash());
             assertTrue(asset.compressed().length <= ModelAssets.MAX_COMPRESSED_BYTES);

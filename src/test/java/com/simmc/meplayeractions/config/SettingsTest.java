@@ -16,13 +16,13 @@ class SettingsTest {
     @Test void bedAndGsitLayUseTheHorizontalClipButRetainIndependentMappings() throws IOException {
         var config = configuration(); var settings = Settings.load(config);
         for (var state : List.of(ActionState.BED_SLEEP, ActionState.SLEEP)) {
-            assertEquals("bed_sleep", settings.animation("ysm_01_jk_player", state, List.of("sleep", "bed_sleep")));
-            assertEquals("sleep", settings.animation("ysm_01_jk_player", state, List.of("sleep")));
+            assertEquals("bed_sleep", settings.animation("ysm_01_jk", state, List.of("sleep", "bed_sleep")));
+            assertEquals("sleep", settings.animation("ysm_01_jk", state, List.of("sleep")));
         }
         config.set("animations.defaults.bed-sleep", List.of());
         var disabled = Settings.load(config);
-        assertNull(disabled.animation("ysm_01_jk_player", ActionState.BED_SLEEP, List.of("bed_sleep")));
-        assertEquals("bed_sleep", disabled.animation("ysm_01_jk_player", ActionState.SLEEP, List.of("bed_sleep")));
+        assertNull(disabled.animation("ysm_01_jk", ActionState.BED_SLEEP, List.of("bed_sleep")));
+        assertEquals("bed_sleep", disabled.animation("ysm_01_jk", ActionState.SLEEP, List.of("bed_sleep")));
     }
     @Test void audienceDefaultsWorkWithOldConfigurationAndExplicitOverrides() throws IOException {
         var config = configuration();
@@ -41,53 +41,38 @@ class SettingsTest {
         Settings settings = Settings.load(configuration());
 
         assertAll(
-                () -> assertEquals("run", settings.animation("ysm_01_jk_player", ActionState.RUN,
+                () -> assertEquals("run", settings.animation("ysm_01_jk", ActionState.RUN,
                         List.of("walk", "run"))),
-                () -> assertEquals("walk", settings.animation("ysm_01_jk_player", ActionState.RUN,
+                () -> assertEquals("walk", settings.animation("ysm_01_jk", ActionState.RUN,
                         List.of("walk"))),
-                () -> assertEquals("fly", settings.animation("ysm_01_jk_player", ActionState.ELYTRA,
+                () -> assertEquals("fly", settings.animation("ysm_01_jk", ActionState.ELYTRA,
                         List.of("fly"))),
-                () -> assertNull(settings.animation("ysm_01_jk_player", ActionState.SIT, List.of("idle")))
+                () -> assertNull(settings.animation("ysm_01_jk", ActionState.SIT, List.of("idle")))
         );
     }
 
     @Test
     void explicitNpcCrawlDisableOverridesDefaultsEvenIfSimilarTracksExist() throws IOException {
         var config = configuration();
-        config.set("animations.models.ysm_01_jk_npc.crawl-idle", List.of());
-        config.set("animations.models.ysm_01_jk_npc.crawl-walk", List.of());
+        config.set("animations.models.ysm_02_jk.crawl-idle", List.of());
+        config.set("animations.models.ysm_02_jk.crawl-walk", List.of());
         Settings settings = Settings.load(config);
         List<String> tracks = List.of("idle", "crawl_idle", "crawl_walk", "climb", "climb_idle");
 
         assertAll(
-                () -> assertEquals("crawl_idle", settings.animation("ysm_01_jk_player", ActionState.CRAWL_IDLE, tracks)),
-                () -> assertEquals("crawl_walk", settings.animation("ysm_01_jk_player", ActionState.CRAWL_WALK, tracks)),
-                () -> assertNull(settings.animation("ysm_01_jk_npc", ActionState.CRAWL_IDLE, tracks)),
-                () -> assertNull(settings.animation("ysm_01_jk_npc", ActionState.CRAWL_WALK, tracks)),
-                () -> assertEquals("idle", settings.animation("ysm_01_jk_npc", ActionState.IDLE, tracks))
+                () -> assertEquals("crawl_idle", settings.animation("ysm_01_jk", ActionState.CRAWL_IDLE, tracks)),
+                () -> assertEquals("climb", settings.animation("ysm_01_jk", ActionState.CRAWL_WALK, tracks)),
+                () -> assertNull(settings.animation("ysm_02_jk", ActionState.CRAWL_IDLE, tracks)),
+                () -> assertNull(settings.animation("ysm_02_jk", ActionState.CRAWL_WALK, tracks)),
+                () -> assertEquals("idle", settings.animation("ysm_02_jk", ActionState.IDLE, tracks))
         );
-    }
-
-    @Test void legacyNpcEmptyMappingsAreMigratedButStandingClimbIsNeverUsed() throws IOException {
-        var config = configuration(); config.set("config-version", 2);
-        config.set("animations.models.ysm_01_jk_npc.crawl-idle", List.of());
-        config.set("animations.models.ysm_01_jk_npc.crawl-walk", List.of());
-        config.set("animations.defaults.jump", List.of("jump"));
-        var settings = Settings.load(config);
-        assertTrue(settings.legacyNpcCrawlMigrated);
-        assertEquals("crawl_idle", settings.animation("ysm_01_jk_npc", ActionState.CRAWL_IDLE, List.of("crawl_idle")));
-        assertEquals("player_jump", settings.animation("ysm_01_jk_npc", ActionState.JUMP, List.of("jump", "player_jump")));
-        assertNull(settings.animation("ysm_01_jk_npc", ActionState.CRAWL_IDLE, List.of("climb", "climb_idle")));
-        config.set("config-version", 3);
-        assertFalse(Settings.load(config).legacyNpcCrawlMigrated);
-        assertNull(Settings.load(config).animation("ysm_01_jk_npc", ActionState.CRAWL_IDLE, List.of("crawl_idle")));
     }
 
     @Test void newNpcDefaultsResolveCrawlAndVisualTimingIsBounded() throws IOException {
         var settings = Settings.load(configuration());
-        assertEquals("crawl_idle", settings.animation("ysm_01_jk_npc", ActionState.CRAWL_IDLE, List.of("crawl_idle")));
-        assertEquals("crawl_walk", settings.animation("ysm_01_jk_npc", ActionState.CRAWL_WALK, List.of("crawl_walk")));
-        assertEquals("swim", settings.animation("ysm_01_jk_npc", ActionState.SWIM_PRONE_IDLE, List.of("swim_idle", "swim")));
+        assertEquals("crawl_idle", settings.animation("ysm_02_jk", ActionState.CRAWL_IDLE, List.of("crawl_idle")));
+        assertEquals("crawl_walk", settings.animation("ysm_02_jk", ActionState.CRAWL_WALK, List.of("crawl_walk")));
+        assertEquals("swim", settings.animation("ysm_02_jk", ActionState.SWIM_PRONE_IDLE, List.of("swim_idle", "swim")));
         assertAll(
                 () -> assertEquals(0, loadWith("visual-follow.delay-ticks", 0).visualDelayTicks),
                 () -> assertThrows(IllegalArgumentException.class, () -> loadWith("visual-follow.delay-ticks", 21)),
@@ -102,11 +87,11 @@ class SettingsTest {
         Settings settings = Settings.load(configuration());
 
         assertAll(
-                () -> assertDoesNotThrow(() -> settings.requireAllowedModel("ysm_01_jk_player")),
+                () -> assertDoesNotThrow(() -> settings.requireAllowedModel("ysm_01_jk")),
                 () -> assertThrows(IllegalArgumentException.class, () -> settings.requireAllowedModel("another_model")),
                 () -> assertThrows(IllegalArgumentException.class, () -> loadWith("models.allowed", List.of())),
                 () -> assertThrows(IllegalArgumentException.class, () -> loadWith("models.allowed", List.of("another_model"))),
-                () -> assertThrows(IllegalArgumentException.class, () -> loadWith("models.allowed", List.of("ysm_01_jk_player", "Invalid Model")))
+                () -> assertThrows(IllegalArgumentException.class, () -> loadWith("models.allowed", List.of("ysm_01_jk", "Invalid Model")))
         );
     }
 
@@ -127,7 +112,7 @@ class SettingsTest {
                 () -> assertThrows(IllegalArgumentException.class, () -> loadWith("controller.manual-priority", 150)),
                 () -> assertThrows(IllegalArgumentException.class, () -> loadWith("controller.interaction-priority", 100)),
                 () -> assertThrows(IllegalArgumentException.class, () -> loadWith("controller.posture-priority", 0)),
-                () -> assertDoesNotThrow(() -> loadWith("controller.manual-priority", 151))
+                () -> assertDoesNotThrow(() -> loadWith("controller.manual-priority", 152))
         );
     }
 
@@ -166,7 +151,7 @@ class SettingsTest {
                 () -> assertThrows(IllegalArgumentException.class, () -> Settings.id("wave.happy")),
                 () -> assertThrows(IllegalArgumentException.class, () -> loadWith("models.default", "fox.v1")),
                 () -> assertThrows(IllegalArgumentException.class,
-                        () -> loadWith("models.allowed", List.of("ysm_01_jk_player", "fox.v1"))),
+                        () -> loadWith("models.allowed", List.of("ysm_01_jk", "fox.v1"))),
                 () -> assertThrows(IllegalArgumentException.class,
                         () -> loadWith("custom-actions.wave.animation", "wave.happy"))
         );
@@ -210,7 +195,7 @@ class SettingsTest {
                 }),
                 () -> assertThrows(IllegalArgumentException.class, () -> loadWith("custom-actions.wave.speed.extra", 1)),
                 () -> assertThrows(IllegalArgumentException.class, () -> loadWith("animations.defaults.typo", List.of("idle"))),
-                () -> assertThrows(IllegalArgumentException.class, () -> loadWith("animations.models.ysm_01_jk_player.typo", List.of("idle")))
+                () -> assertThrows(IllegalArgumentException.class, () -> loadWith("animations.models.ysm_01_jk.typo", List.of("idle")))
         );
     }
 
@@ -237,22 +222,22 @@ class SettingsTest {
     void retainedLegacyConfigGetsNewMappingsButExplicitEmptyListsStillDisable() throws IOException {
         YamlConfiguration config = configuration();
         config.set("animations.defaults.sleep", null);
-        assertEquals("sleep", Settings.load(config).animation("ysm_01_jk_player", ActionState.SLEEP, List.of("sleep")));
+        assertEquals("sleep", Settings.load(config).animation("ysm_01_jk", ActionState.SLEEP, List.of("sleep")));
         config.set("animations.defaults.sleep", List.of());
-        assertNull(Settings.load(config).animation("ysm_01_jk_player", ActionState.SLEEP, List.of("sleep")));
-        config.set("animations.models.ysm_01_jk_player.mining", List.of());
-        assertNull(Settings.load(config).animation("ysm_01_jk_player", ActionState.MINING, List.of("attack")));
+        assertNull(Settings.load(config).animation("ysm_01_jk", ActionState.SLEEP, List.of("sleep")));
+        config.set("animations.models.ysm_01_jk.mining", List.of());
+        assertNull(Settings.load(config).animation("ysm_01_jk", ActionState.MINING, List.of("attack")));
     }
 
     @Test
     void vehicleFallbackAndPartialArmTracksOnlyUseAvailableAnimations() throws IOException {
         Settings settings = Settings.load(configuration());
         assertAll(
-                () -> assertEquals("sit", settings.animation("ysm_01_jk_player", ActionState.MINECART, List.of("sit"))),
-                () -> assertEquals("sit_boat", settings.animation("ysm_01_jk_player", ActionState.BOAT, List.of("sit", "sit_boat"))),
-                () -> assertEquals("attack", settings.animation("ysm_01_jk_player", ActionState.MINING, List.of("attack"))),
-                () -> assertEquals("use_offhand", settings.animation("ysm_01_jk_player", ActionState.SWING_OFFHAND, List.of("attack", "use_offhand"))),
-                () -> assertNull(settings.animation("ysm_01_jk_player", ActionState.SWING_MAINHAND, List.of("wave")))
+                () -> assertEquals("sit", settings.animation("ysm_01_jk", ActionState.MINECART, List.of("sit"))),
+                () -> assertEquals("boat", settings.animation("ysm_01_jk", ActionState.BOAT, List.of("sit", "boat"))),
+                () -> assertEquals("attack", settings.animation("ysm_01_jk", ActionState.MINING, List.of("attack"))),
+                () -> assertEquals("use_offhand", settings.animation("ysm_01_jk", ActionState.SWING_OFFHAND, List.of("attack", "use_offhand"))),
+                () -> assertNull(settings.animation("ysm_01_jk", ActionState.SWING_MAINHAND, List.of("wave")))
         );
     }
 

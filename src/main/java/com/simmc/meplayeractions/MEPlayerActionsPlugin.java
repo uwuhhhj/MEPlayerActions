@@ -64,9 +64,6 @@ public final class MEPlayerActionsPlugin extends JavaPlugin implements Listener,
         getLogger().info("MEPlayerActions " + getDescription().getVersion() + " 已启用；" + gameplay.diagnosis());
     }
     private void initialize() {
-        if (settings.legacyNpcCrawlMigrated)
-            getLogger().info("已兼容旧配置中 NPC 默认禁用的爬行动画；请安装 0.2.1 的 NPC 模型并 /meg reload models。"
-                    + "若需继续禁用，使用 synchronization.crawl: false 或在 config-version: 3 中设置空映射。");
         gameplay = new GameplayBackend(this);
         controller = new ActionController(this, settings, new ModelEngineBridge(), gameplay);
         clients = new ClientSyncService(this, controller::snapshots,

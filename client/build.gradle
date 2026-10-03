@@ -3,7 +3,7 @@ plugins {
 }
 
 group = 'com.simmc'
-version = '0.3.2'
+version = '0.4.0'
 base { archivesName = 'MEPlayerActions-Client' }
 
 repositories {
@@ -26,6 +26,11 @@ java {
     withSourcesJar()
 }
 
+// One bounded expression implementation is used by client and server.
+sourceSets.main.java.srcDir('../src/main/java/com/simmc/meplayeractions/expression')
+sourceSets.main.java.srcDir('../src/main/java/com/simmc/meplayeractions/config')
+sourceSets.main.java.exclude('Settings.java')
+
 tasks.withType(JavaCompile).configureEach {
     options.release = 21
     options.encoding = 'UTF-8'
@@ -34,14 +39,14 @@ tasks.withType(JavaCompile).configureEach {
 processResources {
     inputs.property 'version', project.version
     filesMatching('fabric.mod.json') { expand version: project.version }
-    from('../examples/blueprints/npc') {
+    from('../examples/models') {
         include '*.bbmodel'
         into 'assets/meplayeractions/models'
     }
 }
 
 sourceSets.test.resources {
-    srcDir '../examples/blueprints/npc'
+    srcDir '../examples/models'
     include '*.bbmodel'
 }
 

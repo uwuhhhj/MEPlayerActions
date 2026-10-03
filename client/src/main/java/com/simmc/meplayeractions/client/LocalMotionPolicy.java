@@ -13,7 +13,7 @@ public record LocalMotionPolicy(Set<String> features, Map<String, Layer> clips, 
     private static final Set<String> FEATURES = Set.of("movement", "sprint", "jump", "sit", "sleep", "ride", "crawl",
             "sneak", "swim", "flight", "elytra", "swing", "mining");
     private static final Set<String> STATES = Set.of("idle", "walk", "run", "jump", "fall", "sit", "sleep", "bed-sleep",
-            "boat", "minecart", "ride", "crawl-idle", "crawl-walk", "crouch-idle", "crouch-walk", "swim-idle",
+            "boat", "minecart", "ride", "ride-pig", "ladder-move", "ladder-idle", "crawl-idle", "crawl-walk", "crouch-idle", "crouch-walk", "swim-idle",
             "swim-prone-idle", "swim-walk", "hover", "fly", "elytra", "swing-mainhand", "swing-offhand", "mining");
     public LocalMotionPolicy { features = Set.copyOf(features); clips = Map.copyOf(clips); }
     public boolean enabled(String feature) { return features.contains(feature); }
