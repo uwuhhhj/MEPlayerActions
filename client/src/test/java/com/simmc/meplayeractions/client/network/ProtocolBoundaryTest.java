@@ -43,16 +43,16 @@ class ProtocolBoundaryTest {
         assertThrows(IllegalArgumentException.class,()->transfer.put(1,"AQ=="));
     }
     @Test void strictJsonRejectsAmbiguousAndMalformedEnvelopes() {
-        for(String json:List.of("{\"protocol\":2,\"protocol\":2,\"type\":\"hello\"}",
-                "{\"protocol\":\"2\",\"type\":\"hello\"}","{\"protocol\":2.5,\"type\":\"hello\"}",
-                "{\"protocol\":1,\"type\":\"hello\"}","{\"protocol\":2,\"type\":null}",
-                "{\"protocol\":2,\"type\":\"hello\"}true","{protocol:2,type:'hello'}"))
+        for(String json:List.of("{\"protocol\":3,\"protocol\":3,\"type\":\"hello\"}",
+                "{\"protocol\":\"2\",\"type\":\"hello\"}","{\"protocol\":3.5,\"type\":\"hello\"}",
+                "{\"protocol\":1,\"type\":\"hello\"}","{\"protocol\":3,\"type\":null}",
+                "{\"protocol\":3,\"type\":\"hello\"}true","{protocol:3,type:'hello'}"))
             assertThrows(Exception.class,()->WireJson.decode(json.getBytes(StandardCharsets.UTF_8)),json);
         assertThrows(IOException.class,()->WireJson.decode(new byte[]{(byte)0xc0,(byte)0xaf}));
         assertThrows(IOException.class,()->WireJson.decode(new byte[32_767]));
     }
     @Test void decodesUnicodeLabelsAndFiniteExactNumbers() throws Exception {
-        var json=WireJson.decode("{\"protocol\":2,\"type\":\"state\",\"label\":\"趴下／爬行\",\"tick\":4294967295}".getBytes(StandardCharsets.UTF_8));
+        var json=WireJson.decode("{\"protocol\":3,\"type\":\"state\",\"label\":\"趴下／爬行\",\"tick\":4294967295}".getBytes(StandardCharsets.UTF_8));
         assertEquals("趴下／爬行",WireJson.string(json,"label",64));
         assertEquals(0xffff_ffffL,WireJson.integer(json,"tick",0,0xffff_ffffL));
         assertThrows(IllegalArgumentException.class,()->WireJson.number(json,"label",0,1));

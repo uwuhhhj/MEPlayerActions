@@ -9,6 +9,12 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.EntityPose;
+import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.entity.vehicle.AbstractBoatEntity;
+import net.minecraft.entity.vehicle.AbstractMinecartEntity;
+import net.minecraft.util.Hand;
+import net.minecraft.util.math.MathHelper;
+import net.minecraft.util.math.Vec3d;
 import net.minecraft.text.Text;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -20,7 +26,7 @@ import java.util.concurrent.*;
 public final class ClientRuntime {
     public record RenderBinding(UUID owner, String instance, String assetHash, BbModel model, List<Layer> layers,
                                 double serverTick, double x,double y,double z,float bodyYaw,float headYaw,float headPitch,
-                                float scale,boolean hidePlayer) {}
+                                float scale,boolean hidePlayer,String motionSource) {}
     public record Action(String id,String label) {}
     private static final long SECOND=1_000_000_000L;
     private final MinecraftClient client;
@@ -36,6 +42,7 @@ public final class ClientRuntime {
     public final ClientOptions options;
     private boolean connected,acknowledged;
     private long generation,lastHello,lastHeartbeat,lastReceived;
+    private long localTick;
     private int leaseTicks=100,maxPayload=16_000;
     private Object world;
     private String lastError="",previewId="",previewHash="",previewManual="",previewPose="";
@@ -56,6 +63,7 @@ public final class ClientRuntime {
         ModelRenderer.clear();
     }
     public void tick() {
+        localTick++;
         long now=System.nanoTime();
         if (client.world!=world) {
             boolean wasConnected=connected;reset();connected=wasConnected;world=client.world;
@@ -65,7 +73,7 @@ public final class ClientRuntime {
             releaseBindings();abortTransfers();acknowledged=false;lastHello=0;lastError="服务器同步已超时，恢复 ModelEngine";
         }
         if (options.enabled && !acknowledged && now-lastHello>3*SECOND && ClientPlayNetworking.canSend(ActionPayload.ID)) {
-            JsonObject hello=WireJson.envelope("hello");hello.addProperty("clientVersion","0.3.0");
+            JsonObject hello=WireJson.envelope("hello");hello.addProperty("clientVersion","0.3.1");
             JsonArray caps=new JsonArray();caps.add("local_render");hello.add("capabilities",caps);
             send(hello);lastHello=now;
         }
@@ -87,6 +95,10 @@ public final class ClientRuntime {
         }
         for (String hash:List.copyOf(requested)) if(!loading.contains(hash) && now-transferTimes.getOrDefault(hash,now)>15*SECOND)
             failAsset(hash,"模型下载超时");
+        if(!options.followServerTimeline && client.world!=null) for(Binding binding:bindings.values()) {
+            BbModel model=assets.get(binding.hash);PlayerEntity player=client.world.getPlayerByUuid(binding.owner);
+            if(model!=null && player!=null && usable(binding,now)) entityBinding(binding,model,player);
+        }
     }
     public void receive(byte[] bytes) {
         if(!options.enabled) return;
@@ -157,6 +169,7 @@ public final class ClientRuntime {
                 (float)WireJson.number(json,"bodyYaw",-360_000,360_000),(float)WireJson.number(json,"headYaw",-360_000,360_000),
                 (float)WireJson.number(json,"headPitch",-360,360));
         float scale=(float)WireJson.number(json,"scale",0.05,8);
+        LocalMotionPolicy motion=LocalMotionPolicy.read(json.getAsJsonObject("motion"));
         boolean hide=WireJson.bool(json,"hidePlayer");WireJson.bool(json,"showSelf");
         List<Layer> layers=new ArrayList<>();
         JsonArray array=json.getAsJsonArray("layers");if(array==null || array.size()>16) throw new IllegalArgumentException("Layers");
@@ -186,6 +199,7 @@ public final class ClientRuntime {
         if(sequence<binding.sequence || !binding.timeline.add(transform)) return;
         binding.sequence=sequence;binding.layers=List.copyOf(layers);binding.scale=scale;
         binding.layerTimeline.add(tick,binding.layers);
+        binding.motion=motion;binding.localServerLayers=binding.localClock.accept(tick,localTick,binding.layers);
         binding.hidePlayer=hide;binding.actions=List.copyOf(actions);binding.lastPacket=now;
         BbModel loaded=assets.get(hash);
         binding.unsupported=loaded!=null && layers.stream().anyMatch(layer->!loaded.animations().contains(layer.animation()));
@@ -290,7 +304,7 @@ public final class ClientRuntime {
         json.addProperty("instance",binding.instance);json.addProperty("hash",binding.hash);return json;
     }
     private JsonObject identity(String type,Binding binding) {
-        JsonObject json=identityFields(binding);json.addProperty("protocol",2);json.addProperty("type",type);return json;
+        JsonObject json=identityFields(binding);json.addProperty("protocol",3);json.addProperty("type",type);return json;
     }
     private void failed(Binding binding,String reason) {
         if(binding.readySent) send(identity("render_failed",binding));
@@ -342,15 +356,62 @@ public final class ClientRuntime {
             BbModel model=assets.get(binding.hash);
             if(!usable(binding,now) || model==null)continue;
             if(client.player!=null && binding.owner.equals(client.player.getUuid()) && !options.showSelf)continue;
-            TransformTimeline.Transform t=binding.timeline.sample(tick);
-            List<Layer> presentationLayers=binding.layerTimeline.sample(tick);
-            result.add(new RenderBinding(binding.owner,binding.instance,binding.hash,model,presentationLayers,tick,
-                    t.x(),t.y(),t.z(),t.bodyYaw(),t.headYaw(),t.headPitch(),binding.scale,binding.hidePlayer));
+            if(options.followServerTimeline) {
+                TransformTimeline.Transform t=binding.timeline.sample(tick);
+                List<Layer> presentationLayers=binding.layerTimeline.sample(tick);
+                result.add(new RenderBinding(binding.owner,binding.instance,binding.hash,model,presentationLayers,tick,
+                        t.x(),t.y(),t.z(),t.bodyYaw(),t.headYaw(),t.headPitch(),binding.scale,binding.hidePlayer,"server-timeline"));
+            } else {
+                PlayerEntity player=client.world.getPlayerByUuid(binding.owner);
+                if(player!=null) result.add(entityBinding(binding,model,player));
+            }
         }
         Binding own=client.player==null?null:bindings.get(client.player.getUuid());
         if(own==null && !previewId.isEmpty() && client.player!=null && options.showSelf
                 && assets.containsKey(previewHash) && ModelRenderer.has(previewHash))result.add(previewBinding());
         return List.copyOf(result);
+    }
+    /** Diagnostics only: compare the ME's delayed trajectory with the native entity presentation. */
+    public TransformTimeline.Transform serverTransform(UUID owner) {
+        Binding binding=bindings.get(owner);
+        return binding==null?null:binding.timeline.sample(clock.estimate(System.nanoTime())-options.interpolationTicks);
+    }
+    private RenderBinding entityBinding(Binding binding,BbModel model,PlayerEntity player) {
+        float delta=client.getRenderTickCounter().getTickProgress(false);
+        Vec3d pos=player.getLerpedPos(delta);
+        float bodyYaw=MathHelper.lerpAngleDegrees(delta,player.lastBodyYaw,player.bodyYaw);
+        float headYaw=MathHelper.lerpAngleDegrees(delta,player.lastHeadYaw,player.headYaw),headPitch=player.getPitch(delta);
+        LocalMotionPolicy policy=binding.motion;
+        boolean own=player==client.player,bedSleeping=false;
+        if(policy.specialPose().isEmpty() && player.isSleeping()) {
+            var bed=player.getSleepingPosition().orElse(null);
+            if(bed!=null) {
+                var state=client.world.getBlockState(bed);
+                if(state.getBlock() instanceof net.minecraft.block.BedBlock) {
+                    var second=bed.offset(net.minecraft.block.BedBlock.getOppositePartDirection(state));
+                    pos=new Vec3d((bed.getX()+second.getX()+1)*.5,bed.getY()+9.0/16,(bed.getZ()+second.getZ()+1)*.5);
+                    bodyYaw=switch(state.get(net.minecraft.block.BedBlock.FACING)) {
+                        case SOUTH->0;case WEST->90;case NORTH->180;case EAST->-90;default->bodyYaw;
+                    };
+                    headYaw=bodyYaw;headPitch=0;bedSleeping=true;
+                }
+            }
+        }
+        if(!policy.specialPose().isEmpty()) {
+            pos=pos.add(policy.anchorX(),policy.anchorY(),policy.anchorZ());
+            bodyYaw=policy.anchorYaw();
+            if(policy.specialPose().equals("sleep")){headYaw=bodyYaw;headPitch=0;}
+        }
+        var vehicle=player.getVehicle();
+        String riding=vehicle==null?"":vehicle instanceof AbstractBoatEntity?"boat":vehicle instanceof AbstractMinecartEntity?"minecart":"ride";
+        var current=player.getEntityPos();
+        binding.localMotion.update(localTick,new EntityAnimationController.Sample(current.x,current.y,current.z,player.isOnGround(),
+                bedSleeping,player.getPose()==EntityPose.SWIMMING || policy.forcedPose().equals("crawl"),player.isTouchingWater(),own?player.getAbilities().flying:policy.flying(),
+                player.isGliding(),player.isSneaking() || player.getPose()==EntityPose.CROUCHING || policy.forcedPose().equals("sneak"),player.isSprinting(),riding,player.handSwinging,player.handSwingTicks,
+                player.preferredHand==Hand.OFF_HAND,own && client.interactionManager!=null && client.interactionManager.isBreakingBlock(),own),
+                policy,binding.localServerLayers);
+        return new RenderBinding(binding.owner,binding.instance,binding.hash,model,binding.localMotion.layers(),localTick+delta,
+                pos.x,pos.y,pos.z,bodyYaw,headYaw,headPitch,binding.scale,binding.hidePlayer,own?"local-player":"tracked-player");
     }
     public boolean shouldHidePlayer(UUID owner) {
         if(!options.enabled)return false;
@@ -395,13 +456,15 @@ public final class ClientRuntime {
     public List<String> status() {
         long active=bindings.values().stream().filter(b->b.active).count();
         List<String> text=new ArrayList<>();
-        text.add("客户端 0.3.0 · "+(acknowledged?"已连接动作服务器":"等待服务器 / 本地预览"));
+        text.add("客户端 0.3.1 · "+(acknowledged?"已连接动作服务器":"等待服务器 / 本地预览"));
         text.add("已接管 "+active+" / "+bindings.size()+" 个模型 · 资产 "+assets.size()+" · 下载 "+transfers.size());
-        text.add("本地插值缓冲 "+options.interpolationTicks+" tick · 本人模型 "+(options.showSelf?"显示":"隐藏"));
+        text.add((options.followServerTimeline?"服务器拖后轨迹 · 缓冲 "+options.interpolationTicks+" tick":"客户端实体即时跟随 · 无额外位置缓冲")
+                +" · 本人模型 "+(options.showSelf?"显示":"隐藏"));
         if(!previewId.isEmpty())text.add("本地预览："+previewId);
         Binding own=client.player==null?null:bindings.get(client.player.getUuid());
         if(own!=null){text.add("模型："+own.modelId+" · "+(own.active?"本地渲染":own.readySent?"等待确认":"加载中"));
-            text.add("动画："+own.layers.stream().map(l->l.layer()+"="+l.animation()).reduce((a,b)->a+" / "+b).orElse("基础姿态"));}
+            text.add("动画："+(options.followServerTimeline?own.layers:own.localMotion.layers()).stream()
+                    .map(l->l.layer()+"="+l.animation()).reduce((a,b)->a+" / "+b).orElse("基础姿态"));}
         if(!lastError.isEmpty())text.add(lastError);
         return List.copyOf(text);
     }
@@ -463,12 +526,15 @@ public final class ClientRuntime {
             }
         }
         return new RenderBinding(player.getUuid(),"preview",previewHash,model,List.copyOf(layers),renderTick,
-                pos.x,pos.y,pos.z,bodyYaw,headYaw,headPitch,1,true);
+                pos.x,pos.y,pos.z,bodyYaw,headYaw,headPitch,1,true,"preview");
     }
     private void notify(String message) {if(client.player!=null)client.player.sendMessage(Text.literal("[动作客户端] "+message),false);}
     private static final class Binding {
         final UUID owner;final String instance,modelId,hash;final TransformTimeline timeline=new TransformTimeline();
         final SnapshotTimeline<List<Layer>> layerTimeline=new SnapshotTimeline<>();
+        final EntityAnimationController localMotion=new EntityAnimationController();
+        final LocalLayerClock localClock=new LocalLayerClock();
+        LocalMotionPolicy motion;List<Layer> localServerLayers=List.of();
         long sequence=-1,lastPacket,lastReady;boolean readySent,active,hidePlayer,unsupported;float scale=1;
         List<Layer> layers=List.of();List<Action> actions=List.of();
         Binding(UUID owner,String instance,String modelId,String hash){this.owner=owner;this.instance=instance;this.modelId=modelId;this.hash=hash;}

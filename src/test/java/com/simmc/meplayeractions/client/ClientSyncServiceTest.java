@@ -33,7 +33,7 @@ class ClientSyncServiceTest {
         assertTrue(safe.codePoints().noneMatch(Character::isISOControl));
     }
     @Test void smallPayloadDropsMenuDirectoryButKeepsTransformAndLayersOrRejectsOversizedState() {
-        var state = com.google.gson.JsonParser.parseString("{\"protocol\":2,\"type\":\"state\",\"owner\":\"00000000-0000-0000-0000-000000000001\",\"instance\":\"00000000-0000-0000-0000-000000000002\",\"modelId\":\"ysm_01_jk_player\",\"assetHash\":\"" + "a".repeat(64)
+        var state = com.google.gson.JsonParser.parseString("{\"protocol\":3,\"type\":\"state\",\"owner\":\"00000000-0000-0000-0000-000000000001\",\"instance\":\"00000000-0000-0000-0000-000000000002\",\"modelId\":\"ysm_01_jk_player\",\"assetHash\":\"" + "a".repeat(64)
                 + "\",\"sequence\":12,\"serverTick\":12345,\"world\":\"00000000-0000-0000-0000-000000000003\",\"x\":1,\"y\":64,\"z\":2,\"bodyYaw\":90,\"headYaw\":100,\"headPitch\":10,\"scale\":1.5,\"hidePlayer\":true,\"showSelf\":true,\"layers\":[{\"layer\":\"posture\",\"animation\":\"crawl_idle\",\"startedAtTick\":12340,\"speed\":1,\"loop\":\"LOOP\",\"inTicks\":2,\"outTicks\":2}],\"animations\":[]}").getAsJsonObject();
         var menu = new com.google.gson.JsonArray();
         for (int i = 0; i < 29; i++) { var entry = new com.google.gson.JsonObject(); entry.addProperty("id", "anim_" + i); entry.addProperty("label", "中文动作".repeat(16)); menu.add(entry); }
@@ -46,13 +46,13 @@ class ClientSyncServiceTest {
 
     @ParameterizedTest
     @ValueSource(strings = {
-            "{\"protocol\":2,\"type\":\"hello\",\"capabilities\":[\"local_render\"]}",
-            "{\"protocol\":2,\"type\":\"hello\",\"clientVersion\":\"0.1.0\",\"capabilities\":[\"local_render\"]}",
-            "{\"capabilities\":[\"local_render\"],\"type\":\"hello\",\"protocol\":2}"
+            "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\"]}",
+            "{\"protocol\":3,\"type\":\"hello\",\"clientVersion\":\"0.1.0\",\"capabilities\":[\"local_render\"]}",
+            "{\"capabilities\":[\"local_render\"],\"type\":\"hello\",\"protocol\":3}"
     })
     void acceptsHelloWithRequiredLocalRenderCapability(String json) throws IOException {
         Object decoded = decode(json);
-        assertEquals(2, field(decoded, "protocol"));
+        assertEquals(3, field(decoded, "protocol"));
         assertEquals("hello", field(decoded, "type"));
     }
 
@@ -61,7 +61,7 @@ class ClientSyncServiceTest {
             delimiter = '|', nullValues = "")
     void acceptsOnlySupportedSelfActionRequests(String action, String argument) throws IOException {
         String expectedArgument = argument == null ? "" : argument;
-        String json = "{\"protocol\":2,\"type\":\"request\",\"action\":\"" + action + "\""
+        String json = "{\"protocol\":3,\"type\":\"request\",\"action\":\"" + action + "\""
                 + (argument == null ? "" : ",\"argument\":\"" + argument + "\"") + "}";
         Object decoded = decode(json);
         assertEquals("request", field(decoded, "type"));
@@ -71,32 +71,32 @@ class ClientSyncServiceTest {
 
     @Test
     void acceptsSnapshotRequestWithoutInventingAnAction() throws IOException {
-        Object decoded = decode("{\"protocol\":2,\"type\":\"snapshot_request\"}");
+        Object decoded = decode("{\"protocol\":3,\"type\":\"snapshot_request\"}");
         assertEquals("snapshot_request", field(decoded, "type"));
         assertEquals("", field(decoded, "action"));
         assertEquals("", field(decoded, "argument"));
     }
     @Test void acceptsExactAssetAndReadyKeysAndBoundedHeartbeatBindings() throws IOException {
         String hash = "a".repeat(64), owner = "00000000-0000-0000-0000-000000000001", instance = "00000000-0000-0000-0000-000000000002";
-        Object asset = decode("{\"protocol\":2,\"type\":\"asset_request\",\"modelId\":\"ysm_01_jk_player\",\"hash\":\"" + hash + "\"}");
+        Object asset = decode("{\"protocol\":3,\"type\":\"asset_request\",\"modelId\":\"ysm_01_jk_player\",\"hash\":\"" + hash + "\"}");
         assertEquals(hash, field(asset, "hash")); assertEquals("ysm_01_jk_player", field(asset, "modelId"));
         String binding = "\"owner\":\"" + owner + "\",\"instance\":\"" + instance + "\",\"hash\":\"" + hash + "\"";
         for (String type : new String[]{"render_ready", "render_failed"}) {
-            Object ready = decode("{\"protocol\":2,\"type\":\"" + type + "\"," + binding + "}"); assertEquals(type, field(ready, "type"));
+            Object ready = decode("{\"protocol\":3,\"type\":\"" + type + "\"," + binding + "}"); assertEquals(type, field(ready, "type"));
         }
-        assertEquals("render_heartbeat", field(decode("{\"protocol\":2,\"type\":\"render_heartbeat\",\"bindings\":[{" + binding + "}]}"), "type"));
-        assertEquals("render_heartbeat", field(decode("{\"protocol\":2,\"type\":\"render_heartbeat\",\"bindings\":[]}"), "type"));
+        assertEquals("render_heartbeat", field(decode("{\"protocol\":3,\"type\":\"render_heartbeat\",\"bindings\":[{" + binding + "}]}"), "type"));
+        assertEquals("render_heartbeat", field(decode("{\"protocol\":3,\"type\":\"render_heartbeat\",\"bindings\":[]}"), "type"));
     }
     @Test void rejectsAssetPathTraversalMalformedHashesAndExcessiveOrDuplicateReadyBindings() {
         String hash = "a".repeat(64), owner = "00000000-0000-0000-0000-000000000001", instance = "00000000-0000-0000-0000-000000000002";
-        assertRejected("{\"protocol\":2,\"type\":\"asset_request\",\"modelId\":\"../private\",\"hash\":\"" + hash + "\"}");
-        assertRejected("{\"protocol\":2,\"type\":\"asset_request\",\"modelId\":\"ysm_01_jk_player\",\"hash\":\"" + hash.toUpperCase() + "\"}");
-        assertRejected("{\"protocol\":2,\"type\":\"hello\",\"capabilities\":[]}");
+        assertRejected("{\"protocol\":3,\"type\":\"asset_request\",\"modelId\":\"../private\",\"hash\":\"" + hash + "\"}");
+        assertRejected("{\"protocol\":3,\"type\":\"asset_request\",\"modelId\":\"ysm_01_jk_player\",\"hash\":\"" + hash.toUpperCase() + "\"}");
+        assertRejected("{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[]}");
         String binding = "{\"owner\":\"" + owner + "\",\"instance\":\"" + instance + "\",\"hash\":\"" + hash + "\"}";
-        assertRejected("{\"protocol\":2,\"type\":\"render_heartbeat\",\"bindings\":[" + binding + "," + binding + "]}");
-        assertRejected("{\"protocol\":2,\"type\":\"render_ready\",\"owner\":\"0-0-0-0-1\",\"instance\":\"" + instance + "\",\"hash\":\"" + hash + "\"}");
-        assertRejected("{\"protocol\":2,\"type\":\"render_ready\",\"owner\":\"" + owner + "\",\"instance\":\"" + instance + "\",\"hash\":\"" + hash + "\",\"action\":\"play\"}");
-        StringBuilder many = new StringBuilder("{\"protocol\":2,\"type\":\"render_heartbeat\",\"bindings\":[");
+        assertRejected("{\"protocol\":3,\"type\":\"render_heartbeat\",\"bindings\":[" + binding + "," + binding + "]}");
+        assertRejected("{\"protocol\":3,\"type\":\"render_ready\",\"owner\":\"0-0-0-0-1\",\"instance\":\"" + instance + "\",\"hash\":\"" + hash + "\"}");
+        assertRejected("{\"protocol\":3,\"type\":\"render_ready\",\"owner\":\"" + owner + "\",\"instance\":\"" + instance + "\",\"hash\":\"" + hash + "\",\"action\":\"play\"}");
+        StringBuilder many = new StringBuilder("{\"protocol\":3,\"type\":\"render_heartbeat\",\"bindings\":[");
         for (int i = 0; i < 65; i++) {
             if (i > 0) many.append(',');
             many.append(binding.replace(owner, new java.util.UUID(0, i + 1).toString()));
@@ -106,9 +106,9 @@ class ClientSyncServiceTest {
 
     @ParameterizedTest
     @ValueSource(strings = {
-            "{\"protocol\":2,\"type\":\"hello\",\"protocol\":2}",
-            "{\"protocol\":2,\"type\":\"hello\",\"type\":\"request\"}",
-            "{\"protocol\":2,\"type\":\"request\",\"action\":\"sit\",\"action\":\"crawl\"}"
+            "{\"protocol\":3,\"type\":\"hello\",\"protocol\":3}",
+            "{\"protocol\":3,\"type\":\"hello\",\"type\":\"request\"}",
+            "{\"protocol\":3,\"type\":\"request\",\"action\":\"sit\",\"action\":\"crawl\"}"
     })
     void rejectsDuplicateFieldsEvenWhenValuesAgree(String json) {
         assertRejected(json);
@@ -116,16 +116,16 @@ class ClientSyncServiceTest {
 
     @ParameterizedTest
     @ValueSource(strings = {
-            "{\"protocol\":2,\"type\":\"request\",\"action\":\"sit\",\"owner\":\"00000000-0000-0000-0000-000000000001\"}",
-            "{\"protocol\":2,\"type\":\"request\",\"action\":\"sit\",\"target\":\"00000000-0000-0000-0000-000000000001\"}",
-            "{\"protocol\":2,\"type\":\"request\",\"action\":\"op\",\"argument\":\"Player\"}",
-            "{\"protocol\":2,\"type\":\"request\",\"action\":\"fly\"}",
-            "{\"protocol\":2,\"type\":\"render_ready\"}",
-            "{\"protocol\":2,\"type\":\"hello\",\"capabilities\":[\"render_ready\"]}",
-            "{\"protocol\":2,\"type\":\"hello\",\"capabilities\":[\"local_render\",\"local_render\"]}",
-            "{\"protocol\":2,\"type\":\"hello\",\"argument\":\"wave\"}",
-            "{\"protocol\":2,\"type\":\"snapshot_request\",\"action\":\"stop\"}",
-            "{\"protocol\":2,\"type\":\"hello\",\"command\":\"op Player\"}"
+            "{\"protocol\":3,\"type\":\"request\",\"action\":\"sit\",\"owner\":\"00000000-0000-0000-0000-000000000001\"}",
+            "{\"protocol\":3,\"type\":\"request\",\"action\":\"sit\",\"target\":\"00000000-0000-0000-0000-000000000001\"}",
+            "{\"protocol\":3,\"type\":\"request\",\"action\":\"op\",\"argument\":\"Player\"}",
+            "{\"protocol\":3,\"type\":\"request\",\"action\":\"fly\"}",
+            "{\"protocol\":3,\"type\":\"render_ready\"}",
+            "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"render_ready\"]}",
+            "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\",\"local_render\"]}",
+            "{\"protocol\":3,\"type\":\"hello\",\"argument\":\"wave\"}",
+            "{\"protocol\":3,\"type\":\"snapshot_request\",\"action\":\"stop\"}",
+            "{\"protocol\":3,\"type\":\"hello\",\"command\":\"op Player\"}"
     })
     void rejectsTargetsUnknownActionsCapabilitiesAndFields(String json) {
         assertRejected(json);
@@ -133,12 +133,12 @@ class ClientSyncServiceTest {
 
     @ParameterizedTest
     @ValueSource(strings = {
-            "{\"protocol\":2,\"type\":\"hello\",}",
+            "{\"protocol\":3,\"type\":\"hello\",}",
             "{protocol:1,type:'hello'}",
-            "{\"protocol\":2,\"type\":'hello'}",
-            "{\"protocol\":2,/*comment*/\"type\":\"hello\"}",
-            "{\"protocol\":2,\"type\":\"hello\"} {}",
-            "{\"protocol\":2,\"type\":\"hello\"} garbage",
+            "{\"protocol\":3,\"type\":'hello'}",
+            "{\"protocol\":3,/*comment*/\"type\":\"hello\"}",
+            "{\"protocol\":3,\"type\":\"hello\"} {}",
+            "{\"protocol\":3,\"type\":\"hello\"} garbage",
             "{\"protocol\":01,\"type\":\"hello\"}"
     })
     void rejectsLenientOrTrailingJson(String json) {
@@ -148,14 +148,14 @@ class ClientSyncServiceTest {
     @ParameterizedTest
     @ValueSource(strings = {
             "null", "[]", "\"hello\"", "{\"type\":\"hello\"}",
-            "{\"protocol\":2,\"type\":null}",
-            "{\"protocol\":2,\"type\":\"hello\",\"clientVersion\":{\"name\":\"client\"}}",
-            "{\"protocol\":2,\"type\":\"hello\",\"clientVersion\":[[\"client\"]]}",
-            "{\"protocol\":2,\"type\":\"hello\",\"capabilities\":[[\"local_render\"]]}",
-            "{\"protocol\":2,\"type\":\"hello\",\"capabilities\":{\"local_render\":true}}",
-            "{\"protocol\":2,\"type\":\"request\",\"action\":[\"sit\"]}",
-            "{\"protocol\":2,\"type\":\"request\",\"action\":\"play\",\"argument\":12}",
-            "{\"protocol\":2,\"type\":\"request\",\"action\":\"play\",\"argument\":null}"
+            "{\"protocol\":3,\"type\":null}",
+            "{\"protocol\":3,\"type\":\"hello\",\"clientVersion\":{\"name\":\"client\"}}",
+            "{\"protocol\":3,\"type\":\"hello\",\"clientVersion\":[[\"client\"]]}",
+            "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[[\"local_render\"]]}",
+            "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":{\"local_render\":true}}",
+            "{\"protocol\":3,\"type\":\"request\",\"action\":[\"sit\"]}",
+            "{\"protocol\":3,\"type\":\"request\",\"action\":\"play\",\"argument\":12}",
+            "{\"protocol\":3,\"type\":\"request\",\"action\":\"play\",\"argument\":null}"
     })
     void rejectsMissingFieldsNullAndNestedOrCoercedTypes(String json) {
         assertRejected(json);
@@ -175,13 +175,13 @@ class ClientSyncServiceTest {
 
     private static Stream<String> invalidActionArguments() {
         return Stream.of(
-                "{\"protocol\":2,\"type\":\"request\",\"action\":\"play\"}",
-                "{\"protocol\":2,\"type\":\"request\",\"action\":\"play\",\"argument\":\"\"}",
-                "{\"protocol\":2,\"type\":\"request\",\"action\":\"play\",\"argument\":\"wave;op Player\"}",
-                "{\"protocol\":2,\"type\":\"request\",\"action\":\"play\",\"argument\":\"wave\\u0000\"}",
-                "{\"protocol\":2,\"type\":\"request\",\"action\":\"play\",\"argument\":\"" + "a".repeat(129) + "\"}",
-                "{\"protocol\":2,\"type\":\"request\",\"action\":\"sit\",\"argument\":\"Player\"}",
-                "{\"protocol\":2,\"type\":\"hello\",\"clientVersion\":\"" + "v".repeat(65) + "\"}"
+                "{\"protocol\":3,\"type\":\"request\",\"action\":\"play\"}",
+                "{\"protocol\":3,\"type\":\"request\",\"action\":\"play\",\"argument\":\"\"}",
+                "{\"protocol\":3,\"type\":\"request\",\"action\":\"play\",\"argument\":\"wave;op Player\"}",
+                "{\"protocol\":3,\"type\":\"request\",\"action\":\"play\",\"argument\":\"wave\\u0000\"}",
+                "{\"protocol\":3,\"type\":\"request\",\"action\":\"play\",\"argument\":\"" + "a".repeat(129) + "\"}",
+                "{\"protocol\":3,\"type\":\"request\",\"action\":\"sit\",\"argument\":\"Player\"}",
+                "{\"protocol\":3,\"type\":\"hello\",\"clientVersion\":\"" + "v".repeat(65) + "\"}"
         );
     }
 

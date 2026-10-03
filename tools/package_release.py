@@ -305,7 +305,7 @@ def main() -> None:
         "target": {"paper": "1.21.11", "modelengine": "R4.1.1", "optional_gsit": "3.5.1 (tested; public posture API checked at runtime)", "java_release": 21},
         "test_totals": totals, "test_suites": suites, "client_test_totals": client_totals,
         "client_target": {"minecraft": "1.21.11", "loader": "Fabric", "java_release": 21,
-                          "renderer": "RenderCommandQueue custom geometry", "protocol": 2},
+                          "renderer": "RenderCommandQueue custom geometry", "protocol": 3},
         "compiled_source_fingerprint": fingerprint.hexdigest(),
         "compiled_class_count": len(classes), "animations": animation_names,
         "npc_animations": npc_names, "npc_original_animations_preserved": True,

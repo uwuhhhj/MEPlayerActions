@@ -32,6 +32,7 @@ import java.util.UUID;
 /** ModelEngine R4.1.1 state-machine adapter. All operations run on Paper's main thread. */
 public final class ModelEngineBridge {
     private final Map<UUID, Session> sessions = new HashMap<>();
+    private NativeEntityRelay nativeEntities;
 
     public record Attachment(UUID playerId, String modelId, ActiveModel activeModel, boolean owned) {
         public Attachment {
@@ -210,6 +211,17 @@ public final class ModelEngineBridge {
         Session session = requireSession(attachment);
         if (enabled && (!supportsLocalRendering(attachment) || !session.audience.allows(viewer))) return false;
         if (session.audience == null) return !enabled;
+        if (enabled && !viewer.equals(attachment.playerId())) {
+            try {
+                if (nativeEntities == null) nativeEntities = new NativeEntityRelay();
+                if (!nativeEntities.enable(viewer, attachment.playerId(), session.player.getEntityId(), !session.entity.isBaseEntityVisible())) return false;
+                if (!session.entity.isBaseEntityVisible()) ModelEngineAPI.getEntityHandler().forceSpawn(session.entity.getBase(), Bukkit.getPlayer(viewer));
+            } catch (RuntimeException failure) {
+                if (nativeEntities != null) nativeEntities.disable(viewer, attachment.playerId());
+                Bukkit.getLogger().warning("客户端原版实体同步未能启用，保持 ME：" + failure.getMessage());
+                return false;
+            }
+        } else if (!enabled && nativeEntities != null) nativeEntities.disable(viewer, attachment.playerId());
         session.audience.localRendering(viewer, enabled);
         session.audience.update(session.player, tracked(session));
         if (session.entity.getBase().getData() instanceof BukkitEntityData data) data.syncUpdate();
@@ -291,6 +303,7 @@ public final class ModelEngineBridge {
 
     private void cleanUp(Session session) {
         RuntimeException failure = null;
+        if (nativeEntities != null) nativeEntities.removeOwner(session.attachment.playerId());
         for (OwnedAnimation action : List.copyOf(session.ownedAnimations)) {
             try { action.stop(true); }
             catch (RuntimeException problem) { failure = accumulate(failure, problem); }

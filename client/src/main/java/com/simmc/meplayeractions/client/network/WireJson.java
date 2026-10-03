@@ -20,7 +20,7 @@ public final class WireJson {
             JsonElement root = read(reader, 0);
             if (!root.isJsonObject() || reader.peek() != JsonToken.END_DOCUMENT) throw new IOException("Envelope");
             JsonObject object = root.getAsJsonObject();
-            if (integer(object, "protocol", 2, 2) != 2) throw new IOException("Protocol");
+            if (integer(object, "protocol", 3, 3) != 3) throw new IOException("Protocol");
             string(object, "type", 32);
             return object;
         } catch (IllegalStateException | NumberFormatException exception) {
@@ -63,7 +63,7 @@ public final class WireJson {
         };
     }
     public static JsonObject envelope(String type) {
-        JsonObject json = new JsonObject(); json.addProperty("protocol", 2); json.addProperty("type", type); return json;
+        JsonObject json = new JsonObject(); json.addProperty("protocol", 3); json.addProperty("type", type); return json;
     }
     public static String string(JsonObject object, String key, int max) {
         JsonElement value = object.get(key);

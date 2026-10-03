@@ -4,6 +4,7 @@ import com.simmc.meplayeractions.client.ClientSyncService;
 import com.simmc.meplayeractions.client.ClientSyncService.LayerState;
 import com.simmc.meplayeractions.client.ClientSyncService.StateSnapshot;
 import com.simmc.meplayeractions.client.ClientSyncService.AnimationInfo;
+import com.simmc.meplayeractions.client.ClientSyncService.MotionState;
 import com.simmc.meplayeractions.config.Settings;
 import com.simmc.meplayeractions.gameplay.GameplayBackend;
 import com.simmc.meplayeractions.gameplay.GSitAnchor;
@@ -529,7 +530,28 @@ public final class ActionController {
                 visual == null ? model.getYBodyRot() : visual.bodyYaw(),
                 visual == null ? model.getYHeadRot() : visual.headYaw(),
                 visual == null ? model.getXHeadRot() : visual.headPitch(), model.getScale().x(),
-                s.options.hideSelf(), s.options.showSelf(), animations, bridge.supportsLocalRendering(s.attachment));
+                s.options.hideSelf(), s.options.showSelf(), animations, bridge.supportsLocalRendering(s.attachment), motion(s, location));
+    }
+    private MotionState motion(Session s, Location location) {
+        List<String> features = Arrays.stream(SyncFeature.values()).filter(f -> syncEnabled(s.player, f)).map(SyncFeature::key).toList();
+        List<LayerState> clips = new ArrayList<>();
+        for (ActionState state : ActionState.values()) {
+            String animation = settings.animation(s.attachment.modelId(), state, s.animations);
+            var playback = settings.playback(state);
+            if (animation != null) clips.add(new LayerState(state.key(), animation, 0, playback.speed(), playback.loop().name(),
+                    playback.inTicks(), playback.outTicks()));
+        }
+        // GSit lowers the real player's seat. Send its current contact offset, never the delayed visual frame.
+        var anchor = s.gsitAnchor;
+        String special = anchor == null || !anchor.world().equals(location.getWorld().getUID()) || s.sample == null
+                || s.sample.bedSleeping() ? "" : s.sample.sleeping() ? "sleep" : s.sample.sitting() ? "sit" : s.sample.crawling() ? "crawl" : "";
+        boolean anchored = !special.isEmpty();
+        String forced = s.sample != null && s.sample.crawling() && (s.player.hasFixedPose() || gameplay.isCrawling(s.player))
+                ? "crawl" : s.player.hasFixedPose() && s.player.getPose() == org.bukkit.entity.Pose.SNEAKING ? "sneak" : "";
+        return new MotionState(features, clips, s.jumpDuration, settings.jumpLandingTicks, settings.movementThreshold,
+                settings.interruptMove, settings.interruptPosture, s.player.isFlying(), s.interactionState == null ? "" : s.interactionState.key(), forced, special,
+                anchored ? anchor.x() - location.getX() : 0, anchored ? anchor.y() - location.getY() : 0,
+                anchored ? anchor.z() - location.getZ() : 0, anchored ? anchor.bodyYaw() : 0);
     }
     private static LayerState layer(String name, OwnedAnimation a, long tick) {
         return new LayerState(name, a.animation(), tick, a.speed(), a.loop().name(), a.inTicks(), a.outTicks());

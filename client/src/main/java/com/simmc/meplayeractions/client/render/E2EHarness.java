@@ -38,9 +38,9 @@ public final class E2EHarness {
     private static final Logger LOGGER = LoggerFactory.getLogger("MEPlayerActions/E2E");
     private static final String PLAYER = "MPATest";
     private static final UUID OTHER = UUID.nameUUIDFromBytes("OfflinePlayer:MPAObserver".getBytes(StandardCharsets.UTF_8));
-    private static final List<String> STAGES = List.of("idle", "wave", "crawl", "crawl-side", "bed", "ride", "jump",
+    private static final List<String> STAGES = List.of("idle", "native-follow", "server-trailing", "wave", "crawl", "crawl-side", "bed", "ride", "jump",
             "firstperson", "gsit-sit", "gsit-crawl", "gsit-lay", "gsit-firstperson", "gsit-thirdperson", "gsit-undisguise", "gsit-redisguise", "gsit-reset", "resource-reload", "local-off", "local-on", "npc", "npc-crawl", "npc-crawl-side",
-            "menu", "self-hidden", "self-restored", "server-reload", "other-idle", "other-crawl", "other-bed",
+            "menu", "self-hidden", "self-restored", "server-reload", "other-idle", "other-native-follow", "other-crawl", "other-bed",
             "other-ride", "other-jump", "other-range-out", "other-range-in", "undisguise", "preview", "preview-end");
     private final ClientRuntime runtime;
     private final Path output = Path.of(System.getProperty("meplayeractions.e2e.output", "../build/e2e")).toAbsolutePath();
@@ -57,6 +57,8 @@ public final class E2EHarness {
     private int jumpFrames;
     private boolean otherJumpSeen, otherJumpAfterGround;
     private int otherJumpFrames;
+    private int followSamples,followWalking;
+    private double maxFollowError,maxServerGap;
     private CompletableFuture<Void> reload;
     private ArmorStandEntity sideCamera;
     private Entity gsitCamera;
@@ -103,6 +105,7 @@ public final class E2EHarness {
                     worldConfigured = true;
                     if (!runtime.options.enabled) runtime.toggleEnabled();
                     runtime.options.showSelf = true;
+                    runtime.options.followServerTimeline = false;
                     client.options.setPerspective(Perspective.THIRD_PERSON_FRONT);
                     client.options.getGamma().setValue(1.0);
                     client.player.getAbilities().flying = false;
@@ -121,6 +124,11 @@ public final class E2EHarness {
             }
             stageTicks++;
             String name = STAGES.get(stage);
+            if(name.equals("native-follow") || name.equals("server-trailing")) {
+                client.options.forwardKey.setPressed(stageTicks>=15 && stageTicks<40);
+                if(name.equals("native-follow") && stageTicks>=17 && stageTicks<40) measureFollow(client,client.player);
+            }
+            if(name.equals("other-native-follow") && stageTicks>=17 && stageTicks<40) measureFollow(client,otherPlayer(client));
             if (stageTicks % 5 == 0) phase(client, name);
             if (stageTicks == 5) {
                 if (name.equals("gsit-sit")) command(client, "meplayeractions pose sit");
@@ -188,6 +196,14 @@ public final class E2EHarness {
     }
 
     private void next(MinecraftClient client) {
+        client.options.forwardKey.setPressed(false);
+        if(stage>=0 && (STAGES.get(stage).equals("native-follow") || STAGES.get(stage).equals("other-native-follow"))) {
+            String label=STAGES.get(stage).equals("native-follow")?"own":"remote";
+            check(label+"NativeEntityFollow",followSamples>=10 && maxFollowError<.000001,
+                    "Samples="+followSamples+"; worst pivot error="+maxFollowError+" blocks; server delay=8 ticks");
+            check(label+"IgnoresDelayedServerPosition",maxServerGap>.05,"Delayed server separation="+maxServerGap+" blocks");
+            check(label+"NativeWalkStartsLocally",followWalking>=5,"Native walking observations="+followWalking);
+        }
         if (stage >= 0 && STAGES.get(stage).equals("jump")) {
             check("jumpAnimation", jumpSeen, "Animated jump tick observations=" + jumpFrames);
             check("jumpFinishesAfterGround", jumpSeenAfterGround, "Observed jump animation after real player landed");
@@ -199,6 +215,7 @@ public final class E2EHarness {
         stage++;
         stageTicks = 0;
         captured = false;
+        followSamples=0;followWalking=0;maxFollowError=0;maxServerGap=0;
         if (stage >= STAGES.size()) { finish(client); return; }
         String name = STAGES.get(stage);
         sideCamera = null;
@@ -211,7 +228,9 @@ public final class E2EHarness {
         if (!name.equals("bed")) command(client, "time set day");
         switch (name) {
             case "idle" -> command(client, "mpatest " + PLAYER + " reset");
-            case "wave" -> command(client, "mpatest " + PLAYER + " wave");
+            case "native-follow" -> { command(client,"mpatest "+PLAYER+" reset"); command(client,"mpatest "+PLAYER+" delayed ysm_01_jk_player"); }
+            case "server-trailing" -> { runtime.options.followServerTimeline=true;command(client,"mpatest "+PLAYER+" reset"); }
+            case "wave" -> { runtime.options.followServerTimeline=false;command(client,"mpatest "+PLAYER+" reset");command(client, "mpatest " + PLAYER + " wave"); }
             case "crawl", "npc-crawl" -> command(client, "mpatest " + PLAYER + " crawl");
             case "crawl-side", "npc-crawl-side" -> {
                 client.setCameraEntity(sideCamera(client));
@@ -268,6 +287,7 @@ public final class E2EHarness {
                 command(client, "mpatest MPAObserver reset");
                 command(client, "mpatest MPAObserver disguise ysm_01_jk_player");
             }
+            case "other-native-follow" -> { command(client,"mpatest MPAObserver delayed ysm_01_jk_player");command(client,"mpatest MPAObserver walk"); }
             case "other-crawl" -> command(client, "mpatest MPAObserver crawl");
             case "other-bed" -> { command(client, "time set night"); command(client, "mpatest MPAObserver bed"); }
             case "other-ride" -> command(client, "mpatest MPAObserver ride");
@@ -313,6 +333,10 @@ public final class E2EHarness {
                 "sleeping", other.isSleeping(), "vehicle", other.hasVehicle(), "x", other.getX(), "y", other.getY(), "z", other.getZ()));
         command(client, "mpatest " + (name.startsWith("other-") ? "MPAObserver" : PLAYER) + " status");
         switch (name) {
+            case "server-trailing" -> {
+                var binding=bindings.stream().findFirst().orElse(null);
+                check("explicitTrailingMode",binding!=null && binding.motionSource().equals("server-timeline"),runtime.status().toString());
+            }
             case "idle" -> { idleHeight = height; check("modelIdle", height > 0 && (long) diagnostic.get("drawnBatches") > 0, "height=" + height); }
             case "crawl" -> {
                 check("authoritativeCrawlState", layers.contains("crawl"), "server layer=" + layers + "; client recalculated pose=" + client.player.getPose());
@@ -382,6 +406,17 @@ public final class E2EHarness {
         screenshot(client, String.format("%02d-%s", stage + 1, name));
     }
 
+    private void measureFollow(MinecraftClient client,PlayerEntity entity) {
+        if(entity==null)return;
+        var binding=runtime.renderBindings().stream().filter(value->value.owner().equals(entity.getUuid())).findFirst().orElse(null);
+        if(binding==null)return;
+        var nativePos=entity.getLerpedPos(client.getRenderTickCounter().getTickProgress(false));
+        double error=Math.sqrt(Math.pow(binding.x()-nativePos.x,2)+Math.pow(binding.y()-nativePos.y,2)+Math.pow(binding.z()-nativePos.z,2));
+        maxFollowError=Math.max(maxFollowError,error);followSamples++;
+        if(binding.layers().stream().anyMatch(layer->layer.layer().equals("posture") && (layer.animation().equals("walk") || layer.animation().equals("run")))) followWalking++;
+        var delayed=runtime.serverTransform(entity.getUuid());
+        if(delayed!=null)maxServerGap=Math.max(maxServerGap,Math.sqrt(Math.pow(binding.x()-delayed.x(),2)+Math.pow(binding.y()-delayed.y(),2)+Math.pow(binding.z()-delayed.z(),2)));
+    }
     private List<ClientRuntime.RenderBinding> own(MinecraftClient client) {
         if (client.player == null) return List.of();
         Collection<ClientRuntime.RenderBinding> bindings = runtime.renderBindings();
@@ -479,7 +514,7 @@ public final class E2EHarness {
             Files.createDirectories(output);
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("passed", !checks.isEmpty() && checks.stream().allMatch(check -> Boolean.TRUE.equals(check.get("passed"))));
-            result.put("minecraft", "1.21.11"); result.put("clientVersion", "0.3.0");
+            result.put("minecraft", "1.21.11"); result.put("clientVersion", "0.3.1");
             result.put("testedClientSha256", proof.get("clientArtifactSha256")); result.put("testedServerSha256", proof.get("serverArtifactSha256"));
             result.put("artifactProof", proof);result.put("startedAtMillis", startedMillis);result.put("completedAtMillis", System.currentTimeMillis());
             result.put("checks", checks); result.put("screenshots", screenshots); result.put("observations", observations);

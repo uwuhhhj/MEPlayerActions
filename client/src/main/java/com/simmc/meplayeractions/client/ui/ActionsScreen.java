@@ -14,7 +14,7 @@ public final class ActionsScreen extends Screen {
     private List<ClientRuntime.Action> actions=List.of();
     public ActionsScreen(ClientRuntime runtime){super(Text.literal("玩家模型动作"));this.runtime=runtime;}
     @Override protected void init() {
-        actions=runtime.actions();rows=Math.max(1,Math.min(4,(height-210)/24));
+        actions=runtime.actions();rows=Math.max(1,Math.min(4,(height-234)/24));
         int pageSize=rows*3;page=Math.max(0,Math.min(page,Math.max(0,(actions.size()-1)/pageSize)));
         int panel=Math.min(450,width-24),left=(width-panel)/2,col=(panel-12)/3;
         for(int index=page*pageSize;index<Math.min(actions.size(),(page+1)*pageSize);index++) {
@@ -36,7 +36,11 @@ public final class ActionsScreen extends Screen {
         addDrawableChild(ButtonWidget.builder(selfText(),b->{runtime.options.showSelf=!runtime.options.showSelf;runtime.options.save();b.setMessage(selfText());})
                 .dimensions(left+col+6,bottom,col,20).build());
         addDrawableChild(ButtonWidget.builder(smoothingText(),b->{runtime.options.interpolationTicks=(runtime.options.interpolationTicks+1)%7;
-                    runtime.options.save();b.setMessage(smoothingText());}).dimensions(left+2*(col+6),bottom,col,20).build());
+                    runtime.options.save();b.setMessage(smoothingText());}).dimensions(left+2*(col+6),bottom,col,20).build())
+                .setTooltip(Tooltip.of(Text.literal("仅在开启服务器拖后轨迹时生效；即时跟随使用原版实体的帧间平滑")));
+        bottom+=24;
+        addDrawableChild(ButtonWidget.builder(trailingText(),b->{runtime.options.followServerTimeline=!runtime.options.followServerTimeline;
+                    runtime.options.save();b.setMessage(trailingText());}).dimensions(left,bottom,panel,20).build());
         bottom+=24;
         addDrawableChild(ButtonWidget.builder(Text.literal("本地预览示例"),b->runtime.preview("ysm_01_jk_npc")).dimensions(left,bottom,col,20).build());
         addDrawableChild(ButtonWidget.builder(Text.literal("结束预览"),b->runtime.preview("off")).dimensions(left+col+6,bottom,col,20).build());
@@ -44,7 +48,8 @@ public final class ActionsScreen extends Screen {
     }
     private Text enabledText(){return Text.literal("本地渲染："+(runtime.options.enabled?"开启":"关闭"));}
     private Text selfText(){return Text.literal("本人模型："+(runtime.options.showSelf?"显示":"隐藏"));}
-    private Text smoothingText(){return Text.literal("插值缓冲："+runtime.options.interpolationTicks+" tick");}
+    private Text smoothingText(){return Text.literal("拖后缓冲："+runtime.options.interpolationTicks+" tick");}
+    private Text trailingText(){return Text.literal("坐标跟随："+(runtime.options.followServerTimeline?"服务器拖后轨迹（点击关闭）":"客户端实体即时跟随（默认）"));}
     @Override public void tick(){if(!runtime.actions().equals(actions))clearAndInit();}
     @Override public void render(DrawContext context,int mouseX,int mouseY,float delta) {
         // Minecraft 1.21.11 applies screen blur before invoking render.

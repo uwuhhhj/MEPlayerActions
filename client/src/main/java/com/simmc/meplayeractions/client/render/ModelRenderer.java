@@ -136,7 +136,8 @@ public final class ModelRenderer {
     }
 
     public record FrameModel(String owner, String hash, int vertices, double minY, double maxY,
-                             float bodyYaw, float appliedYaw, double minX, double maxX, double minZ, double maxZ) { }
+                             float bodyYaw, float appliedYaw, double minX, double maxX, double minZ, double maxZ,
+                             double pivotX, double pivotY, double pivotZ, String motionSource) { }
 
     public static void release(String hash) {
         MinecraftClient client = MinecraftClient.getInstance();
@@ -253,7 +254,8 @@ public final class ModelRenderer {
                 Box geometry = geometryBounds(binding, vertices);
                 modelInfo.add(new FrameModel(binding.owner().toString(), binding.assetHash(), vertices.size(),
                         geometry.minY, geometry.maxY, binding.bodyYaw(), 180 - binding.bodyYaw(),
-                        geometry.minX, geometry.maxX, geometry.minZ, geometry.maxZ));
+                        geometry.minX, geometry.maxX, geometry.minZ, geometry.maxZ,
+                        binding.x(), binding.y(), binding.z(), binding.motionSource()));
             } catch (RuntimeException failure) {
                 activeRuntime.renderFailed(binding.owner(), binding.instance(), binding.assetHash(), failure.toString());
                 LOGGER.warn("Cannot extract model {}: {}", binding.assetHash(), failure.toString());

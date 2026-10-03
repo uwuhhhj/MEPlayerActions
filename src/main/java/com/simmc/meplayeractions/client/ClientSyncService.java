@@ -19,7 +19,7 @@ import java.util.regex.Pattern;
 /** Verified local-render takeover with per-viewer fallback and bounded asset transfers. */
 public final class ClientSyncService implements PluginMessageListener, AutoCloseable {
     public static final String CHANNEL = "meplayeractions:main";
-    public static final int PROTOCOL = 2;
+    public static final int PROTOCOL = 3;
     private static final int HEARTBEAT_TICKS = 20, MAX_TRANSFERS = 2;
     private static final Gson GSON = new GsonBuilder().setStrictness(Strictness.STRICT).create();
     private static final Pattern ANIMATION_NAME = Pattern.compile("[a-zA-Z0-9_.:/-]{1,128}");
@@ -96,7 +96,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     public String status(Player player) {
         if (!running || !configuredEnabled) return "disabled (ME rendering)";
         Session session = sessions.get(player.getUniqueId());
-        return session == null ? "未握手（ME 渲染）" : "local-render v2；客户端 " + session.clientVersion
+        return session == null ? "未握手（ME 渲染）" : "local-render v3；客户端 " + session.clientVersion
                 + "；可见实例 " + session.bindings.size() + "；已确认本地渲染 " + session.leases.size();
     }
     @Override public void onPluginMessageReceived(String channel, Player player, byte[] bytes) {
@@ -237,6 +237,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         state.addProperty("x", snapshot.x()); state.addProperty("y", snapshot.y()); state.addProperty("z", snapshot.z());
         state.addProperty("bodyYaw", snapshot.bodyYaw()); state.addProperty("headYaw", snapshot.headYaw()); state.addProperty("headPitch", snapshot.headPitch());
         state.addProperty("scale", snapshot.scale()); state.addProperty("hidePlayer", snapshot.hidePlayer()); state.addProperty("showSelf", snapshot.showSelf());
+        state.add("motion", motionJson(snapshot.motion()));
         JsonArray layers = new JsonArray();
         for (LayerState layer : snapshot.layers()) {
             JsonObject value = new JsonObject(); value.addProperty("layer", layer.layer()); value.addProperty("animation", layer.animation());
@@ -390,12 +391,37 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     private static JsonObject envelope(String type) { JsonObject object = new JsonObject(); object.addProperty("protocol", PROTOCOL); object.addProperty("type", type); return object; }
     private static long currentTick() { return Integer.toUnsignedLong(Bukkit.getCurrentTick()); }
     private static long tickDistance(long current, long previous) { return (current - previous) & 0xffffffffL; }
+    private static JsonObject motionJson(MotionState motion) {
+        JsonObject value = new JsonObject();
+        JsonArray features = new JsonArray(); motion.features().forEach(features::add); value.add("features", features);
+        JsonArray clips = new JsonArray();
+        for (LayerState clip : motion.clips()) {
+            JsonObject entry = new JsonObject(); entry.addProperty("state", clip.layer()); entry.addProperty("animation", clip.animation());
+            entry.addProperty("speed", clip.speed()); entry.addProperty("loop", clip.loop());
+            entry.addProperty("inTicks", clip.inTicks()); entry.addProperty("outTicks", clip.outTicks()); clips.add(entry);
+        }
+        value.add("clips", clips); value.addProperty("jumpMinTicks", motion.jumpMinTicks());
+        value.addProperty("landingGraceTicks", motion.landingGraceTicks()); value.addProperty("movementThreshold", motion.movementThreshold());
+        value.addProperty("interruptMove", motion.interruptMove()); value.addProperty("interruptPosture", motion.interruptPosture());
+        value.addProperty("flying", motion.flying());
+        value.addProperty("interaction", motion.interaction());
+        value.addProperty("forcedPose", motion.forcedPose());
+        value.addProperty("specialPose", motion.specialPose()); value.addProperty("anchorX", motion.anchorX());
+        value.addProperty("anchorY", motion.anchorY()); value.addProperty("anchorZ", motion.anchorZ()); value.addProperty("anchorYaw", motion.anchorYaw());
+        return value;
+    }
+    /** Immediate client entity presentation is independent of the ME visual-follow history. */
+    public record MotionState(List<String> features, List<LayerState> clips, int jumpMinTicks, int landingGraceTicks,
+                              double movementThreshold, boolean interruptMove, boolean interruptPosture, boolean flying, String interaction, String forcedPose,
+                              String specialPose, double anchorX, double anchorY, double anchorZ, float anchorYaw) {
+        public MotionState { features = List.copyOf(features); clips = List.copyOf(clips); Objects.requireNonNull(specialPose); Objects.requireNonNull(interaction); Objects.requireNonNull(forcedPose); }
+    }
     public record StateSnapshot(UUID owner, UUID instance, String modelId, long sequence, long serverTick, List<LayerState> layers,
             UUID world, double x, double y, double z, double bodyYaw, double headYaw, double headPitch, double scale,
-            boolean hidePlayer, boolean showSelf, List<AnimationInfo> animations, boolean localRenderable) {
+            boolean hidePlayer, boolean showSelf, List<AnimationInfo> animations, boolean localRenderable, MotionState motion) {
         public StateSnapshot {
             Objects.requireNonNull(owner); Objects.requireNonNull(instance); Objects.requireNonNull(modelId); Objects.requireNonNull(world);
-            layers = List.copyOf(layers); animations = List.copyOf(animations);
+            layers = List.copyOf(layers); animations = List.copyOf(animations); Objects.requireNonNull(motion);
             if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z) || !Double.isFinite(bodyYaw) || !Double.isFinite(headYaw)
                     || !Double.isFinite(headPitch) || !Double.isFinite(scale) || scale <= 0) throw new IllegalArgumentException("Invalid visual transform");
         }
