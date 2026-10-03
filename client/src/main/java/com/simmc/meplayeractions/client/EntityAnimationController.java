@@ -26,9 +26,9 @@ public final class EntityAnimationController {
     private String state = "", previousPosture = "", suppressedManual = "";
     private List<Layer> layers = List.of();
     private final Map<String,Layer> handLayers = new LinkedHashMap<>();
-    private final Map<String,String> handKeys = new HashMap<>();
+    private final VanillaYsmAnimations.HandPlayback handPlayback = new VanillaYsmAnimations.HandPlayback();
     private List<String> animationNames = List.of();
-    private VanillaYsmAnimations.Catalog catalog;
+    private VanillaYsmAnimations.Catalog catalog, legacyCatalog;
     private Set<String> pausedControllers = Set.of();
     private String automaticAnimation = "";
 
@@ -40,11 +40,17 @@ public final class EntityAnimationController {
     public void update(long tick, Sample sample, LocalMotionPolicy policy, List<Layer> serverLayers, Collection<String> availableAnimations) {
         if (tick == lastTick) return;
         List<String> names = List.copyOf(availableAnimations);
-        if(catalog==null || !animationNames.equals(names)) { animationNames=names;catalog=new VanillaYsmAnimations.Catalog(names); }
+        if(legacyCatalog==null || !animationNames.equals(names)) { animationNames=names;legacyCatalog=new VanillaYsmAnimations.Catalog(names); }
+        update(tick, sample, policy, serverLayers, legacyCatalog);
+    }
+    public void update(long tick, Sample sample, LocalMotionPolicy policy, List<Layer> serverLayers,
+                       VanillaYsmAnimations.Catalog availableAnimations) {
+        if (tick == lastTick) return;
+        catalog = Objects.requireNonNull(availableAnimations);
         double dx = previous == null ? 0 : sample.x - previous.x, dy = previous == null ? 0 : sample.y - previous.y;
         double dz = previous == null ? 0 : sample.z - previous.z;
         boolean discontinuity = previous == null || tick < lastTick || dx * dx + dy * dy + dz * dz > 16 || tick - lastTick > 40;
-        if (discontinuity) { jumping = false; landed = -1; state = ""; suppressedManual = "";handLayers.clear();handKeys.clear();automaticAnimation=""; }
+        if (discontinuity) { jumping = false; landed = -1; state = ""; suppressedManual = "";handLayers.clear();handPlayback.reset();automaticAnimation=""; }
         boolean moving = !discontinuity && (dx * dx + dz * dz > policy.movementThreshold() * policy.movementThreshold()
                 || (sample.flying || sample.climbing) && Math.abs(dy) > policy.movementThreshold());
         String posture = posture(sample, policy);
@@ -116,11 +122,12 @@ public final class EntityAnimationController {
             pausedControllers=decision.pauseSlots();
             for(var entry:decision.slots().entrySet()) {
                 String slot=entry.getKey();var choice=entry.getValue();
+                handPlayback.observe(slot,choice,sample.vanilla);
                 boolean disabled=slot.equals("player.swing") && (!policy.enabled("swing") || showManual
                         || result.stream().anyMatch(layer->layer.layer().equals("interaction")))
                         || slot.equals("player.use") && showManual;
                 if(disabled || choice.directive()==VanillaYsmAnimations.Directive.STOP) {
-                    handLayers.remove(slot);handKeys.remove(slot);continue;
+                    handLayers.remove(slot);handPlayback.stop(slot);continue;
                 }
                 if(choice.directive()==VanillaYsmAnimations.Directive.PAUSE || choice.directive()==VanillaYsmAnimations.Directive.CONTINUE) {
                     // OpenYSM PAUSE keeps controller time but submits no transforms; the renderer
@@ -128,13 +135,9 @@ public final class EntityAnimationController {
                     Layer retained=handLayers.get(slot);if(retained!=null)result.add(retained);
                     continue;
                 }
-                Layer previousLayer=handLayers.get(slot);String key=choice.eventKey();
-                long started=slot.equals("player.swing")?tick-sample.vanilla.swingTicks()
-                        :slot.equals("player.use")?tick-Math.max(0,sample.vanilla.useTicks()-1L)
-                        :previousLayer!=null && choice.animation().equals(previousLayer.animation()) && key.equals(handKeys.get(slot))
-                        ?previousLayer.startedAtTick():tick;
+                long started=handPlayback.start(slot,choice,sample.vanilla,tick);
                 Layer layer=new Layer(slot,choice.animation(),started,1,choice.loop(),slot.equals("player.swing")?0:2,2);
-                handLayers.put(slot,layer);handKeys.put(slot,key);result.add(layer);
+                handLayers.put(slot,layer);result.add(layer);
             }
         }
         layers = List.copyOf(result); previous = sample; previousPosture = posture; lastTick = tick;

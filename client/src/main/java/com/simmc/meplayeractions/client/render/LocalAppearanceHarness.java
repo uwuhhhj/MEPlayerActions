@@ -9,7 +9,13 @@ import com.simmc.meplayeractions.client.LocalAppearanceSettings;
 import com.simmc.meplayeractions.client.network.ActionPayload;
 import com.simmc.meplayeractions.client.model.YsmFolderModel;
 import com.simmc.meplayeractions.client.model.BbModel;
-import com.simmc.meplayeractions.client.ui.ActionsScreen;
+import com.simmc.meplayeractions.client.model.BuiltinYsmModels;
+import com.simmc.meplayeractions.client.ui.PlayerModelScreen;
+import com.simmc.meplayeractions.client.MEPlayerActionsClient;
+import com.simmc.meplayeractions.client.ClientOptions;
+import com.simmc.meplayeractions.client.WheelPreferences;
+import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+import net.minecraft.client.option.KeyBinding;
 import com.simmc.meplayeractions.client.ui.AnimationWheelScreen;
 import com.simmc.meplayeractions.client.ui.LocalAppearanceScreen;
 import com.simmc.meplayeractions.client.ui.ModelSettingsScreen;
@@ -50,14 +56,52 @@ import java.util.concurrent.CompletableFuture;
 public final class LocalAppearanceHarness {
     private static final Logger LOG = LoggerFactory.getLogger("MEPlayerActions/StandaloneE2E");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    private static final List<String> STAGES = List.of("native", "model", "transform", "first-person", "settings-ui", "gallery-browse-ui",
+    private static final List<String> FULL_STAGES = List.of("native", "model", "transform", "first-person", "settings-ui", "gallery-browse-ui",
             "model-settings-ui", "wheel-ui", "local-actions-ui", "action", "stop", "vehicle-component", "projectile-component", "model-effects", "save-reload", "resource-reload",
             "ui-reload-ui", "disable");
     private static final LocalAppearanceSettings PROFILE = new LocalAppearanceSettings(true, "openysm_default", .65f, .25, .35, -.2);
     private final ClientRuntime runtime;
+    private final String validationProfile = System.getProperty("meplayeractions.standalone.focus", "full");
+    private final boolean interactions = validationProfile.equals("interactions");
+    private final List<String> stages = interactions ? List.of("interaction-ui") : FULL_STAGES;
+    private static final String INTERACTION_MODEL = "local:UI-Interaction-Memory.bbmodel";
+    private static final List<String> INTERACTION_REQUIRED = List.of(
+            "standaloneInteractionJOnlyBinding", "standaloneInteractionJOpensWheel", "standaloneInteractionReferenceWheel",
+            "standaloneInteractionSingleSettings", "standaloneInteractionSettingsOpensModelScreen", "standaloneInteractionSources",
+            "standaloneInteractionReferenceModelScreen", "standaloneInteractionClientGallery", "standaloneInteractionClientModelSettings",
+            "standaloneInteractionAdvancedPreferences", "standaloneInteractionPreferencePersistence", "standaloneInteractionInlineAuthorForms",
+            "standaloneInteractionLocalActionNoServerRequest", "standaloneInteractionWheelMemory", "standaloneInteractionNoServerAuthority",
+            "standaloneInteractionControlsInBounds", "standaloneInteractionCleanup",
+            "standaloneWineFoxTaishoMaidGuiAndWorld", "standaloneWineFoxNewYearGuiAndWorld", "standaloneWineFoxAstronautGuiAndWorld");
+    private static final List<String> WINE_FOX_IDS=List.of(BuiltinYsmModels.TAISHO_MAID_ID,BuiltinYsmModels.NEW_YEAR_ID,BuiltinYsmModels.ASTRONAUT_ID);
+    private static final List<String> WINE_FOX_CHECKS=List.of("standaloneWineFoxTaishoMaidGuiAndWorld","standaloneWineFoxNewYearGuiAndWorld","standaloneWineFoxAstronautGuiAndWorld");
+    private int wineFoxIndex,wineFoxStep,wineFoxWorldSamples,wineFoxContinueAt;
+    private long wineFoxPreviewBaseline,wineFoxFrameBaseline,wineFoxDrawBaseline,wineFoxLastFrame=-1;
+    private String wineFoxHash="",wineFoxInstance="",wineFoxHomeScreenshot="",wineFoxGameScreenshot="";
+    private LocalAppearanceSettings wineFoxDraftProfile;
+    private Map<String,Object> wineFoxSource=Map.of(),wineFoxPreview=Map.of(),wineFoxWorld=Map.of();
+    private boolean wineFoxClassesCurrent;
+    private final List<Map<String,Object>> wineFoxModels=new ArrayList<>(),wineFoxWorldFrames=new ArrayList<>();
+    private static final Map<String,Map<String,Object>> GUI_PREVIEW_SOURCES=new LinkedHashMap<>();
+    private int interactionStep, interactionStepAt;
+    private boolean interactionCompleted, interactionControlsValid = true, interactionCardSelected, interactionHoverSelected;
+    private AnimationWheelScreen interactionFormWheel;
+    private String interactionAuthorGroup = "";
+    private LocalAppearanceSettings interactionOriginalProfile;
+    private WheelPreferences interactionOriginalWheel;
+    private boolean interactionOriginalActionLock, interactionOriginalEnabled, interactionOriginalShowSelf;
+    private Path interactionFixture;
+    private String interactionAction = "", interactionMemorySource = "";
+    private int interactionMemoryPage;
+    private long interactionActionStart;
+    private double interactionOriginalX;
+    private String interactionHomeScreenshot="";
+    private Map<String,Object> interactionHomeEvidence=Map.of();
+
     private final Path output = Path.of(System.getProperty("meplayeractions.e2e.output", "../build/standalone-e2e")).toAbsolutePath();
     private final List<Map<String, Object>> checks = new ArrayList<>(), observations = new ArrayList<>();
     private final List<String> screenshots = new ArrayList<>();
+    private final java.util.Set<String> completedScreenshots=new java.util.HashSet<>();
     private final long startedNanos = System.nanoTime(), startedMillis = System.currentTimeMillis();
     private final Map<String, Object> artifactProof = artifactProof();
     private boolean connecting, configured, finished, captured, savedDisabledReload, savedEnabledReload;
@@ -90,6 +134,7 @@ public final class LocalAppearanceHarness {
     private int previewMainSamples, previewCardSamples, previewMatureSamples;
     private int previewAfterSameSelectionSamples;
     private double previewFirstStart = Double.NaN, previewPreviousAge = -1, previewMaximumAge;
+    private double previewCardFirstStart = Double.NaN, previewCardPreviousAge = -1;
     private boolean galleryDragAttempted, settingsDragAttempted;
     private ModelEffectsHarness effects;
     private boolean effectsScreenshot, effectsChecksMerged;
@@ -114,7 +159,7 @@ public final class LocalAppearanceHarness {
         ticks++;
         try {
             if (System.nanoTime() - startedNanos > 240_000_000_000L) {
-                check("standaloneCompletion", false, "240 second timeout; stage=" + (stage < 0 ? "join" : STAGES.get(stage)));
+                check("standaloneCompletion", false, "240 second timeout; stage=" + (stage < 0 ? "join" : stages.get(stage)));
                 finish(client); return;
             }
             if (!connecting) {
@@ -129,12 +174,17 @@ public final class LocalAppearanceHarness {
             }
             if (client.world == null || client.player == null || client.getNetworkHandler() == null) return;
             client.options.pauseOnLostFocus = false;
-            boolean uiStage = stage >= 0 && STAGES.get(stage).endsWith("-ui");
+            boolean uiStage = stage >= 0 && stages.get(stage).endsWith("-ui");
             if (!uiStage && client.currentScreen != null) client.setScreen(null);
             clearWorldTicks = client.getOverlay() == null ? clearWorldTicks + 1 : 0;
             if (!configured) {
                 if (clearWorldTicks < 15) return;
                 configured = true;
+                if (interactions) {
+                    interactionOriginalProfile = runtime.localAppearance(); interactionOriginalWheel = runtime.wheelPreferences();
+                    interactionOriginalActionLock = runtime.localActionLocked(); interactionOriginalEnabled = runtime.options.enabled;
+                    interactionOriginalShowSelf = runtime.options.showSelf;
+                }
                 if (!runtime.options.enabled) runtime.toggleEnabled();
                 runtime.options.showSelf = true;
                 runtime.disableLocalAppearance();
@@ -153,7 +203,8 @@ public final class LocalAppearanceHarness {
                 finish(client); return;
             }
             stageTicks++;
-            String name = STAGES.get(stage);
+            String name = stages.get(stage);
+            if (interactions) { interactionUiTick(client); return; }
             if (name.equals("save-reload")) savedProfileTick();
             if (name.equals("local-actions-ui")) localActionUiTick(client);
             if (name.equals("gallery-browse-ui")) galleryUiTick(client);
@@ -196,7 +247,7 @@ public final class LocalAppearanceHarness {
                     && previewRendered(settings.previewDiagnostics()) && settingsVerified
                     && singlePreviewEyes(settings.previewDiagnostics(23f / 128, 42f / 128, 25f / 128, 44f / 128));
             if (name.equals("wheel-ui")) ready &= client.currentScreen instanceof AnimationWheelScreen && wheelVerified;
-            if (name.equals("local-actions-ui")) ready &= client.currentScreen instanceof ActionsScreen && uiActionVerified;
+            if (name.equals("local-actions-ui")) ready &= client.currentScreen instanceof PlayerModelScreen && uiActionVerified;
             if (ready && readyAt < 0) readyAt = stageTicks;
             int delay = name.equals("action") ? 12 : 20;
             if (!captured && ready && readyAt >= 0 && stageTicks >= readyAt + delay) capture(client, name, binding, renderer);
@@ -212,21 +263,26 @@ public final class LocalAppearanceHarness {
     }
 
     private void next(MinecraftClient client) throws Exception {
-        if (stage >= 0 && (STAGES.get(stage).equals("vehicle-component") || STAGES.get(stage).equals("projectile-component"))) cleanupComponentFixtures(client);
-        if (stage >= 0 && STAGES.get(stage).equals("model-effects") && effects != null) { effects.close(); mergeEffectsChecks(); }
-        if (stage >= 0 && STAGES.get(stage).endsWith("-ui")) {
+        if (stage >= 0 && (stages.get(stage).equals("vehicle-component") || stages.get(stage).equals("projectile-component"))) cleanupComponentFixtures(client);
+        if (stage >= 0 && stages.get(stage).equals("model-effects") && effects != null) { effects.close(); mergeEffectsChecks(); }
+        if (stage >= 0 && stages.get(stage).endsWith("-ui")) {
             Screen closing = client.currentScreen;
             if (closing != null) closing.close();
-            check(STAGES.get(stage) + "StandaloneCloseCallback", closing != null && client.currentScreen != closing
+            check(stages.get(stage) + "StandaloneCloseCallback", closing != null && client.currentScreen != closing
                     && PROFILE.equals(runtime.localAppearance()), "Actual Screen.close callback; active appearance=" + runtime.localAppearance());
         }
         stage++; stageTicks = 0; readyAt = -1; captured = false;
         uiStartedAt = -1;
-        if (stage >= STAGES.size()) { finish(client); return; }
-        String name = STAGES.get(stage);
+        if (stage >= stages.size()) { finish(client); return; }
+        String name = stages.get(stage);
         LOG.info("Standalone stage {}", name);
         client.setScreen(null);
         switch (name) {
+            case "interaction-ui" -> {
+                prepareInteractionFixture(); runtime.updateLocalAppearance(PROFILE);
+                runtime.updateWheelPreferences(runtime.wheelPreferences().withSource(WheelPreferences.Source.CLIENT).withPage(WheelPreferences.Source.CLIENT, 0));
+                interactionStep = 0; interactionStepAt = 0; requestInteractionWheel(client);
+            }
             case "model" -> {
                 check("standaloneBundledModelsAvailable", runtime.localModels().stream().anyMatch(model -> model.id().equals("openysm_default")), runtime.localModels().toString());
                 runtime.selectLocalModel("openysm_default");
@@ -263,7 +319,7 @@ public final class LocalAppearanceHarness {
             }
             case "local-actions-ui" -> {
                 uiActionPressed = false; uiActionVerified = false; uiActionId = "";
-                client.setScreen(new ActionsScreen(runtime, true, null));
+                client.setScreen(new PlayerModelScreen(runtime, null));
             }
             case "action" -> check("standaloneLocalActionAccepted", runtime.playLocal("extra1"), runtime.localActions().toString());
             case "stop" -> runtime.stopLocal();
@@ -282,6 +338,726 @@ public final class LocalAppearanceHarness {
             default -> { }
         }
     }
+    /** New entry/source/remembered UI acceptance only; historical asset and renderer stages stay above. */
+    private void interactionUiTick(MinecraftClient client) throws Exception {
+        if (stageTicks > 900) { check("standaloneInteractionCompletion", false, "UI step timeout=" + interactionStep
+                + "; Wine index/step="+wineFoxIndex+"/"+wineFoxStep+"; screen="+(client.currentScreen==null?"world":client.currentScreen.getClass().getName())
+                + "; preview="+(client.currentScreen instanceof PlayerModelScreen hub?hub.previewDiagnostics():Map.of())); finish(client); return; }
+        if (stageTicks - interactionStepAt < 4) return;
+        Screen current = client.currentScreen;
+        if (current != null) interactionControlsValid &= interactionControlsInBounds(client, current);
+        switch (interactionStep) {
+            case 0 -> {
+                if (!(current instanceof AnimationWheelScreen wheel) || own(client) == null || !runtime.localModelProfile().isYsm()
+                        || diagnosticNumber(wheel.diagnostics(), "emittedVertices") <= 0) return;
+                var keys = java.util.Arrays.stream(client.options.allKeys).filter(key -> key.getId().startsWith("key.meplayeractions.")).toList();
+                check("standaloneInteractionJOnlyBinding", keys.size() == 1 && keys.getFirst() == MEPlayerActionsClient.actionWheelKey
+                        && "key.meplayeractions.action_wheel".equals(keys.getFirst().getId())
+                        && KeyBindingHelper.getBoundKeyOf(keys.getFirst()).getCode() == GLFW.GLFW_KEY_J,
+                        "Actual registered bindings=" + keys.stream().map(key -> key.getId() + ":" + KeyBindingHelper.getBoundKeyOf(key).getCode()).toList());
+                check("standaloneInteractionJOpensWheel", number(wheel.diagnostics(), "releaseKey") == GLFW.GLFW_KEY_J,
+                        "KeyBinding.onKeyPressed drove the registered END_CLIENT_TICK route, not Screen construction");
+                check("standaloneInteractionReferenceWheel", referenceWheel(wheel.diagnostics()), "Actual reference polygon wheel=" + wheel.diagnostics());
+                var controls = (List<?>) wheel.diagnostics().get("controls");
+                check("standaloneInteractionSingleSettings", controls.stream().filter(Map.class::isInstance).map(Map.class::cast)
+                        .filter(row -> "settings".equals(row.get("id"))).count() == 1
+                        && Boolean.FALSE.equals(wheel.diagnostics().get("scopeButtonsVisible"))
+                        && !wheel.children().stream().filter(ButtonWidget.class::isInstance).map(ButtonWidget.class::cast)
+                        .anyMatch(button -> button.getMessage().getString().contains("本地动作") || button.getMessage().getString().contains("服务器动作")),
+                        "One settings gear; source and preferences belong to the model page; controls=" + controls);
+                interactionObservation(client, "j-wheel", wheel.diagnostics(), true);
+                if (!interactionPress(client, wheel, label -> label.equals("⚙"))) throw new IllegalStateException("Wheel settings callback missing");
+                advanceInteraction();
+            }
+            case 1 -> {
+                if (!(current instanceof PlayerModelScreen hub)) return;
+                var diagnostics = hub.diagnostics();
+                if (!(diagnostics.get("leftPreview") instanceof Map<?, ?> preview) || !Boolean.TRUE.equals(preview.get("drawn"))) return;
+                Map<String,Object> source=guiPreviewSource(PROFILE.modelId());
+                Map<String,Object> contexts=nativePreviewContextProof(client,nativePreviewDiagnostics(hub,PROFILE.modelId()),String.valueOf(preview.get("key")),source);
+                if(!Boolean.TRUE.equals(contexts.get("passed")))return;
+                if(interactionHomeScreenshot.isEmpty()) {
+                    var evidence=new LinkedHashMap<String,Object>(diagnostics);evidence.put("nativePreviewSource",source);evidence.put("nativeContextProof",contexts);
+                    evidence.put("scaledWidth",client.getWindow().getScaledWidth());evidence.put("scaledHeight",client.getWindow().getScaledHeight());
+                    evidence.put("windowScaleFactor",client.getWindow().getScaleFactor());
+                    evidence.put("framebufferWidth",client.getWindow().getFramebufferWidth());evidence.put("framebufferHeight",client.getWindow().getFramebufferHeight());
+                    interactionHomeEvidence=evidence;interactionObservation(client,"model-home",evidence,true);interactionHomeScreenshot=screenshots.getLast();return;
+                }
+                @SuppressWarnings("unchecked") Map<String,Object> capturedContext=(Map<String,Object>)interactionHomeEvidence.get("nativeContextProof");
+                if(!completedScreenshots.contains(interactionHomeScreenshot))return;
+                @SuppressWarnings("unchecked") Map<String,Object> pixels=interactionHomeEvidence.get("defaultVisibilityPixels") instanceof Map<?,?> cached && cached.containsKey("passed")
+                        ?(Map<String,Object>)cached:defaultPngVisibilityProof(output.resolve(interactionHomeScreenshot),capturedContext,
+                        ((Number)interactionHomeEvidence.get("scaledWidth")).intValue(),((Number)interactionHomeEvidence.get("scaledHeight")).intValue(),
+                        ((Number)interactionHomeEvidence.get("windowScaleFactor")).intValue(),((Number)interactionHomeEvidence.get("framebufferWidth")).intValue(),
+                        ((Number)interactionHomeEvidence.get("framebufferHeight")).intValue());
+                interactionHomeEvidence.put("defaultVisibilityPixels",pixels);
+                if(!Boolean.TRUE.equals(pixels.get("passed")))return;
+                check("standaloneInteractionSettingsOpensModelScreen", "client".equals(diagnostics.get("mode")) && Boolean.TRUE.equals(diagnostics.get("localModelControlsVisible")),
+                        "Actual wheel settings gear opens unified client model page=" + diagnostics);
+                check("standaloneInteractionReferenceModelScreen", referenceModelScreen(hub, diagnostics) && Boolean.TRUE.equals(contexts.get("passed")),
+                        "Actual source tabs/search/cards, depth-rendered owner/card cameras, unclipped head and real PNG white-eye pixels=" + interactionHomeEvidence);
+                if (!interactionPress(client, hub, label -> label.startsWith("服务器下发"))) throw new IllegalStateException("Server source tab missing");
+                advanceInteraction();
+            }
+            case 2 -> {
+                if (!(current instanceof PlayerModelScreen hub)) return;
+                var diagnostics = hub.diagnostics();
+                check("standaloneInteractionSources", "server".equals(diagnostics.get("mode")) && Boolean.FALSE.equals(diagnostics.get("localModelControlsVisible"))
+                        && Boolean.FALSE.equals(diagnostics.get("actionGrid")), "Unavailable server page can be browsed without a private action grid=" + diagnostics);
+                check("standaloneInteractionNoServerAuthority", !runtime.serverBridgeConnected() && !runtime.hasOwnServerDisguise()
+                        && runtime.requestPacketsSent() == requestBaseline && !ClientPlayNetworking.canSend(ActionPayload.ID),
+                        "Actual server-page callback grants no server model, transport or request capability");
+                interactionObservation(client, "unavailable-server-page", diagnostics, true);
+                if (!interactionPress(client, hub, label -> label.startsWith("客户端"))) throw new IllegalStateException("Client source tab missing");
+                advanceInteraction();
+            }
+            case 3 -> {
+                if (!(current instanceof PlayerModelScreen hub)) return;
+                if (!Boolean.TRUE.equals(hub.diagnostics().get("advanced"))) {
+                    if (!interactionPress(client, hub, label -> label.startsWith("轮盘选项") || label.equals("⚙"))) throw new IllegalStateException("Advanced options callback missing");
+                    return;
+                }
+                boolean keepCallback = interactionPress(client, hub, label -> label.startsWith("选择后保持轮盘"));
+                if (!runtime.wheelPreferences().keepOpen()) keepCallback &= interactionPress(client, hub, label -> label.startsWith("选择后保持轮盘"));
+                boolean lockCallback = interactionPress(client, hub, label -> label.startsWith("移动时保留本地动作"));
+                check("standaloneInteractionAdvancedPreferences", keepCallback && lockCallback && runtime.wheelPreferences().keepOpen()
+                        && runtime.localActionLocked() != interactionOriginalActionLock && Boolean.TRUE.equals(hub.diagnostics().get("advanced")),
+                        "Actual advanced controls change separate keep-open/action-lock options=" + hub.diagnostics());
+                var persisted = new ClientOptions(runtime.localAppearanceSettingsPath());
+                check("standaloneInteractionPreferencePersistence", persisted.wheelPreferences().equals(runtime.wheelPreferences())
+                        && persisted.localActionLocked == runtime.localActionLocked(), "Fresh Options read of actual saved settings=" + persisted.wheelPreferences());
+                interactionObservation(client, "advanced-options", hub.diagnostics(), true); hub.close(); advanceInteraction();
+            }
+            case 4 -> {
+                if (!(current instanceof AnimationWheelScreen wheel)) return;
+                var slots = (List<?>) wheel.diagnostics().get("configSlots");
+                var gear = slots.stream().filter(Map.class::isInstance).map(Map.class::cast).findFirst().orElse(null);
+                if (gear == null) throw new IllegalStateException("Default author configuration gear missing");
+                interactionFormWheel = wheel; interactionAuthorGroup = String.valueOf(gear.get("group")).replaceFirst("^#", "");
+                wheel.mouseMoved(((Number) gear.get("x")).doubleValue(), ((Number) gear.get("y")).doubleValue());
+                wheel.mouseClicked(new Click(((Number) gear.get("x")).doubleValue(), ((Number) gear.get("y")).doubleValue(), new MouseInput(GLFW.GLFW_MOUSE_BUTTON_LEFT, 0)), false);
+                advanceInteraction();
+            }
+            case 5 -> {
+                if (!(current instanceof AnimationWheelScreen wheel)) return;
+                Object panelValue = wheel.diagnostics().get("formPanel");
+                Map<?, ?> panel = panelValue instanceof Map<?, ?> value ? value : Map.of();
+                check("standaloneInteractionInlineAuthorForms", Boolean.TRUE.equals(panel.get("visible"))
+                        && panel.get("forms") instanceof List<?> forms && !forms.isEmpty()
+                        && forms.stream().anyMatch(value -> value instanceof Map<?, ?> form && form.get("controls") instanceof List<?> controls
+                            && controls.stream().anyMatch(item -> item instanceof Map<?, ?> control && Boolean.TRUE.equals(control.get("visible")) && Boolean.TRUE.equals(control.get("active"))))
+                        && current == interactionFormWheel && interactionAuthorGroup.equals(String.valueOf(panel.get("group")).replaceFirst("^#", ""))
+                        && runtime.requestPacketsSent() == requestBaseline,
+                        "Actual authored gear opens forms on the same roulette screen=" + panel);
+                interactionObservation(client, "inline-author-forms", wheel.diagnostics(), true);
+                var action = interactionActions(wheel).stream().filter(row -> "extra1".equals(row.get("id"))).findFirst().orElseThrow();
+                interactionAction = "extra1"; wheel.beginHoldSelection();
+                wheel.mouseMoved(((Number) action.get("x")).doubleValue(), ((Number) action.get("y")).doubleValue());
+                interactionHoverSelected = number(wheel.diagnostics(), "hovered") == number(action, "slot");
+                wheel.keyPressed(new KeyInput(GLFW.GLFW_KEY_1 + number(action, "slot"), 0, 0)); advanceInteraction();
+            }
+            case 6 -> {
+                if (!(current instanceof AnimationWheelScreen wheel)) return;
+                var binding = own(client);
+                boolean manual = binding != null && binding.layers().stream().anyMatch(layer -> layer.layer().equals("manual") && layer.animation().equals(interactionAction));
+                interactionActionStart = binding == null ? -1 : binding.layers().stream().filter(layer -> layer.layer().equals("manual") && layer.animation().equals(interactionAction)).mapToLong(layer -> layer.startedAtTick()).findFirst().orElse(-1);
+                wheel.keyReleased(new KeyInput(GLFW.GLFW_KEY_J, 0, 0)); wheel.keyReleased(new KeyInput(GLFW.GLFW_KEY_J, 0, 0));
+                check("standaloneInteractionLocalActionNoServerRequest", manual && interactionHoverSelected && interactionActionStart >= 0 && runtime.requestPacketsSent() == requestBaseline
+                        && client.currentScreen == wheel && runtime.wheelPreferences().keepOpen() && Boolean.TRUE.equals(wheel.diagnostics().get("releaseConsumed")), "Actual numeric callback selects local extra1 without server requests; release is consumed");
+                interactionObservation(client, "local-numeric-action", wheel.diagnostics(), true);
+                wheel.close(); requestInteractionWheel(client); advanceInteraction();
+            }
+            case 7 -> {
+                if (!(current instanceof AnimationWheelScreen wheel)) return;
+                if (!interactionPress(client, wheel, label -> label.equals("⚙"))) throw new IllegalStateException("Reopened wheel settings missing");
+                advanceInteraction();
+            }
+            case 8 -> {
+                if (!(current instanceof PlayerModelScreen hub)) return;
+                if (!interactionCardSelected) {
+                    var search = hub.children().stream().filter(TextFieldWidget.class::isInstance).map(TextFieldWidget.class::cast).findFirst().orElse(null);
+                    if (search == null) throw new IllegalStateException("Unified gallery search missing");
+                    search.setText("UI-Interaction-Memory");
+                    interactionCardSelected = interactionPress(client, hub, label -> label.contains("UI-Interaction-Memory"));
+                    if (!interactionCardSelected) return;
+                }
+                if (!interactionPress(client, hub, label -> label.equals("使用模型"))) return;
+                advanceInteraction();
+            }
+            case 9 -> {
+                if (!(current instanceof PlayerModelScreen hub) || !INTERACTION_MODEL.equals(runtime.localAppearance().modelId()) || own(client) == null) return;
+                check("standaloneInteractionClientGallery", interactionCardSelected && runtime.localAppearance().enabled()
+                        && runtime.requestPacketsSent() == requestBaseline, "Actual search/card/use callbacks selected the disposable multi-page model=" + runtime.localAppearance());
+                interactionObservation(client, "gallery-use-model", hub.diagnostics(), true);
+                if (!interactionPress(client, hub, label -> label.equals("设置") || label.startsWith("详情") || label.startsWith("外观设置"))) throw new IllegalStateException("Selected-model detail settings missing");
+                advanceInteraction();
+            }
+            case 10 -> {
+                if (!(current instanceof ModelSettingsScreen settings)) return;
+                var field = settings.children().stream().filter(TextFieldWidget.class::isInstance).map(TextFieldWidget.class::cast)
+                        .filter(widget -> widget.getMessage().getString().equals("位置 X")).findFirst().orElseThrow();
+                interactionOriginalX = runtime.localAppearance().offsetX(); field.setText(Double.toString(interactionOriginalX + .125));
+                boolean saved = interactionPress(client, settings, label -> label.equals("保存"));
+                check("standaloneInteractionClientModelSettings", saved && INTERACTION_MODEL.equals(settings.selectedModelId())
+                        && Math.abs(runtime.localAppearance().offsetX() - interactionOriginalX - .125) < .000001
+                        && runtime.requestPacketsSent() == requestBaseline, "Actual selected-model detail X field/save callback is private=" + runtime.localAppearance());
+                field.setText(Double.toString(interactionOriginalX)); interactionPress(client, settings, label -> label.equals("保存"));
+                interactionObservation(client, "model-detail-settings", Map.of("selectedModelId", settings.selectedModelId(), "profile", runtime.localAppearance()), true);
+                settings.close(); advanceInteraction();
+            }
+            case 11 -> {
+                if (!(current instanceof PlayerModelScreen hub)) return;
+                hub.close(); advanceInteraction();
+            }
+            case 12 -> {
+                if (!(current instanceof AnimationWheelScreen wheel) || number(wheel.diagnostics(), "pageCount") < 2) return;
+                wheel.keyPressed(new KeyInput(GLFW.GLFW_KEY_RIGHT, 0, 0));
+                interactionMemoryPage = number(wheel.diagnostics(), "page"); interactionMemorySource = String.valueOf(wheel.diagnostics().get("source"));
+                interactionObservation(client, "wheel-next-page", wheel.diagnostics(), true);
+                wheel.close(); requestInteractionWheel(client); advanceInteraction();
+            }
+            case 13 -> {
+                if (!(current instanceof AnimationWheelScreen wheel)) return;
+                var persisted = new ClientOptions(runtime.localAppearanceSettingsPath());
+                check("standaloneInteractionWheelMemory", interactionMemoryPage > 0 && number(wheel.diagnostics(), "page") == interactionMemoryPage
+                        && interactionMemorySource.equals(wheel.diagnostics().get("source")) && "CLIENT".equals(interactionMemorySource)
+                        && persisted.wheelPreferences().clientPage() == interactionMemoryPage && persisted.wheelPreferences().keepOpen()
+                        && Boolean.TRUE.equals(wheel.diagnostics().get("keepOpen")) && persisted.localActionLocked == runtime.localActionLocked(),
+                        "Real next-page callback + close + registered J reopen restore nonzero source/page/preferences=" + wheel.diagnostics());
+                interactionObservation(client, "wheel-memory-reopen", wheel.diagnostics(), true);
+                if(!interactionCoordinatePress(wheel,button->button.getMessage().getString().equals("⚙")))return;
+                advanceInteraction();
+            }
+            case 14 -> {
+                if(!wineFoxUiTick(client))return;
+                check("standaloneInteractionControlsInBounds", interactionControlsValid, "Visible initialized controls stayed within the actual scaled window throughout the new flow, including all three WineFox selections");
+                interactionCompleted=true;finish(client);
+            }
+            default -> throw new IllegalStateException("Unknown interaction UI step=" + interactionStep);
+        }
+    }
+    private void advanceInteraction() { interactionStep++; interactionStepAt = stageTicks; }
+    private void requestInteractionWheel(MinecraftClient client) {
+        client.setScreen(null);
+        KeyBinding.onKeyPressed(KeyBindingHelper.getBoundKeyOf(MEPlayerActionsClient.actionWheelKey));
+    }
+    private static boolean interactionCoordinateClick(Screen screen,double x,double y) {
+        if(!Double.isFinite(x)||!Double.isFinite(y))return false;
+        screen.mouseMoved(x,y);var click=new Click(x,y,new MouseInput(GLFW.GLFW_MOUSE_BUTTON_LEFT,0));
+        boolean accepted=screen.mouseClicked(click,false);screen.mouseReleased(click);return accepted;
+    }
+    private static boolean interactionCoordinatePress(Screen screen,java.util.function.Predicate<ButtonWidget> predicate) {
+        var button=screen.children().stream().filter(ButtonWidget.class::isInstance).map(ButtonWidget.class::cast)
+                .filter(widget->widget.visible && widget.active && predicate.test(widget)).findFirst().orElse(null);
+        return button!=null && interactionCoordinateClick(screen,button.getX()+button.getWidth()/2d,button.getY()+button.getHeight()/2d);
+    }
+    private static Map<String,Object> classJarOrigin(Class<?> type) throws Exception {
+        var location=type.getProtectionDomain().getCodeSource().getLocation();Path path=Path.of(location.toURI()).toAbsolutePath().normalize();
+        boolean jar=Files.isRegularFile(path) && path.getFileName().toString().endsWith(".jar");
+        return Map.of("class",type.getName(),"location",location.toString(),"path",path.toString(),"fromJar",jar,
+                "sha256",jar?HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path))):"");
+    }
+    /** Read the author's actual declaration and clip from the loaded JAR, independent of GUI labels. */
+    static Map<String,Object> guiPreviewSource(String id) throws Exception {
+        if(GUI_PREVIEW_SOURCES.containsKey(id))return GUI_PREVIEW_SOURCES.get(id);
+        var registered=BuiltinYsmModels.find(id).orElseThrow();String manifestPath=registered.resourceRoot()+"ysm.json";
+        byte[] manifestBytes=registeredResource(manifestPath);
+        var manifest=JsonParser.parseString(new String(manifestBytes,StandardCharsets.UTF_8)).getAsJsonObject();
+        var properties=manifest.getAsJsonObject("properties");
+        String animation=properties.has("preview_animation")?properties.get("preview_animation").getAsString():"";
+        String animationPath=registered.resourceRoot()+manifest.getAsJsonObject("files").getAsJsonObject("player")
+                .getAsJsonObject("animation").get("main").getAsString();
+        byte[] animationBytes=registeredResource(animationPath);
+        var clips=JsonParser.parseString(new String(animationBytes,StandardCharsets.UTF_8)).getAsJsonObject().getAsJsonObject("animations");
+        var clip=clips.has(animation)?clips.getAsJsonObject(animation):new JsonObject();
+        String loop=!clip.has("loop")?"ONCE":clip.get("loop").isJsonPrimitive() && clip.get("loop").getAsJsonPrimitive().isBoolean()
+                ?clip.get("loop").getAsBoolean()?"LOOP":"ONCE":"hold_on_last_frame".equals(clip.get("loop").getAsString())?"HOLD":"ONCE";
+        var source=new LinkedHashMap<String,Object>();source.put("modelId",id);source.put("manifest",manifestPath);
+        source.put("manifestSha256",HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(manifestBytes)));
+        source.put("properties",properties.deepCopy());source.put("animationResource",animationPath);
+        source.put("animationSha256",HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(animationBytes)));
+        source.put("animation",animation);source.put("loop",loop);source.put("length",clip.has("animation_length")?clip.get("animation_length").getAsDouble():0d);
+        source.put("clipPresent",clips.has(animation));source.put("disableCardRotation",properties.has("disable_preview_rotation") && properties.get("disable_preview_rotation").getAsBoolean());
+        source.put("background",properties.has("gui_background")?properties.get("gui_background").getAsString():"");
+        source.put("foreground",properties.has("gui_foreground")?properties.get("gui_foreground").getAsString():"");
+        double authorHeight=properties.has("height_scale")?properties.get("height_scale").getAsDouble():.7;
+        double authorWidth=properties.has("width_scale")?properties.get("width_scale").getAsDouble():.7;
+        source.put("shape",Map.of("heightScalePropertyPresent",properties.has("height_scale"),"widthScalePropertyPresent",properties.has("width_scale"),
+                "heightScale",authorHeight,"widthScale",authorWidth,"modelScale",List.of(authorHeight,authorWidth,authorHeight),"initialYOffset",.01));
+        if(id.equals(PROFILE.modelId()))source.put("defaultVisual",defaultVisualSource(registered.resourceRoot(),manifest,clips));
+        Map<String,Object> frozen=Map.copyOf(source);GUI_PREVIEW_SOURCES.put(id,frozen);return frozen;
+    }
+    private static Map<String,Object> defaultVisualSource(String root,JsonObject manifest,JsonObject animations) throws Exception {
+        String geometryPath=root+manifest.getAsJsonObject("files").getAsJsonObject("player").getAsJsonObject("model").get("main").getAsString();
+        byte[] geometryBytes=registeredResource(geometryPath);
+        var geometry=JsonParser.parseString(new String(geometryBytes,StandardCharsets.UTF_8)).getAsJsonObject().getAsJsonArray("minecraft:geometry").get(0).getAsJsonObject();
+        int width=geometry.getAsJsonObject("description").get("texture_width").getAsInt(),height=geometry.getAsJsonObject("description").get("texture_height").getAsInt();
+        var bounds=new LinkedHashMap<String,List<Double>>();List<List<Double>> headBounds=new ArrayList<>();double openAfter=0;
+        for(var value:geometry.getAsJsonArray("bones")) {
+            var bone=value.getAsJsonObject();String name=bone.get("name").getAsString();
+            if(!List.of("Head","RightEyelid","LeftEyelid").contains(name))continue;
+            var face=bone.getAsJsonArray("cubes").get(0).getAsJsonObject().getAsJsonObject("uv").getAsJsonObject("north");
+            var uv=face.getAsJsonArray("uv");var size=face.getAsJsonArray("uv_size");
+            bounds.put(name,List.of(uv.get(0).getAsDouble(),uv.get(1).getAsDouble(),uv.get(0).getAsDouble()+size.get(0).getAsDouble(),uv.get(1).getAsDouble()+size.get(1).getAsDouble()));
+            if(name.equals("Head"))for(var entry:bone.getAsJsonArray("cubes").get(0).getAsJsonObject().getAsJsonObject("uv").entrySet()) {
+                var headUv=entry.getValue().getAsJsonObject().getAsJsonArray("uv");var headSize=entry.getValue().getAsJsonObject().getAsJsonArray("uv_size");
+                double u=headUv.get(0).getAsDouble(),v=headUv.get(1).getAsDouble(),du=headSize.get(0).getAsDouble(),dv=headSize.get(1).getAsDouble();
+                headBounds.add(List.of(Math.min(u,u+du),Math.min(v,v+dv),Math.max(u,u+du),Math.max(v,v+dv)));
+            }
+            if(!name.equals("Head")) {
+                var scales=animations.getAsJsonObject("pre_parallel1").getAsJsonObject("bones").getAsJsonObject(name).getAsJsonObject("scale");
+                for(var entry:scales.entrySet()) {
+                    var keyframe=entry.getValue().getAsJsonObject();
+                    if(keyframe.getAsJsonArray("post").get(1).getAsDouble()==1)openAfter=Math.max(openAfter,Double.parseDouble(entry.getKey())*20);
+                }
+            }
+        }
+        String texturePath=root+manifest.getAsJsonObject("files").getAsJsonObject("player").getAsJsonArray("texture").get(0).getAsString();
+        byte[] textureBytes=registeredResource(texturePath);var texture=javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(textureBytes));
+        var eye=bounds.get("RightEyelid");List<Integer> white=new ArrayList<>();
+        for(int y=eye.get(1).intValue();y<eye.get(3);y++)for(int x=eye.get(0).intValue();x<eye.get(2);x++)white.add(texture.getRGB(x,y));
+        var proof=new LinkedHashMap<String,Object>();proof.put("geometry",geometryPath);proof.put("geometrySha256",HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(geometryBytes)));
+        proof.put("texture",texturePath);proof.put("textureSha256",HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(textureBytes)));
+        proof.put("textureWidth",width);proof.put("textureHeight",height);proof.put("frontUvPixels",bounds);proof.put("whiteSourcePixels",white);
+        proof.put("headUvPixels",headBounds);
+        proof.put("blinkAnimation","pre_parallel1");proof.put("blinkCycleTicks",animations.getAsJsonObject("pre_parallel1").get("animation_length").getAsDouble()*20);
+        proof.put("blinkSafeOpenStartTicks",Math.ceil(openAfter)+2);proof.put("blinkSafeEndMarginTicks",3);return proof;
+    }
+    private static byte[] registeredResource(String path) throws Exception {
+        try(var input=BuiltinYsmModels.class.getResourceAsStream(path)) {
+            if(input==null)throw new IllegalStateException("Missing registered GUI source: "+path);
+            byte[] raw=input.readNBytes(8*1024*1024+1);
+            if(raw.length==0 || raw.length>8*1024*1024)throw new IllegalStateException("Invalid registered GUI source size: "+path);
+            return raw;
+        }
+    }
+    private static boolean nearDiagnostic(Map<?,?> draw,String name,double expected) {
+        return Double.isFinite(diagnosticNumber(draw,name)) && Math.abs(diagnosticNumber(draw,name)-expected)<.00001;
+    }
+    private static boolean matureNativeDraw(Map<?,?> draw) {
+        return diagnosticNumber(draw,"vertices")>0 && diagnosticNumber(draw,"quads")>0
+                && diagnosticNumber(draw,"vertices")==diagnosticNumber(draw,"quads")*4
+                && diagnosticNumber(draw,"sampleTick")>=12 && diagnosticNumber(draw,"entryProgress")>=.999
+                && diagnosticNumber(draw,"startCount")==1 && Double.isFinite(diagnosticNumber(draw,"startedAtTick"));
+    }
+    private static boolean nativeScaleAndExecution(Map<?,?> draw,Map<String,Object> source) {
+        if(!(source.get("shape") instanceof Map<?,?> shape) || !(draw.get("modelScale") instanceof Map<?,?> scale)
+                || !(draw.get("nativeBackend") instanceof Map<?,?> backend) || !(draw.get("nativeExecution") instanceof Map<?,?> execution))return false;
+        List<Double> range=diagnosticVector(draw.get("modelVertexDepthRange"),2);
+        return nearDiagnostic(scale,"x",diagnosticNumber(shape,"heightScale")) && nearDiagnostic(scale,"y",diagnosticNumber(shape,"widthScale"))
+                && nearDiagnostic(scale,"z",diagnosticNumber(shape,"heightScale"))
+                && "minecraft-special-gui-offscreen".equals(backend.get("backend"))
+                && "meplayeractions:pipeline/gui_model_native_depth".equals(backend.get("pipeline"))
+                && "minecraft:core/position_tex_color".equals(backend.get("shader")) && "minecraft:core/position_tex_color".equals(backend.get("fragmentShader"))
+                && "LEQUAL_DEPTH_TEST".equals(backend.get("depthTest")) && Boolean.TRUE.equals(backend.get("depthWrite")) && Boolean.TRUE.equals(backend.get("perVertexDepth"))
+                && diagnosticNumber(execution,"renderCount")>0
+                && diagnosticNumber(execution,"emittedVertices")==(diagnosticNumber(draw,"quads")-diagnosticNumber(draw,"decorationQuads"))*4*diagnosticNumber(execution,"renderCount")
+                && Boolean.TRUE.equals(execution.get("colorAttachment")) && Boolean.TRUE.equals(execution.get("depthAttachment"))
+                && "RGBA8".equals(execution.get("colorFormat")) && "DEPTH32".equals(execution.get("depthFormat"))
+                && diagnosticNumber(execution,"targetWidth")>0 && diagnosticNumber(execution,"targetHeight")>0
+                && range.size()==2 && Double.isFinite(range.get(0)) && Double.isFinite(range.get(1)) && range.get(1)>range.get(0);
+    }
+    private static boolean ownerNativeContext(Map<?,?> draw,String animation,double height,double scale) {
+        return "OWNER".equals(draw.get("context")) && Boolean.TRUE.equals(draw.get("nativeCamera"))
+                && "openysm-owner-inventory".equals(draw.get("cameraSource")) && matureNativeDraw(draw)
+                && nearDiagnostic(draw,"displaySize",70) && nearDiagnostic(draw,"pixelsPerBlock",70)
+                && nearDiagnostic(draw,"nativeEntityHeight",height) && nearDiagnostic(draw,"nativeEntityScale",scale)
+                && nearDiagnostic(draw,"anchorY",height/scale*.5+.0625) && Boolean.FALSE.equals(draw.get("rotationDisabled"))
+                && Double.isFinite(diagnosticNumber(draw,"yaw")) && Double.isFinite(diagnosticNumber(draw,"pitch"))
+                && "".equals(draw.get("background")) && "".equals(draw.get("foreground")) && nearDiagnostic(draw,"decorationQuads",0)
+                && draw.get("controllerSlots") instanceof List<?> slots && !slots.isEmpty() && !slots.contains("player.cap")
+                && draw.get("layers") instanceof List<?> layers && !layers.contains(animation);
+    }
+    private static boolean cardNativeContext(Map<?,?> draw,Map<String,Object> source) {
+        boolean locked=Boolean.TRUE.equals(source.get("disableCardRotation"));
+        String animation=String.valueOf(source.get("animation"));
+        int decorations=(String.valueOf(source.get("background")).isEmpty()?0:1)+(String.valueOf(source.get("foreground")).isEmpty()?0:1);
+        List<Map<?,?>> requests=diagnosticRows(draw,"layerRequests");
+        boolean actualCap=requests.size()==1 && "player.cap".equals(requests.getFirst().get("layer"))
+                && animation.equals(requests.getFirst().get("animation")) && source.get("loop").equals(requests.getFirst().get("loop"));
+        return actualCap && nativeScaleAndExecution(draw,source) && "CARD".equals(draw.get("context")) && Boolean.TRUE.equals(draw.get("nativeCamera"))
+                && "openysm-dummy-card".equals(draw.get("cameraSource")) && matureNativeDraw(draw)
+                && nearDiagnostic(draw,"displaySize",30) && nearDiagnostic(draw,"pixelsPerBlock",30)
+                && nearDiagnostic(draw,"nativeEntityHeight",1.8) && nearDiagnostic(draw,"nativeEntityScale",1)
+                && nearDiagnostic(draw,"anchorY",.9+(locked?5.5/30:0))
+                && Boolean.valueOf(locked).equals(draw.get("rotationDisabled"))
+                && nearDiagnostic(draw,"yaw",locked?0:-20) && nearDiagnostic(draw,"pitch",locked?0:-10)
+                && source.get("background").equals(draw.get("background")) && source.get("foreground").equals(draw.get("foreground"))
+                && nearDiagnostic(draw,"decorationQuads",decorations)
+                && List.of("player.cap").equals(draw.get("controllerSlots")) && List.of(animation).equals(draw.get("layers"));
+    }
+    /** Both contexts must be real current submissions; their independent clocks need not be equal. */
+    static Map<String,Object> nativePreviewContextProof(MinecraftClient client,Map<?,?> diagnostics,String key,Map<String,Object> source) {
+        List<Map<?,?>> draws=diagnosticRows(diagnostics,"draws").stream().filter(row->key.equals(row.get("key"))).toList();
+        Map<?,?> owner=draws.stream().filter(row->"OWNER".equals(row.get("context"))).findFirst().orElse(Map.of());
+        Map<?,?> card=draws.stream().filter(row->"CARD".equals(row.get("context"))).findFirst().orElse(Map.of());
+        double height=client.player==null?Double.NaN:client.player.getHeight(),scale=client.player==null?Double.NaN:client.player.getScale();
+        String animation=String.valueOf(source.get("animation"));
+        boolean ownerValid=ownerNativeContext(owner,animation,height,scale) && nativeScaleAndExecution(owner,source),cardValid=cardNativeContext(card,source);
+        Map<String,Object> visibility=source.get("defaultVisual") instanceof Map<?,?> visual?defaultProjectedVisibility(owner,card,visual):Map.of();
+        boolean visualValid=visibility.isEmpty() || Boolean.TRUE.equals(visibility.get("passed"));
+        var proof=new LinkedHashMap<String,Object>();proof.put("passed",Boolean.TRUE.equals(source.get("clipPresent")) && ownerValid && cardValid && visualValid);
+        proof.put("owner",owner);proof.put("card",card);proof.put("ownerValid",ownerValid);proof.put("cardValid",cardValid);
+        proof.put("actualOwnerNativeHeight",height);proof.put("actualOwnerNativeScale",scale);
+        proof.put("sourcePreviewAnimation",animation);proof.put("sourcePreviewAnimationSha256",source.get("animationSha256"));
+        proof.put("sourcePreviewAnimationLoop",source.get("loop"));proof.put("sourcePreviewAnimationLength",source.get("length"));
+        proof.put("independentContexts",!owner.isEmpty() && !card.isEmpty() && owner!=card);
+        proof.put("sourceShape",source.get("shape"));proof.put("actualOwnerPlayerAgeTicks",client.player==null?0:client.player.age);
+        if(!visibility.isEmpty())proof.put("defaultProjectedVisibility",visibility);
+        return proof;
+    }
+    static Map<String,Object> nativePreviewDiagnostics(PlayerModelScreen screen,String id) throws Exception {
+        var source=guiPreviewSource(id);
+        if(!(source.get("defaultVisual") instanceof Map<?,?> visual) || !(visual.get("frontUvPixels") instanceof Map<?,?> regions))return screen.previewDiagnostics();
+        var eye=diagnosticVector(regions.get("RightEyelid"),4);
+        float width=(float)diagnosticNumber(visual,"textureWidth"),height=(float)diagnosticNumber(visual,"textureHeight");
+        Map<String,Object> diagnostics=screen.previewDiagnostics((float)(eye.get(0)/width),(float)(eye.get(1)/height),(float)(eye.get(2)/width),(float)(eye.get(3)/height));
+        List<Map<String,Object>> headDiagnostics=new ArrayList<>();
+        for(Object value:(List<?>)visual.get("headUvPixels")) {
+            var head=diagnosticVector(value,4);
+            headDiagnostics.add(screen.previewDiagnostics((float)(head.get(0)/width),(float)(head.get(1)/height),(float)(head.get(2)/width),(float)(head.get(3)/height)));
+        }
+        List<Map<String,Object>> draws=new ArrayList<>();
+        for(Map<?,?> draw:diagnosticRows(diagnostics,"draws")) {
+            Map<String,Object> copy=new LinkedHashMap<>();draw.forEach((name,value)->copy.put(String.valueOf(name),value));
+            var heads=headDiagnostics.stream().flatMap(query->diagnosticRows(query,"draws").stream()).filter(row->draw.get("key").equals(row.get("key"))
+                    && draw.get("context").equals(row.get("context"))).flatMap(row->diagnosticRows(row,"faces").stream()).distinct().toList();
+            copy.put("headFaces",heads);draws.add(copy);
+        }
+        var result=new LinkedHashMap<String,Object>(diagnostics);result.put("draws",draws);return result;
+    }
+    private static boolean faceMatchesSource(Map<?,?> face,List<Double> bounds,double width,double height) {
+        if(!(face.get("sourceUv") instanceof List<?> uvs) || uvs.size()!=4 || diagnosticVector(face.get("depths"),4).size()!=4)return false;
+        double minU=Double.POSITIVE_INFINITY,minV=Double.POSITIVE_INFINITY,maxU=Double.NEGATIVE_INFINITY,maxV=Double.NEGATIVE_INFINITY;
+        for(Object value:uvs) {
+            var uv=diagnosticVector(value,2);if(uv.isEmpty())return false;
+            minU=Math.min(minU,uv.get(0)*width);maxU=Math.max(maxU,uv.get(0)*width);minV=Math.min(minV,uv.get(1)*height);maxV=Math.max(maxV,uv.get(1)*height);
+        }
+        return Math.abs(minU-bounds.get(0))<.001 && Math.abs(minV-bounds.get(1))<.001
+                && Math.abs(maxU-bounds.get(2))<.001 && Math.abs(maxV-bounds.get(3))<.001;
+    }
+    private static double projectedFaceArea(Map<?,?> face) {
+        if(!(face.get("points") instanceof List<?> points) || points.size()!=4)return 0;
+        double area=0;
+        for(int index=0;index<4;index++) {
+            var a=diagnosticVector(points.get(index),2);var b=diagnosticVector(points.get((index+1)%4),2);
+            if(a.isEmpty() || b.isEmpty())return 0;
+            area+=a.get(0)*b.get(1)-b.get(0)*a.get(1);
+        }
+        return Math.abs(area)*.5;
+    }
+    private static boolean faceInsideClip(Map<?,?> face,Map<?,?> clip) {
+        if(!(face.get("points") instanceof List<?> points) || points.size()!=4)return false;
+        return points.stream().allMatch(value->{var point=diagnosticVector(value,2);return point.size()==2 && Double.isFinite(point.get(0)) && Double.isFinite(point.get(1))
+                && point.get(0)>=diagnosticNumber(clip,"x") && point.get(0)<=diagnosticNumber(clip,"x")+diagnosticNumber(clip,"width")
+                && point.get(1)>=diagnosticNumber(clip,"y") && point.get(1)<=diagnosticNumber(clip,"y")+diagnosticNumber(clip,"height");});
+    }
+    private static Map<String,Object> defaultProjectedVisibility(Map<?,?> owner,Map<?,?> card,Map<?,?> source) {
+        if(!(source.get("frontUvPixels") instanceof Map<?,?> regions))return Map.of("passed",false);
+        var eyeUv=diagnosticVector(regions.get("RightEyelid"),4);
+        var headUvs=((List<?>)source.get("headUvPixels")).stream().map(value->diagnosticVector(value,4)).toList();
+        List<Map<String,Object>> contexts=new ArrayList<>();
+        for(Map<?,?> draw:List.of(owner,card)) {
+            var eyes=diagnosticRows(draw,"faces").stream().filter(face->faceMatchesSource(face,eyeUv,diagnosticNumber(source,"textureWidth"),diagnosticNumber(source,"textureHeight"))
+                    && projectedFaceArea(face)>.25).toList();
+            var heads=diagnosticRows(draw,"headFaces").stream().filter(face->headUvs.stream().anyMatch(uv->faceMatchesSource(face,uv,diagnosticNumber(source,"textureWidth"),diagnosticNumber(source,"textureHeight")))).toList();
+            Map<?,?> clip=draw.get("clip") instanceof Map<?,?> value?value:Map.of();
+            double age=diagnosticNumber(draw,"sampleTick"),cycle=diagnosticNumber(source,"blinkCycleTicks"),phase=age%cycle;
+            boolean open=Double.isFinite(phase) && phase>=diagnosticNumber(source,"blinkSafeOpenStartTicks") && phase<cycle-diagnosticNumber(source,"blinkSafeEndMarginTicks");
+            boolean contained=eyes.size()==2 && heads.size()==6 && eyes.stream().allMatch(face->faceInsideClip(face,clip)) && heads.stream().allMatch(face->faceInsideClip(face,clip));
+            contexts.add(Map.of("context",String.valueOf(draw.get("context")),"passed",open && contained,"sourceBlinkSafeOpen",open,
+                    "sampleTick",Double.isFinite(age)?age:-1,"blinkPhaseTicks",Double.isFinite(phase)?phase:-1,
+                    "headFullyInsideClip",contained,"eyeFaces",eyes,"headFaces",heads,"clip",clip));
+        }
+        return Map.of("passed",contexts.size()==2 && contexts.stream().allMatch(row->Boolean.TRUE.equals(row.get("passed"))),"contexts",contexts,"source",source);
+    }
+    private static boolean insideProjectedQuad(List<?> points,double x,double y) {
+        double sign=0;
+        for(int i=0;i<4;i++) {
+            var a=diagnosticVector(points.get(i),2);var b=diagnosticVector(points.get((i+1)%4),2);if(a.isEmpty() || b.isEmpty())return false;
+            double cross=(b.get(0)-a.get(0))*(y-a.get(1))-(b.get(1)-a.get(1))*(x-a.get(0));
+            if(Math.abs(cross)>1e-7){if(sign!=0 && Math.signum(cross)!=sign)return false;sign=Math.signum(cross);}
+        }
+        return sign!=0;
+    }
+    /** Read actual framebuffer PNG pixels after the asynchronous screenshot has been written. */
+    static Map<String,Object> defaultPngVisibilityProof(Path path,Map<String,Object> proof,int scaledWidth,int scaledHeight,
+                                                       int windowScaleFactor,int framebufferWidth,int framebufferHeight) throws Exception {
+        if(!Files.isRegularFile(path))return Map.of("pending",true);
+        byte[] bytes=Files.readAllBytes(path);java.awt.image.BufferedImage image;
+        try {image=javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(bytes));}
+        catch(java.io.IOException incomplete){return Map.of("pending",true,"readError",incomplete.toString());}
+        if(image==null)return Map.of("pending",true);
+        if(!(proof.get("defaultProjectedVisibility") instanceof Map<?,?> projected) || !(projected.get("source") instanceof Map<?,?> source)
+                || !(source.get("whiteSourcePixels") instanceof List<?> sourcePixels))return Map.of("passed",false,"reason","Missing original default eye/clip evidence");
+        int minimumSource=sourcePixels.stream().mapToInt(value->{int color=((Number)value).intValue();return Math.min(color>>16&255,Math.min(color>>8&255,color&255));}).min().orElse(255);
+        int threshold=(int)Math.floor(minimumSource*.45),maximumChannelSpread=24;
+        // GuiRenderer projects using framebuffer dimensions / the real integer GUI scale, rather than ceil-scaled window dimensions.
+        boolean dimensionsMatch=windowScaleFactor>0 && image.getWidth()==framebufferWidth && image.getHeight()==framebufferHeight
+                && Math.ceil((double)framebufferWidth/windowScaleFactor)==scaledWidth && Math.ceil((double)framebufferHeight/windowScaleFactor)==scaledHeight;
+        if(!dimensionsMatch)return Map.of("passed",false,"reason","Screenshot framebuffer or GUI scale changed after preview capture");
+        double sx=windowScaleFactor,sy=windowScaleFactor;
+        List<Map<String,Object>> contexts=new ArrayList<>();
+        for(Map<?,?> context:diagnosticRows(projected,"contexts")) {
+            List<Map<String,Object>> eyes=new ArrayList<>();
+            for(Map<?,?> face:diagnosticRows(context,"eyeFaces")) {
+                if(!(face.get("points") instanceof List<?> points) || points.size()!=4)continue;
+                double minX=Double.POSITIVE_INFINITY,minY=Double.POSITIVE_INFINITY,maxX=Double.NEGATIVE_INFINITY,maxY=Double.NEGATIVE_INFINITY;
+                for(Object value:points){var point=diagnosticVector(value,2);minX=Math.min(minX,point.get(0)*sx);maxX=Math.max(maxX,point.get(0)*sx);minY=Math.min(minY,point.get(1)*sy);maxY=Math.max(maxY,point.get(1)*sy);}
+                int tested=0,white=0;List<List<Integer>> samples=new ArrayList<>();
+                for(int y=Math.max(0,(int)Math.floor(minY));y<Math.min(image.getHeight(),(int)Math.ceil(maxY));y++)
+                    for(int x=Math.max(0,(int)Math.floor(minX));x<Math.min(image.getWidth(),(int)Math.ceil(maxX));x++) {
+                        if(!insideProjectedQuad(points,(x+.5)/sx,(y+.5)/sy))continue;
+                        tested++;int color=image.getRGB(x,y),r=color>>16&255,g=color>>8&255,b=color&255;
+                        if(Math.min(r,Math.min(g,b))>=threshold && Math.max(r,Math.max(g,b))-Math.min(r,Math.min(g,b))<=maximumChannelSpread) {
+                            white++;if(samples.size()<16)samples.add(List.of(x,y,color));
+                        }
+                    }
+                eyes.add(Map.of("points",points,"testedPixels",tested,"visibleNeutralEyePixels",white,"pixelSamples",samples));
+            }
+            contexts.add(Map.of("context",context.get("context"),"eyes",eyes,"passed",eyes.size()==2 && eyes.stream().allMatch(row->diagnosticNumber(row,"visibleNeutralEyePixels")>0)));
+        }
+        var result=new LinkedHashMap<String,Object>();result.put("passed",Boolean.TRUE.equals(projected.get("passed")) && contexts.size()==2 && contexts.stream().allMatch(row->Boolean.TRUE.equals(row.get("passed"))));
+        result.put("screenshot",path.toAbsolutePath().toString());result.put("sha256",HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)));
+        result.put("width",image.getWidth());result.put("height",image.getHeight());result.put("scaledWidth",scaledWidth);result.put("scaledHeight",scaledHeight);
+        result.put("windowScaleFactor",windowScaleFactor);result.put("framebufferWidth",framebufferWidth);result.put("framebufferHeight",framebufferHeight);
+        result.put("minimumWhiteChannel",threshold);result.put("maximumWhiteChannelSpread",maximumChannelSpread);result.put("contexts",contexts);return result;
+    }
+    private Map<String,Object> readWineFoxSource(String id) throws Exception {
+        var model=BuiltinYsmModels.find(id).orElseThrow();String path=model.resourceRoot()+"ysm.json";byte[] raw;
+        try(var input=BuiltinYsmModels.class.getResourceAsStream(path)){if(input==null)throw new IllegalStateException("Missing registered WineFox manifest: "+path);raw=input.readAllBytes();}
+        var manifest=JsonParser.parseString(new String(raw,StandardCharsets.UTF_8)).getAsJsonObject();
+        String geometryPath=model.resourceRoot()+manifest.getAsJsonObject("files").getAsJsonObject("player").getAsJsonObject("model").get("main").getAsString();
+        byte[] geometry;try(var input=BuiltinYsmModels.class.getResourceAsStream(geometryPath)){if(input==null)throw new IllegalStateException("Missing authored WineFox geometry: "+geometryPath);geometry=input.readAllBytes();}
+        var main=JsonParser.parseString(new String(geometry,StandardCharsets.UTF_8)).getAsJsonObject().getAsJsonArray("minecraft:geometry").get(0).getAsJsonObject();
+        List<String> bones=main.getAsJsonArray("bones").asList().stream().map(value->value.getAsJsonObject().get("name").getAsString()).distinct().toList();
+        var source=new LinkedHashMap<String,Object>();source.put("resourceRoot",model.resourceRoot());source.put("registryModelId",model.id());source.put("registryLabel",model.label());
+        source.put("manifest",path);source.put("manifestSha256",HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(raw)));
+        source.put("spec",manifest.get("spec").getAsInt());source.put("declaredFiles",manifest.getAsJsonObject("files").deepCopy());
+        source.put("primaryGeometry",geometryPath);source.put("primaryGeometrySha256",HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(geometry)));
+        source.put("primaryBoneNames",bones);source.put("registryClassOrigin",classJarOrigin(BuiltinYsmModels.class));
+        source.put("modelRendererClassOrigin",classJarOrigin(ModelRenderer.class));source.put("expectedClientJarSha256",artifactProof.get("clientArtifactSha256"));
+        source.put("guiPreview",guiPreviewSource(id));source.put("shape",guiPreviewSource(id).get("shape"));return source;
+    }
+    private static List<Map<?,?>> diagnosticRows(Map<?,?> diagnostics,String key) {
+        return diagnostics.get(key) instanceof List<?> values?values.stream().filter(Map.class::isInstance).<Map<?,?>>map(value->(Map<?,?>)value).toList():List.of();
+    }
+    private boolean wineFoxUiTick(MinecraftClient client) throws Exception {
+        String id=WINE_FOX_IDS.get(wineFoxIndex);
+        if(wineFoxStep==0 && client.currentScreen instanceof AnimationWheelScreen wheel) {
+            if(interactionCoordinatePress(wheel,button->button.getMessage().getString().equals("⚙")))return false;
+            return false;
+        }
+        if(wineFoxStep==0 && client.currentScreen instanceof PlayerModelScreen hub) {
+            if(!"client".equals(hub.diagnostics().get("mode")))return false;
+            var search=hub.children().stream().filter(TextFieldWidget.class::isInstance).map(TextFieldWidget.class::cast).findFirst().orElseThrow();
+            if(!search.getText().equals(id))search.setText(id);
+            Map<?,?> card=diagnosticRows(hub.galleryDiagnostics(),"cards").stream().filter(row->id.equals(row.get("modelId"))).findFirst().orElse(Map.of());
+            if(card.isEmpty())return false;
+            wineFoxDraftProfile=runtime.localAppearance();wineFoxPreviewBaseline=(long)diagnosticNumber(hub.previewDiagnostics(),"emittedVertices");
+            if(!interactionCoordinateClick(hub,diagnosticNumber(card,"x")+diagnosticNumber(card,"width")/2,diagnosticNumber(card,"y")+diagnosticNumber(card,"height")/2))return false;
+            if(!id.equals(hub.selectedModelId()))throw new IllegalStateException("Actual WineFox card callback selected another ID");
+            wineFoxSource=readWineFoxSource(id);wineFoxStep=1;return false;
+        }
+        if(wineFoxStep==1 && client.currentScreen instanceof PlayerModelScreen hub) {
+            Map<String,Object> gallery=hub.galleryDiagnostics();Map<String,Object> actual=hub.previewDiagnostics();
+            Map<String,Object> guiSource=guiPreviewSource(id);String prefix=id+":";
+            Map<?,?> draftDraw=diagnosticRows(actual,"draws").stream().filter(row->String.valueOf(row.get("key")).startsWith(prefix)
+                    && cardNativeContext(row,guiSource)).findFirst().orElse(Map.of());
+            if(draftDraw.isEmpty())return false;
+            String key=String.valueOf(draftDraw.get("key"));
+            String hash=key.substring(prefix.length());if(!hash.matches("[a-f0-9]{64}"))return false;
+            Map<?,?> card=diagnosticRows(gallery,"cards").stream().filter(row->id.equals(row.get("modelId"))).findFirst().orElse(Map.of());
+            if(!Boolean.TRUE.equals(card.get("loaded")) || !Boolean.TRUE.equals(card.get("drawn")) || !Boolean.TRUE.equals(card.get("selected"))
+                    || diagnosticNumber(actual,"emittedVertices")<=wineFoxPreviewBaseline || diagnosticNumber(actual,"frameVertices")<=0)return false;
+            if(!wineFoxDraftProfile.equals(runtime.localAppearance()))throw new IllegalStateException("Browsing WineFox card applied a private model before use");
+            var draft=new LinkedHashMap<String,Object>();draft.put("modelId",id);draft.put("hash",hash);draft.put("selectedCard",card);
+            draft.put("actualDraws",List.of(draftDraw));draft.put("profileBeforeUse",wineFoxDraftProfile);draft.put("profileUnchanged",true);
+            draft.put("leftPreviewBeforeUse",gallery.getOrDefault("leftPreview",Map.of()));
+            draft.put("emittedVertices",diagnosticNumber(actual,"emittedVertices"));draft.put("baselineEmittedVertices",wineFoxPreviewBaseline);
+            wineFoxHash=hash;var preview=new LinkedHashMap<String,Object>();preview.put("modelId",id);preview.put("hash",hash);
+            preview.put("draftCallback",true);preview.put("profileBeforeUse",wineFoxDraftProfile);preview.put("draftPreview",draft);wineFoxPreview=preview;
+            Map<String,Object> renderer=ModelRenderer.diagnostics();
+            wineFoxFrameBaseline=(long)diagnosticNumber(renderer,"extractedFrames");wineFoxDrawBaseline=(long)diagnosticNumber(renderer,"drawnBatches");
+            if(!interactionCoordinatePress(hub,button->button.getMessage().getString().equals("使用模型")))return false;
+            wineFoxPreview=new LinkedHashMap<>(wineFoxPreview);wineFoxPreview.put("useCallback",true);
+            wineFoxStep=2;wineFoxWorldSamples=0;wineFoxWorldFrames.clear();wineFoxLastFrame=-1;wineFoxInstance="";
+            hub.close();client.setScreen(null);client.options.setPerspective(Perspective.THIRD_PERSON_FRONT);return false;
+        }
+        if(wineFoxStep==2) {
+            var binding=own(client);Map<String,Object> renderer=ModelRenderer.diagnostics();long frame=(long)diagnosticNumber(renderer,"extractedFrames");
+            Map<?,?> shape=(Map<?,?>)wineFoxSource.get("shape");
+            ModelRenderer.FrameModel body=renderer.get("models") instanceof List<?> values?values.stream().filter(ModelRenderer.FrameModel.class::isInstance).map(ModelRenderer.FrameModel.class::cast)
+                    .filter(value->client.player.getUuidAsString().equals(value.owner()) && wineFoxHash.equals(value.hash()) && "local-self".equals(value.motionSource()) && value.vertices()>0).findFirst().orElse(null):null;
+            boolean ready=client.currentScreen==null && binding!=null && id.equals(runtime.localAppearance().modelId()) && runtime.localAppearance().enabled()
+                    && binding.instance().startsWith("local-self:") && wineFoxHash.equals(binding.assetHash()) && body!=null && frame>wineFoxFrameBaseline
+                    && diagnosticNumber(renderer,"drawnBatches")>wineFoxDrawBaseline && !runtime.serverBridgeConnected() && !runtime.hasOwnServerDisguise()
+                    && runtime.requestPacketsSent()==requestBaseline && body.instance().equals(binding.instance()) && body.nativeYsm()
+                    && Math.abs(body.modelScaleX()-diagnosticNumber(shape,"heightScale"))<.00001
+                    && Math.abs(body.modelScaleY()-diagnosticNumber(shape,"widthScale"))<.00001
+                    && Math.abs(body.modelScaleZ()-diagnosticNumber(shape,"heightScale"))<.00001
+                    && Math.abs(body.bindingScale()-binding.scale())<.00001 && Math.abs(body.initialYOffset()-.01)<.00001;
+            if(!ready){wineFoxWorldSamples=0;return false;}
+            if(wineFoxInstance.isEmpty())wineFoxInstance=binding.instance();
+            if(!wineFoxInstance.equals(binding.instance())){wineFoxWorldSamples=0;return false;}
+            if(frame!=wineFoxLastFrame) {
+                wineFoxLastFrame=frame;wineFoxWorldSamples++;
+                wineFoxWorldFrames.add(Map.of("extractedFrame",frame,"vertices",body.vertices(),"drawnBatches",diagnosticNumber(renderer,"drawnBatches"),
+                        "owner",binding.owner().toString(),"instance",binding.instance(),"hash",binding.assetHash(),"sampleTick",binding.serverTick(),"body",body));
+            }
+            if(wineFoxWorldSamples<3)return false;
+            Map<String,Object> world=new LinkedHashMap<>();world.put("owner",binding.owner().toString());world.put("instance",binding.instance());world.put("hash",binding.assetHash());
+            world.put("extractedFrame",frame);world.put("baselineFrame",wineFoxFrameBaseline);world.put("vertices",body.vertices());
+            world.put("drawnBatches",diagnosticNumber(renderer,"drawnBatches"));world.put("baselineDrawnBatches",wineFoxDrawBaseline);
+            world.put("frames",List.copyOf(wineFoxWorldFrames));world.put("modelRendererClassOrigin",wineFoxSource.get("modelRendererClassOrigin"));
+            world.put("nativeYsm",body.nativeYsm());world.put("sourceShape",shape);world.put("modelScale",Map.of("x",body.modelScaleX(),"y",body.modelScaleY(),"z",body.modelScaleZ()));
+            world.put("bindingScale",body.bindingScale());world.put("initialYOffset",body.initialYOffset());
+            boolean sourceBones=wineFoxSource.get("primaryBoneNames") instanceof List<?> names && names.stream().allMatch(name->binding.model().hasBone(String.valueOf(name)));
+            world.put("primarySourceBonesPresent",sourceBones);
+            Map<?,?> registryOrigin=(Map<?,?>)wineFoxSource.get("registryClassOrigin"),rendererOrigin=(Map<?,?>)wineFoxSource.get("modelRendererClassOrigin");
+            boolean jar=Boolean.TRUE.equals(registryOrigin.get("fromJar")) && Boolean.TRUE.equals(rendererOrigin.get("fromJar"))
+                    && artifactProof.get("clientArtifactSha256").equals(registryOrigin.get("sha256")) && artifactProof.get("clientArtifactSha256").equals(rendererOrigin.get("sha256"));
+            wineFoxWorld=Map.copyOf(world);wineFoxClassesCurrent=jar;
+            interactionObservation(client,"winefox-"+id+"-game",Map.of("modelId",id,"source",wineFoxSource,"assetHash",wineFoxHash,
+                    "draftPreview",wineFoxPreview.get("draftPreview"),"world",wineFoxWorld,"sourceClassesFromTestedJar",jar),true);
+            wineFoxGameScreenshot=screenshots.getLast();wineFoxStep=3;requestInteractionWheel(client);return false;
+        }
+        if(wineFoxStep==3) {
+            if(client.currentScreen instanceof AnimationWheelScreen wheel) {interactionCoordinatePress(wheel,button->button.getMessage().getString().equals("⚙"));return false;}
+            if(client.currentScreen instanceof PlayerModelScreen hub) {
+                var search=hub.children().stream().filter(TextFieldWidget.class::isInstance).map(TextFieldWidget.class::cast).findFirst().orElseThrow();
+                search.setText(id);wineFoxPreviewBaseline=(long)diagnosticNumber(hub.previewDiagnostics(),"emittedVertices");wineFoxStep=4;
+            }
+            return false;
+        }
+        if(wineFoxStep==4 && client.currentScreen instanceof PlayerModelScreen hub) {
+            Map<String,Object> gallery=hub.galleryDiagnostics(),actual=hub.previewDiagnostics();String key=id+":"+wineFoxHash;
+            var binding=own(client);
+            if(binding==null || !wineFoxInstance.equals(binding.instance()) || !wineFoxHash.equals(binding.assetHash())
+                    || !id.equals(runtime.localAppearance().modelId()) || runtime.requestPacketsSent()!=requestBaseline)return false;
+            if(!(gallery.get("leftPreview") instanceof Map<?,?> left) || !id.equals(left.get("modelId")) || !key.equals(left.get("key")) || !Boolean.TRUE.equals(left.get("drawn")))return false;
+            Map<?,?> card=diagnosticRows(gallery,"cards").stream().filter(row->id.equals(row.get("modelId"))).findFirst().orElse(Map.of());
+            Map<String,Object> contexts=nativePreviewContextProof(client,actual,key,guiPreviewSource(id));
+            if(!Boolean.TRUE.equals(contexts.get("passed")) || !Boolean.TRUE.equals(card.get("loaded")) || !Boolean.TRUE.equals(card.get("drawn"))
+                    || !Boolean.TRUE.equals(card.get("selected")) || diagnosticNumber(actual,"emittedVertices")<=wineFoxPreviewBaseline)return false;
+            List<Map<?,?>> draws=diagnosticRows(actual,"draws").stream().filter(row->key.equals(row.get("key")) && matureNativeDraw(row)).toList();
+            var preview=new LinkedHashMap<String,Object>(wineFoxPreview);preview.put("selectedCard",card);preview.put("leftPreview",left);
+            preview.put("vertices",diagnosticNumber(actual,"frameVertices"));preview.put("actualDraws",draws);preview.put("nativeContextProof",contexts);
+            preview.put("emittedVertices",diagnosticNumber(actual,"emittedVertices"));preview.put("baselineEmittedVertices",wineFoxPreviewBaseline);
+            preview.put("ownerCapturedAfterActualUse",true);wineFoxPreview=preview;
+            var evidence=new LinkedHashMap<String,Object>();evidence.put("modelId",id);evidence.put("source",wineFoxSource);evidence.put("assetHash",wineFoxHash);
+            evidence.put("preview",wineFoxPreview);evidence.put("world",wineFoxWorld);evidence.put("sourceClassesFromTestedJar",wineFoxClassesCurrent);
+            interactionObservation(client,"winefox-"+id+"-home",Map.of("modelId",id,"source",wineFoxSource,"preview",wineFoxPreview,"gallery",gallery),true);
+            wineFoxHomeScreenshot=screenshots.getLast();evidence.put("screenshots",List.of(wineFoxHomeScreenshot,wineFoxGameScreenshot));
+            wineFoxModels.add(Map.copyOf(evidence));check(WINE_FOX_CHECKS.get(wineFoxIndex),wineFoxClassesCurrent
+                            && Boolean.TRUE.equals(wineFoxWorld.get("primarySourceBonesPresent")) && Boolean.TRUE.equals(contexts.get("passed")),
+                    "Real CARD draft leaves world unchanged; use callback creates current local body, then J/settings reopens actual OWNER inventory and independent author CARD cap previews: "+evidence);
+            wineFoxStep=5;wineFoxContinueAt=stageTicks;return false;
+        }
+        if(wineFoxStep==5 && stageTicks-wineFoxContinueAt>=4) {
+            if(++wineFoxIndex>=WINE_FOX_IDS.size())return true;
+            wineFoxStep=0;requestInteractionWheel(client);
+        }
+        return false;
+    }
+    private static List<Map<?, ?>> interactionActions(AnimationWheelScreen wheel) {
+        Object entries = wheel.diagnostics().get("actions");
+        return entries instanceof List<?> list ? list.stream().filter(Map.class::isInstance).<Map<?, ?>>map(value -> (Map<?, ?>) value).toList() : List.of();
+    }
+    private static boolean referenceWheel(Map<String,Object> diagnostics) {
+        if (!Boolean.TRUE.equals(diagnostics.get("upstreamRoulette")) || !Boolean.TRUE.equals(diagnostics.get("polygon"))
+                || diagnosticNumber(diagnostics, "emittedVertices") <= 0
+                || !(diagnostics.get("polygons") instanceof List<?> polygons) || polygons.isEmpty() || polygons.size() > 24) return false;
+        for (Object entry : polygons) {
+            if (!(entry instanceof Map<?, ?> polygon) || !(polygon.get("vertices") instanceof List<?> vertices) || vertices.size() != 4) return false;
+            if (vertices.stream().anyMatch(value -> !(value instanceof List<?> point) || point.size() != 2 || point.stream().anyMatch(axis -> !(axis instanceof Number number) || !Double.isFinite(number.doubleValue())))) return false;
+            double area = 0;
+            for (int index = 0; index < 4; index++) {
+                var point = (List<?>) vertices.get(index); var next = (List<?>) vertices.get((index + 1) % 4);
+                area += ((Number) point.get(0)).doubleValue() * ((Number) next.get(1)).doubleValue()
+                        - ((Number) next.get(0)).doubleValue() * ((Number) point.get(1)).doubleValue();
+            }
+            if (Math.abs(area) < 1) return false;
+        }
+        if (!(diagnostics.get("actions") instanceof List<?> actions) || actions.isEmpty() || actions.size() > 8) return false;
+        long drawnActionSlots = polygons.stream().filter(Map.class::isInstance).map(Map.class::cast)
+                .filter(row -> "action".equals(row.get("kind"))).map(row -> row.get("slot")).distinct().count();
+        return drawnActionSlots == actions.size();
+    }
+    private static boolean referenceModelScreen(PlayerModelScreen hub, Map<String,Object> diagnostics) {
+        boolean gallery = Boolean.TRUE.equals(diagnostics.get("galleryLayout")) || Boolean.TRUE.equals(diagnostics.get("upstreamGallery"));
+        var buttons = hub.children().stream().filter(ButtonWidget.class::isInstance).map(ButtonWidget.class::cast).filter(button -> button.visible).toList();
+        boolean sources = buttons.stream().anyMatch(button -> button.getMessage().getString().startsWith("客户端") && button.getWidth() >= 90)
+                && buttons.stream().anyMatch(button -> button.getMessage().getString().startsWith("服务器下发") && button.getWidth() >= 90);
+        boolean actualGallery = diagnostics.get("gallery") instanceof Map<?, ?> evidence
+                && "left-preview/right-search-model-cards".equals(evidence.get("layout"))
+                && "0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85".equals(evidence.get("referenceRevision"))
+                && evidence.get("leftPreview") instanceof Map<?, ?> preview && Boolean.TRUE.equals(preview.get("drawn"))
+                && evidence.get("cards") instanceof List<?> cards && cards.stream().anyMatch(value -> value instanceof Map<?, ?> card && Boolean.TRUE.equals(card.get("drawn")));
+        return gallery && actualGallery && sources && Boolean.FALSE.equals(diagnostics.get("actionGrid"))
+                && hub.children().stream().anyMatch(TextFieldWidget.class::isInstance)
+                && hub.children().stream().anyMatch(widget -> widget.getClass().getSimpleName().equals("ModelCard"));
+    }
+    private static boolean interactionPress(MinecraftClient client, Screen screen, java.util.function.Predicate<String> label) {
+        for (int attempt = 0; attempt < 12; attempt++) {
+            var button = screen.children().stream().filter(ButtonWidget.class::isInstance).map(ButtonWidget.class::cast)
+                    .filter(widget -> widget.active && label.test(widget.getMessage().getString())).findFirst().orElse(null);
+            if (button == null) return false;
+            if (button.visible) { button.onPress(null); return true; }
+            screen.mouseScrolled(client.getWindow().getScaledWidth() / 2d, client.getWindow().getScaledHeight() / 2d, 0, button.getY() > client.getWindow().getScaledHeight() / 2 ? -1 : 1);
+        }
+        return false;
+    }
+    private static boolean interactionControlsInBounds(MinecraftClient client, Screen screen) {
+        int width = client.getWindow().getScaledWidth(), height = client.getWindow().getScaledHeight();
+        return screen.children().stream().filter(ClickableWidget.class::isInstance).map(ClickableWidget.class::cast).filter(widget -> widget.visible)
+                .allMatch(widget -> widget.getWidth() > 0 && widget.getHeight() > 0 && widget.getX() >= 0 && widget.getY() >= 0 && widget.getRight() <= width && widget.getBottom() <= height);
+    }
+    private void interactionObservation(MinecraftClient client, String phase, Map<String,Object> diagnostics, boolean screenshot) throws Exception {
+        observations.add(Map.of("stage", "interaction-ui", "phase", phase, "stageTick", stageTicks, "diagnostics", diagnostics,
+                "profile", runtime.localAppearance(), "requestPacketsSent", runtime.requestPacketsSent()));
+        if (screenshot) saveScreenshot(client, "interaction-" + phase);
+    }
+    private void prepareInteractionFixture() throws Exception {
+        Path game = FabricLoader.getInstance().getGameDir().toAbsolutePath().normalize();
+        Path directory = runtime.localModelDirectory().toAbsolutePath().normalize();
+        if (game.getParent() == null || !game.getParent().getFileName().toString().equals("meplayeractions-standalone-e2e") || !directory.startsWith(game.resolve("config")))
+            throw new IllegalStateException("Interaction fixture requires the disposable standalone clone: " + directory);
+        Files.createDirectories(directory);
+        if (!directory.toRealPath().startsWith(game.resolve("config").toRealPath())) throw new IllegalStateException("Interaction directory escapes clone");
+        JsonObject model = JsonParser.parseString(new String(YsmFolderModel.bundledDefault(), StandardCharsets.UTF_8)).getAsJsonObject();
+        new ArrayList<>(model.keySet()).stream().filter(key -> key.startsWith("ysm_")).forEach(model::remove);
+        var animations = new com.google.gson.JsonArray();
+        for (int index = 0; index < 17; index++) { var clip = new JsonObject(); clip.addProperty("name", String.format(java.util.Locale.ROOT,"memory_%02d",index)); clip.addProperty("length",2); clip.addProperty("loop","loop"); animations.add(clip); }
+        model.add("animations", animations); byte[] bytes = GSON.toJson(model).getBytes(StandardCharsets.UTF_8);
+        Path file = directory.resolve("UI-Interaction-Memory.bbmodel");
+        if (Files.exists(file,java.nio.file.LinkOption.NOFOLLOW_LINKS) && (!Files.isRegularFile(file,java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                || !file.toRealPath().getParent().equals(directory.toRealPath()) || !java.util.Arrays.equals(bytes,Files.readAllBytes(file))))
+            throw new IllegalStateException("Refusing to overwrite unrelated interaction fixture: " + file);
+        Files.write(file,bytes); interactionFixture=file;
+    }
+    private void cleanupInteractions(MinecraftClient client) throws Exception {
+        runtime.stopLocal(); client.setScreen(null);
+        if (interactionOriginalProfile != null) {
+            runtime.updateLocalAppearance(interactionOriginalProfile); runtime.updateWheelPreferences(interactionOriginalWheel);
+            runtime.options.localActionLocked=interactionOriginalActionLock; runtime.options.enabled=interactionOriginalEnabled;
+            runtime.options.showSelf=interactionOriginalShowSelf; runtime.options.save();
+        }
+        if (interactionFixture != null) Files.deleteIfExists(interactionFixture);
+        check("standaloneInteractionCleanup", interactionOriginalProfile != null && interactionOriginalProfile.equals(runtime.localAppearance())
+                && interactionOriginalWheel.equals(runtime.wheelPreferences()) && runtime.options.localActionLocked==interactionOriginalActionLock
+                && runtime.options.enabled==interactionOriginalEnabled && runtime.options.showSelf==interactionOriginalShowSelf
+                && (interactionFixture==null || !Files.exists(interactionFixture)) && runtime.requestPacketsSent()==requestBaseline,
+                "Original saved profile/options restored and only the disposable memory fixture removed");
+    }
+    private Map<String,Object> interactionDelivery() {
+        var relevant=checks.stream().filter(row->INTERACTION_REQUIRED.contains(row.get("name"))).toList();
+        boolean passed=interactionCompleted && INTERACTION_REQUIRED.stream().allMatch(name->relevant.stream().anyMatch(row->name.equals(row.get("name")) && Boolean.TRUE.equals(row.get("passed"))))
+                && relevant.stream().allMatch(row->Boolean.TRUE.equals(row.get("passed")));
+        return Map.of("scope","interactions","passed",passed,"requiredChecks",INTERACTION_REQUIRED,"checks",relevant,"observations",observations,
+                "wineFoxModels",List.copyOf(wineFoxModels));
+    }
+
     private static String uuidNbt(java.util.UUID uuid) {
         long most = uuid.getMostSignificantBits(), least = uuid.getLeastSignificantBits();
         return "[I;" + (int) (most >>> 32) + "," + (int) most + "," + (int) (least >>> 32) + "," + (int) least + "]";
@@ -460,7 +1236,7 @@ public final class LocalAppearanceHarness {
         check("standaloneBuiltinPreviewSourceEvidence", "gui".equals(evidence.get("previewAnimation")) && !animations.has("enter")
                         && converted.animations().containsAll(List.of("gui", "idle", "pre_parallel1")) && sourceBlink
                         && eyeBones.size() == 6 && whiteEyeFaces.size() == 2 && whitePixels && sensitiveEdges,
-                "Real source has gui + idle and a natural 4-second blink; UI entry is a separate transition. Eye white UV must not sample neighbouring transparency/skin: " + evidence);
+                "Real source has gui + idle and a natural 4-second blink; OWNER native layers and CARD cap use independent source clocks. Eye white UV must not sample neighbouring transparency/skin: " + evidence);
     }
 
     private static double diagnosticNumber(Map<?, ?> row, String key) {
@@ -475,7 +1251,8 @@ public final class LocalAppearanceHarness {
         return diagnosticNumber(draw, "width") * diagnosticNumber(draw, "height");
     }
     private static Map<?, ?> mainPreviewDraw(List<Map<?, ?>> draws) {
-        return draws.stream().max(java.util.Comparator.comparingDouble(LocalAppearanceHarness::viewportArea)).orElse(Map.of());
+        return draws.stream().filter(draw->"OWNER".equals(draw.get("context"))).findFirst()
+                .orElseGet(()->draws.stream().max(java.util.Comparator.comparingDouble(LocalAppearanceHarness::viewportArea)).orElse(Map.of()));
     }
     private static List<Double> diagnosticVector(Object value, int size) {
         if (!(value instanceof List<?> vector) || vector.size() != size || vector.stream().anyMatch(item -> !(item instanceof Number))) return List.of();
@@ -529,20 +1306,25 @@ public final class LocalAppearanceHarness {
                 "visibleWhiteEyeFrontQuads", visible, "bothEyesSeparated", bothEyes, "projectedAreas", areas, "centersX", centers);
     }
     private Map<String, Object> authorPreviewProof(Map<?, ?> draw) {
-        boolean fixedCamera = Boolean.TRUE.equals(builtinPreviewAsset.get("disablePreviewRotation"))
-                && Boolean.TRUE.equals(draw.get("rotationDisabled")) && diagnosticNumber(draw, "yaw") == 0 && diagnosticNumber(draw, "pitch") == 0;
+        boolean owner="OWNER".equals(draw.get("context"));
+        Map<String,Object> source;
+        try { source=guiPreviewSource(PROFILE.modelId()); }
+        catch(Exception failure) { return Map.of("fixedAuthorCamera",false,"sourceFlagsMatch",false,"actualBackgroundModelForegroundOrder",false,"error",failure.toString()); }
+        var player=MinecraftClient.getInstance().player;
+        boolean fixedCamera=owner?player!=null && ownerNativeContext(draw,String.valueOf(source.get("animation")),player.getHeight(),player.getScale())
+                :cardNativeContext(draw,source);
         boolean flags = Boolean.FALSE.equals(builtinPreviewAsset.get("guiNoLighting")) && Boolean.FALSE.equals(draw.get("noLighting"));
-        boolean layers = diagnosticNumber(draw, "entryProgress") >= .999 && diagnosticNumber(draw, "decorationQuads") == 2
-                && draw.get("decorations") instanceof List<?> rows && rows.size() == 2;
+        boolean layers = diagnosticNumber(draw, "entryProgress") >= .999 && diagnosticNumber(draw, "decorationQuads") == (owner?0:2)
+                && draw.get("decorations") instanceof List<?> rows && rows.size() == (owner?0:2);
         List<Map<String, Object>> evidence = new ArrayList<>();
         if (draw.get("decorations") instanceof List<?> rows) for (Object value : rows) {
             if (!(value instanceof Map<?, ?> decoration)) { layers = false; continue; }
             String role = String.valueOf(decoration.get("role"));
-            Map<?, ?> source = ((Map<?, ?>) builtinPreviewAsset.getOrDefault("decorations", Map.of())).get(role) instanceof Map<?, ?> found ? found : Map.of();
+            Map<?, ?> decorationSource = ((Map<?, ?>) builtinPreviewAsset.getOrDefault("decorations", Map.of())).get(role) instanceof Map<?, ?> found ? found : Map.of();
             List<Double> atlas = diagnosticVector(decoration.get("atlas"), 6);
-            boolean valid = source.get("path") != null && source.get("path").equals(draw.get(role))
-                    && atlas.size() == 6 && atlas.get(2) == ((Number) source.get("width")).doubleValue()
-                    && atlas.get(3) == ((Number) source.get("height")).doubleValue() && atlas.get(2) == 52 && atlas.get(3) == 90
+            boolean valid = decorationSource.get("path") != null && decorationSource.get("path").equals(draw.get(role))
+                    && atlas.size() == 6 && atlas.get(2) == ((Number) decorationSource.get("width")).doubleValue()
+                    && atlas.get(3) == ((Number) decorationSource.get("height")).doubleValue() && atlas.get(2) == 52 && atlas.get(3) == 90
                     && diagnosticNumber(decoration, "color") == -1
                     && diagnosticNumber(decoration, "order") == (role.equals("background") ? 0 : diagnosticNumber(draw, "quads") - 1);
             List<List<Double>> corners = List.of(List.of(0d, 0d), List.of(0d, 1d), List.of(1d, 1d), List.of(1d, 0d));
@@ -564,7 +1346,7 @@ public final class LocalAppearanceHarness {
         boolean shaded = draw.get("faces") instanceof List<?> faces && faces.stream().filter(Map.class::isInstance).map(Map.class::cast)
                 .anyMatch(face -> face.get("color") instanceof Number color && (color.intValue() >>> 24) == 255 && (color.intValue() >> 16 & 255) < 255);
         return Map.of("fixedAuthorCamera", fixedCamera, "sourceFlagsMatch", flags && shaded, "actualBackgroundModelForegroundOrder", layers,
-                "decorations", evidence, "actualModelSoftShading", shaded);
+                "context",String.valueOf(draw.get("context")),"decorations", evidence, "actualModelSoftShading", shaded);
     }
     private boolean dragPreview(Screen screen, Map<?, ?> draw) {
         double x = diagnosticNumber(draw, "x") + diagnosticNumber(draw, "width") * .5;
@@ -605,10 +1387,11 @@ public final class LocalAppearanceHarness {
         previewEntryCompleted |= progress >= .999 && age >= 12;
         if (main.get("faces") instanceof List<?> faces) for (Object value : faces) if (value instanceof Map<?, ?> face && face.get("color") instanceof Number color) {
             double bounded = Math.clamp(progress, 0d, 1d);
-            int expectedAlpha = (int) Math.round(255 * bounded * bounded * (3 - 2 * bounded));
+            int expectedAlpha = Boolean.TRUE.equals(main.get("nativeCamera"))?255:(int) Math.round(255 * bounded * bounded * (3 - 2 * bounded));
             previewEntryAlphaValid &= Math.abs((color.intValue() >>> 24) - expectedAlpha) <= 1;
         }
-        previewLayersValid &= main.get("layers") instanceof List<?> layers && layers.containsAll(List.of("idle", "gui"));
+        previewLayersValid &= main.get("layers") instanceof List<?> layers && !layers.contains("gui")
+                && main.get("controllerSlots") instanceof List<?> slots && !slots.isEmpty() && !slots.contains("player.cap");
         Map<String, Object> mainEyes = whiteEyeProof(main);
         previewAtlasValid &= Boolean.TRUE.equals(mainEyes.get("numericAtlasMappingValid"));
         boolean mature = progress >= .999 && age >= 12;
@@ -633,12 +1416,15 @@ public final class LocalAppearanceHarness {
         for (Map<?, ?> card : draws) {
             if (card == main) continue;
             previewCardSamples++;
-            previewSharedClockValid &= Math.abs(diagnosticNumber(card, "sampleTick") - age) < .001
-                    && Math.abs(diagnosticNumber(card, "startedAtTick") - start) < .001 && diagnosticNumber(card, "startCount") == 1;
-            previewLayersValid &= card.get("layers") instanceof List<?> layers && layers.containsAll(List.of("idle", "gui"));
+            double cardAge=diagnosticNumber(card,"sampleTick"),cardStart=diagnosticNumber(card,"startedAtTick");
+            if(Double.isNaN(previewCardFirstStart))previewCardFirstStart=cardStart;
+            previewSharedClockValid &= "CARD".equals(card.get("context")) && Double.isFinite(cardAge) && cardAge+.001>=previewCardPreviousAge
+                    && Math.abs(cardStart-previewCardFirstStart)<.001 && diagnosticNumber(card,"startCount")==1;
+            previewCardPreviousAge=cardAge;
+            previewLayersValid &= List.of("gui").equals(card.get("layers")) && List.of("player.cap").equals(card.get("controllerSlots"));
             Map<String, Object> eyes = whiteEyeProof(card);
             previewAtlasValid &= Boolean.TRUE.equals(eyes.get("numericAtlasMappingValid"));
-            if (mature) previewCardEyesSeen |= Boolean.TRUE.equals(eyes.get("bothEyesSeparated"));
+            if (diagnosticNumber(card,"entryProgress")>=.999 && cardAge>=12) previewCardEyesSeen |= Boolean.TRUE.equals(eyes.get("bothEyesSeparated"));
             cards.add(Map.of("draw", card, "eyeEvidence", eyes));
         }
         if (previewRegressionSamples.size() < 100) previewRegressionSamples.add(Map.of("stageTick", stageTicks,
@@ -656,10 +1442,12 @@ public final class LocalAppearanceHarness {
         String filename = String.format("%02d-%s.png", stage + 1, name);
         screenshots.add("screenshots/" + filename);
         client.inGameHud.getChatHud().clear(false);
-        ScreenshotRecorder.saveScreenshot(output.toFile(), filename, client.getFramebuffer(), 1, message -> LOG.info("Standalone screenshot {}", filename));
+        ScreenshotRecorder.saveScreenshot(output.toFile(), filename, client.getFramebuffer(), 1, message -> {
+            client.execute(()->completedScreenshots.add("screenshots/"+filename));LOG.info("Standalone screenshot {}", filename);
+        });
     }
     private void uiEvent(String action, Object detail) {
-        uiEvents.add(Map.of("stage", STAGES.get(stage), "stageTick", stageTicks, "action", action, "detail", detail));
+        uiEvents.add(Map.of("stage", stages.get(stage), "stageTick", stageTicks, "action", action, "detail", detail));
     }
     private boolean draftDidNotApply(MinecraftClient client) {
         var binding = own(client);
@@ -927,7 +1715,7 @@ public final class LocalAppearanceHarness {
                 && ((Number) diagnostics.get("gpuPixels")).longValue() > 0;
     }
     private void localActionUiTick(MinecraftClient client) {
-        if (!(client.currentScreen instanceof ActionsScreen screen)) return;
+        if (!(client.currentScreen instanceof PlayerModelScreen screen)) return;
         if (!uiActionPressed && stageTicks >= 5) {
             String sourceLabel = runtime.localModelProfile().extraAnimations().get("extra1");
             String label = sourceLabel == null || sourceLabel.isEmpty() ? "extra1" : runtime.localModelProfile().localized(client.options.language, sourceLabel, sourceLabel);
@@ -987,21 +1775,20 @@ public final class LocalAppearanceHarness {
                 check(name.equals("settings-ui") ? "standaloneGalleryAuthorGuiLayers" : "standaloneGalleryAuthorGuiLayersAfterReload",
                         authorProofs.size() >= 2 && authorProofs.stream().allMatch(proof -> Boolean.TRUE.equals(proof.get("actualBackgroundModelForegroundOrder"))
                                 && Boolean.TRUE.equals(proof.get("sourceFlagsMatch")) && Boolean.TRUE.equals(proof.get("fixedAuthorCamera"))),
-                        "Actual main/card atlas batch has original 52x90 background first and foreground last around the model, complete viewport/pixel UVs, soft shading and author-fixed camera: " + authorProofs);
+                        "Actual OWNER uses native inventory animation/camera without decorations; CARD uses author cap/camera and original 52x90 background/model/foreground UV order: " + authorProofs);
             }
             if (name.equals("settings-ui")) {
                 check("standaloneGalleryAuthorRotationLocked", galleryDragAttempted
-                                && defaultPreviewDraws(gallery.previewDiagnostics()).stream().allMatch(draw -> Boolean.TRUE.equals(draw.get("rotationDisabled"))
-                                && diagnosticNumber(draw, "yaw") == 0 && diagnosticNumber(draw, "pitch") == 0),
-                        "Actual mouse click/drag/release attempted +40/+25; source disable_preview_rotation keeps all main/card projections at 0/0");
+                                && defaultPreviewDraws(gallery.previewDiagnostics()).stream().allMatch(draw -> Boolean.TRUE.equals(authorPreviewProof(draw).get("fixedAuthorCamera"))),
+                        "Actual owner mouse drag is allowed by the native inventory camera; source disable_preview_rotation applies only to CARD, which remains at 0/0");
                 observation.put("previewRegressionSamples", List.copyOf(previewRegressionSamples));
                 check("standaloneGalleryFirstEntryProgressesOnce", previewEntrySeen && previewEntryCompleted && previewEntryAlphaValid && previewEntryScreenshot,
-                        "Real 12-tick UI entry transitions from partial opacity to full opacity; actual submitted quad alpha follows progress. It is separate from authored gui/idle, and the entry screenshot is retained.");
+                        "Independent preview age advances through 12 ticks once; source-native geometry stays opaque without extra fade/scale. The early-clock screenshot is retained.");
                 check("standaloneGalleryPreviewClockStable", previewClockValid && previewSharedClockValid && previewLayersValid
                                 && previewSameSelectionRequested && previewAfterSameSelectionSamples >= 6 && previewMaximumAge >= 24,
-                        "Same default asset's main/card actual samples keep one startedAtTick and startCount=1 through ordinary frames and a real same-card click; age="
+                        "Default OWNER and CARD maintain independent stable startedAtTick/startCount=1 through ordinary frames and a real same-card click; owner age="
                                 + previewMaximumAge + "; main/card samples=" + previewMainSamples + "/" + previewCardSamples
-                                + "; after repeated selection=" + previewAfterSameSelectionSamples + "; authored idle+gui layers are actually sampled");
+                                + "; after repeated selection=" + previewAfterSameSelectionSamples + "; native OWNER layers and CARD player.cap GUI are actually sampled");
                 check("standaloneGalleryEyeAtlasSourceBounds", previewAtlasValid && previewMainEyesSeen && previewCardEyesSeen && previewMatureSamples >= 12,
                         "Independent original geometry/PNG pixel evidence versus numeric source and actual consumer atlas UVs (within .001 source pixel); both eye fronts observed in large preview and thumbnail across mature samples=" + previewMatureSamples);
             }
@@ -1037,9 +1824,9 @@ public final class LocalAppearanceHarness {
             Map<String, Object> author = authorPreviewProof(main); observation.put("authorPreviewProof", author);
             check("standaloneModelSettingsAuthorGuiLayers", Boolean.TRUE.equals(author.get("actualBackgroundModelForegroundOrder"))
                             && Boolean.TRUE.equals(author.get("sourceFlagsMatch")) && Boolean.TRUE.equals(author.get("fixedAuthorCamera")),
-                    "Actual settings-page projection and original source GUI decoration atlas quads: " + author);
+                    "Actual settings OWNER native inventory projection has normal animation and no card-only GUI decorations: " + author);
             check("standaloneModelSettingsAuthorRotationLocked", settingsDragAttempted && Boolean.TRUE.equals(author.get("fixedAuthorCamera")),
-                    "Real settings-page drag callback cannot rotate a source model that disables preview rotation");
+                    "Real settings OWNER drag callback retains the native inventory camera; card-only author rotation policy is not applied to the owner");
         } else if (screen instanceof AnimationWheelScreen wheel) {
             var diagnostics = wheel.diagnostics(); observation.put("wheel", diagnostics);
             List<String> labels = widgets.stream().map(widget -> widget.getMessage().getString()).toList();
@@ -1063,8 +1850,8 @@ public final class LocalAppearanceHarness {
             }
             check("standaloneWheelLabelsAndWidgetsSeparate", separate,
                     "Real wheel text rectangles do not overlap each other or initialized widgets; labels=" + rectangles + "; window=" + width + "x" + height);
-        } else if (screen instanceof ActionsScreen) {
-            check("standaloneActionsUiScreen", screen instanceof ActionsScreen, screen == null ? "No screen" : screen.getClass().getName());
+        } else if (screen instanceof PlayerModelScreen) {
+            check("standaloneActionsUiScreen", screen instanceof PlayerModelScreen, screen == null ? "No screen" : screen.getClass().getName());
             List<String> labels = widgets.stream().map(widget -> widget.getMessage().getString()).toList();
             check("standaloneActionsUiSeparateModes", labels.contains("本地动作 ✓") && labels.contains("服务器动作")
                             && !labels.contains("真实坐下") && !labels.contains("真实爬行") && !runtime.localActions().isEmpty(),
@@ -1169,18 +1956,21 @@ public final class LocalAppearanceHarness {
         try {
             if (effects != null) { effects.close(); mergeEffectsChecks(); }
             if (!componentFixtureUuids.isEmpty()) cleanupComponentFixtures(client);
-            check("standaloneAllStagesCaptured", observations.size() == STAGES.size(), "Captured stages=" + observations.stream().map(row -> row.get("stage")).toList());
+            if (interactions) cleanupInteractions(client);
+            check("standaloneAllStagesCaptured", interactions ? interactionCompleted && !observations.isEmpty() : observations.size() == stages.size(), "Captured stages=" + observations.stream().map(row -> row.get("stage")).toList());
             check("standaloneBridgeStayedDisconnected", !runtime.serverBridgeConnected(), runtime.status().toString());
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("scope", "standalone-no-server-plugins"); result.put("passed", checks.stream().allMatch(check -> Boolean.TRUE.equals(check.get("passed"))));
-            result.put("minecraft", "1.21.11"); result.put("clientVersion", "0.4.2"); result.put("runtimeServerConnected", runtime.serverBridgeConnected());
+            result.put("minecraft", "1.21.11"); result.put("clientVersion", FabricLoader.getInstance().getModContainer("meplayeractions").orElseThrow().getMetadata().getVersion().getFriendlyString()); result.put("runtimeServerConnected", runtime.serverBridgeConnected());
             result.put("serverChannelAvailable", client.getNetworkHandler() != null && ClientPlayNetworking.canSend(ActionPayload.ID));
             result.put("testedClientSha256", artifactProof.get("clientArtifactSha256")); result.put("artifactProof", artifactProof);
             result.put("startedAtMillis", startedMillis); result.put("completedAtMillis", System.currentTimeMillis());
             result.put("checks", checks); result.put("screenshots", screenshots); result.put("observations", observations);
             result.put("savedProfilePath", runtime.localAppearanceSettingsPath().toString());
             result.put("galleryFixture", galleryFixture); result.put("uiEvents", uiEvents);
-            result.put("guiPreviewRegression", guiPreviewRegression());
+            result.put("validationProfile", validationProfile);
+            if (interactions) result.put("interactionDelivery", interactionDelivery());
+            else result.put("guiPreviewRegression", guiPreviewRegression());
             result.put("modelEffects", effectsReport);
             Files.createDirectories(output);
             Files.writeString(output.resolve("results.json"), GSON.toJson(result), StandardCharsets.UTF_8);
@@ -1204,7 +1994,7 @@ public final class LocalAppearanceHarness {
                 && relevant.stream().allMatch(row -> Boolean.TRUE.equals(row.get("passed")));
         return Map.of("passed", passed, "requiredChecks", required, "checks", relevant,
                 "builtinAssetEvidence", builtinPreviewAsset, "frameSamples", previewRegressionSamples,
-                "entryMeaning", "12-tick GUI fade/scale followed by steady authored gui + idle, not a nonexistent built-in enter animation");
+                "entryMeaning", "Independent native OWNER and Dummy CARD clocks; OWNER uses native motion and Inventory70, CARD stops main and routes authored GUI to cap/30, without added YSM fade/scale");
     }
     private static Map<String, Object> artifactProof() {
         Map<String, Object> proof = new LinkedHashMap<>();

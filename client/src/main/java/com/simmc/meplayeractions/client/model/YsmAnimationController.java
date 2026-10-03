@@ -117,7 +117,8 @@ public final class YsmAnimationController {
                 default -> layer.layer();
             };
             // GUI clips own their separate slot, not the native entity posture.
-            if (layer.animation().equals("gui_focus") || layer.animation().equals("gui_hover")) slot = family + "." + layer.animation();
+            if (layer.layer().equals("gui") && (layer.animation().equals("gui_focus") || layer.animation().equals("gui_hover")))
+                slot = family + "." + layer.animation();
             builtins.put(slot, layer);
         }
         Map<String,Object> queries = context.queryValues(); Map<String,Object> scope = context.contextValues();

@@ -1,263 +1,582 @@
 package com.simmc.meplayeractions.client.ui;
 
 import com.simmc.meplayeractions.client.ClientRuntime;
+import com.simmc.meplayeractions.client.MEPlayerActionsClient;
+import com.simmc.meplayeractions.client.WheelPreferences;
+import com.simmc.meplayeractions.client.model.YsmModelProfile;
+import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+import net.minecraft.client.gl.RenderPipelines;
 import net.minecraft.client.gui.Click;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.tooltip.Tooltip;
 import net.minecraft.client.gui.widget.ButtonWidget;
+import net.minecraft.client.gui.widget.ClickableWidget;
+import net.minecraft.client.gui.widget.SliderWidget;
 import net.minecraft.client.input.KeyInput;
+import net.minecraft.client.util.InputUtil;
+import net.minecraft.text.OrderedText;
 import net.minecraft.text.Text;
+import net.minecraft.util.Identifier;
 import org.lwjgl.glfw.GLFW;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BooleanSupplier;
 
-import java.util.List;
-import java.util.Map;
-import java.util.ArrayList;
-
-/** Radial local previews and server actions, with no changes to native game posture. */
+/**
+ * Yarn 1.21.11 port of OpenYSM's classic AnimationRouletteScreen at 0306e1f (MIT).
+ * Polygon slices, configuration slices, author forms, scrolling and flat/check/range widgets
+ * follow AnimationRouletteScreen, FlatColorButton, ConfigCheckBox and AnimationSlider.
+ * Runtime supplies MPA action authorization and atomic private-profile writes.
+ * See THIRD_PARTY_NOTICES.md for the original license and source attribution.
+ */
 public final class AnimationWheelScreen extends Screen {
-    private static final int SLOTS = 8;
+    private static final int SLOTS=WheelSelection.PAGE_SIZE;
+    private static final Identifier ROULETTE_TEXTURE=Identifier.of("meplayeractions","textures/gui/roulette.png");
     private final ClientRuntime runtime;
     private final Screen parent;
-    private boolean localMode, locked, serverAvailable, releaseConsumed, releaseKeyDown, keyboardSelection;
-    private int page, hovered=-1, centerX, centerY, inner, outer, sideX, sideWidth, releaseKey=GLFW.GLFW_KEY_G;
+    private final AtomicLong emittedVertices=new AtomicLong();
+    private boolean localMode,locked,serverAvailable,ownServerDisguise,sourceInitialized,restorePageOnCatalog;
+    private boolean releaseConsumed,releaseKeyDown,keyboardSelection,hoveredConfig,hoveredCenter;
+    private int page,hovered=-1,centerX,centerY,inner,outer,releaseKey=GLFW.GLFW_KEY_J;
+    private InputUtil.Type releaseType=InputUtil.Type.KEYSYM;
+    private WheelSelection.RouletteLayout layout;
     private List<ClientRuntime.Action> actions=List.of();
-    private List<WheelSelection.Run> ring=List.of();
-    private String message="";
-    private com.simmc.meplayeractions.client.model.YsmModelProfile menuProfile;
+    private List<Map<String,Object>> renderedPolygons=List.of();
+    private final List<NavigationControl> navigationControls=new ArrayList<>();
+    private final List<FormRow> formRows=new ArrayList<>();
+    private final List<ClickableWidget> formWidgets=new ArrayList<>();
+    private final List<String> categoryPath=new ArrayList<>();
+    private final Map<String,Integer> categoryPages=new HashMap<>();
+    private String message="",configGroupId="",serverInstance="";
+    private int configScroll,configContentHeight;
+    private YsmModelProfile menuProfile;
     private ModelActionMenu menu;
+    private ModelConfigSchema configSchema;
+    private ModelConfigSchema.Group configGroup;
     private List<ModelActionMenu.Entry> localEntries=List.of();
-    private boolean hoveredConfig;
+    private FlatButton centerButton,scrollUpButton,scrollDownButton;
 
-    public AnimationWheelScreen(ClientRuntime runtime) {
-        this(runtime, runtime.localAppearance().enabled() || !runtime.serverOwnModelReady(), null);
+    public AnimationWheelScreen(ClientRuntime runtime) {this(runtime,true,null);beginHoldSelection();}
+    /** The compatibility source argument never changes Runtime's per-instance action source. */
+    public AnimationWheelScreen(ClientRuntime runtime,boolean localMode,Screen parent) {
+        super(Text.literal("动作轮盘"));this.runtime=runtime;this.parent=parent;this.localMode=localMode;releaseConsumed=true;
+    }
+    public void setReleaseKey(int keyCode) {
+        releaseKey=keyCode;releaseType=InputUtil.Type.KEYSYM;
+        if(MEPlayerActionsClient.actionWheelKey!=null) {
+            var bound=KeyBindingHelper.getBoundKeyOf(MEPlayerActionsClient.actionWheelKey);
+            if(bound.getCode()==keyCode)releaseType=bound.getCategory();
+        }
         beginHoldSelection();
     }
-    public AnimationWheelScreen(ClientRuntime runtime, boolean localMode, Screen parent) {
-        super(Text.literal("动作轮盘")); this.runtime=runtime; this.localMode=localMode; this.parent=parent;
-        releaseConsumed=true;
+    public void setReleaseKey(InputUtil.Key key) {releaseKey=key.getCode();releaseType=key.getCategory();beginHoldSelection();}
+    public void beginHoldSelection() {releaseConsumed=false;releaseKeyDown=true;}
+    private boolean releaseMatches(KeyInput input) {
+        return releaseType!=InputUtil.Type.MOUSE &&
+                (releaseType==InputUtil.Type.SCANCODE?input.scancode():input.key())==releaseKey;
     }
-    /** The entry key can be rebound independently of this menu. */
-    public void setReleaseKey(int keyCode) { releaseKey=keyCode; beginHoldSelection(); }
-    public void beginHoldSelection() { releaseConsumed=false; releaseKeyDown=true; }
-    /** Called by the entry binding on release. Repeated tick callbacks never replay an action. */
+    /** Release dispatches once and cannot submit a previous appearance's selection. */
     public void releaseSelection() {
         releaseKeyDown=false;
-        if (releaseConsumed || client==null || client.currentScreen!=this) return;
+        if(releaseConsumed || client.currentScreen!=this)return;
         releaseConsumed=true;
-        if (index(hovered)>=0) { if(hoveredConfig) openConfig(hovered); else select(hovered); } else if (!locked) close();
+        if(!sameSource())return;
+        if(index(hovered)>=0){if(hoveredConfig)openConfig(hovered);else select(hovered);}
+        else if(hoveredCenter){activateCenter();if(!localMode && !locked)close();}
+        else if(!locked)close();
+    }
+    private WheelPreferences.Source source() {return localMode?WheelPreferences.Source.CLIENT:WheelPreferences.Source.SERVER;}
+    private void clearHover() {hovered=-1;hoveredConfig=false;hoveredCenter=false;keyboardSelection=false;}
+    private void clearConfig() {configGroup=null;configGroupId="";configScroll=0;configContentHeight=0;}
+    private void syncSource() {
+        var preferences=runtime.wheelPreferences();
+        boolean local=runtime.interactionLocalMode();
+        if(!sourceInitialized || local!=localMode) {
+            localMode=local;page=preferences.page(source());sourceInitialized=true;restorePageOnCatalog=true;
+            menu=null;menuProfile=null;configSchema=null;localEntries=List.of();categoryPages.clear();categoryPath.clear();
+            clearConfig();clearHover();message="";
+        }
+        ownServerDisguise=runtime.hasOwnServerDisguise();serverInstance=runtime.serverOwnModelInstance();locked=preferences.keepOpen();
+    }
+    private boolean sameSource() {
+        if(localMode==runtime.interactionLocalMode() && serverInstance.equals(runtime.serverOwnModelInstance()))return true;
+        clearHover();releaseConsumed=true;clearAndInit();return false;
     }
     @Override protected void init() {
-        serverAvailable=runtime.serverBridgeReady() && runtime.serverOwnModelReady();
-        actions=currentActions(); page=Math.max(0,Math.min(page,WheelSelection.pageCount(actions.size(),SLOTS)-1));
-        sideWidth=Math.max(104,Math.min(156,width/3)); sideX=width-sideWidth-12;
-        centerX=(sideX-12)/2; centerY=height/2+10;
-        outer=Math.max(28,Math.min((height-108)/2,(sideX-28)/2)); inner=Math.max(16,outer/3);
-        ring=WheelSelection.ring(inner,outer,SLOTS);
-        int scopeWidth=Math.max(60,(width-30)/2);
-        addDrawableChild(ButtonWidget.builder(Text.literal(localMode ? "本地动作 ✓" : "本地动作"), b -> switchMode(true))
-                .dimensions(12,32,scopeWidth,20).build());
-        var server=ButtonWidget.builder(Text.literal(localMode ? "服务器动作" : "服务器动作 ✓"), b -> switchMode(false))
-                .dimensions(18+scopeWidth,32,scopeWidth,20).build();
-        server.setTooltip(Tooltip.of(Text.literal("需要服务器支持和服务器模型；选择动作会同步给其他观看者")));
-        addDrawableChild(server);
-        int controlsY=Math.max(78,height-(height>=244 ? 151 : 127));
-        var lock=ButtonWidget.builder(Text.literal(locked ? "保持打开：开" : "保持打开：关"), b -> {locked=!locked;clearAndInit();})
-                .dimensions(sideX,controlsY,sideWidth,20).build();
-        lock.setTooltip(Tooltip.of(Text.literal("选择后保留菜单；动作锁定是另一项独立设置"))); addDrawableChild(lock);
-        var actionLock=ButtonWidget.builder(Text.literal(runtime.localActionLocked() ? "动作锁定：开" : "动作锁定：关"), b -> {
-            runtime.setLocalActionLocked(!runtime.localActionLocked()); clearAndInit();
-        }).dimensions(sideX,controlsY+24,sideWidth,20).build();
-        actionLock.setTooltip(Tooltip.of(Text.literal("开启后移动不会取消本地额外动作；不会锁定轮盘或改变真实姿态")));
-        addDrawableChild(actionLock).active=localMode;
-        addDrawableChild(ButtonWidget.builder(Text.literal("停止当前动作"),b -> stop())
-                .dimensions(sideX,controlsY+48,sideWidth,20).build()).active=localMode || serverAvailable;
-        var settings=ButtonWidget.builder(Text.literal("模型参数…"),b -> {
-            if(client!=null)client.setScreen(new ModelSettingsScreen(runtime,runtime.localAppearance().modelId(),this));
-        }).dimensions(sideX,controlsY+72,sideWidth,20).build();
-        settings.setTooltip(Tooltip.of(Text.literal("编辑本地模型、缩放和 XYZ；这些参数仅自己可见")));addDrawableChild(settings);
-        if(height>=244)addDrawableChild(ButtonWidget.builder(Text.literal("模型图库…"),b -> {
-            if(client!=null)client.setScreen(new LocalAppearanceScreen(runtime,this));
-        }).dimensions(sideX,controlsY+96,sideWidth,20).build());
-        int navWidth=Math.max(42,Math.min(76,(sideX-30)/3)), navY=height-25;
-        addDrawableChild(ButtonWidget.builder(Text.literal("上一页"),b -> changePage(-1))
-                .dimensions(12,navY,navWidth,20).build()).active=page>0;
-        addDrawableChild(ButtonWidget.builder(Text.literal("下一页"),b -> changePage(1))
-                .dimensions(18+navWidth,navY,navWidth,20).build()).active=page+1<WheelSelection.pageCount(actions.size(),SLOTS);
-        addDrawableChild(ButtonWidget.builder(Text.literal("返回"),b -> close())
-                .dimensions(sideX,navY,sideWidth,20).build());
+        syncSource();navigationControls.clear();formRows.clear();formWidgets.clear();scrollUpButton=null;scrollDownButton=null;
+        serverAvailable=ownServerDisguise && runtime.serverBridgeReady();actions=currentActions();
+        if(restorePageOnCatalog && !actions.isEmpty()) {page=runtime.wheelPreferences().page(source());restorePageOnCatalog=false;}
+        page=WheelSelection.clampPage(page,actions.size(),SLOTS);
+        layout=WheelSelection.layout(width,height);centerX=layout.centerX();centerY=layout.centerY();
+        inner=layout.scaled(25);outer=layout.scaled(105);
+        centerButton=addControl("center",new FlatButton(centerX-24,centerY-10,48,20,centerLabel(),this::activateCenter));
+        centerButton.active=localMode?runtime.canUseLocalActions():serverAvailable;
+        centerButton.setTooltip(Tooltip.of(Text.literal(localMode?"移动时保持本地专用动作":"停止服务器专用动作")));
+        var settings=addControl("settings",new FlatButton(width-30,8,22,20,"⚙",()->{
+            releaseConsumed=true;client.setScreen(new PlayerModelScreen(runtime,this));
+        }));
+        settings.setTooltip(Tooltip.of(Text.literal("玩家模型设置")));
+        int aw=Math.max(20,layout.scaled(30)),ah=Math.max(20,layout.scaled(30));
+        var previous=addControl("previous",new FlatButton(layout.panelX(),layout.y(-102),aw,ah,"<",()->changePage(-1)));
+        var next=addControl("next",new FlatButton(layout.x(270)-aw,layout.y(-102),aw,ah,">",()->changePage(1)));
+        previous.active=page>0;next.active=page+1<WheelSelection.pageCount(actions.size(),SLOTS);
+        addControl("back",new FlatButton(layout.panelX(),layout.y(-70),layout.panelWidth(),Math.max(18,layout.scaled(22)),
+                "返回",()->{releaseConsumed=true;close();}));
+        if(configGroup!=null && localMode && runtime.canEditLocalAppearance())buildConfigForms();
+    }
+    private String centerLabel() {return localMode?"锁定:"+(runtime.localActionLocked()?"开":"关"):"停止";}
+    private <T extends FlatButton> T addControl(String id,T widget) {
+        navigationControls.add(new NavigationControl(id,widget));return addDrawableChild(widget);
     }
     private List<ClientRuntime.Action> currentActions() {
-        if(!localMode) return runtime.serverBridgeReady() && runtime.serverOwnModelReady() ? runtime.actions() : List.of();
+        if(!localMode)return runtime.hasOwnServerDisguise() && runtime.serverBridgeReady()?runtime.actions():List.of();
+        if(!runtime.canUseLocalActions())return List.of();
         var profile=runtime.localModelProfile();
         if(profile!=menuProfile) {
-            menuProfile=profile; menu=null; page=0;
-            try { if(profile!=null && profile.isYsm()) menu=new ModelActionMenu(profile, client==null ? "zh_cn" : client.getLanguageManager().getLanguage()); }
-            catch(RuntimeException invalid) { message="模型动作配置无法使用"; }
+            menuProfile=profile;menu=null;configSchema=null;categoryPages.clear();categoryPath.clear();clearConfig();restorePageOnCatalog=true;
+            try {
+                if(profile!=null && profile.isYsm()) {
+                    String language=client.getLanguageManager().getLanguage();
+                    menu=new ModelActionMenu(profile,language);configSchema=ModelConfigSchema.from(profile,language);
+                }
+            } catch(RuntimeException invalid){message="模型动作配置无法使用";}
         }
-        if(menu==null) { localEntries=List.of(); return runtime.localActions(); }
+        if(menu==null){localEntries=List.of();return runtime.localActions();}
         localEntries=menu.entries();
-        return localEntries.stream().map(entry -> new ClientRuntime.Action(entry.id(),entry.label())).toList();
+        return localEntries.stream().map(entry->new ClientRuntime.Action(entry.id(),entry.label())).toList();
     }
-    private int index(int slot) { return WheelSelection.actionIndex(page,slot,actions.size(),SLOTS); }
-    private void switchMode(boolean local) {localMode=local;menu=null;menuProfile=null;page=0;hovered=-1;keyboardSelection=false;message="";clearAndInit();}
+    private int visibleSlots() {return WheelSelection.visibleSlots(page,actions.size());}
+    private int index(int slot) {return WheelSelection.actionIndex(page,slot,actions.size(),SLOTS);}
+    private String category() {return localMode && menu!=null?menu.categoryId():"";}
+    private void rememberPage() {
+        if(localMode && menu!=null)categoryPages.put(category(),page);
+        if(!localMode || menu==null || menu.depth()==0) {
+            var preferences=runtime.wheelPreferences();
+            if(preferences.page(source())!=page)runtime.updateWheelPreferences(preferences.withPage(source(),page));
+        }
+    }
     private void changePage(int direction) {
-        page=Math.max(0,Math.min(page+direction,WheelSelection.pageCount(actions.size(),SLOTS)-1));
-        hovered=-1;keyboardSelection=false;clearAndInit();
+        int next=WheelSelection.clampPage(page+direction,actions.size(),SLOTS);
+        if(next==page)return;
+        page=next;restorePageOnCatalog=false;rememberPage();clearHover();releaseConsumed=true;clearAndInit();
+    }
+    private void changedCategory() {
+        page=categoryPages.getOrDefault(category(),menu.depth()==0?runtime.wheelPreferences().page(source()):0);
+        restorePageOnCatalog=false;clearHover();clearConfig();releaseConsumed=true;clearAndInit();
     }
     private void select(int slot) {
-        int index=index(slot); if(index<0)return;
-        String id=actions.get(index).id(); boolean played;
+        if(!sameSource())return;
+        int selected=index(slot);if(selected<0)return;
         if(localMode && menu!=null) {
-            var entry=localEntries.get(index);
+            var entry=localEntries.get(selected);
             if(entry.category() || entry.back()) {
-                if(menu.enter(entry)) { page=0; hovered=-1; releaseConsumed=true; clearAndInit(); }
-                else message="此动作分类不可进入";
+                rememberPage();
+                if(menu.enter(entry)) {
+                    if(entry.back()){if(!categoryPath.isEmpty())categoryPath.removeLast();}
+                    else categoryPath.add(entry.label());
+                    changedCategory();
+                } else message="此动作分类不可进入";
                 return;
             }
         }
-        if(localMode) played=runtime.playLocal(id);
-        else {
-            played=runtime.serverBridgeReady() && runtime.serverOwnModelReady();
-            if(played)runtime.request("play",id);
-        }
-        if(!played){message=localMode ? "先选择并启用本地模型，等待加载完成" : "先连接支持的服务器并使用服务器模型";return;}
-        releaseConsumed=true;
-        message="已选择："+actions.get(index).label();
-        if(!locked && client!=null)client.setScreen(parent);
+        String id=actions.get(selected).id();boolean played;
+        if(localMode)played=runtime.canUseLocalActions() && runtime.playLocal(id);
+        else {played=runtime.hasOwnServerDisguise() && runtime.serverBridgeReady();if(played)runtime.request("play",id);}
+        if(!played){message=localMode?"选择并启用本地模型后可播放动作":"等待服务器动作频道";return;}
+        rememberPage();releaseConsumed=true;message="已选择："+actions.get(selected).label();
+        if(!locked)client.setScreen(parent);
     }
     private boolean hasConfig(int slot) {
-        int index=index(slot); return localMode && menu!=null && index>=0 && !localEntries.get(index).configGroup().isEmpty();
-    }
-    private boolean inConfigRing(double x,double y) {
-        double distance=x*x+y*y, edge=inner+(outer-inner)*.42;
-        return distance>=inner*inner && distance<edge*edge;
+        int selected=index(slot);
+        return localMode && runtime.canEditLocalAppearance() && menu!=null && configSchema!=null && selected>=0 &&
+                !localEntries.get(selected).configGroup().isEmpty() &&
+                configSchema.group(localEntries.get(selected).configGroup()).isPresent();
     }
     private void openConfig(int slot) {
-        if(!hasConfig(slot))return;
+        if(!sameSource() || !hasConfig(slot))return;
+        configGroupId=localEntries.get(index(slot)).configGroup();
+        configGroup=configSchema.group(configGroupId).orElse(null);configScroll=0;releaseConsumed=true;
+        clearAndInit(); // This same Screen continues to render both roulette and author form.
+    }
+    private void activateCenter() {
+        if(!sameSource())return;
         releaseConsumed=true;
-        client.setScreen(new ModelConfigScreen(runtime,runtime.localAppearance().modelId(),localEntries.get(index(slot)).configGroup(),this));
+        if(localMode) {
+            if(runtime.canUseLocalActions())runtime.setLocalActionLocked(!runtime.localActionLocked());
+            centerButton.setMessage(Text.literal(centerLabel()));
+        } else stop();
     }
     private void stop() {
+        if(!sameSource())return;
         if(localMode)runtime.stopLocal();
-        else if(runtime.serverBridgeReady() && runtime.serverOwnModelReady())runtime.request("stop","");
-        message="已停止";
+        else if(runtime.hasOwnServerDisguise() && runtime.serverBridgeReady())runtime.request("stop","");
+        else {message="等待服务器动作频道";return;}
+        releaseConsumed=true;message="已停止";
     }
     @Override public void tick() {
-        boolean available=runtime.serverBridgeReady() && runtime.serverOwnModelReady();
-        if(available!=serverAvailable || !currentActions().equals(actions)){hovered=-1;keyboardSelection=false;clearAndInit();}
+        boolean present=runtime.hasOwnServerDisguise(),available=present && runtime.serverBridgeReady();
+        YsmModelProfile previousProfile=menuProfile;List<ClientRuntime.Action> current=currentActions();
+        if(localMode!=runtime.interactionLocalMode() || !serverInstance.equals(runtime.serverOwnModelInstance()) ||
+                present!=ownServerDisguise || available!=serverAvailable || previousProfile!=menuProfile || !current.equals(actions)) {
+            clearHover();releaseConsumed=true;clearAndInit();
+        }
+        locked=runtime.wheelPreferences().keepOpen();
+        if(centerButton!=null)centerButton.setMessage(Text.literal(centerLabel()));
+    }
+    private void hover(double mouseX,double mouseY) {
+        double x=(mouseX-centerX)/layout.scale(),y=(mouseY-centerY)/layout.scale();
+        hovered=WheelSelection.classicSlotAt(x,y,50,100,visibleSlots());hoveredConfig=false;
+        int configSlot=WheelSelection.classicSlotAt(x,y,20,50,visibleSlots());
+        if(hasConfig(configSlot)){hovered=configSlot;hoveredConfig=true;}
+        hoveredCenter=centerButton!=null && centerButton.isMouseOver(mouseX,mouseY);
     }
     @Override public void mouseMoved(double mouseX,double mouseY) {
-        keyboardSelection=false;hovered=WheelSelection.slotAt(mouseX-centerX,mouseY-centerY,inner,outer,SLOTS);
-        hoveredConfig=hasConfig(hovered) && inConfigRing(mouseX-centerX,mouseY-centerY);
-        super.mouseMoved(mouseX,mouseY);
+        keyboardSelection=false;hover(mouseX,mouseY);super.mouseMoved(mouseX,mouseY);
     }
     @Override public boolean mouseClicked(Click click,boolean doubled) {
-        if(super.mouseClicked(click,doubled))return true;
+        if(releaseType==InputUtil.Type.MOUSE && click.button()==releaseKey) {
+            if(!releaseKeyDown)beginHoldSelection();return true;
+        }
+        hover(click.x(),click.y());
+        if(super.mouseClicked(click,doubled)){releaseConsumed=true;return true;}
         if(click.button()!=GLFW.GLFW_MOUSE_BUTTON_LEFT)return false;
-        double x=click.x()-centerX,y=click.y()-centerY;
-        if(x*x+y*y<inner*inner){stop();return true;}
-        int slot=WheelSelection.slotAt(x,y,inner,outer,SLOTS);
-        if(index(slot)>=0){if(hasConfig(slot) && inConfigRing(x,y))openConfig(slot);else select(slot);return true;}return false;
+        if(index(hovered)>=0){if(hoveredConfig)openConfig(hovered);else select(hovered);return true;}
+        return false;
+    }
+    @Override public boolean mouseReleased(Click click) {
+        if(releaseType==InputUtil.Type.MOUSE && click.button()==releaseKey){releaseSelection();return true;}
+        return super.mouseReleased(click);
     }
     @Override public boolean mouseScrolled(double mouseX,double mouseY,double horizontal,double vertical) {
-        if(vertical!=0){changePage(vertical>0 ? -1 : 1);return true;}return super.mouseScrolled(mouseX,mouseY,horizontal,vertical);
+        if(vertical==0)return super.mouseScrolled(mouseX,mouseY,horizontal,vertical);
+        if(mouseX>=layout.x(110) && configGroup!=null){scrollConfig(vertical>0?-20:20);return true;}
+        changePage(vertical>0?-1:1);return true;
     }
     @Override public boolean keyPressed(KeyInput input) {
         int key=input.key();
-        if(key==releaseKey){if(!releaseKeyDown)beginHoldSelection();return true;}
-        if(key>=GLFW.GLFW_KEY_1 && key<=GLFW.GLFW_KEY_8){hovered=key-GLFW.GLFW_KEY_1;keyboardSelection=true;hoveredConfig=false;select(hovered);return true;}
-        if(key==GLFW.GLFW_KEY_ENTER || key==GLFW.GLFW_KEY_KP_ENTER){select(hovered);return true;}
+        if(releaseMatches(input)){if(!releaseKeyDown)beginHoldSelection();return true;}
+        if(getFocused() instanceof SliderWidget && key!=GLFW.GLFW_KEY_ESCAPE && super.keyPressed(input))return true;
+        if(key>=GLFW.GLFW_KEY_1 && key<=GLFW.GLFW_KEY_8){
+            hovered=key-GLFW.GLFW_KEY_1;keyboardSelection=true;hoveredConfig=false;hoveredCenter=false;select(hovered);return true;
+        }
+        if(key==GLFW.GLFW_KEY_ENTER || key==GLFW.GLFW_KEY_KP_ENTER) {
+            if(getFocused()!=null && super.keyPressed(input))return true;
+            if(hoveredCenter)activateCenter();else select(hovered);return true;
+        }
         if(key==GLFW.GLFW_KEY_LEFT || key==GLFW.GLFW_KEY_PAGE_UP){changePage(-1);return true;}
         if(key==GLFW.GLFW_KEY_RIGHT || key==GLFW.GLFW_KEY_PAGE_DOWN){changePage(1);return true;}
         return super.keyPressed(input);
     }
     @Override public boolean keyReleased(KeyInput input) {
-        if(input.key()==releaseKey){releaseSelection();return true;}return super.keyReleased(input);
+        if(releaseMatches(input)){releaseSelection();return true;}return super.keyReleased(input);
     }
+
     @Override public void render(DrawContext context,int mouseX,int mouseY,float delta) {
-        context.fill(0,0,width,height,0x95101823);
-        if(!keyboardSelection) {
-            hovered=WheelSelection.slotAt(mouseX-centerX,mouseY-centerY,inner,outer,SLOTS);
-            hoveredConfig=hasConfig(hovered) && inConfigRing(mouseX-centerX,mouseY-centerY);
+        context.fill(0,0,width,height,0x35000000);
+        if(!keyboardSelection)hover(mouseX,mouseY);
+        context.drawCenteredTextWithShadow(textRenderer,localMode?"本地动作":"服务器动作",width/2,8,0xfff3f0e0);
+        var polygons=new ArrayList<Map<String,Object>>();
+        for(int slot=0;slot<visibleSlots();slot++) {
+            boolean selected=hovered==slot && !hoveredConfig,config=hasConfig(slot);
+            if(selected && config) {
+                drawRadialSegment(context,polygons,slot,50,115,0xf0ffb100,"action");
+                drawRadialSegment(context,polygons,slot,25,50,0x90000000,"action");
+            } else drawRadialSegment(context,polygons,slot,25,selected?115:105,selected?0xf0ffb100:0x90000000,"action");
+            if(config)drawRadialSegment(context,polygons,slot,hoveredConfig && hovered==slot?15:25,50,
+                    hoveredConfig && hovered==slot?0xf000ceff:0x7000ceff,"config");
         }
-        context.drawCenteredTextWithShadow(textRenderer,title,width/2,12,0xffffffff);
-        for(var run:ring) {
-            int color=index(run.slot())<0 ? 0xAA1B2631 : run.slot()==hovered ? 0xF05290B8
-                    : run.slot()%2==0 ? 0xE02E4053 : 0xE0273749;
-            context.fill(centerX+run.x1(),centerY+run.y(),centerX+run.x2(),centerY+run.y()+1,color);
+        renderedPolygons=List.copyOf(polygons);
+        renderRadialLabels(context);renderPathAndPage(context);
+        super.render(context,mouseX,mouseY,delta);renderConfigForms(context,mouseX,mouseY,delta);
+        if(configGroup==null) {
+            String detail=actions.isEmpty()?(localMode?"暂无本地动作":"等待服务器动作"):
+                    localMode?"点击动作内侧 ⚙ 配置组件":"服务器下发动作";
+            context.drawWrappedTextWithShadow(textRenderer,Text.literal(detail),layout.panelX()+2,
+                    layout.viewportY()+3,Math.max(1,layout.panelWidth()-4),0xffb8bec8);
         }
-        for(int y=-inner;y<inner;y++) {
-            int half=(int)Math.sqrt(inner*inner-y*y);
-            context.fill(centerX-half,centerY+y,centerX+half,centerY+y+1,0xDF172330);
-        }
-        context.drawCenteredTextWithShadow(textRenderer,localMode ? "本地" : "服务器",centerX,centerY-10,0xffbcd7ea);
-        context.drawCenteredTextWithShadow(textRenderer,"停止",centerX,centerY+3,0xffffffff);
-        for(int slot=0;slot<SLOTS;slot++) {
-            int index=index(slot); if(index<0)continue;
-            double angle=-Math.PI/2+slot*Math.PI*2/SLOTS, radius=(inner+outer)*.56;
-            int x=centerX+(int)(Math.cos(angle)*radius),y=centerY+(int)(Math.sin(angle)*radius);
-            String label=slotLabel(index);
-            context.drawCenteredTextWithShadow(textRenderer,Integer.toString(slot+1),x,y-9,0xffa9c8dc);
-            if(outer>=60)context.drawCenteredTextWithShadow(textRenderer,label,x,y+2,0xffffffff);
-            if(hasConfig(slot)) {
-                double gearRadius=inner+(outer-inner)*.24;
-                context.drawCenteredTextWithShadow(textRenderer,"⚙",centerX+(int)(Math.cos(angle)*gearRadius),centerY+(int)(Math.sin(angle)*gearRadius)-4,hoveredConfig && slot==hovered ? 0xffffd589 : 0xffa9c8dc);
-            }
-        }
-        var profile=runtime.localAppearance();
-        int textY=66;
-        context.drawTextWithShadow(textRenderer,Text.literal(localMode ? "基础模型参数" : "本地模型参数"),sideX,textY,0xffffffff);
-        if(height>=300) {
-            context.drawTextWithShadow(textRenderer,Text.literal(textRenderer.trimToWidth(profile.modelId(),sideWidth)),sideX,textY+14,0xffa4bbd6);
-            context.drawTextWithShadow(textRenderer,Text.literal("缩放 "+number(profile.scale())),sideX,textY+28,0xffc6d5ec);
-            context.drawTextWithShadow(textRenderer,Text.literal(textRenderer.trimToWidth("XYZ "+number(profile.offsetX())+" / "+number(profile.offsetY())+" / "+number(profile.offsetZ()),sideWidth)),sideX,textY+42,0xffc6d5ec);
-        }
-        String detail=!message.isEmpty() ? message : actions.isEmpty() ? (localMode ? "模型参数中选择并启用本地模型" : "当前服务器没有可用动作")
-                : localMode ? "仅自己可见 · 悬停后松开按键选择" : "服务器同步 · 悬停后松开按键选择";
-        context.drawCenteredTextWithShadow(textRenderer,Text.literal(textRenderer.trimToWidth(detail,width-24)),width/2,height-40,0xffc6d5ec);
-        String pageLabel=(page+1)+" / "+WheelSelection.pageCount(actions.size(),SLOTS)
-                +(localMode && menu!=null && menu.depth()>0 ? " · "+menu.categoryId() : "");
-        context.drawCenteredTextWithShadow(textRenderer,textRenderer.trimToWidth(pageLabel,Math.max(1,sideX-24)),centerX,height-57,0xffa9c8dc);
-        super.render(context,mouseX,mouseY,delta);
-        int index=index(hovered);
-        if(index>=0)context.drawTooltip(textRenderer,Text.literal((hoveredConfig ? "点击配置 · " : "")+actions.get(index).label()+" · "+actions.get(index).id()
-                +(localMode ? " · 仅自己可见" : " · 服务器动作")),mouseX,mouseY);
+        if(!message.isEmpty())context.drawCenteredTextWithShadow(textRenderer,textRenderer.trimToWidth(message,Math.max(1,width-24)),
+                width/2,height-15,0xfff3f0e0);
+        int selected=index(hovered);
+        if(selected>=0)context.drawTooltip(textRenderer,Text.literal((hoveredConfig?"配置 · ":"")+actions.get(selected).label()),mouseX,mouseY);
     }
-    private static String number(double value) {return java.math.BigDecimal.valueOf(value).setScale(2,java.math.RoundingMode.HALF_UP).stripTrailingZeros().toPlainString();}
-    private String slotLabel(int index) {return textRenderer.trimToWidth(actions.get(index).label(),Math.max(22,(int)(outer*.65)));}
-    /** Real visible text rectangles support layout/accessibility inspection at the active GUI scale. */
-    public Map<String,Object> diagnostics() {
-        List<Map<String,Object>> labels=new ArrayList<>(),configSlots=new ArrayList<>();
-        if(textRenderer!=null)for(int slot=0;slot<SLOTS;slot++) {
-            int index=index(slot);if(index<0)continue;
-            double angle=-Math.PI/2+slot*Math.PI*2/SLOTS,radius=(inner+outer)*.56;
-            int x=centerX+(int)(Math.cos(angle)*radius),y=centerY+(int)(Math.sin(angle)*radius);
-            labels.add(textRectangle(Integer.toString(slot+1),x,y-9,slot));
-            if(outer>=60)labels.add(textRectangle(slotLabel(index),x,y+2,slot));
+    private void drawRadialSegment(DrawContext context,List<Map<String,Object>> polygons,int slot,double innerRadius,
+                                   double outerRadius,int color,String kind) {
+        var vertices=WheelSelection.polygon(slot,innerRadius*layout.scale(),outerRadius*layout.scale()).stream()
+                .map(point->new WheelSelection.Point(centerX+point.x(),centerY+point.y())).toList();
+        context.state.addSimpleElement(RadialSliceRenderState.of(context.getMatrices(),vertices,color,null,emittedVertices));
+        polygons.add(Map.of("slot",slot,"kind",kind,"color",color,
+                "vertices",vertices.stream().map(point->List.of(point.x(),point.y())).toList()));
+    }
+    private WheelSelection.Point pointAt(int slot,double radius) {
+        var point=WheelSelection.labelPoint(slot,radius*layout.scale());
+        return new WheelSelection.Point(centerX+point.x(),centerY+point.y());
+    }
+    private boolean showShortcutHints() {return page==0 && (menu==null || menu.depth()==0);}
+    private List<OrderedText> wrappedLabel(int selected) {
+        var lines=textRenderer.wrapLines(Text.literal(actions.get(selected).label()),Math.max(32,layout.scaled(50)));
+        return lines.size()<=4?lines:lines.subList(0,4);
+    }
+    private void renderRadialLabels(DrawContext context) {
+        for(int slot=0;slot<visibleSlots();slot++) {
+            int selected=index(slot);var point=pointAt(slot,65);int x=Math.round(point.x()),y=Math.round(point.y())-4;
+            var lines=wrappedLabel(selected);int firstY=y-lines.size()*textRenderer.fontHeight+2+(showShortcutHints()?0:9);
+            boolean category=localMode && menu!=null && (localEntries.get(selected).category() || localEntries.get(selected).back());
+            for(var line:lines) {
+                context.drawCenteredTextWithShadow(textRenderer,line,x,firstY,category?0xffff6262:0xfff3f0e0);
+                firstY+=textRenderer.fontHeight;
+            }
+            // Actual Screen numeric bindings, without inventing unregistered author global hotkeys.
+            if(showShortcutHints())context.drawCenteredTextWithShadow(textRenderer,"[ "+(slot+1)+" ]",x,y+4,0xffffff55);
             if(hasConfig(slot)) {
-                double radiusConfig=inner+(outer-inner)*.24;
-                int configX=centerX+(int)(Math.cos(angle)*radiusConfig),configY=centerY+(int)(Math.sin(angle)*radiusConfig);
-                labels.add(textRectangle("⚙",configX,configY-4,slot));
-                configSlots.add(Map.of("slot",slot,"group",localEntries.get(index).configGroup(),"x",configX,"y",configY));
+                var gear=pointAt(slot,35);
+                context.drawCenteredTextWithShadow(textRenderer,"⚙",Math.round(gear.x()),Math.round(gear.y())-4,0xffffc44f);
             }
         }
-        var result=new java.util.LinkedHashMap<String,Object>(Map.of("centerX",centerX,"centerY",centerY,"innerRadius",inner,"outerRadius",outer,
-                "page",page,"localMode",localMode,"locked",locked,"hovered",hovered,"labels",labels,
-                "visibleActionIds",actions.stream().skip((long)page*SLOTS).limit(SLOTS).map(ClientRuntime.Action::id).toList()));
+    }
+    private String pathText() {
+        String root=localMode?"本地":"服务器";
+        return categoryPath.isEmpty()?root:root+" > "+String.join(" > ",categoryPath);
+    }
+    private void renderPathAndPage(DrawContext context) {
+        int left=layout.x(157),right=layout.x(238);
+        context.drawCenteredTextWithShadow(textRenderer,textRenderer.trimToWidth("路径："+pathText(),Math.max(1,right-left)),
+                (left+right)/2,layout.y(-100),0xfff3f0e0);
+        context.fill(left,layout.y(-87),right,layout.y(-72),0xcf000000);
+        context.drawCenteredTextWithShadow(textRenderer,(page+1)+"/"+WheelSelection.pageCount(actions.size(),SLOTS),
+                (left+right)/2,layout.y(-83),0xff55ffff);
+    }
+
+    private void buildConfigForms() {
+        String modelId=runtime.localAppearance().modelId();
+        int contentWidth=Math.max(20,layout.scaled(115)),offset=0,savedScroll=configScroll;
+        configScroll=0;
+        Map<String,Double> variables=runtime.localModelVariables(modelId);
+        for(var form:configGroup.forms()) {
+            int top=offset;List<ClickableWidget> widgets=new ArrayList<>();
+            if(form.kind()==ModelConfigSchema.Kind.CHECKBOX) {
+                var widget=new AuthorCheckbox(layout.panelX(),layout.viewportY()+offset,contentWidth,form.title(),
+                        ()->readForm(form)!=0,()->applyForm(modelId,form.checkboxScript(readForm(form)==0),null,-1));
+                widget.setTooltip(Tooltip.of(Text.literal(form.description())));
+                widgets.add(widget);registerFormWidget(widget);offset+=14;
+            } else if(form.kind()==ModelConfigSchema.Kind.RANGE) {
+                var widget=new AuthorRange(layout.panelX(),layout.viewportY()+offset,contentWidth,form,modelId,form.snap(readForm(form,variables)));
+                widget.setTooltip(Tooltip.of(Text.literal(form.description())));
+                widgets.add(widget);registerFormWidget(widget);offset+=17;
+            } else {
+                int maxLabel=16;
+                for(var choice:form.choices())maxLabel=Math.max(maxLabel,textRenderer.getWidth(choice.label())+16);
+                int columns=Math.max(1,contentWidth/maxLabel),cellWidth=Math.max(1,contentWidth/columns);offset+=14;
+                for(int choice=0;choice<form.choices().size();choice++) {
+                    int choiceIndex=choice;
+                    var widget=new AuthorCheckbox(layout.panelX()+choice%columns*cellWidth,
+                            layout.viewportY()+offset+choice/columns*14,cellWidth,form.choices().get(choice).label(),
+                            ()->runtime.options.modelProfile(modelId).radioSelections().getOrDefault(form.key(),
+                                    Math.max(0,Math.min(form.choices().size()-1,(int)Math.round(readForm(form)))))==choiceIndex,
+                            ()->applyForm(modelId,form.radioScript(choiceIndex),form.key(),choiceIndex));
+                    widget.setTooltip(Tooltip.of(Text.literal(form.description())));
+                    widgets.add(widget);registerFormWidget(widget);
+                }
+                offset+=(form.choices().size()+columns-1)/columns*14+3;
+            }
+            formRows.add(new FormRow(form,top,List.copyOf(widgets)));
+        }
+        configContentHeight=offset;
+        int sw=Math.max(18,layout.scaled(28)),sh=Math.max(22,layout.scaled(60));
+        scrollUpButton=addControl("config-up",new FlatButton(layout.x(270)-sw,layout.viewportY(),sw,sh,"↑",()->scrollConfig(-50)));
+        scrollDownButton=addControl("config-down",new FlatButton(layout.x(270)-sw,
+                layout.viewportY()+layout.viewportHeight()-sh,sw,sh,"↓",()->scrollConfig(50)));
+        scrollConfig(savedScroll);
+    }
+    private void registerFormWidget(ClickableWidget widget) {formWidgets.add(widget);addSelectableChild(widget);}
+    private double readForm(ModelConfigSchema.Form form) {return readForm(form,runtime.localModelVariables(runtime.localAppearance().modelId()));}
+    private double readForm(ModelConfigSchema.Form form,Map<String,Double> values) {
+        try {double value=form.read(values);if(Double.isFinite(value))return value;}catch(RuntimeException invalid){ }
+        message="模型配置值无法读取："+form.title();return 0;
+    }
+    private boolean applyForm(String modelId,String script,String radioKey,int radioIndex) {
+        releaseConsumed=true;
+        if(!sameSource() || !localMode || !runtime.canEditLocalAppearance() ||
+                !runtime.localAppearance().modelId().equals(modelId))return false;
+        Map<String,Integer> radios=new LinkedHashMap<>(runtime.options.modelProfile(modelId).radioSelections());
+        if(radioKey!=null)radios.put(radioKey,radioIndex);
+        boolean accepted=runtime.runLocalScripts(modelId,List.of(script),radios);
+        message=accepted?"已更新模型组件":"模型组件设置未保存";return accepted;
+    }
+    private boolean insideFormViewport(double x,double y) {
+        return configGroup!=null && x>=layout.panelX() && x<layout.x(240) &&
+                y>=layout.viewportY() && y<layout.viewportY()+layout.viewportHeight();
+    }
+    private void scrollConfig(int amount) {
+        int next=WheelSelection.clampScroll(configScroll+amount,configContentHeight,layout.viewportHeight());
+        int shift=configScroll-next;configScroll=next;
+        for(var widget:formWidgets) {
+            widget.setY(widget.getY()+shift);
+            widget.visible=widget.getBottom()>layout.viewportY() && widget.getY()<layout.viewportY()+layout.viewportHeight();
+            widget.active=widget.visible && runtime.canEditLocalAppearance() &&
+                    (!(widget instanceof AuthorRange range) || range.form.maximum()>range.form.minimum());
+            if(!widget.visible && getFocused()==widget){setFocused(null);setDragging(false);}
+        }
+        if(scrollUpButton!=null)scrollUpButton.active=configScroll>0;
+        if(scrollDownButton!=null)scrollDownButton.active=configScroll<Math.max(0,configContentHeight-layout.viewportHeight());
+    }
+    private void renderConfigForms(DrawContext context,int mouseX,int mouseY,float delta) {
+        if(configGroup==null)return;
+        context.enableScissor(layout.panelX(),layout.viewportY(),layout.x(240),layout.viewportY()+layout.viewportHeight());
+        int clippedMouseY=insideFormViewport(mouseX,mouseY)?mouseY:-1000;
+        for(var row:formRows)if(row.form.kind()==ModelConfigSchema.Kind.RADIO)
+            context.drawTextWithShadow(textRenderer,textRenderer.trimToWidth(row.form.title(),Math.max(1,layout.scaled(115))),
+                    layout.panelX(),layout.viewportY()+row.top-configScroll+2,0xfff3f0e0);
+        for(var widget:formWidgets)widget.render(context,mouseX,clippedMouseY,delta);
+        context.disableScissor();
+    }
+
+    private record NavigationControl(String id,FlatButton widget) { }
+    private record FormRow(ModelConfigSchema.Form form,int top,List<ClickableWidget> controls) { }
+    /** OpenYSM FlatColorButton's flat fill and cream hover outline, with native focus/narration. */
+    private class FlatButton extends ButtonWidget {
+        FlatButton(int x,int y,int width,int height,String label,Runnable action) {
+            super(x,y,width,height,net.minecraft.text.Text.literal(label),button->action.run(),DEFAULT_NARRATION_SUPPLIER);
+        }
+        @Override protected void drawIcon(DrawContext context,int mouseX,int mouseY,float delta) {
+            context.fill(getX(),getY(),getRight(),getBottom(),active?-12369342:0x80525252);
+            if(isHovered() || isFocused())context.drawStrokedRectangle(getX(),getY(),getWidth(),getHeight(),-790560);
+            context.drawCenteredTextWithShadow(textRenderer,textRenderer.trimToWidth(getMessage().getString(),Math.max(1,getWidth()-4)),
+                    getX()+getWidth()/2,getY()+(getHeight()-textRenderer.fontHeight)/2,active?0xfff3f0e0:0xffa0a0a0);
+        }
+    }
+    /** OpenYSM ConfigCheckBox's original checked/hovered atlas regions. */
+    private final class AuthorCheckbox extends FlatButton {
+        private final BooleanSupplier selected;
+        AuthorCheckbox(int x,int y,int width,String label,BooleanSupplier selected,Runnable action) {
+            super(x,y,width,12,label,action);this.selected=selected;
+        }
+        @Override protected void drawIcon(DrawContext context,int mouseX,int mouseY,float delta) {
+            context.drawTexture(RenderPipelines.GUI_TEXTURED,ROULETTE_TEXTURE,getX(),getY(),
+                    selected.getAsBoolean()?128:0,isHovered()?12:0,getWidth(),12,256,256);
+            context.drawTextWithShadow(textRenderer,textRenderer.trimToWidth(getMessage().getString(),Math.max(1,getWidth()-14)),
+                    getX()+14,getY()+2,0xffffffff);
+        }
+        @Override public boolean mouseClicked(Click click,boolean doubled) {
+            return insideFormViewport(click.x(),click.y()) && super.mouseClicked(click,doubled);
+        }
+    }
+    /** OpenYSM AnimationSlider's atlas and step/range semantics, with the native drag handler. */
+    private final class AuthorRange extends SliderWidget {
+        final ModelConfigSchema.Form form;
+        private final String modelId;
+        private double applied;
+        AuthorRange(int x,int y,int width,ModelConfigSchema.Form form,String modelId,double current) {
+            super(x,y,width,15,Text.empty(),fraction(form,current));this.form=form;this.modelId=modelId;applied=current;updateMessage();
+        }
+        private static double fraction(ModelConfigSchema.Form form,double value) {
+            return form.maximum()==form.minimum()?0:(value-form.minimum())/(form.maximum()-form.minimum());
+        }
+        @Override protected void updateMessage() {
+            setMessage(Text.literal(form.title()+": "+number(form.snap(form.minimum()+value*(form.maximum()-form.minimum())))));
+        }
+        @Override protected void applyValue() {
+            double requested=form.snap(form.minimum()+value*(form.maximum()-form.minimum()));
+            if(requested!=applied && !applyForm(modelId,form.rangeScript(requested),null,-1))value=fraction(form,applied);
+            else {applied=requested;value=fraction(form,requested);}
+            updateMessage();
+        }
+        @Override public void renderWidget(DrawContext context,int mouseX,int mouseY,float delta) {
+            context.drawTexture(RenderPipelines.GUI_TEXTURED,ROULETTE_TEXTURE,getX(),getY(),0,24,getWidth()-4,15,256,256);
+            context.drawTexture(RenderPipelines.GUI_TEXTURED,ROULETTE_TEXTURE,getRight()-4,getY(),196,24,4,15,256,256);
+            int handle=getX()+(int)(value*(getWidth()-8)),v=isHovered()?84:64;
+            context.drawTexture(RenderPipelines.GUI_TEXTURED,ROULETTE_TEXTURE,handle,getY(),0,v,4,15,256,256);
+            context.drawTexture(RenderPipelines.GUI_TEXTURED,ROULETTE_TEXTURE,handle+4,getY(),196,v,4,15,256,256);
+            context.drawCenteredTextWithShadow(textRenderer,textRenderer.trimToWidth(getMessage().getString(),Math.max(1,getWidth()-4)),
+                    getX()+getWidth()/2,getY()+3,0xffffffff);
+        }
+        @Override public boolean mouseClicked(Click click,boolean doubled) {
+            return insideFormViewport(click.x(),click.y()) && super.mouseClicked(click,doubled);
+        }
+    }
+    private static String number(double value) {return java.math.BigDecimal.valueOf(value).stripTrailingZeros().toPlainString();}
+
+    public Map<String,Object> diagnostics() {
+        List<Map<String,Object>> labels=new ArrayList<>(),configSlots=new ArrayList<>(),visibleActions=new ArrayList<>();
+        if(layout!=null)for(int slot=0;slot<visibleSlots();slot++) {
+            int selected=index(slot);var point=pointAt(slot,65);int x=Math.round(point.x()),y=Math.round(point.y());
+            visibleActions.add(Map.of("slot",slot,"id",actions.get(selected).id(),"label",actions.get(selected).label(),
+                    "x",x,"y",y,"shortcut",Integer.toString(slot+1),"configGroup",hasConfig(slot)?localEntries.get(selected).configGroup():"",
+                    "category",localMode && menu!=null && localEntries.get(selected).category(),"back",localMode && menu!=null && localEntries.get(selected).back()));
+            var lines=wrappedLabel(selected);int ly=y-4-lines.size()*textRenderer.fontHeight+2+(showShortcutHints()?0:9);
+            for(var line:lines) {
+                int lw=textRenderer.getWidth(line);
+                labels.add(Map.of("slot",slot,"text",actions.get(selected).label(),"x",x-lw/2,"y",ly,"width",lw,"height",textRenderer.fontHeight));
+                ly+=textRenderer.fontHeight;
+            }
+            if(showShortcutHints())labels.add(textRectangle("[ "+(slot+1)+" ]",x,y,slot));
+            if(hasConfig(slot)) {
+                var gear=pointAt(slot,35);int gx=Math.round(gear.x()),gy=Math.round(gear.y());
+                labels.add(textRectangle("⚙",gx,gy-4,slot));
+                configSlots.add(Map.of("slot",slot,"group",localEntries.get(selected).configGroup(),"x",gx,"y",gy));
+            }
+        }
+        var result=new LinkedHashMap<String,Object>();
+        result.put("centerX",centerX);result.put("centerY",centerY);result.put("innerRadius",inner);result.put("outerRadius",outer);
+        result.put("page",page);result.put("localMode",localMode);result.put("source",source().name());
+        result.put("locked",locked);result.put("keepOpen",locked);result.put("hovered",hovered);result.put("hoveredCenter",hoveredCenter);
+        result.put("labels",labels);result.put("visibleActionIds",actions.stream().skip((long)page*SLOTS).limit(SLOTS).map(ClientRuntime.Action::id).toList());
         result.put("configSlots",configSlots);result.put("actionLocked",runtime.localActionLocked());
-        result.put("category",localMode && menu!=null ? menu.categoryId() : "");
-        result.put("categoryId",localMode && menu!=null ? menu.categoryId() : "");result.put("depth",localMode && menu!=null ? menu.depth() : 0);
-        result.put("pageCount",WheelSelection.pageCount(actions.size(),SLOTS));
-        result.put("entries",localMode && menu!=null ? localEntries.stream().map(entry->Map.of("id",entry.id(),"configGroup",entry.configGroup(),"category",entry.category(),"back",entry.back())).toList() : List.of());return result;
+        result.put("category",category());result.put("categoryId",category());result.put("depth",localMode && menu!=null?menu.depth():0);
+        result.put("pageCount",WheelSelection.pageCount(actions.size(),SLOTS));result.put("paginationVisible",WheelSelection.pageCount(actions.size(),SLOTS)>1);
+        result.put("paginationControlsVisible",true);result.put("ownServerDisguise",runtime.hasOwnServerDisguise());result.put("serverAvailable",serverAvailable);
+        result.put("serverModelInstance",runtime.serverOwnModelInstance());result.put("serverAppearance",runtime.ownServerAppearanceDiagnostics());
+        result.put("effectiveLocalMode",runtime.interactionLocalMode());
+        result.put("controls",navigationControls.stream().map(control->widgetRectangle(control.id,control.widget)).toList());
+        result.put("scopeButtonsVisible",false);result.put("localModelDetailsVisible",false);
+        result.put("releaseKey",releaseKey);result.put("releaseType",releaseType.name());result.put("releaseConsumed",releaseConsumed);
+        result.put("rememberedSource",runtime.wheelPreferences().source().name());
+        result.put("rememberedClientPage",runtime.wheelPreferences().clientPage());result.put("rememberedServerPage",runtime.wheelPreferences().serverPage());
+        result.put("entries",localMode && menu!=null?localEntries.stream().map(entry->Map.of("id",entry.id(),"configGroup",entry.configGroup(),
+                "category",entry.category(),"back",entry.back())).toList():List.of());
+        result.put("upstreamRoulette",true);result.put("upstreamSource","OpenYSM-Updated/AnimationRouletteScreen@0306e1f");
+        result.put("polygon",true);result.put("polygons",renderedPolygons);result.put("emittedVertices",emittedVertices.get());
+        result.put("actions",visibleActions);result.put("path",pathText());result.put("categoryPath",List.copyOf(categoryPath));
+        result.put("formPanel",formDiagnostics());return result;
+    }
+    private Map<String,Object> formDiagnostics() {
+        List<Map<String,Object>> forms=new ArrayList<>();
+        for(var row:formRows) {
+            var controls=new ArrayList<Map<String,Object>>();
+            for(int i=0;i<row.controls.size();i++) {
+                var widget=row.controls.get(i);
+                String id=row.form.kind()==ModelConfigSchema.Kind.RADIO?"radio:"+i:row.form.kind()==ModelConfigSchema.Kind.RANGE?"range":"checkbox";
+                var data=new LinkedHashMap<>(widgetRectangle(id,widget));data.put("visible",widget.visible);
+                if(widget instanceof AuthorCheckbox checkbox)data.put("selected",checkbox.selected.getAsBoolean());
+                if(widget instanceof AuthorRange range)data.put("value",range.applied);
+                if(row.form.kind()==ModelConfigSchema.Kind.RADIO)data.put("choice",i);
+                controls.add(data);
+            }
+            var form=new LinkedHashMap<String,Object>();
+            form.put("key",row.form.key());form.put("kind",row.form.kind().name());form.put("title",row.form.title());
+            form.put("expression",row.form.expression());form.put("value",readForm(row.form));form.put("controls",controls);
+            form.put("min",row.form.minimum());form.put("max",row.form.maximum());form.put("step",row.form.step());forms.add(form);
+        }
+        return Map.of("visible",configGroup!=null,"group",configGroupId,"x",layout==null?0:layout.panelX(),
+                "y",layout==null?0:layout.viewportY(),"width",layout==null?0:layout.scaled(115),
+                "height",layout==null?0:layout.viewportHeight(),"scroll",configScroll,"contentHeight",configContentHeight,
+                "maxScroll",layout==null?0:Math.max(0,configContentHeight-layout.viewportHeight()),"forms",forms);
+    }
+    private static Map<String,Object> widgetRectangle(String id,ClickableWidget widget) {
+        return Map.of("id",id,"label",widget.getMessage().getString(),"x",widget.getX(),"y",widget.getY(),
+                "width",widget.getWidth(),"height",widget.getHeight(),"active",widget.active);
     }
     private Map<String,Object> textRectangle(String text,int center,int y,int slot) {
-        int textWidth=textRenderer.getWidth(text),x=center-textWidth/2;
-        return Map.of("slot",slot,"text",text,"x",x,"y",y,"width",textWidth,"height",textRenderer.fontHeight);
+        int textWidth=textRenderer.getWidth(text);
+        return Map.of("slot",slot,"text",text,"x",center-textWidth/2,"y",y,"width",textWidth,"height",textRenderer.fontHeight);
     }
     public boolean navigateBack() {
-        if(localMode && menu!=null && menu.back()) {page=0;hovered=-1;clearAndInit();return true;} return false;
+        if(localMode && menu!=null && menu.depth()>0) {
+            rememberPage();
+            if(menu.back()){if(!categoryPath.isEmpty())categoryPath.removeLast();changedCategory();return true;}
+        }
+        return false;
     }
-    @Override public void close() {if(client!=null) {if(!navigateBack())client.setScreen(parent);}}
+    @Override public void close() {if(!navigateBack())client.setScreen(parent);}
     @Override public boolean shouldPause() {return false;}
 }

@@ -1,6 +1,4 @@
 {
-  "key.meplayeractions.menu": "Open player actions",
-  "key.category.meplayeractions.actions": "Player Model Actions",
-  "key.meplayeractions.models": "Open model library",
-  "key.meplayeractions.wheel": "Open action wheel"
+  "key.category.meplayeractions.actions": "Player Models",
+  "key.meplayeractions.action_wheel": "Action wheel / model settings"
 }

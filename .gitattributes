@@ -1,0 +1,2 @@
+# Bundled upstream assets retain their original bytes and line endings.
+client/src/main/resources/assets/meplayeractions/builtin/** -text

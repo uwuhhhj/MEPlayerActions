@@ -3,6 +3,8 @@ package com.simmc.meplayeractions.client.render;
 import com.simmc.meplayeractions.client.ClientRuntime;
 import com.simmc.meplayeractions.client.model.AnimationPlayer;
 import com.simmc.meplayeractions.client.model.BbModel;
+import com.simmc.meplayeractions.client.model.YsmModelProfile;
+import com.simmc.meplayeractions.client.model.YsmRenderScale;
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldExtractionContext;
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderContext;
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents;
@@ -27,6 +29,8 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.Arm;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.joml.Matrix4f;
+import org.joml.Vector3f;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -52,6 +56,7 @@ public final class ModelRenderer {
     private static volatile Map<String, Object> cameraInfo = Map.of();
     private static volatile List<Map<String, Object>> itemInfo = List.of();
     private static volatile List<Map<String, Object>> submittedItemDraws = List.of();
+    private static volatile List<Map<String, Object>> submittedEquipmentDraws = List.of();
     private static ClientRuntime runtime;
     private static boolean registered;
 
@@ -140,6 +145,7 @@ public final class ModelRenderer {
         result.put("firstPersonSelfSkipped", firstPersonSkipped); result.put("models", frameModels); result.put("camera", cameraInfo);
         result.put("extractedFrames", extractedFrames); result.put("items", itemInfo); result.put("submittedItems", YsmItemRenderer.submittedItems());
         result.put("submittedItemDraws", submittedItemDraws); result.put("submittedEquipment", YsmEquipmentRenderer.submittedEquipment());
+        result.put("submittedEquipmentDraws", submittedEquipmentDraws);
         result.put("components", YsmComponentRenderer.diagnostics());
         return Map.copyOf(result);
     }
@@ -152,7 +158,9 @@ public final class ModelRenderer {
 
     public record FrameModel(String owner, String hash, int vertices, double minY, double maxY,
                              float bodyYaw, float appliedYaw, double minX, double maxX, double minZ, double maxZ,
-                             double pivotX, double pivotY, double pivotZ, String motionSource) { }
+                             double pivotX, double pivotY, double pivotZ, String motionSource,
+                             String instance, boolean nativeYsm, float modelScaleX, float modelScaleY,
+                             float modelScaleZ, float bindingScale, float initialYOffset) { }
 
     public static void release(String hash) {
         MinecraftClient client = MinecraftClient.getInstance();
@@ -166,6 +174,7 @@ public final class ModelRenderer {
         frameModels = List.of();
         itemInfo = List.of();
         submittedItemDraws = List.of();
+        submittedEquipmentDraws = List.of();
         YsmComponentRenderer.clear();
         PLAYERS.entrySet().removeIf(entry -> {
             if (!entry.getKey().hash().equals(hash)) return false;
@@ -204,6 +213,7 @@ public final class ModelRenderer {
         frameModels = List.of();
         itemInfo = List.of();
         submittedItemDraws = List.of();
+        submittedEquipmentDraws = List.of();
         YsmComponentRenderer.clear();
         PLAYERS.values().forEach(AnimationPlayer::reset);
         PLAYERS.clear();
@@ -227,6 +237,7 @@ public final class ModelRenderer {
             frameModels = List.of();
             itemInfo = List.of();
             submittedItemDraws = List.of();
+            submittedEquipmentDraws = List.of();
             YsmComponentRenderer.clear();
             firstPersonSkipped = 0;
             extractedFrames++;
@@ -254,6 +265,9 @@ public final class ModelRenderer {
             InstanceKey key = new InstanceKey(binding.owner(), binding.instance(), binding.assetHash());
             live.add(key);
             try {
+                YsmModelProfile profile = activeRuntime.modelProfile(binding.owner());
+                boolean nativeYsm = profile.isYsm();
+                YsmRenderScale modelScale = YsmRenderScale.forProfile(profile);
                 AnimationPlayer player = PLAYERS.computeIfAbsent(key, ignored -> new AnimationPlayer(binding.model()));
                 player.configureFrame(expressions -> activeRuntime.configureExpressionContext(binding.owner(), expressions));
                 List<BbModel.Vertex> vertices = player.sample(binding.serverTick(), binding.layers(),
@@ -267,8 +281,9 @@ public final class ModelRenderer {
                     continue;
                 }
                 if (!activeRuntime.shouldShowModel(binding.owner())) continue;
-                Box bounds = bounds(binding, vertices);
-                if (vertices.isEmpty() || !context.frustum().isVisible(bounds)) continue;
+                if (vertices.isEmpty()) continue;
+                Box geometry = geometryBounds(binding, vertices, modelScale, nativeYsm);
+                if (!context.frustum().isVisible(geometry.expand(.05))) continue;
                 Map<Integer, List<BbModel.Vertex>> byTexture = new LinkedHashMap<>();
                 for (int offset = 0; offset + 3 < vertices.size(); offset += 4) {
                     int index = vertices.get(offset).texture();
@@ -287,17 +302,29 @@ public final class ModelRenderer {
                 var nativePlayer = activeRuntime.nativePlayer(binding.owner());
                 try {
                     items = YsmItemRenderer.extract(nativePlayer, player);
-                    equipment = YsmEquipmentRenderer.extract(nativePlayer, player);
+                    if(!activeRuntime.isServerDisguised(binding.owner()))equipment = YsmEquipmentRenderer.extract(nativePlayer, player);
                 } catch (RuntimeException failure) { LOGGER.warn("Cannot extract equipment for {}: {}", binding.owner(), failure.toString()); }
                 Map<String, Object> itemSource = new LinkedHashMap<>();
                 itemSource.put("owner", binding.owner().toString()); itemSource.put("instance", binding.instance()); itemSource.put("hash", binding.assetHash());
+                itemSource.put("nativeYsm", nativeYsm);
+                itemSource.put("modelScaleX", modelScale.x()); itemSource.put("modelScaleY", modelScale.y()); itemSource.put("modelScaleZ", modelScale.z());
+                itemSource.put("bindingScale", binding.scale());
+                itemSource.put("initialYOffset", nativeYsm ? YsmRenderScale.PLAYER_BODY_Y_OFFSET : 0f);
                 itemSource.put("currentBindingValid", true); itemSource.put("motionSource", binding.motionSource());
                 itemSource.put("nativePresent", nativePlayer != null);
+                itemSource.put("hideNativeEquipment",activeRuntime.isServerDisguised(binding.owner()));
                 if (nativePlayer != null) {
                     itemSource.put("nativeEntityUuid", nativePlayer.getUuid().toString()); itemSource.put("nativeEntityId", nativePlayer.getId());
                     itemSource.put("swinging", nativePlayer.handSwinging); itemSource.put("swingTicks", nativePlayer.handSwingTicks);
                     itemSource.put("usingItem", nativePlayer.isUsingItem()); itemSource.put("useTicks", nativePlayer.getItemUseTime());
                     itemSource.put("activeHand", nativePlayer.isUsingItem() ? nativePlayer.getActiveHand().name() : "");
+                    Map<String,String> armor=new LinkedHashMap<>();
+                    for(var slot:List.of(net.minecraft.entity.EquipmentSlot.HEAD,net.minecraft.entity.EquipmentSlot.CHEST,
+                            net.minecraft.entity.EquipmentSlot.LEGS,net.minecraft.entity.EquipmentSlot.FEET))
+                        armor.put(slot.name(),net.minecraft.registry.Registries.ITEM.getId(nativePlayer.getEquippedStack(slot).getItem()).toString());
+                    itemSource.put("nativeArmorStacks",Map.copyOf(armor));
+                    itemSource.put("nativeCapeAvailable",nativePlayer instanceof net.minecraft.client.network.AbstractClientPlayerEntity clientPlayer
+                            && clientPlayer.getSkin().cape()!=null);
                 }
                 if (!items.isEmpty() || !equipment.isEmpty()) {
                     Map<String, Object> info = new LinkedHashMap<>(itemSource);
@@ -305,12 +332,14 @@ public final class ModelRenderer {
                     nextItemInfo.add(Map.copyOf(info));
                 }
                 nextFrame.add(new FrozenModel(binding.x() - camera.x, binding.y() - camera.y,
-                        binding.z() - camera.z, binding.bodyYaw(), binding.scale(), light, List.copyOf(meshes), items, equipment, Map.copyOf(itemSource)));
-                Box geometry = geometryBounds(binding, vertices);
+                        binding.z() - camera.z, binding.bodyYaw(), binding.scale(), nativeYsm, modelScale,
+                        light, List.copyOf(meshes), items, equipment, Map.copyOf(itemSource)));
                 modelInfo.add(new FrameModel(binding.owner().toString(), binding.assetHash(), vertices.size(),
                         geometry.minY, geometry.maxY, binding.bodyYaw(), 180 - binding.bodyYaw(),
                         geometry.minX, geometry.maxX, geometry.minZ, geometry.maxZ,
-                        binding.x(), binding.y(), binding.z(), binding.motionSource()));
+                        binding.x(), binding.y(), binding.z(), binding.motionSource(), binding.instance(), nativeYsm,
+                        modelScale.x(), modelScale.y(), modelScale.z(), binding.scale(),
+                        nativeYsm ? YsmRenderScale.PLAYER_BODY_Y_OFFSET : 0f));
             } catch (RuntimeException failure) {
                 activeRuntime.renderFailed(binding.owner(), binding.instance(), binding.assetHash(), failure.toString());
                 LOGGER.warn("Cannot extract model {}: {}", binding.assetHash(), failure.toString());
@@ -336,29 +365,21 @@ public final class ModelRenderer {
                 && binding.scale() > 0 && binding.scale() <= 8;
     }
 
-    private static Box bounds(ClientRuntime.RenderBinding binding, List<BbModel.Vertex> vertices) {
-        double radius = 0;
-        double minY = 0;
-        double maxY = 0;
-        for (BbModel.Vertex vertex : vertices) {
-            radius = Math.max(radius, Math.hypot(vertex.x(), vertex.z()));
-            minY = Math.min(minY, vertex.y());
-            maxY = Math.max(maxY, vertex.y());
-        }
-        radius = Math.max(0.05, radius * binding.scale());
-        return new Box(binding.x() - radius, binding.y() + minY * binding.scale() - 0.05,
-                binding.z() - radius, binding.x() + radius,
-                binding.y() + maxY * binding.scale() + 0.05, binding.z() + radius);
-    }
-
-    private static Box geometryBounds(ClientRuntime.RenderBinding binding, List<BbModel.Vertex> vertices) {
+    private static Box geometryBounds(ClientRuntime.RenderBinding binding, List<BbModel.Vertex> vertices,
+                                      YsmRenderScale modelScale, boolean nativeYsm) {
         double minX = Double.POSITIVE_INFINITY, minY = Double.POSITIVE_INFINITY, minZ = Double.POSITIVE_INFINITY;
         double maxX = Double.NEGATIVE_INFINITY, maxY = Double.NEGATIVE_INFINITY, maxZ = Double.NEGATIVE_INFINITY;
+        Matrix4f initial = modelScale.applyInitialPlayerBody(new Matrix4f(), nativeYsm);
+        Vector3f point = new Vector3f();
         double yaw = Math.toRadians(180 - binding.bodyYaw()), sine = Math.sin(yaw), cosine = Math.cos(yaw);
         for (BbModel.Vertex vertex : vertices) {
-            double x = binding.x() + binding.scale() * (vertex.x() * cosine + vertex.z() * sine);
-            double y = binding.y() + binding.scale() * vertex.y();
-            double z = binding.z() + binding.scale() * (-vertex.x() * sine + vertex.z() * cosine);
+            initial.transformPosition(vertex.x(), vertex.y(), vertex.z(), point);
+            // Apply the existing sampled-position budget after the newly supported author transform too.
+            if (!point.isFinite() || point.lengthSquared() > 1e12f)
+                throw new IllegalArgumentException("Sampled model bounds exceeded after YSM INITIAL scale");
+            double x = binding.x() + binding.scale() * (point.x * cosine + point.z * sine);
+            double y = binding.y() + binding.scale() * point.y;
+            double z = binding.z() + binding.scale() * (-point.x * sine + point.z * cosine);
             minX = Math.min(minX, x); maxX = Math.max(maxX, x);
             minY = Math.min(minY, y); maxY = Math.max(maxY, y);
             minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
@@ -368,6 +389,7 @@ public final class ModelRenderer {
 
     private static void submit(WorldRenderContext context) {
         List<Map<String, Object>> itemDraws = new ArrayList<>();
+        List<Map<String, Object>> equipmentDraws = new ArrayList<>();
         for (FrozenModel model : frame) {
             MatrixStack matrices = context.matrices();
             matrices.push();
@@ -376,6 +398,10 @@ public final class ModelRenderer {
                 // Blockbench front is -Z. Minecraft bodyYaw=0 faces +Z.
                 matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(180 - model.yaw()));
                 matrices.scale(model.scale(), model.scale(), model.scale());
+                if (model.nativeYsm()) {
+                    matrices.translate(0, YsmRenderScale.PLAYER_BODY_Y_OFFSET, 0);
+                    matrices.scale(model.modelScale().x(), model.modelScale().y(), model.modelScale().z());
+                }
                 for (FrozenTexture texture : model.textures()) {
                     context.commandQueue().submitCustom(matrices, texture.layer(),
                             (entry, consumer) -> emit(entry, consumer, texture.vertices(), model.light()));
@@ -385,12 +411,19 @@ public final class ModelRenderer {
                     proof.putAll(draw); proof.put("extractedFrame", extractedFrames);
                     itemDraws.add(Map.copyOf(proof));
                 }
+                long equipmentBefore=YsmEquipmentRenderer.submittedEquipment();
                 YsmEquipmentRenderer.submit(model.equipment(), matrices, context.commandQueue(), model.light());
+                Map<String,Object> equipmentProof=new LinkedHashMap<>(model.itemSource());
+                equipmentProof.put("extractedFrame",extractedFrames);
+                equipmentProof.put("equipment",YsmEquipmentRenderer.diagnostics(model.equipment()));
+                equipmentProof.put("submitted",YsmEquipmentRenderer.submittedEquipment()-equipmentBefore);
+                equipmentDraws.add(Map.copyOf(equipmentProof));
             } finally {
                 matrices.pop();
             }
         }
         submittedItemDraws = List.copyOf(itemDraws);
+        submittedEquipmentDraws = List.copyOf(equipmentDraws);
         YsmComponentRenderer.submit(context);
     }
 
@@ -440,7 +473,8 @@ public final class ModelRenderer {
     private record PreparedAsset(BbModel model, Map<Integer, PreparedTexture> textures) { }
     private record InstanceKey(UUID owner, String instance, String hash) { }
     private record FrozenTexture(RenderLayer layer, List<BbModel.Vertex> vertices) { }
-    private record FrozenModel(double x, double y, double z, float yaw, float scale, int light,
+    private record FrozenModel(double x, double y, double z, float yaw, float scale,
+                               boolean nativeYsm, YsmRenderScale modelScale, int light,
                                List<FrozenTexture> textures, List<YsmItemRenderer.Attachment> items,
                                List<YsmEquipmentRenderer.Attachment> equipment, Map<String, Object> itemSource) { }
 }

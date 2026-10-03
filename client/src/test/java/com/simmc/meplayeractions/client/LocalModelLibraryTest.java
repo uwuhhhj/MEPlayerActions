@@ -2,6 +2,8 @@ package com.simmc.meplayeractions.client;
 
 import com.simmc.meplayeractions.client.network.AssetTransfer;
 import com.simmc.meplayeractions.client.model.YsmFolderModel;
+import com.simmc.meplayeractions.client.model.BuiltinYsmModels;
+import java.util.stream.Stream;
 import com.simmc.meplayeractions.client.model.YsmFolderFixtures;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -16,14 +18,14 @@ class LocalModelLibraryTest {
 
     @Test void modelPickerIncludesBundledAndSafeFilesAndLoadsTheSelectedFile() throws Exception {
         Path directory=temporary.resolve("models");var library=new LocalModelLibrary(directory);
-        assertEquals(List.of("openysm_default"),library.models().stream().map(LocalModelLibrary.Entry::id).toList());
+        assertEquals(BuiltinYsmModels.ids(),library.models().stream().map(LocalModelLibrary.Entry::id).toList());
         assertNull(LocalModelLibrary.class.getResourceAsStream("/assets/meplayeractions/models/ysm_01_jk.bbmodel"));
         assertNull(LocalModelLibrary.class.getResourceAsStream("/assets/meplayeractions/models/ysm_02_jk.bbmodel"));
         byte[] model=YsmFolderModel.bundledDefault();
         Files.write(directory.resolve("我的模型.bbmodel"),model);
         Files.writeString(directory.resolve("notes.txt"),"not a model");
         Files.createDirectory(directory.resolve("nested.bbmodel"));
-        assertEquals(List.of("openysm_default","local:我的模型.bbmodel"),library.models().stream().map(LocalModelLibrary.Entry::id).toList());
+        assertEquals(Stream.concat(BuiltinYsmModels.ids().stream(),Stream.of("local:我的模型.bbmodel")).toList(),library.models().stream().map(LocalModelLibrary.Entry::id).toList());
         var loaded=library.load("local:我的模型.bbmodel");
         assertEquals(AssetTransfer.hash(model),loaded.hash());assertTrue(loaded.model().cubeCount()>0);
         assertEquals(loaded.hash(),library.load("openysm_default").hash());
@@ -44,7 +46,7 @@ class LocalModelLibraryTest {
         Path directory=Files.createDirectory(temporary.resolve("models")); Path folder=directory.resolve("我的 YSM 模型");
         YsmFolderFixtures.copyDefault(folder);
         var library=new LocalModelLibrary(directory);
-        assertEquals(List.of("openysm_default","ysm:我的 YSM 模型"),library.models().stream().map(LocalModelLibrary.Entry::id).toList());
+        assertEquals(Stream.concat(BuiltinYsmModels.ids().stream(),Stream.of("ysm:我的 YSM 模型")).toList(),library.models().stream().map(LocalModelLibrary.Entry::id).toList());
         var bundled=library.load("openysm_default");var local=library.load("ysm:我的 YSM 模型");
         assertEquals(bundled.hash(),local.hash());assertEquals(172,local.model().cubeCount());
         assertTrue(local.model().animations().containsAll(List.of("idle","walk","run","swim","extra1","extra7")));

@@ -1,5 +1,7 @@
 package com.simmc.meplayeractions.client;
 
+import com.simmc.meplayeractions.client.model.BuiltinYsmModels;
+
 /** A private viewer-side appearance; none of these values are sent to the server. */
 public record LocalAppearanceSettings(boolean enabled, String modelId, float scale,
                                       double offsetX, double offsetY, double offsetZ) {
@@ -7,7 +9,7 @@ public record LocalAppearanceSettings(boolean enabled, String modelId, float sca
     public static final double MAX_OFFSET = 32;
 
     public LocalAppearanceSettings {
-        if (!isValidModelId(modelId)) throw new IllegalArgumentException("请选择默认模型、本地 .bbmodel 文件或 YSM 模型文件夹");
+        if (!isValidModelId(modelId)) throw new IllegalArgumentException("请选择内置模型、本地 .bbmodel 文件或 YSM 模型文件夹");
         if (!Float.isFinite(scale) || scale < MIN_SCALE || scale > MAX_SCALE)
             throw new IllegalArgumentException("缩放范围为 0.05 到 8");
         if (!validOffset(offsetX) || !validOffset(offsetY) || !validOffset(offsetZ))
@@ -19,7 +21,7 @@ public record LocalAppearanceSettings(boolean enabled, String modelId, float sca
     }
 
     public static boolean isValidModelId(String id) {
-        if ("openysm_default".equals(id)) return true;
+        if (BuiltinYsmModels.contains(id)) return true;
         if (id == null || id.length() > 128) return false;
         if (id.startsWith("local:")) {
             String filename = id.substring(6);

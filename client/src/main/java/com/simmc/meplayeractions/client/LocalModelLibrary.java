@@ -1,6 +1,7 @@
 package com.simmc.meplayeractions.client;
 
 import com.simmc.meplayeractions.client.model.BbModel;
+import com.simmc.meplayeractions.client.model.BuiltinYsmModels;
 import com.simmc.meplayeractions.client.model.YsmFolderModel;
 import com.simmc.meplayeractions.client.model.YsmModelProfile;
 import com.simmc.meplayeractions.client.network.AssetTransfer;
@@ -28,7 +29,7 @@ public final class LocalModelLibrary {
 
     public List<Entry> models() throws IOException {
         List<Entry> models = new ArrayList<>();
-        models.add(new Entry("openysm_default", "默认模型 · OpenYSM"));
+        for (var builtin : BuiltinYsmModels.models()) models.add(new Entry(builtin.id(), builtin.label()));
         if (!Files.exists(directory)) Files.createDirectories(directory);
         checkDirectory();
         try (var files = Files.list(directory)) {
@@ -71,7 +72,7 @@ public final class LocalModelLibrary {
             var imported = YsmFolderModel.readWithProfile(directory.resolve(id.substring(4)), textureId);
             raw = imported.raw(); previewAnimation = imported.previewAnimation(); profile = imported.profile();
         } else {
-            var imported = YsmFolderModel.bundledDefaultWithProfile(textureId);
+            var imported = YsmFolderModel.bundledWithProfile(id, textureId);
             raw = imported.raw(); previewAnimation = imported.previewAnimation(); profile = imported.profile();
         }
         return new Loaded(AssetTransfer.hash(raw), BbModel.parse(raw), previewAnimation, profile);

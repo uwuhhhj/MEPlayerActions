@@ -1,0 +1,429 @@
+{
+  "schema": 1,
+  "upstream": "https://github.com/IzumiiKonata/OpenYSM-Updated",
+  "revision": "0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85",
+  "original_file_count": 77,
+  "original_bytes": 4973579,
+  "models": [
+    {
+      "id": "wine_fox_01_taisho_maid",
+      "label": "酒狐 · 大正女仆",
+      "upstream_path": "common/src/main/resources/assets/yes_steve_model/builtin/wine_fox/01_taisho_maid",
+      "resource_root": "assets/meplayeractions/builtin/wine_fox/01_taisho_maid/",
+      "file_count": 43,
+      "bytes": 3123310,
+      "files": [
+        {
+          "path": "animations/arrow.animation.json",
+          "sha256": "7920d5f25a5f639cecfe5e980ea6bd35fa43f1747c0f4afd418ab66b8fcb3313",
+          "bytes": 1238
+        },
+        {
+          "path": "animations/carryon.animation.json",
+          "sha256": "5371aee783c07a9d441d3b9a88666c349e692c2461bd07037ecf274423ca376e",
+          "bytes": 3798
+        },
+        {
+          "path": "animations/extra.animation.json",
+          "sha256": "9933f5fe80d55f81b43fa5d87a144c91793ef538684d634303a29c611fea9ff9",
+          "bytes": 504442
+        },
+        {
+          "path": "animations/fp.arm.animation.json",
+          "sha256": "17b10e3b6c163069d61c4e26cf778b2d9d5f9fa3b90265866dd09426252e13a2",
+          "bytes": 328
+        },
+        {
+          "path": "animations/main.animation.json",
+          "sha256": "2fdb908b1b77845008dc8e8f882e71827af4f496d46972bf7418ed9a04c4362b",
+          "bytes": 393471
+        },
+        {
+          "path": "animations/tac.animation.json",
+          "sha256": "f9c6f7d7d4afc5422975f36994f6d8a3eb26dade1a6d8dab646f312a0cca3173",
+          "bytes": 193417
+        },
+        {
+          "path": "animations/tlm.animation.json",
+          "sha256": "f8d09b38d362cde2f018e28930c586ecce57a55e248015a874018c88ce685b10",
+          "bytes": 321430
+        },
+        {
+          "path": "animations/vehicle/horse.animation.json",
+          "sha256": "d20a3e7d99c4c255ce4fb2a56aa8f8595cbc6b22b21c93838ef869d8e375db96",
+          "bytes": 1700
+        },
+        {
+          "path": "animations/vehicle/mule.animation.json",
+          "sha256": "469312a4e3befccf2bb960bd7507bf0e7205b5100a4a5c1b1d147f226c96ad1d",
+          "bytes": 1648
+        },
+        {
+          "path": "avatar/bfxm.jpg",
+          "sha256": "41fb944b9d083ff69e1edc2ba69cf44d444f5645a4e1114026f1c9ad3ef6025f",
+          "bytes": 5466
+        },
+        {
+          "path": "avatar/gsl.png",
+          "sha256": "dbfee9f254d512bad28db7f7e23d631d4aa450cbe42a31d1e2ed3a756f16f4a1",
+          "bytes": 17212
+        },
+        {
+          "path": "avatar/hl.png",
+          "sha256": "80f61d49f385faf974b8b3e579b6b307b9046992f1d3ae32647e8676102d5fa3",
+          "bytes": 5216
+        },
+        {
+          "path": "avatar/hys.png",
+          "sha256": "6dda47283fff88a4ed4ec07509de852b473cc97170e560b71f10339c2ab14ecf",
+          "bytes": 5773
+        },
+        {
+          "path": "avatar/lmg.png",
+          "sha256": "0d05a6be0b1ffb32f6497265f7411b7741f18ae89a82e82a4982e39ba4183fa4",
+          "bytes": 2984
+        },
+        {
+          "path": "avatar/maks.jpg",
+          "sha256": "836e8432f93fd41b5e6d19eb97a89027faf78e1ffa3758b489592f7f4a86ec9c",
+          "bytes": 4744
+        },
+        {
+          "path": "avatar/mrsy.png",
+          "sha256": "1d5f4b48bda1349a1f5f7ceb5de981dfc4590f6a766574d3db5323290e4010eb",
+          "bytes": 5984
+        },
+        {
+          "path": "avatar/nico.png",
+          "sha256": "c4dc33bb154086be5c4ea25c3638257de58713a7ba5e198b05235e4252074f09",
+          "bytes": 2366
+        },
+        {
+          "path": "avatar/wmdj.jpg",
+          "sha256": "ffabb00e0bb3328749e1d5ac542a8d2f36ce8dba291469976068e36b6fb9b8c7",
+          "bytes": 5154
+        },
+        {
+          "path": "avatar/wool.png",
+          "sha256": "98eb2c163ca5c7beac09a80d892df1fd414ff102dd8f85c428d99ff15f85ea9d",
+          "bytes": 6683
+        },
+        {
+          "path": "controller/wine_fox.animation_controllers.json",
+          "sha256": "6cfffe227e58f254d5001cfc473ef32cafa9cabfd8c6be30ece71add58f5692d",
+          "bytes": 1601
+        },
+        {
+          "path": "lang/en_us.json",
+          "sha256": "417edfd996633b7a406e172cc5bda1ef21c4fd5b92587ca5ee61b3bf706f1933",
+          "bytes": 2287
+        },
+        {
+          "path": "lang/zh_cn.json",
+          "sha256": "27842b53991ef32ba06a4f987f6d0027662e7fa59531761a66aba5ce6866080f",
+          "bytes": 2202
+        },
+        {
+          "path": "models/arm.json",
+          "sha256": "50014b87b2cd05acda0e3edf426fe4d90decff9274ec25e57de87639cf0a5214",
+          "bytes": 8008
+        },
+        {
+          "path": "models/arrow.json",
+          "sha256": "13fd9a38830571238aa6a45338b188d9626229dbc1a73f81aefd04af53b36d5a",
+          "bytes": 29883
+        },
+        {
+          "path": "models/boat.json",
+          "sha256": "2c1632097fb60194852c3b128ce5405d3318f343c8e23a884c15a7568674f480",
+          "bytes": 17425
+        },
+        {
+          "path": "models/foxcar.json",
+          "sha256": "1d5c7bddee0fc876834d9e46d9e0e5e8106458d46cbf11e6adb6ac28bff36b1c",
+          "bytes": 289697
+        },
+        {
+          "path": "models/main.json",
+          "sha256": "a1525e7a88b4d77c7b0dc35116cf4fba6a3f32a288691d7f983b9ecf999f08ee",
+          "bytes": 100384
+        },
+        {
+          "path": "models/minecart.json",
+          "sha256": "03e79239cab5bf591eb17bc59dfa3120853a7f889bf4a6a56838dfe56006e140",
+          "bytes": 73027
+        },
+        {
+          "path": "models/trident.json",
+          "sha256": "b87fecf17e6dd1069b6d0cb7c1822f3d9c7166dfb296d9bd0ff29763396bdebd",
+          "bytes": 4702
+        },
+        {
+          "path": "sounds/car_idle.ogg",
+          "sha256": "906d2c14001168b1387c87623b0335c43dc2d49309f382f084f822966c32aa1a",
+          "bytes": 76211
+        },
+        {
+          "path": "sounds/car_run.ogg",
+          "sha256": "70ec38e95609d72c24ad5a7ca3a592b6da805e9952f03c86dc4902abe3fc8e23",
+          "bytes": 166833
+        },
+        {
+          "path": "sounds/get_down.ogg",
+          "sha256": "63dbf11be085953b3232710552f049df9465c1a15327cd083ecaa0f726cba86c",
+          "bytes": 289223
+        },
+        {
+          "path": "sounds/otoko_wa_tsurai_yo.ogg",
+          "sha256": "53dc18199056bc254a8e664483b4adbcf3317bee5d1182435323c6cc4960b191",
+          "bytes": 298472
+        },
+        {
+          "path": "sounds/zufolo_impazzito.ogg",
+          "sha256": "ee80cfe3f9ad70f2bd6b3b735d65c5c356c1119c67c8da4d812c838058ca6990",
+          "bytes": 172286
+        },
+        {
+          "path": "textures/arrow.png",
+          "sha256": "0d4435fe0620372d92279e07af771b1e96cdd5d6c3e1628a538336195d47eaaf",
+          "bytes": 1212
+        },
+        {
+          "path": "textures/boat.png",
+          "sha256": "447c0e2d1ca0f29099294b68fc1d61c2b39a51372692cd9126219486d095cf51",
+          "bytes": 4300
+        },
+        {
+          "path": "textures/foxcar.png",
+          "sha256": "f38fbe1bf62f74e2e94792f1707049d2b69e71a2ec6210302f75ed2606ad1f3a",
+          "bytes": 32129
+        },
+        {
+          "path": "textures/foxcar_s.png",
+          "sha256": "691cd3da973e556026365c384a76649534251a11ef5093f681d1040fd50d3810",
+          "bytes": 11514
+        },
+        {
+          "path": "textures/minecart.png",
+          "sha256": "71f80b4165c2e055362c500cb387061ae3afaf5a90aa74de012c98917afdb515",
+          "bytes": 32463
+        },
+        {
+          "path": "textures/skin.png",
+          "sha256": "77010882e37f727dd0cd18249485e94d702aedda206ef725fe3d7c657e72df8f",
+          "bytes": 10475
+        },
+        {
+          "path": "textures/skin_white.png",
+          "sha256": "9d6e8d421adcf4c9eb75a120e9ffc7ee55c8528ee1dd02a9f4e6f2339e72b430",
+          "bytes": 9949
+        },
+        {
+          "path": "textures/trident.png",
+          "sha256": "eac28c315c1e5c69b01af28b8bf505a24670e658f926ba9e258d7d5147678e82",
+          "bytes": 486
+        },
+        {
+          "path": "ysm.json",
+          "sha256": "13ad14adbf8ec96a32982beebd5d788f8109d7ad88dbca2f7fd38b35610f3cf4",
+          "bytes": 5487
+        }
+      ]
+    },
+    {
+      "id": "wine_fox_02_new_year",
+      "label": "酒狐 · 新春",
+      "upstream_path": "common/src/main/resources/assets/yes_steve_model/builtin/wine_fox/02_new_year",
+      "resource_root": "assets/meplayeractions/builtin/wine_fox/02_new_year/",
+      "file_count": 15,
+      "bytes": 906308,
+      "files": [
+        {
+          "path": "animations/arrow.animation.json",
+          "sha256": "bc6cff221fc2c751de765c6ffdbd24115bca062b5d19fa4f8f716fdbf6c27389",
+          "bytes": 1122
+        },
+        {
+          "path": "animations/carryon.animation.json",
+          "sha256": "5371aee783c07a9d441d3b9a88666c349e692c2461bd07037ecf274423ca376e",
+          "bytes": 3798
+        },
+        {
+          "path": "animations/extra.animation.json",
+          "sha256": "8fb05745cf26fded7ea3a2ab372fb179cb9c1fb5952899e9b958235181abcbc5",
+          "bytes": 136038
+        },
+        {
+          "path": "animations/main.animation.json",
+          "sha256": "888fca8166766b5108c3c592b8441f0943c028412175861a431d294e9a8b7867",
+          "bytes": 309790
+        },
+        {
+          "path": "animations/tac.animation.json",
+          "sha256": "f9c6f7d7d4afc5422975f36994f6d8a3eb26dade1a6d8dab646f312a0cca3173",
+          "bytes": 193417
+        },
+        {
+          "path": "avatar/hl.png",
+          "sha256": "80f61d49f385faf974b8b3e579b6b307b9046992f1d3ae32647e8676102d5fa3",
+          "bytes": 5216
+        },
+        {
+          "path": "avatar/zb.avif",
+          "sha256": "3454087a917e39176ad6c2aa64ea2db80a397b786d6dd91244dee6d34439715c",
+          "bytes": 9947
+        },
+        {
+          "path": "lang/en_us.json",
+          "sha256": "497fde8cbbcb0ec6cf396a62d84839d60c6c64c7045f4c3c79040bb4b34772ea",
+          "bytes": 778
+        },
+        {
+          "path": "lang/zh_cn.json",
+          "sha256": "b7087e6d9a884b9748b8f7fea92f285f4d53230a341a4aa59e66e1cec414b77e",
+          "bytes": 783
+        },
+        {
+          "path": "models/arm.json",
+          "sha256": "b334e8ccd94fb630a48b732e8255b239e8c2102a4798aae8f4fe2415a1b3cec3",
+          "bytes": 7998
+        },
+        {
+          "path": "models/arrow.json",
+          "sha256": "13fd9a38830571238aa6a45338b188d9626229dbc1a73f81aefd04af53b36d5a",
+          "bytes": 29883
+        },
+        {
+          "path": "models/main.json",
+          "sha256": "38520531321177b20897237f3f64d8d0fb435a0c28a7dc14179b965e3e1fd077",
+          "bytes": 191789
+        },
+        {
+          "path": "textures/arrow.png",
+          "sha256": "0d4435fe0620372d92279e07af771b1e96cdd5d6c3e1628a538336195d47eaaf",
+          "bytes": 1212
+        },
+        {
+          "path": "textures/skin.png",
+          "sha256": "37f10b36cf7b4e9bf946ee59dc2aefae674da3b99e25446772085d3e73f66127",
+          "bytes": 12661
+        },
+        {
+          "path": "ysm.json",
+          "sha256": "b7e61aea31fdd98f210fdb795989481fdb981db72776aa1904bf6a9b9e6c0b7d",
+          "bytes": 1876
+        }
+      ]
+    },
+    {
+      "id": "wine_fox_03_astronaut",
+      "label": "酒狐 · 宇航员",
+      "upstream_path": "common/src/main/resources/assets/yes_steve_model/builtin/wine_fox/03_astronaut",
+      "resource_root": "assets/meplayeractions/builtin/wine_fox/03_astronaut/",
+      "file_count": 19,
+      "bytes": 943961,
+      "files": [
+        {
+          "path": "animations/arm.animation.json",
+          "sha256": "a96091b4c5d62368f47ceacace1694ecf53ff4f9893cef371b4a70c057bdbbc4",
+          "bytes": 188471
+        },
+        {
+          "path": "animations/arrow.animation.json",
+          "sha256": "bc6cff221fc2c751de765c6ffdbd24115bca062b5d19fa4f8f716fdbf6c27389",
+          "bytes": 1122
+        },
+        {
+          "path": "animations/carryon.animation.json",
+          "sha256": "5371aee783c07a9d441d3b9a88666c349e692c2461bd07037ecf274423ca376e",
+          "bytes": 3798
+        },
+        {
+          "path": "animations/extra.animation.json",
+          "sha256": "b18894cbd4d70e31806a62d8bdb762926fd45951e68eed0119d4d529fd11dc38",
+          "bytes": 69061
+        },
+        {
+          "path": "animations/main.animation.json",
+          "sha256": "8ca4aa4c3b7b011a19ba0f6dba981ff12c872e5da81bafbf4276b43877f2e489",
+          "bytes": 300897
+        },
+        {
+          "path": "animations/tac.animation.json",
+          "sha256": "63ee720953376de7948caed9c303c6ca9ba2a054c6afb796e4cdce1fd4ba6859",
+          "bytes": 183653
+        },
+        {
+          "path": "avatars/af.avif",
+          "sha256": "6359c8dbb9f0f8c0d2e7723be2289cfced5e2ae39e08180badea913afcdb3614",
+          "bytes": 4802
+        },
+        {
+          "path": "avatars/gsl.png",
+          "sha256": "dbfee9f254d512bad28db7f7e23d631d4aa450cbe42a31d1e2ed3a756f16f4a1",
+          "bytes": 17212
+        },
+        {
+          "path": "avatars/hl.png",
+          "sha256": "03d609e8d022ca022796b1cf2683efc1a9cf22e111a78b47ee3424caffad8536",
+          "bytes": 7056
+        },
+        {
+          "path": "avatars/hys.png",
+          "sha256": "734a8f179cb3c19ee402c1720526e3a1e9c8c6fd93207ccc9c19a0f036a3342a",
+          "bytes": 7385
+        },
+        {
+          "path": "controller/controller.json",
+          "sha256": "3fe15544afa2febef510328e3dc61a682e1d2c9a1138aea259bd3f73855fc83f",
+          "bytes": 7053
+        },
+        {
+          "path": "lang/en_us.json",
+          "sha256": "78b69c2fa78f22e4df4101e2eed5776a0d58622c1efae46ace919ddf3b2d0dfc",
+          "bytes": 952
+        },
+        {
+          "path": "lang/zh_cn.json",
+          "sha256": "bbd7f9e4652992519157d2dfad712f409fe88134acdb3a7ee15b384ef505eaf2",
+          "bytes": 938
+        },
+        {
+          "path": "models/arm.json",
+          "sha256": "ceccd6e3fc442a8bea7ab30391a647636683b36f7435cb8b23360c438eeb955a",
+          "bytes": 4321
+        },
+        {
+          "path": "models/arrow.json",
+          "sha256": "13fd9a38830571238aa6a45338b188d9626229dbc1a73f81aefd04af53b36d5a",
+          "bytes": 29883
+        },
+        {
+          "path": "models/main.json",
+          "sha256": "33ce85097261700d03b727136484dc53fc0935a4a0b30c13163dd0d3848e253e",
+          "bytes": 102628
+        },
+        {
+          "path": "textures/arrow.png",
+          "sha256": "0d4435fe0620372d92279e07af771b1e96cdd5d6c3e1628a538336195d47eaaf",
+          "bytes": 1212
+        },
+        {
+          "path": "textures/skin.png",
+          "sha256": "028d5e613e9cc625f5737cee6383cb00bff21ae6edeb143fe331d8765766afab",
+          "bytes": 11765
+        },
+        {
+          "path": "ysm.json",
+          "sha256": "e9c279611e0dff1fad886a9e8f85651e9b5d2f54a42dccf400b407b8dbc721be",
+          "bytes": 1752
+        }
+      ]
+    }
+  ],
+  "shared_license": {
+    "path": "assets/meplayeractions/builtin/wine_fox/LICENSE.CC-BY-NC-SA-4.0.txt",
+    "sha256": "329d5952cc9edbeb8310d68327f4684f7fd0ccc76f27aedc2fa6563e27ae34a4",
+    "bytes": 20852
+  }
+}

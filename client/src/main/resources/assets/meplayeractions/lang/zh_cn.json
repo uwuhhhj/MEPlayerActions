@@ -1,6 +1,4 @@
 {
-  "key.meplayeractions.menu": "打开玩家动作面板",
-  "key.category.meplayeractions.actions": "玩家模型动作",
-  "key.meplayeractions.models": "打开模型图库",
-  "key.meplayeractions.wheel": "打开动作轮盘"
+  "key.category.meplayeractions.actions": "玩家模型",
+  "key.meplayeractions.action_wheel": "动作轮盘 / 模型设置"
 }

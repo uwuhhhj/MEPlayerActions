@@ -10,7 +10,10 @@ import java.util.List;
 
 /** GUI-only orthographic camera. Authored model coordinates never enter a world renderer. */
 final class PreviewMesh {
-    record Point(float x, float y, float u, float v) { }
+    /** Per-corner native camera depth is retained for a depth-tested GUI model pass. */
+    record Point(float x, float y, float u, float v, float depth) {
+        Point(float x, float y, float u, float v) { this(x, y, u, v, 0); }
+    }
     record Quad(List<Point> points, int texture, int color, float depth) { }
     record Settings(boolean noLighting, boolean disableRotation, String background, String foreground) { }
 
@@ -55,7 +58,7 @@ final class PreviewMesh {
         int alpha = (int) Math.round(255 * ease);
         return quads.stream().map(quad -> new Quad(quad.points().stream().map(point ->
                 new Point(centerX + (point.x() - centerX) * scale,
-                        centerY + (point.y() - centerY) * scale, point.u(), point.v())).toList(),
+                        centerY + (point.y() - centerY) * scale, point.u(), point.v(), point.depth())).toList(),
                 quad.texture(), alpha << 24 | quad.color() & 0xffffff, quad.depth())).toList();
     }
 
@@ -105,7 +108,7 @@ final class PreviewMesh {
                 // positive X would mirror the authored front texture and asymmetry.
                 points.add(new Point(x + width * .5f - (positions[(i + corner) * 3] - centerX) * scale,
                         y + height * .5f - (positions[(i + corner) * 3 + 1] - centerY) * scale,
-                        v.u(), v.v()));
+                        v.u(), v.v(), positions[(i + corner) * 3 + 2]));
                 depth += positions[(i + corner) * 3 + 2] * .25f;
             }
             double nx = cy * face.nx() + sy * face.nz(), nz = -sy * face.nx() + cy * face.nz();
@@ -122,6 +125,39 @@ final class PreviewMesh {
         }
         // All quads stay in one GUI element/atlas. Minecraft may sort GUI elements
         // by texture, but cannot reorder these far-to-near faces within the batch.
+        quads.sort(Comparator.comparingDouble(Quad::depth).reversed());
+        return List.copyOf(quads);
+    }
+
+    /** Native YSM previews use the entity-height anchor and fixed source size, never geometry bounds. */
+    static List<Quad> project(List<BbModel.Vertex> vertices, int x, int y, int width, int height,
+                              Settings settings, NativeGuiPreviewCamera.Camera camera) {
+        if (camera == null || width <= 0 || height <= 0 || vertices.isEmpty() || vertices.size() % 4 != 0)
+            return List.of();
+        List<Quad> quads = new ArrayList<>(vertices.size() / 4);
+        for (int i = 0; i < vertices.size(); i += 4) {
+            BbModel.Vertex face = vertices.get(i);
+            List<Point> points = new ArrayList<>(4);
+            float depth = 0;
+            for (int corner = 0; corner < 4; corner++) {
+                BbModel.Vertex vertex = vertices.get(i + corner);
+                if (!finite(vertex) || vertex.texture() != face.texture()) return List.of();
+                var projected = camera.project(vertex.x(), vertex.y(), vertex.z(), x, y, width, height);
+                if (!Float.isFinite(projected.x()) || !Float.isFinite(projected.y())
+                        || !Float.isFinite(projected.depth())) return List.of();
+                points.add(new Point(projected.x(), projected.y(), vertex.u(), vertex.v(), projected.depth()));
+                depth += projected.depth() * .25f;
+            }
+            var normal = camera.rotateNormal(face.nx(), face.ny(), face.nz());
+            double length = Math.sqrt(normal.x() * normal.x() + normal.y() * normal.y()
+                    + normal.depth() * normal.depth());
+            double light = length < 1e-8 ? 0 : Math.max(0,
+                    (-.45 * normal.x() + .7 * normal.y() - .8 * normal.depth())
+                            / (Math.sqrt(.45 * .45 + .7 * .7 + .8 * .8) * length));
+            int shade = settings.noLighting() ? 255 : (int) Math.round(255 * (.58 + .42 * light));
+            quads.add(new Quad(List.copyOf(points), face.texture(),
+                    0xff000000 | shade << 16 | shade << 8 | shade, depth));
+        }
         quads.sort(Comparator.comparingDouble(Quad::depth).reversed());
         return List.copyOf(quads);
     }

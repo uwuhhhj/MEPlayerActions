@@ -16,9 +16,11 @@ import java.util.*;
 
 /** Imports bounded local YSM assets and author metadata into the independent cube renderer. */
 public final class YsmFolderModel {
-    public static final String DEFAULT_ID = "openysm_default";
-    private static final String DEFAULT_ROOT = "/assets/meplayeractions/builtin/openysm_default/";
+    public static final String DEFAULT_ID = BuiltinYsmModels.DEFAULT_ID;
     private static final int MAX_BONES = 2047, MAX_CUBES = 4096, MAX_FRAMES = 200_000;
+    // Original wine-fox parallel4 has 64 ordered programs; hold_mainhand:spear lasts 10,000 seconds.
+    private static final int MAX_TIMELINE_PROGRAMS = 64, MAX_TIMELINE_BYTES = 32_768;
+    private static final double MAX_ANIMATION_SECONDS = 10_000;
     private YsmFolderModel() { }
 
     /** Profile data is local-only; converted animation/controller data belongs to these bytes' hash. */
@@ -41,12 +43,20 @@ public final class YsmFolderModel {
     }
 
     public static Imported bundledDefaultWithProfile(String textureId) throws IOException {
+        return bundledWithProfile(DEFAULT_ID, textureId);
+    }
+
+    /** Loads a fixed built-in resource root without filesystem or server-pack authority. */
+    public static Imported bundledWithProfile(String id, String textureId) throws IOException {
+        BuiltinYsmModels.Model model = BuiltinYsmModels.find(id)
+                .orElseThrow(() -> new IOException("未知的内置 YSM 模型: " + id));
         return convert(new Assets((name, maximum) -> {
-            try (InputStream input = YsmFolderModel.class.getResourceAsStream(DEFAULT_ROOT + name)) {
-                if (input == null) throw new IOException("默认 YSM 模型资源缺失: " + name);
+            try (InputStream input = YsmFolderModel.class.getResourceAsStream(model.resourceRoot() + name)) {
+                if (input == null) throw new IOException("内置 YSM 模型资源缺失: " + id + "/" + name);
                 return boundedRead(input, maximum);
             }
-        }, List.of("lang/en_us.json", "lang/zh_cn.json"), directory -> List.of(), List.of()), textureId);
+        }, model.languages(), directory -> model.sounds().stream()
+                .filter(file -> file.startsWith(directory + "/")).toList(), List.of()), textureId);
     }
 
     public static byte[] read(Path folder) throws IOException {
@@ -173,6 +183,8 @@ public final class YsmFolderModel {
         byte[] output(Converter converter, JsonObject controllers, String family) throws IOException {
             converter.output.add("ysm_animation_controllers", controllers.deepCopy());
             converter.output.addProperty("ysm_controller_family", family);
+            // OpenYSM's folder-deserializer internal format version, independent of manifest spec 2.
+            converter.output.addProperty("ysm_format_version", 65535);
             if (!functions.isEmpty()) converter.output.add("ysm_functions", functions.deepCopy());
             if (!events.isEmpty()) converter.output.add("ysm_events", events.deepCopy());
             byte[] result = converter.output.toString().getBytes(StandardCharsets.UTF_8);
@@ -248,6 +260,12 @@ public final class YsmFolderModel {
             }
             JsonObject files = object(manifest.get("files"));
             subEntities(assets, files.get("projectiles"), "projectile", components);
+            if (files.has("arrow") && components.stream().noneMatch(component -> component.kind().equals("projectile")
+                    && component.matches().contains("minecraft:arrow"))) {
+                // OpenYSM legacy model type 3 is minecraft:arrow; it does not alias spectral arrows.
+                JsonObject legacyArrow = new JsonObject(); legacyArrow.add("minecraft:arrow", files.get("arrow"));
+                subEntities(assets, legacyArrow, "projectile", components);
+            }
             subEntities(assets, files.get("vehicles"), "vehicle", components);
             JsonObject languages = new JsonObject();
             for (String file : assets.languageFiles) {
@@ -469,8 +487,9 @@ public final class YsmFolderModel {
         void cube(JsonObject source, JsonObject bone, JsonObject node) {
             if (elements.size() >= MAX_CUBES) throw invalid("YSM 方块数量超出限制");
             double[] origin = vector(source.get("origin"), 0), size = vector(source.get("size"), 0);
-            for (double axis : size) if (axis < 0) throw invalid("YSM 方块大小不能为负");
             JsonObject cube = new JsonObject(); String uuid = id("cube:" + elements.size()); cube.addProperty("uuid", uuid);
+            // OpenYSM bakes signed extents directly; sorting endpoints would change faces, UVs and winding.
+            if (Arrays.stream(size).anyMatch(axis -> axis < 0)) cube.addProperty("ysm_signed_cube", true);
             cube.add("from", numbers(-origin[0] - size[0], origin[1], origin[2]));
             cube.add("to", numbers(-origin[0], origin[1] + size[1], origin[2] + size[2]));
             cube.add("origin", numericVector(source.get("pivot"), true, false, 0));
@@ -509,6 +528,7 @@ public final class YsmFolderModel {
                 for (String unsupported : List.of("animation_time_update", "start_delay", "loop_delay"))
                     if (authored.has(unsupported)) throw invalid("YSM 动作字段暂不支持: " + unsupported);
                 JsonObject clip = new JsonObject(); clip.addProperty("name", name); JsonObject animators = new JsonObject(); clip.add("animators", animators);
+                clip.addProperty("ysm_primary", true);
                 clip.addProperty("loop", animationLoop(authored.get("loop")));
                 if (authored.has("blend_weight")) {
                     JsonElement value = authored.get("blend_weight");
@@ -526,7 +546,7 @@ public final class YsmFolderModel {
                     for (String channel : List.of("position", "rotation", "scale")) if (channels.has(channel)) {
                         JsonElement data = channels.get(channel);
                         if (data.isJsonObject()) for (var key : object(data).entrySet()) {
-                            double time = Double.parseDouble(key.getKey()); length = Math.max(length, time);
+                            double time = Double.parseDouble(key.getKey());
                             keys.add(keyframe(channel, time, key.getValue()));
                         } else keys.add(keyframe(channel, 0, data));
                     }
@@ -538,20 +558,23 @@ public final class YsmFolderModel {
                     SortedMap<Double, JsonElement> ordered = new TreeMap<>();
                     for (var event : object(authored.get("timeline")).entrySet()) {
                         double time = Double.parseDouble(event.getKey());
-                        if (!Double.isFinite(time) || time < 0 || time > 3600 || ordered.put(time, event.getValue()) != null)
+                        if (!Double.isFinite(time) || time < 0 || time > MAX_ANIMATION_SECONDS || ordered.put(time, event.getValue()) != null)
                             throw invalid("YSM 时间轴时间无效或重复");
-                        length = Math.max(length, time);
                     }
                     for (var event : ordered.entrySet()) {
                         if (++frames > MAX_FRAMES) throw invalid("YSM 关键帧数量超出限制");
                         JsonArray programs = event.getValue().isJsonArray() ? array(event.getValue()) : new JsonArray();
                         if (!event.getValue().isJsonArray()) programs.add(event.getValue());
-                        if (programs.size() > 32) throw invalid("YSM 时间轴脚本数量超出限制");
+                        if (programs.size() > MAX_TIMELINE_PROGRAMS) throw invalid("YSM 时间轴脚本数量超出限制");
+                        int programBytes = 0;
                         JsonObject key = new JsonObject(); key.addProperty("channel", "timeline"); key.addProperty("time", event.getKey());
                         JsonArray points = new JsonArray(); key.add("data_points", points);
                         for (JsonElement program : programs) {
                             if (!program.isJsonPrimitive() || !program.getAsJsonPrimitive().isString()) throw invalid("YSM 时间轴脚本必须是文本");
-                            String expression = normalize(program.getAsString()); Molang.compile(expression);
+                            String expression = normalize(program.getAsString());
+                            if ((programBytes += expression.getBytes(StandardCharsets.UTF_8).length) > MAX_TIMELINE_BYTES)
+                                throw invalid("YSM 单时间轴脚本总大小超过 32 KiB");
+                            Molang.compile(expression);
                             JsonObject point = new JsonObject(); point.addProperty("script", expression); points.add(point);
                         }
                         keys.add(key);
@@ -564,9 +587,8 @@ public final class YsmFolderModel {
                     SortedMap<Double, JsonElement> ordered = new TreeMap<>();
                     for (var event : object(authored.get(field)).entrySet()) {
                         double time = Double.parseDouble(event.getKey());
-                        if (!Double.isFinite(time) || time < 0 || time > 3600 || ordered.put(time, event.getValue()) != null)
+                        if (!Double.isFinite(time) || time < 0 || time > MAX_ANIMATION_SECONDS || ordered.put(time, event.getValue()) != null)
                             throw invalid("YSM 特效时间无效或重复");
-                        length = Math.max(length, time);
                     }
                     for (var event : ordered.entrySet()) {
                         if (++frames > MAX_FRAMES) throw invalid("YSM 关键帧数量超出限制");
@@ -585,8 +607,10 @@ public final class YsmFolderModel {
                     }
                     animators.add("ysm_import_" + field, effect);
                 }
-                if (length < 0 || !Double.isFinite(length) || length > 3600) throw invalid("YSM 动作时长无效");
-                if (!authored.has("animation_length") && length == 0) clip.addProperty("ysm_infinite", true);
+                if (length < 0 || !Double.isFinite(length) || length > MAX_ANIMATION_SECONDS) throw invalid("YSM 动作时长无效");
+                // The upstream loader preserves explicit duration, even when interpolation/event keys extend beyond it.
+                // A missing animation_length means infinite duration, independently of the final key's time.
+                if (!authored.has("animation_length")) clip.addProperty("ysm_infinite", true);
                 clip.addProperty("length", length); namedClips.put(name, clip); clips.add(clip);
             }
         }
@@ -604,7 +628,7 @@ public final class YsmFolderModel {
         }
 
         JsonObject keyframe(String channel, double time, JsonElement source) {
-            if (++frames > MAX_FRAMES || time < 0 || !Double.isFinite(time) || time > 3600) throw invalid("YSM 关键帧超出限制");
+            if (++frames > MAX_FRAMES || time < 0 || !Double.isFinite(time) || time > MAX_ANIMATION_SECONDS) throw invalid("YSM 关键帧超出限制");
             JsonObject frame = new JsonObject(); frame.addProperty("channel", channel); frame.addProperty("time", time); frame.addProperty("interpolation", "linear");
             JsonArray points = new JsonArray();
             if (source.isJsonObject()) {

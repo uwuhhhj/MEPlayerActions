@@ -155,4 +155,81 @@ class ClientOptionsTest {
         assertFalse(options.updateModelProfile("ysm:sample", new ClientOptions.ModelProfile("blue", Map.of("v.x", 2d), Map.of())));
         assertEquals(ClientOptions.ModelProfile.defaults(), options.modelProfile("ysm:sample"));
     }
+
+    @Test void legacyOptionsGainWheelDefaultsWithoutChangingPrivateModelChoices() throws Exception {
+        Path path = directory.resolve("options.json");
+        var saved = new ClientOptions(path);
+        var appearance = new LocalAppearanceSettings(true, "local:我的模型.bbmodel", 1.5f, 1, 2, 3);
+        var profile = new ClientOptions.ModelProfile("blue", Map.of("v.player_size", 1.5d), Map.of());
+        saved.setLocalAppearance(appearance); assertTrue(saved.updateModelProfile(appearance.modelId(), profile));
+        saved.enabled = false; saved.localActionLocked = true; saved.save();
+        JsonObject legacy = JsonParser.parseString(Files.readString(path)).getAsJsonObject();
+        legacy.remove("wheelPreferences"); Files.writeString(path, legacy.toString());
+        var loaded = new ClientOptions(path);
+        assertEquals(WheelPreferences.defaults(), loaded.wheelPreferences());
+        assertEquals(appearance, loaded.localAppearance()); assertEquals(profile, loaded.modelProfile(appearance.modelId()));
+        assertFalse(loaded.enabled); assertTrue(loaded.localActionLocked);
+        loaded.save();
+        assertEquals(WheelPreferences.defaults(), new ClientOptions(path).wheelPreferences());
+        assertEquals(WheelPreferences.defaults(), new ClientOptions(directory.resolve("missing.json")).wheelPreferences());
+    }
+
+    @Test void wheelSourcesPagesAndKeepOpenRoundTripIndependentlyOfActionLock() throws Exception {
+        Path path = directory.resolve("options.json"); var options = new ClientOptions(path);
+        var remembered = new WheelPreferences(WheelPreferences.Source.SERVER, 12, 127, true);
+        assertTrue(options.updateWheelPreferences(remembered));
+        var loaded = new ClientOptions(path);
+        assertEquals(remembered, loaded.wheelPreferences()); assertFalse(loaded.localActionLocked);
+        loaded.localActionLocked = true;
+        assertTrue(loaded.updateWheelPreferences(loaded.wheelPreferences().withSource(WheelPreferences.Source.CLIENT)
+                .withPage(WheelPreferences.Source.CLIENT, 4).withKeepOpen(false)));
+        var restored = new ClientOptions(path);
+        assertEquals(new WheelPreferences(WheelPreferences.Source.CLIENT, 4, 127, false), restored.wheelPreferences());
+        assertTrue(restored.localActionLocked);
+        JsonObject wheel = JsonParser.parseString(Files.readString(path)).getAsJsonObject().getAsJsonObject("wheelPreferences");
+        assertEquals("client", wheel.get("source").getAsString()); assertFalse(wheel.get("keepOpen").getAsBoolean());
+    }
+
+    @Test void invalidAndFutureWheelFieldsFallBackIndividuallyWithoutErasingValidSiblings() throws Exception {
+        Path path = directory.resolve("options.json");
+        for (String invalid : List.of("null", "[]", "{}", "true", "\"7\"", "1.5", "-1", "128", "1e300")) {
+            Files.writeString(path, "{\"enabled\":false,\"wheelPreferences\":{\"source\":\"server\",\"clientPage\":"
+                    + invalid + ",\"serverPage\":9,\"keepOpen\":true}}");
+            var loaded = new ClientOptions(path);
+            assertEquals(new WheelPreferences(WheelPreferences.Source.SERVER, 0, 9, true), loaded.wheelPreferences(), invalid);
+            assertFalse(loaded.enabled);
+        }
+        Files.writeString(path, "{\"futureVersion\":99,\"wheelPreferences\":{\"source\":\"future-source\","
+                + "\"clientPage\":3,\"serverPage\":5,\"keepOpen\":true,\"futureOption\":{\"x\":1}}}");
+        assertEquals(new WheelPreferences(WheelPreferences.Source.CLIENT, 3, 5, true), new ClientOptions(path).wheelPreferences());
+        for (String invalid : List.of("null", "[]", "{}", "1", "\"true\"")) {
+            Files.writeString(path, "{\"wheelPreferences\":{\"source\":\"server\",\"clientPage\":3,\"keepOpen\":" + invalid + "}}");
+            assertEquals(new WheelPreferences(WheelPreferences.Source.SERVER, 3, 0, false), new ClientOptions(path).wheelPreferences(), invalid);
+        }
+    }
+
+    @Test void malformedWheelSectionDoesNotPreventRestoringPrivateAppearanceAndProfiles() throws Exception {
+        Path path = directory.resolve("options.json"); var saved = new ClientOptions(path);
+        var appearance = new LocalAppearanceSettings(true, "ysm:sample", 2, .5, -.5, 1);
+        var profile = new ClientOptions.ModelProfile("blue", Map.of("v.player_size", 2d), Map.of());
+        saved.setLocalAppearance(appearance); assertTrue(saved.updateModelProfile(appearance.modelId(), profile));
+        JsonObject json = JsonParser.parseString(Files.readString(path)).getAsJsonObject();
+        for (String invalid : List.of("null", "[]", "\"invalid\"", "1")) {
+            json.add("wheelPreferences", JsonParser.parseString(invalid)); Files.writeString(path, json.toString());
+            var loaded = new ClientOptions(path);
+            assertEquals(WheelPreferences.defaults(), loaded.wheelPreferences());
+            assertEquals(appearance, loaded.localAppearance()); assertEquals(profile, loaded.modelProfile(appearance.modelId()));
+        }
+    }
+
+    @Test void ioFailureRollsBackWheelMemoryAndLeavesTheBlockingDirectoryUntouched() throws Exception {
+        Path path = directory.resolve("options.json"); var options = new ClientOptions(path);
+        var previous = new WheelPreferences(WheelPreferences.Source.SERVER, 2, 5, true);
+        assertTrue(options.updateWheelPreferences(previous));
+        Files.delete(path); Files.createDirectory(path);
+        Path sentinel = path.resolve("keep.txt"); Files.writeString(sentinel, "preserve");
+        assertFalse(options.updateWheelPreferences(previous.withSource(WheelPreferences.Source.CLIENT).withPage(WheelPreferences.Source.CLIENT, 9)));
+        assertEquals(previous, options.wheelPreferences()); assertEquals("preserve", Files.readString(sentinel));
+        try (var children = Files.list(directory)) { assertEquals(List.of(path), children.toList()); }
+    }
 }

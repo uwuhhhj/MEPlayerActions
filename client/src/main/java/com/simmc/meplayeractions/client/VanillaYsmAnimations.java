@@ -6,14 +6,25 @@ import java.util.*;
 public final class VanillaYsmAnimations {
     public enum Hand { NONE, MAIN, OFF }
     public enum Directive { PLAY, PAUSE, CONTINUE, STOP }
+    /** Native adapters retain the tracked stack reference, matching OpenYSM's item comparison lifecycle. */
+    public interface TrackedItemComparison { boolean isDamaged(); }
     public record ItemState(String id, Set<String> tags, String kind, String useAction,
-                            boolean empty, boolean chargedCrossbow, long revision) {
+                            boolean empty, boolean chargedCrossbow, long revision, boolean damaged, Object comparisonKey) {
         public static final ItemState EMPTY = new ItemState("minecraft:air", Set.of(), "", "none", true, false, 0);
+        public ItemState(String id, Set<String> tags, String kind, String useAction,
+                         boolean empty, boolean chargedCrossbow, long revision) {
+            this(id, tags, kind, useAction, empty, chargedCrossbow, revision, false);
+        }
+        public ItemState(String id, Set<String> tags, String kind, String useAction,
+                         boolean empty, boolean chargedCrossbow, long revision, boolean damaged) {
+            this(id, tags, kind, useAction, empty, chargedCrossbow, revision, damaged, Long.valueOf(revision));
+        }
         public ItemState {
             if (!resourceId(id) || kind == null || !kind.matches("[a-z0-9_]{0,64}")
                     || useAction == null || !useAction.matches("[a-z0-9_]{1,32}"))
                 throw new IllegalArgumentException("Vanilla held item");
             tags = checkedTags(tags);
+            Objects.requireNonNull(comparisonKey, "Native tracked item comparison");
         }
         String eventKey() { return id + ":" + revision; }
     }
@@ -49,7 +60,19 @@ public final class VanillaYsmAnimations {
     /** Preserve authored order when several item/entity tags match. */
     public static final class Catalog {
         private final Set<String> names;
+        private final int formatVersion;
+        private final Map<String,String> authoredLoops;
+        private final Set<String> primaryAnimations;
+        /** Names-only inventories retain the old, non-primary format's predicate overrides. */
         public Catalog(Collection<String> animations) {
+            this(animations, 0, Map.of(), Set.of(), false);
+        }
+        public Catalog(Collection<String> animations, int formatVersion, Map<String,String> authoredLoops,
+                       Set<String> primaryAnimations) {
+            this(animations, formatVersion, authoredLoops, primaryAnimations, true);
+        }
+        private Catalog(Collection<String> animations, int formatVersion, Map<String,String> authoredLoops,
+                        Set<String> primaryAnimations, boolean metadata) {
             Objects.requireNonNull(animations);
             if (animations.size() > 128) throw new IllegalArgumentException("Animation inventory");
             var copy = new LinkedHashSet<String>();
@@ -59,8 +82,24 @@ public final class VanillaYsmAnimations {
                 copy.add(name);
             }
             names = Collections.unmodifiableSet(copy);
+            if (formatVersion < 0 || formatVersion > 65535) throw new IllegalArgumentException("YSM format version");
+            Objects.requireNonNull(authoredLoops); Objects.requireNonNull(primaryAnimations);
+            if (metadata && !names.equals(authoredLoops.keySet()) || !names.containsAll(primaryAnimations))
+                throw new IllegalArgumentException("Animation metadata inventory");
+            var loops = new LinkedHashMap<String,String>();
+            authoredLoops.forEach((name, loop) -> {
+                if (loop == null || !Set.of("LOOP", "ONCE", "HOLD").contains(loop))
+                    throw new IllegalArgumentException("Animation metadata loop");
+                loops.put(name, loop);
+            });
+            this.formatVersion = formatVersion;
+            this.authoredLoops = Collections.unmodifiableMap(loops);
+            this.primaryAnimations = Set.copyOf(primaryAnimations);
         }
         public boolean contains(String animation) { return names.contains(animation); }
+        public int formatVersion() { return formatVersion; }
+        public boolean fromPrimaryAssembly(String animation) { return primaryAnimations.contains(animation); }
+        public String authoredLoop(String animation) { return authoredLoops.getOrDefault(animation, "ONCE"); }
         public String first(String... candidates) {
             for (String name : candidates) if (names.contains(name)) return name;
             return "";
@@ -96,13 +135,13 @@ public final class VanillaYsmAnimations {
             String prefix = state.swingingHand == Hand.MAIN ? "swing" : "swing_offhand";
             String name = state.item(state.swingingHand).empty ? "" : catalog.condition(prefix, state.item(state.swingingHand));
             if (name.isEmpty()) name = catalog.first(state.swingingHand == Hand.MAIN ? "swing_hand" : "swing_offhand");
-            swing = play(name, "ONCE", state.swingingHand + ":" + state.item(state.swingingHand).eventKey());
+            swing = playAnimationWithValid(catalog, name, "ONCE", state.swingingHand + ":" + state.item(state.swingingHand).eventKey());
         }
         if (!state.sleeping && state.usingHand != Hand.NONE) {
             String prefix = state.usingHand == Hand.MAIN ? "use_mainhand" : "use_offhand";
             String name = state.item(state.usingHand).empty ? "" : catalog.condition(prefix, state.item(state.usingHand));
             if (name.isEmpty()) name = catalog.first(prefix);
-            use = play(name, "LOOP", state.usingHand + ":" + state.item(state.usingHand).eventKey());
+            use = playAnimationWithValid(catalog, name, "LOOP", state.usingHand + ":" + state.item(state.usingHand).eventKey());
         }
         result.put("player.swing", swing); result.put("player.use", use);
         return new Decision(result);
@@ -115,10 +154,70 @@ public final class VanillaYsmAnimations {
         String name = item.chargedCrossbow ? catalog.first(prefix + ":charged_crossbow")
                 : hand == Hand.MAIN && state.fishing ? catalog.first(prefix + ":fishing")
                 : catalog.condition(prefix, item);
-        return play(name, "LOOP", item.eventKey());
+        return playAnimationWithValid(catalog, name, "LOOP", item.eventKey());
     }
-    private static Selection play(String name, String loop, String key) {
-        return name.isEmpty() ? Selection.STOP : new Selection(Directive.PLAY, name, loop, key);
+    /** Port of IAnimationPredicate.playAnimationWithValid: an accepted format has no loop override. */
+    private static Selection playAnimationWithValid(Catalog catalog, String name, String fallbackLoop, String key) {
+        if (name.isEmpty()) return Selection.STOP;
+        String loop = AnimationFormatValidator.validate(catalog.formatVersion(), catalog.fromPrimaryAssembly(name))
+                ? catalog.authoredLoop(name) : fallbackLoop;
+        return new Selection(Directive.PLAY, name, loop, key);
+    }
+
+    /**
+     * Shared body/first-person request clocks adapted from Main/OffHandHoldPredicate
+     * and AnimationControllerInstance.setAnimation/stopTransition (OpenYSM 0306e1fa, MIT).
+     * PAUSE/CONTINUE callers retain the previous layer and do not reset this clock.
+     */
+    public static final class HandPlayback {
+        private record Request(String animation, String loop, long started) { }
+        private final Map<String,Request> requests = new HashMap<>();
+        private final Map<String,ItemState> heldItems = new HashMap<>();
+
+        /** Source hold predicates compare/record equipment before looking up a matching animation. */
+        public void observe(String slot, Selection selection, VanillaState state) {
+            if (selection.directive() == Directive.PAUSE || selection.directive() == Directive.CONTINUE) return;
+            Hand hand = switch (slot) {
+                case "player.hold_mainhand" -> Hand.MAIN;
+                case "player.hold_offhand" -> Hand.OFF;
+                default -> Hand.NONE;
+            };
+            if (hand == Hand.NONE) return;
+            ItemState item = state.item(hand);
+            // These source predicates return before isSameItem/stopTransition.
+            boolean special = item.chargedCrossbow() || hand == Hand.MAIN && state.fishing();
+            if (!special && !isSameItem(item, heldItems.get(slot))) {
+                heldItems.put(slot, item);
+                stop(slot);
+            }
+        }
+        public long start(String slot, Selection selection, VanillaState state, long tick) {
+            if (selection.directive() != Directive.PLAY) throw new IllegalArgumentException("Hand playback request");
+            if (slot.equals("player.swing") || slot.equals("player.use")) {
+                long started = slot.equals("player.swing") ? tick - state.swingTicks()
+                        : tick - Math.max(0, state.useTicks() - 1L);
+                requests.put(slot, new Request(selection.animation(), selection.loop(), started));
+                return started;
+            }
+            if (!slot.equals("player.hold_mainhand") && !slot.equals("player.hold_offhand"))
+                throw new IllegalArgumentException("Hand controller slot");
+            observe(slot, selection, state);
+            Request previous = requests.get(slot);
+            if (previous != null && previous.animation.equals(selection.animation()) && previous.loop.equals(selection.loop()))
+                return previous.started;
+            requests.put(slot, new Request(selection.animation(), selection.loop(), tick));
+            return tick;
+        }
+        public void stop(String slot) { requests.remove(slot); }
+        public void reset() { requests.clear(); heldItems.clear(); }
+
+        /** The source compares only item type when its previously tracked stack is damaged. */
+        private static boolean isSameItem(ItemState item, ItemState previous) {
+            boolean previousDamaged = previous != null && (previous.comparisonKey() instanceof TrackedItemComparison tracked
+                    ? tracked.isDamaged() : previous.damaged());
+            return previous != null && item.id().equals(previous.id())
+                    && (previousDamaged || Objects.equals(item.comparisonKey(), previous.comparisonKey()));
+        }
     }
     private static boolean resourceId(String id) {
         return id != null && id.length() <= 256 && id.matches("[a-z0-9_.-]+:[a-z0-9/._-]+");

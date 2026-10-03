@@ -159,6 +159,7 @@ public final class ModelConfigScreen extends Screen {
         } else message = "皮肤未保存，请检查模型配置或保存空间";
     }
     private void reset() {
+        if (!runtime.canEditLocalAppearance()) return;
         if (!runtime.options.resetModelProfile(modelId)) { message = "重置失败，原设置已保留"; return; }
         scripts.clear(); radios.clear(); draftValues.clear();
         if (modelId.equals("openysm_default")) {
@@ -171,6 +172,9 @@ public final class ModelConfigScreen extends Screen {
         return Map.of("modelId", modelId, "group", groupId, "page", page, "groupPage", groupPage,
                 "forms", visible.stream().map(form -> Map.of("key", form.key(), "kind", form.kind().name(), "value", read(form))).toList(),
                 "pendingScripts", scripts.size(), "texture", loaded == null ? "" : loaded.profile().selectedTexture());
+    }
+    @Override public void tick() {
+        if (!runtime.canEditLocalAppearance()) client.setScreen(new PlayerModelScreen(runtime));
     }
     private static String number(double value) { return BigDecimal.valueOf(value).stripTrailingZeros().toPlainString(); }
     @Override public boolean mouseScrolled(double x, double y, double horizontal, double vertical) {

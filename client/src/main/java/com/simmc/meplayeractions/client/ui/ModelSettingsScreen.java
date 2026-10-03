@@ -207,7 +207,10 @@ public final class ModelSettingsScreen extends Screen {
         context.drawTextWithShadow(textRenderer, textRenderer.trimToWidth(text, Math.max(0, w)), x, y, color);
     }
 
-    @Override public void tick() { ticks++; }
+    @Override public void tick() {
+        if (!runtime.canEditLocalAppearance()) { client.setScreen(new PlayerModelScreen(runtime)); return; }
+        ticks++;
+    }
     @Override public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         preview.beginFrame(context);
         drawnPreviewCount = 0;
@@ -225,7 +228,7 @@ public final class ModelSettingsScreen extends Screen {
             if (preview.render(context, loaded.model(), modelId + ":" + loaded.hash(), previewX, previewY, previewW, previewH, yaw, pitch, ticks + delta, parameters, loaded.previewAnimation(), loaded.profile())) drawnPreviewCount++;
             clipped(context, loaded.model().cubeCount() + " 方块 · " + loaded.model().animations().size() + " 动作", left + 6, bottom - 25, previewWidth - 12, 0xffc6d5e7);
         } else clipped(context, previewError.isEmpty() ? "正在加载模型…" : previewError, previewX + 3, previewY + previewH / 2, previewW - 6, 0xffffc685);
-        clipped(context, rotationDisabled() ? "作者固定正面视角" : "拖动旋转 · 自动居中", left + 6, bottom - 13, previewWidth - 12, 0xffa7b5c8);
+        clipped(context, rotationDisabled() ? "作者固定正面视角" : "拖动旋转", left + 6, bottom - 13, previewWidth - 12, 0xffa7b5c8);
         if (scale != null) {
             clipped(context, "缩放（0.05–8）", scale.getX(), scale.getY() - labelGap, scale.getWidth(), 0xffc6d5e7);
             clipped(context, "X 位置", offsetX.getX(), offsetX.getY() - labelGap, offsetX.getWidth(), 0xffc6d5e7);

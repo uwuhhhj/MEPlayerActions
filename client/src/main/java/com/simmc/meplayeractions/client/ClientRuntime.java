@@ -3,6 +3,7 @@ package com.simmc.meplayeractions.client;
 import com.google.gson.*;
 import com.simmc.meplayeractions.client.model.BbModel;
 import com.simmc.meplayeractions.client.model.BbModel.Layer;
+import com.simmc.meplayeractions.client.model.BuiltinYsmModels;
 import com.simmc.meplayeractions.client.model.YsmModelProfile;
 import com.simmc.meplayeractions.expression.Molang;
 import com.simmc.meplayeractions.client.ui.ModelConfigSchema;
@@ -37,6 +38,10 @@ public final class ClientRuntime {
                                 double serverTick, double x,double y,double z,float bodyYaw,float headYaw,float headPitch,
                                 float scale,boolean hidePlayer,String motionSource) {}
     public record Action(String id,String label) {}
+    /** Read-only owner input for the native inventory preview, independent of disguise and asset leases. */
+    public record GuiPreviewInput(float height,float scale,EntityAnimationController.Sample sample) {}
+    /** Identity and assets of the currently prepared appearance; GUI reads never advance world controllers. */
+    public record GuiPreviewAppearance(String modelId,String instance,String assetHash,BbModel model,YsmModelProfile profile) {}
     private static final long SECOND=1_000_000_000L;
     private final MinecraftClient client;
     private final ServerClock clock=new ServerClock();
@@ -77,6 +82,8 @@ public final class ClientRuntime {
     private boolean previewWasGround=true;
     private Binding localSelf;
     private final LocalAppearanceVisibility localAppearanceVisibility=new LocalAppearanceVisibility();
+    private final PlayerInteractionPolicy playerInteractionPolicy=new PlayerInteractionPolicy();
+    private String knownOwnServerModelId="";
     private boolean localAppearancePending;
     private long localAppearanceRequest,localAppearanceRetryAfter,requestPacketsSent;
     private long ownAppearanceMissingSince,lastAppearanceSnapshotRequest;
@@ -97,6 +104,7 @@ public final class ClientRuntime {
         localSelf=null;localAppearanceError="";localAppearanceRetryAfter=0;
         ownAppearanceMissingSince=0;lastAppearanceSnapshotRequest=0;
         localAppearanceVisibility.reset();
+        playerInteractionPolicy.reset();knownOwnServerModelId="";
         ModelRenderer.clear();
     }
     public void tick() {
@@ -272,7 +280,10 @@ public final class ClientRuntime {
             binding=new Binding(owner,instance,modelId,hash);bindings.put(owner,binding);
         }
         if(sequence<binding.sequence || !binding.timeline.add(transform)) return;
-        if(client.player!=null && owner.equals(client.player.getUuid()))localAppearanceVisibility.serverOwnState(instance);
+        if(client.player!=null && owner.equals(client.player.getUuid())) {
+            localAppearanceVisibility.serverOwnState(instance);
+            interactionPolicy();
+        }
         binding.sequence=sequence;binding.layers=List.copyOf(layers);binding.scale=scale;binding.accessories=accessories;
         binding.foodLevel=json.has("foodLevel")?(int)WireJson.integer(json,"foodLevel",0,20):20;
         binding.layerTimeline.add(tick,binding.layers);
@@ -430,6 +441,7 @@ public final class ClientRuntime {
     }
     /** Independent browser decoding; it never creates a world binding or acknowledges a server lease. */
     public CompletableFuture<LocalModelLibrary.Loaded> loadLocalPreview(String id) {
+        if(!canEditLocalAppearance())return CompletableFuture.failedFuture(new IllegalStateException(localAppearanceSuspensionReason()));
         String texture=localTextureSelection(id);
         try {return CompletableFuture.supplyAsync(()->{
             try {return localModelLibrary.load(id,texture.isEmpty()?null:texture);}
@@ -454,7 +466,7 @@ public final class ClientRuntime {
     public PlayerEntity nativePlayer(UUID owner){return client.world==null?null:client.world.getPlayerByUuid(owner);}
     public RenderBinding appearanceBinding(UUID owner){return animationBindings().stream().filter(binding->binding.owner().equals(owner)).findFirst().orElse(null);}
     public boolean localActionLocked(){return options.localActionLocked;}
-    public void setLocalActionLocked(boolean locked){options.localActionLocked=locked;options.save();}
+    public void setLocalActionLocked(boolean locked){if(!canUseLocalActions())return;options.localActionLocked=locked;options.save();}
     public Map<String,Double> localModelVariables(String id){
         var loaded=localProfiles.get(id);BbModel model=loaded==null?null:loaded.model();
         if(model==null && localSelf!=null && localSelf.modelId.equals(id))model=assets.get(localSelf.hash);
@@ -468,6 +480,7 @@ public final class ClientRuntime {
         return script!=null && runLocalScripts(id,List.of(script),options.modelProfile(id).radioSelections());
     }
     public boolean runLocalScripts(String id,List<String> scripts,Map<String,Integer> radios){
+        if(!canEditLocalAppearance())return false;
         if(!LocalAppearanceSettings.isValidModelId(id)||scripts==null||radios==null||scripts.size()>128)return false;
         if(scripts.stream().anyMatch(Objects::isNull)||scripts.stream().mapToLong(String::length).sum()>32768)return false;
         try{
@@ -486,6 +499,7 @@ public final class ClientRuntime {
         }catch(RuntimeException invalid){MEPlayerActionsClient.LOGGER.debug("Private model configuration rejected: {}",invalid.getMessage());return false;}
     }
     public boolean selectLocalTexture(String id,String texture){
+        if(!canEditLocalAppearance())return false;
         var profile=localModelProfile(id);
         if(texture==null||profile.textures().stream().noneMatch(choice->choice.id().equals(texture)))return false;
         var previous=options.modelProfile(id);
@@ -495,7 +509,7 @@ public final class ClientRuntime {
         return true;
     }
     public Path localModelDirectory() {return localModelLibrary.directory();}
-    public void refreshLocalAppearance() {invalidateLocalAppearance();ensureLocalAppearance();}
+    public void refreshLocalAppearance() {if(!canEditLocalAppearance()){suspendLocalAppearanceForServer();return;}invalidateLocalAppearance();ensureLocalAppearance();}
     private void begin(JsonObject json,long now) {
         String hash=WireJson.hash(json,"hash");
         pushAuthorization.begin(offerId(json),hash,WireJson.modelId(json),(int)WireJson.integer(json,"rawBytes",1,AssetTransfer.MAX_RAW),
@@ -623,7 +637,7 @@ public final class ClientRuntime {
     }
     public void request(String action,String argument) {
         Binding own=client.player==null?null:bindings.get(client.player.getUuid());
-        if(!previewId.isEmpty() && own==null) {
+        if(canUseLocalActions() && !previewId.isEmpty() && own==null) {
             if(action.equals("play")){previewManual=argument;previewManualStarted=client.world.getTime();}
             else if(action.equals("stop") || action.equals("reset"))previewManual="";
             return;
@@ -790,6 +804,40 @@ public final class ClientRuntime {
                 Math.max(0,player.handSwingTicks),player.fishHook!=null,vehicle==null?"":Registries.ENTITY_TYPE.getId(vehicle.getType()).toString(),tags,
                 vehicle!=null&&vehicle.isAlive(),vehicle instanceof LivingEntity living&&!living.getEquippedStack(EquipmentSlot.SADDLE).isEmpty());
     }
+    public GuiPreviewAppearance guiPreviewAppearance() {
+        if(!options.enabled || client.world==null || client.player==null)return null;
+        if(localAppearanceActive()) {
+            BbModel model=assets.get(localSelf.hash);
+            return model==null?null:new GuiPreviewAppearance(localSelf.modelId,localSelf.instance,localSelf.hash,model,localSelf.profile);
+        }
+        Binding own=bindings.get(client.player.getUuid());
+        if(usable(own,System.nanoTime())) {
+            BbModel model=assets.get(own.hash);
+            return model==null?null:new GuiPreviewAppearance(own.modelId,own.instance,own.hash,model,YsmModelProfile.empty());
+        }
+        if(own==null && !previewId.isEmpty() && assets.containsKey(previewHash) && ModelRenderer.has(previewHash))
+            return new GuiPreviewAppearance(previewId,"preview:"+previewId,previewHash,assets.get(previewHash),YsmModelProfile.empty());
+        return null;
+    }
+    public GuiPreviewInput guiPreviewInput() {
+        var player=client.player;
+        if(player==null) return new GuiPreviewInput(1.8f,1f,null);
+        var position=player.getEntityPos();var vehicle=player.getVehicle();
+        String riding=vehicle==null?"":vehicle instanceof AbstractBoatEntity?"boat":vehicle instanceof AbstractMinecartEntity?"minecart":vehicle instanceof net.minecraft.entity.passive.PigEntity?"ride-pig":"ride";
+        var sample=new EntityAnimationController.Sample(position.x,position.y,position.z,player.isOnGround(),player.isSleeping(),
+                player.getPose()==EntityPose.SWIMMING,player.isTouchingWater(),player.getAbilities().flying,player.isGliding(),
+                player.isSneaking() || player.getPose()==EntityPose.CROUCHING,player.isSprinting(),riding,player.handSwinging,
+                Math.max(0,player.handSwingTicks),player.preferredHand==Hand.OFF_HAND,client.interactionManager!=null && client.interactionManager.isBreakingBlock(),
+                true,player.isClimbing(),vanillaState(player.getUuid()));
+        return new GuiPreviewInput(player.getHeight(),player.getScale(),sample);
+    }
+    public void configureGuiPreviewExpressionContext(Molang.Context context,String texture) {
+        var player=client.player;
+        VanillaYsmQueries.populate(client,player,player==null?20:player.getHungerManager().getFoodLevel(),texture,context);
+        // Inventory rendering is third person even when the camera behind the menu is first person.
+        context.query("ysm.rendering_in_inventory",1d);context.query("ysm.rendering_in_paperdoll",0d);
+        context.query("ysm.is_first_person",0d);context.query("query.is_first_person",0d);context.query("ysm.person_view",2d);
+    }
     private static VanillaYsmAnimations.ItemState vanillaItem(ItemStack stack){
         if(stack.isEmpty())return VanillaYsmAnimations.ItemState.EMPTY;
         String id=Registries.ITEM.getId(stack.getItem()).toString();Set<String> tags=new LinkedHashSet<>();
@@ -800,7 +848,20 @@ public final class ClientRuntime {
         if(kind.isEmpty() && (id.endsWith("_spear")||tags.contains("minecraft:spears")||tags.contains("c:spears")))kind="lance";
         if(kind.isEmpty() && (id.equals("minecraft:splash_potion")||id.equals("minecraft:lingering_potion")))kind="throwable_potion";
         if(kind.isEmpty() && id.equals("minecraft:mace"))kind="mace";
-        return new VanillaYsmAnimations.ItemState(id,tags,kind,stack.getUseAction().name().toLowerCase(Locale.ROOT),false,VanillaYsmQueries.charged(stack),ItemStack.hashCode(stack));
+        // OpenYSM compares item/components/count; a damaged previous stack compares only item type.
+        long revision=31L*ItemStack.hashCode(stack)+stack.getCount();
+        return new VanillaYsmAnimations.ItemState(id,tags,kind,stack.getUseAction().name().toLowerCase(Locale.ROOT),false,VanillaYsmQueries.charged(stack),revision,stack.isDamaged(),new ItemStackComparisonKey(stack));
+    }
+    /** Adapt OpenYSM's ItemStack.matches to Yarn's exact component/count comparison. */
+    private static final class ItemStackComparisonKey implements VanillaYsmAnimations.TrackedItemComparison {
+        // LivingEntityFrameState retains the actual stack; it does not copy the tracked hand item.
+        private final ItemStack trackedStack;
+        ItemStackComparisonKey(ItemStack stack) {trackedStack=stack;}
+        @Override public boolean equals(Object other) {
+            return other instanceof ItemStackComparisonKey key && ItemStack.areEqual(trackedStack,key.trackedStack);
+        }
+        @Override public int hashCode() {return 31*ItemStack.hashCode(trackedStack)+trackedStack.getCount();}
+        @Override public boolean isDamaged() {return trackedStack.isDamaged();}
     }
     private RenderBinding entityBinding(Binding binding,BbModel model,PlayerEntity player) {
         float delta=client.getRenderTickCounter().getTickProgress(false);
@@ -836,7 +897,7 @@ public final class ClientRuntime {
                 bedSleeping,player.getPose()==EntityPose.SWIMMING || policy.forcedPose().equals("crawl"),player.isTouchingWater(),own?player.getAbilities().flying:policy.flying(),
                 player.isGliding(),player.isSneaking() || player.getPose()==EntityPose.CROUCHING || policy.forcedPose().equals("sneak"),player.isSprinting(),riding,player.handSwinging,player.handSwingTicks,
                 player.preferredHand==Hand.OFF_HAND,own && client.interactionManager!=null && client.interactionManager.isBreakingBlock(),own,player.isClimbing(),vanillaState(player.getUuid())),
-                policy,binding.localServerLayers,model.animations());
+                policy,binding.localServerLayers,model.animationCatalog());
         return new RenderBinding(binding.owner,binding.instance,binding.hash,model,binding.localMotion.layers(),localTick+delta,
                 pos.x,pos.y,pos.z,bodyYaw,headYaw,headPitch,binding.scale,binding.hidePlayer,own?"local-player":"tracked-player");
     }
@@ -881,6 +942,67 @@ public final class ClientRuntime {
     public boolean serverOwnModelReady() {
         return client.player!=null && serverBridgeReady() && usable(bindings.get(client.player.getUuid()),System.nanoTime());
     }
+    public PlayerInteractionPolicy interactionPolicy() {
+        UUID self=client.player==null?null:client.player.getUuid();Binding own=self==null?null:bindings.get(self);
+        boolean present=PlayerInteractionPolicy.isServerDisguised(self,self,bindings.keySet(),localAppearanceVisibility.hasServerAppearance());
+        playerInteractionPolicy.observe(present,own==null?"":own.instance,serverBridgeReady());
+        if(own!=null)knownOwnServerModelId=own.modelId;
+        else if(!present)knownOwnServerModelId="";
+        if(!playerInteractionPolicy.canUseLocalAppearance())suspendLocalAppearanceForServer();
+        return playerInteractionPolicy;
+    }
+    /** Presence survives loading/render failure and is independent of a GPU-ready lease. */
+    public boolean serverOwnModelPresent() {return interactionPolicy().serverOwnModelPresent();}
+    public boolean hasOwnServerAppearance() {return serverOwnModelPresent();}
+    public boolean hasOwnServerDisguise() {return serverOwnModelPresent();}
+    public boolean interactionLocalMode() {return interactionPolicy().interactionLocalMode();}
+    /** Source selection is explicit and scoped to this disguise instance, not restored across servers. */
+    public boolean selectInteractionSource(boolean local) {
+        PlayerInteractionPolicy policy=interactionPolicy();
+        if(!policy.allowsScope(local?PlayerInteractionPolicy.Scope.CLIENT:PlayerInteractionPolicy.Scope.SERVER))return false;
+        WheelPreferences.Source source=local?WheelPreferences.Source.CLIENT:WheelPreferences.Source.SERVER;
+        WheelPreferences preferences=options.wheelPreferences();
+        if(preferences.source()!=source && !options.updateWheelPreferences(preferences.withSource(source)))return false;
+        if(!policy.selectSource(local))return false;
+        if(local)ensureLocalAppearance();else suspendLocalAppearanceForServer();
+        return true;
+    }
+    /** Server equipment rules follow the underlying disguise even when a private self mesh is selected. */
+    public boolean isServerDisguised(UUID owner) {
+        return PlayerInteractionPolicy.isServerDisguised(owner,client.player==null?null:client.player.getUuid(),
+                bindings.keySet(),localAppearanceVisibility.hasServerAppearance());
+    }
+    public boolean canEditLocalAppearance() {return interactionPolicy().canEditLocalAppearance();}
+    public boolean canUseLocalAppearance() {return interactionPolicy().canUseLocalAppearance();}
+    public boolean canUseLocalActions() {return interactionPolicy().canUseLocalActions();}
+    public boolean canUseServerActions() {return interactionPolicy().canUseServerActions();}
+    public String localAppearanceSuspensionReason() {return interactionPolicy().suspensionReason();}
+    public String serverOwnModelId() {
+        interactionPolicy();return knownOwnServerModelId;
+    }
+    public String serverOwnModelInstance() {
+        return interactionPolicy().serverInstance();
+    }
+    public WheelPreferences wheelPreferences() {return options.wheelPreferences();}
+    public boolean updateWheelPreferences(WheelPreferences value) {return options.updateWheelPreferences(Objects.requireNonNull(value));}
+    public Map<String,Object> ownServerAppearanceDiagnostics() {
+        Binding own=client.player==null?null:bindings.get(client.player.getUuid());
+        PlayerInteractionPolicy policy=interactionPolicy();
+        boolean prepared=localAppearancePrepared(),active=localAppearanceActive();
+        Map<String,Object> values=new LinkedHashMap<>();
+        values.put("present",serverOwnModelPresent());values.put("bindingPresent",own!=null);
+        values.put("owner",client.player==null?"":client.player.getUuid().toString());values.put("instance",policy.serverInstance());
+        values.put("modelId",knownOwnServerModelId);values.put("hash",own==null?"":own.hash);
+        values.put("ready",serverOwnModelReady());values.put("bridgeReady",serverBridgeReady());
+        values.put("assetState",own==null?"":own.assetState);values.put("assetError",own==null?"":own.assetError);
+        values.put("interactionLocalMode",policy.interactionLocalMode());
+        values.put("interactionSource",policy.interactionLocalMode()?"client":"server");
+        values.put("privateEnabled",localAppearance().enabled());values.put("privatePending",localAppearancePending);
+        values.put("privatePrepared",prepared);values.put("privateActive",active);
+        values.put("privateSuspended",policy.serverOwnModelPresent() && !policy.interactionLocalMode() && localAppearance().enabled());
+        values.put("privateWaitingForLease",policy.serverOwnModelPresent() && policy.interactionLocalMode() && prepared && !active);
+        values.put("suspensionReason",localAppearanceSuspensionReason());return Map.copyOf(values);
+    }
     /** Counts only server gameplay requests, so private action previews can prove that none were sent. */
     public long requestPacketsSent() {return requestPacketsSent;}
     /** Actual protocol/cache/GPU events, with cumulative counters surviving reconnects. */
@@ -912,10 +1034,11 @@ public final class ClientRuntime {
         try {return localModelLibrary.models().stream().map(entry -> new Action(entry.id(),entry.label())).toList();}
         catch(IOException exception) {
             MEPlayerActionsClient.LOGGER.warn("Cannot list local model directory: {}",exception.toString());
-            return List.of(new Action("openysm_default","OpenYSM 默认模型"));
+            return BuiltinYsmModels.models().stream().map(model->new Action(model.id(),model.label())).toList();
         }
     }
     public List<Action> localActions() {
+        if(!canUseLocalActions())return List.of();
         BbModel model=localSelf==null?null:assets.get(localSelf.hash);
         return model==null?List.of():model.animations().stream()
                 .filter(id -> !id.startsWith("parallel") && !id.startsWith("pre_parallel"))
@@ -925,6 +1048,7 @@ public final class ClientRuntime {
     /** Apply and persist only the viewer's own appearance; server identities and profiles are untouched. */
     public void updateLocalAppearance(LocalAppearanceSettings settings) {
         Objects.requireNonNull(settings);
+        if(!canEditLocalAppearance()){notify(localAppearanceSuspensionReason());return;}
         LocalAppearanceSettings previous=options.localAppearance();
         options.setLocalAppearance(settings);
         if(settings.enabled())options.enabled=true;
@@ -934,6 +1058,7 @@ public final class ClientRuntime {
         ensureLocalAppearance();
     }
     public void selectLocalModel(String id) {
+        if(!canEditLocalAppearance()){notify(localAppearanceSuspensionReason());return;}
         var current=localAppearance();
         updateLocalAppearance(new LocalAppearanceSettings(true,id,current.scale(),current.offsetX(),current.offsetY(),current.offsetZ()));
     }
@@ -942,9 +1067,11 @@ public final class ClientRuntime {
         updateLocalAppearance(new LocalAppearanceSettings(false,current.modelId(),current.scale(),current.offsetX(),current.offsetY(),current.offsetZ()));
     }
     public void reloadLocalAppearanceSettings() {
+        if(!canEditLocalAppearance())return;
         options.reloadLocalAppearance();invalidateLocalAppearance();ensureLocalAppearance();
     }
     public String localAppearanceStatus() {
+        if(!canUseLocalAppearance())return localAppearanceSuspensionReason();
         if(!localAppearance().enabled())return "本地外观已关闭";
         if(!options.enabled)return "客户端渲染已关闭；本地外观设置已保留";
         if(client.world==null || client.player==null)return "本地外观已保存，进入世界后显示";
@@ -954,7 +1081,7 @@ public final class ClientRuntime {
         return localAppearanceActive()?"本地外观仅自己可见":"等待本地模型";
     }
     public boolean playLocal(String animation) {
-        if(animation==null || !localAppearancePrepared())return false;
+        if(!canUseLocalActions() || animation==null || !localAppearancePrepared())return false;
         BbModel model=assets.get(localSelf.hash);
         if(!model.animations().contains(animation) || animation.startsWith("parallel") || animation.startsWith("pre_parallel"))return false;
         localSelf.localServerLayers=List.of(new Layer("manual",animation,localTick,1,model.animationLoop(animation),2,2));
@@ -967,8 +1094,14 @@ public final class ClientRuntime {
         localAppearanceRequest++;localAppearancePending=false;localSelf=null;
         localAppearanceError="";localAppearanceRetryAfter=0;
     }
+    private void suspendLocalAppearanceForServer() {
+        if(localSelf!=null || localAppearancePending)invalidateLocalAppearance();
+        if(!previewId.isEmpty() || previewPending) {
+            previewRequest++;previewPending=false;previewId="";previewHash="";previewManual="";previewPose="";
+        }
+    }
     private boolean localAppearancePrepared() {
-        return options.enabled && localAppearance().enabled() && client.world!=null && client.player!=null && localSelf!=null
+        return canUseLocalActions() && options.enabled && localAppearance().enabled() && client.world!=null && client.player!=null && localSelf!=null
                 && localSelf.owner.equals(client.player.getUuid()) && localSelf.modelId.equals(localAppearance().modelId())
                 && assets.containsKey(localSelf.hash) && ModelRenderer.has(localSelf.hash);
     }
@@ -980,6 +1113,7 @@ public final class ClientRuntime {
     }
     public boolean privateAppearanceActive() {return localAppearanceActive();}
     private void ensureLocalAppearance() {
+        if(!canUseLocalAppearance()){suspendLocalAppearanceForServer();return;}
         var settings=localAppearance();
         if(!options.enabled || !settings.enabled() || client.world==null || client.player==null
                 || localAppearancePrepared() || localAppearancePending || System.nanoTime()<localAppearanceRetryAfter)return;
@@ -992,7 +1126,8 @@ public final class ClientRuntime {
                     client.execute(()->{
                         if(token!=localAppearanceRequest || epoch!=generation)return;
                         localAppearancePending=false;
-                        if(client.world==null || client.player==null || !owner.equals(client.player.getUuid()) || !localAppearance().enabled())return;
+                        if(client.world==null || client.player==null || !owner.equals(client.player.getUuid()) || !localAppearance().enabled()
+                                || !canUseLocalAppearance())return;
                         install(loaded.hash(),loaded.model());
                         if(!assets.containsKey(loaded.hash()) || !ModelRenderer.has(loaded.hash())) {
                             localAppearanceError="本地模型纹理加载失败";localAppearanceRetryAfter=System.nanoTime()+30*SECOND;return;
@@ -1036,6 +1171,7 @@ public final class ClientRuntime {
     public List<Action> actions() {
         Binding own=client.player==null?null:bindings.get(client.player.getUuid());
         if(own!=null)return own.actions;
+        if(serverOwnModelPresent())return List.of();
         BbModel preview=assets.get(previewHash);
         return preview==null?List.of():preview.animations().stream().filter(id->!id.startsWith("parallel")&&!id.startsWith("pre_parallel")).sorted().map(id->new Action(id,previewLabel(id))).toList();
     }
@@ -1068,7 +1204,7 @@ public final class ClientRuntime {
         if((!LocalAppearanceSettings.isValidModelId(id) && !Set.of("ysm_02_jk","ysm_01_jk").contains(id)) || client.world==null || client.player==null) {
             notify("进入世界后可预览本地模型；服务器模型需要完整资源包");return;
         }
-        if(bindings.containsKey(client.player.getUuid())){notify("请先解除服务器伪装，再使用本地预览");return;}
+        if(!canUseLocalActions()){notify(localAppearanceSuspensionReason());return;}
         if(previewPending || loading.size()>=4){notify("模型正在加载，请稍后");return;}
         long token=++previewRequest;
         previewPending=true;
@@ -1078,8 +1214,8 @@ public final class ClientRuntime {
                 boolean packSource=!LocalAppearanceSettings.isValidModelId(id);
                 var loaded=packSource?loadPackModel(id,null):localModelLibrary.load(id,options.defaultBlueTexture);
                 BbModel model=loaded.model();String hash=loaded.hash();
-                client.execute(()->{if(epoch==generation && token==previewRequest){previewPending=false;if(packSource)packAssets.add(hash);install(hash,model);if(assets.containsKey(hash)){
-                    previewId=id;previewHash=hash;previewManual="";previewStarted=client.world.getTime();notify("本地模型预览已开启，请切换第三人称；N 打开动作面板");}}});
+                client.execute(()->{if(epoch==generation && token==previewRequest && canUseLocalActions()){previewPending=false;if(packSource)packAssets.add(hash);install(hash,model);if(assets.containsKey(hash)){
+                    previewId=id;previewHash=hash;previewManual="";previewStarted=client.world.getTime();notify("本地模型预览已开启，请切换第三人称；J 打开动作轮盘");}}});
             }catch(Exception exception){client.execute(()->{if(epoch==generation && token==previewRequest){previewPending=false;notify("预览失败："+exception.getMessage());}});}
         });
     }

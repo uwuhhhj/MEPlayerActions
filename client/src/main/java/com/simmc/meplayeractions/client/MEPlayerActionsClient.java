@@ -3,9 +3,9 @@ package com.simmc.meplayeractions.client;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.simmc.meplayeractions.client.network.ActionPayload;
 import com.simmc.meplayeractions.client.render.ModelRenderer;
-import com.simmc.meplayeractions.client.ui.ActionsScreen;
-import com.simmc.meplayeractions.client.ui.LocalAppearanceScreen;
+import com.simmc.meplayeractions.client.ui.PlayerModelScreen;
 import com.simmc.meplayeractions.client.ui.AnimationWheelScreen;
+import com.simmc.meplayeractions.client.ui.NativeGuiRenderBackend;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
@@ -24,7 +24,9 @@ import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.*;
 public final class MEPlayerActionsClient implements ClientModInitializer {
     public static final Logger LOGGER=LoggerFactory.getLogger("MEPlayerActions/Client");
     public static ClientRuntime runtime;
+    public static KeyBinding actionWheelKey;
     @Override public void onInitializeClient() {
+        NativeGuiRenderBackend.register();
         MinecraftClient client=MinecraftClient.getInstance();runtime=new ClientRuntime(client);
         PayloadTypeRegistry.playS2C().register(ActionPayload.ID,ActionPayload.CODEC);
         PayloadTypeRegistry.playC2S().register(ActionPayload.ID,ActionPayload.CODEC);
@@ -33,25 +35,19 @@ public final class MEPlayerActionsClient implements ClientModInitializer {
         ClientPlayConnectionEvents.JOIN.register((handler,sender,mc)->runtime.joined());
         ClientPlayConnectionEvents.DISCONNECT.register((handler,mc)->runtime.reset());
         ModelRenderer.register(runtime);
-        KeyBinding menu=KeyBindingHelper.registerKeyBinding(new KeyBinding("key.meplayeractions.menu",InputUtil.Type.KEYSYM,
-                GLFW.GLFW_KEY_N,KeyBinding.Category.create(Identifier.of("meplayeractions","actions"))));
-        KeyBinding models=KeyBindingHelper.registerKeyBinding(new KeyBinding("key.meplayeractions.models",InputUtil.Type.KEYSYM,
-                GLFW.GLFW_KEY_Y,menu.getCategory()));
-        KeyBinding wheel=KeyBindingHelper.registerKeyBinding(new KeyBinding("key.meplayeractions.wheel",InputUtil.Type.KEYSYM,
-                GLFW.GLFW_KEY_G,menu.getCategory()));
+        // A new binding identifier retires the old saved G binding as well as the G/Y/N entry points.
+        actionWheelKey=KeyBindingHelper.registerKeyBinding(new KeyBinding("key.meplayeractions.action_wheel",InputUtil.Type.KEYSYM,
+                GLFW.GLFW_KEY_J,KeyBinding.Category.create(Identifier.of("meplayeractions","actions"))));
         ClientTickEvents.END_CLIENT_TICK.register(mc->{runtime.tick();
-            while(models.wasPressed())if(mc.world!=null)mc.setScreen(new LocalAppearanceScreen(runtime));
-            while(wheel.wasPressed())if(mc.world!=null) {
-                var screen=new AnimationWheelScreen(runtime);screen.setReleaseKey(KeyBindingHelper.getBoundKeyOf(wheel).getCode());mc.setScreen(screen);
+            while(actionWheelKey.wasPressed())if(mc.world!=null && mc.currentScreen==null) {
+                var screen=new AnimationWheelScreen(runtime);screen.setReleaseKey(KeyBindingHelper.getBoundKeyOf(actionWheelKey));mc.setScreen(screen);
             }
-            while(menu.wasPressed()){
-            if(mc.world!=null)mc.setScreen(new ActionsScreen(runtime));
-        }});
+        });
         ClientCommandRegistrationCallback.EVENT.register((dispatcher,registry)->dispatcher.register(literal("mpaclient")
-                .executes(ctx->{client.setScreen(new ActionsScreen(runtime));return 1;})
-                .then(literal("settings").executes(ctx->{client.setScreen(new LocalAppearanceScreen(runtime));return 1;}))
+                .executes(ctx->{client.setScreen(new PlayerModelScreen(runtime));return 1;})
+                .then(literal("settings").executes(ctx->{client.setScreen(new PlayerModelScreen(runtime));return 1;}))
                 .then(literal("local")
-                        .executes(ctx->{client.setScreen(new LocalAppearanceScreen(runtime));return 1;})
+                        .executes(ctx->{client.setScreen(new PlayerModelScreen(runtime));return 1;})
                         .then(literal("off").executes(ctx->{runtime.disableLocalAppearance();return 1;}))
                         .then(literal("reset").executes(ctx->{runtime.updateLocalAppearance(LocalAppearanceSettings.defaults());return 1;}))
                         .then(literal("stop").executes(ctx->{runtime.stopLocal();return 1;}))
@@ -67,6 +63,6 @@ public final class MEPlayerActionsClient implements ClientModInitializer {
                 .then(literal("preview").then(argument("model",StringArgumentType.word())
                         .suggests((ctx,builder)->{builder.suggest("ysm_02_jk");builder.suggest("ysm_01_jk");builder.suggest("off");return builder.buildFuture();})
                         .executes(ctx->{runtime.preview(StringArgumentType.getString(ctx,"model"));return 1;})))));
-        LOGGER.info("MEPlayerActions Client 0.4.2 initialized for Minecraft 1.21.11 (local bone rendering, protocol 3, server-push models)");
+        LOGGER.info("MEPlayerActions Client 0.4.3 initialized for Minecraft 1.21.11 (local bone rendering, protocol 3, server-push models)");
     }
 }

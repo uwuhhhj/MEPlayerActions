@@ -52,7 +52,7 @@ public final class YsmComponentRenderer {
     private static final class Playback {
         final AnimationPlayer player;
         final Map<String, BbModel.Layer> clocks = new LinkedHashMap<>();
-        final Map<String, String> handKeys = new HashMap<>();
+        final VanillaYsmAnimations.HandPlayback handPlayback = new VanillaYsmAnimations.HandPlayback();
         Playback(BbModel model) { player = new AnimationPlayer(model); }
         BbModel.Layer layer(String slot, String clip, double tick) {
             BbModel.Layer current = clocks.get(slot);
@@ -195,13 +195,14 @@ public final class YsmComponentRenderer {
         List<BbModel.Layer> layers = new ArrayList<>(binding.layers().stream()
                 .filter(layer -> !layer.layer().startsWith("player.") && component.model().animations().contains(layer.animation())).toList());
         var state = runtime.vanillaState(binding.owner());
-        var decision = VanillaYsmAnimations.select(state, new VanillaYsmAnimations.Catalog(component.model().animations()));
+        var decision = VanillaYsmAnimations.select(state, component.model().animationCatalog());
         String family = component.model().controllerFamily();
         boolean manual = layers.stream().anyMatch(layer -> layer.layer().equals("manual"));
         for (var entry : decision.slots().entrySet()) {
             String slot = entry.getKey(); var choice = entry.getValue();
+            playback.handPlayback.observe(slot, choice, state);
             if (choice.directive() == VanillaYsmAnimations.Directive.STOP || manual && (slot.equals("player.swing") || slot.equals("player.use"))) {
-                playback.clocks.remove(slot); playback.handKeys.remove(slot); continue;
+                playback.clocks.remove(slot); playback.handPlayback.stop(slot); continue;
             }
             BbModel.Layer previous = playback.clocks.get(slot);
             if (choice.directive() == VanillaYsmAnimations.Directive.PAUSE || choice.directive() == VanillaYsmAnimations.Directive.CONTINUE) {
@@ -209,12 +210,9 @@ public final class YsmComponentRenderer {
                 continue;
             }
             long tick = (long) binding.serverTick();
-            long started = slot.equals("player.swing") ? tick - state.swingTicks()
-                    : slot.equals("player.use") ? tick - Math.max(0, state.useTicks() - 1L)
-                    : previous != null && choice.animation().equals(previous.animation()) && choice.eventKey().equals(playback.handKeys.get(slot))
-                    ? previous.startedAtTick() : tick;
+            long started = playback.handPlayback.start(slot, choice, state, tick);
             var layer = new BbModel.Layer(slot, choice.animation(), started, 1, choice.loop(), slot.equals("player.swing") ? 0 : 2, 2);
-            playback.clocks.put(slot, layer); playback.handKeys.put(slot, choice.eventKey()); layers.add(componentLayer(family, layer));
+            playback.clocks.put(slot, layer); layers.add(componentLayer(family, layer));
         }
         Map<String, Double> queries = new HashMap<>(runtime.expressionQueries(binding.owner()));
         for (String slot : decision.slots().keySet()) queries.put("ysm.pause." + family + slot.substring(slot.indexOf('.')), decision.pauseSlots().contains(slot) ? 1d : 0d);

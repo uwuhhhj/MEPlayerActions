@@ -27,6 +27,7 @@ public final class ClientOptions {
     private final Set<String> favorites = new LinkedHashSet<>();
     private final Path path;
     private LocalAppearanceSettings localAppearance = LocalAppearanceSettings.defaults();
+    private WheelPreferences wheelPreferences = WheelPreferences.defaults();
     public ClientOptions(Path path) {
         this.path = Objects.requireNonNull(path);
         try {
@@ -41,6 +42,7 @@ public final class ClientOptions {
                 if (json.has("defaultHeaddress")) defaultHeaddress = json.get("defaultHeaddress").getAsBoolean();
                 if (json.has("defaultBlueTexture")) defaultBlueTexture = json.get("defaultBlueTexture").getAsBoolean();
                 if (json.has("localActionLocked")) localActionLocked = json.get("localActionLocked").getAsBoolean();
+                wheelPreferences = readWheelPreferences(json);
                 readProfiles(json);
                 if (json.has("favorites") && json.get("favorites").isJsonArray()) {
                     for (JsonElement value : json.getAsJsonArray("favorites")) {
@@ -57,6 +59,14 @@ public final class ClientOptions {
 
     public LocalAppearanceSettings localAppearance() { return localAppearance; }
     public void setLocalAppearance(LocalAppearanceSettings settings) { localAppearance = Objects.requireNonNull(settings); }
+    public WheelPreferences wheelPreferences() { return wheelPreferences; }
+    /** Persist wheel memory atomically, retaining the previous memory on budget or IO failure. */
+    public boolean updateWheelPreferences(WheelPreferences preferences) {
+        WheelPreferences previous = wheelPreferences;
+        wheelPreferences = Objects.requireNonNull(preferences);
+        if (write()) return true;
+        wheelPreferences = previous; return false;
+    }
     public Path path() { return path; }
     public boolean isFavorite(String id) { return favorites.contains(id); }
     public void toggleFavorite(String id) {
@@ -99,6 +109,39 @@ public final class ClientOptions {
             LOGGER.warn("Invalid local appearance; leaving it disabled: {}", invalid.toString());
             return LocalAppearanceSettings.defaults();
         }
+    }
+
+    private static WheelPreferences readWheelPreferences(JsonObject json) {
+        if (!json.has("wheelPreferences")) return WheelPreferences.defaults();
+        try {
+            JsonObject value = json.getAsJsonObject("wheelPreferences");
+            return new WheelPreferences(readWheelSource(value), readWheelPage(value, "clientPage"), readWheelPage(value, "serverPage"),
+                    readWheelKeepOpen(value));
+        } catch (RuntimeException invalid) {
+            LOGGER.warn("Invalid wheel preferences; using wheel defaults: {}", invalid.toString());
+            return WheelPreferences.defaults();
+        }
+    }
+
+    private static WheelPreferences.Source readWheelSource(JsonObject value) {
+        JsonElement selected = value.get("source");
+        if (selected != null && selected.isJsonPrimitive() && selected.getAsJsonPrimitive().isString()
+                && selected.getAsString().equals("server")) return WheelPreferences.Source.SERVER;
+        return WheelPreferences.Source.CLIENT;
+    }
+
+    private static boolean readWheelKeepOpen(JsonObject value) {
+        JsonElement selected = value.get("keepOpen");
+        return selected != null && selected.isJsonPrimitive() && selected.getAsJsonPrimitive().isBoolean() && selected.getAsBoolean();
+    }
+
+    private static int readWheelPage(JsonObject value, String key) {
+        try {
+            JsonElement page = value.get(key);
+            if (page == null || !page.isJsonPrimitive() || !page.getAsJsonPrimitive().isNumber()) return 0;
+            int integer = page.getAsBigDecimal().intValueExact();
+            return integer >= 0 && integer <= WheelPreferences.MAX_PAGE ? integer : 0;
+        } catch (RuntimeException invalid) { return 0; }
     }
 
     /** Only authored configuration variables belong here; physics/query state is never persisted. */
@@ -193,6 +236,11 @@ public final class ClientOptions {
         json.addProperty("defaultHeaddress", defaultHeaddress);
         json.addProperty("defaultBlueTexture", defaultBlueTexture);
         json.addProperty("localActionLocked", localActionLocked);
+        JsonObject wheel = new JsonObject();
+        wheel.addProperty("source", wheelPreferences.source().name().toLowerCase(Locale.ROOT));
+        wheel.addProperty("clientPage", wheelPreferences.clientPage()); wheel.addProperty("serverPage", wheelPreferences.serverPage());
+        wheel.addProperty("keepOpen", wheelPreferences.keepOpen());
+        json.add("wheelPreferences", wheel);
         JsonArray favoriteJson = new JsonArray(); favorites.forEach(favoriteJson::add); json.add("favorites", favoriteJson);
         JsonObject appearance = new JsonObject();
         appearance.addProperty("enabled",localAppearance.enabled()); appearance.addProperty("modelId",localAppearance.modelId());

@@ -10,7 +10,7 @@ class LocalAppearanceSettingsTest {
     }
 
     @Test void acceptsBundledAndSingleLocalModelFiles() {
-        for(String model:List.of("openysm_default","local:sample.bbmodel","local:我的模型.bbmodel","ysm:default","ysm:我的模型")) {
+        for(String model:List.of("openysm_default","wine_fox_01_taisho_maid","wine_fox_02_new_year","wine_fox_03_astronaut","local:sample.bbmodel","local:我的模型.bbmodel","ysm:default","ysm:我的模型")) {
             assertTrue(LocalAppearanceSettings.isValidModelId(model),model);
             assertEquals(model,new LocalAppearanceSettings(true,model,1,0,0,0).modelId());
         }
@@ -22,7 +22,7 @@ class LocalAppearanceSettingsTest {
         for(String model:List.of("","unknown","local:","local:sample.json","local:../sample.bbmodel",
                 "local:dir/sample.bbmodel","local:dir\\sample.bbmodel","local:/sample.bbmodel",
                 "local:C:\\sample.bbmodel","local:two..dots.bbmodel","local:bad"+(char)0+"name.bbmodel",
-                "ysm_01_jk","ysm_02_jk","ysm:","ysm:../default","ysm:dir/model","ysm:dir\\model","ysm:C:\\model","ysm:.hidden")) {
+                "ysm_01_jk","ysm_02_jk","wine_fox_04_student","wine_fox/01_taisho_maid","ysm:","ysm:../default","ysm:dir/model","ysm:dir\\model","ysm:C:\\model","ysm:.hidden")) {
             assertFalse(LocalAppearanceSettings.isValidModelId(model),model);
             assertThrows(IllegalArgumentException.class,()->new LocalAppearanceSettings(true,model,1,0,0,0),model);
         }
