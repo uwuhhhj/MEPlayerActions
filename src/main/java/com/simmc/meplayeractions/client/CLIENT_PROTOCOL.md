@@ -6,7 +6,7 @@
 
 客户端发送：
 ```json
-{"protocol":3,"type":"hello","clientVersion":"0.3.1","capabilities":["local_render"]}
+{"protocol":3,"type":"hello","clientVersion":"0.3.2","capabilities":["local_render"]}
 ```
 `capabilities` 必须含唯一的 `local_render`；`clientVersion` 可省略（最多 64 字符）。hello 每秒最多处理一次。新 hello 清理旧绑定并恢复旧 ME 可见性，不授予渲染权限。
 
@@ -52,6 +52,8 @@ modelId 仅允许 1–64 位小写英文字母/数字/_/-；hash 必须匹配当
 服务器再次验证当前 owner/instance/hash、可见性、owned 且无外来模型，然后只对该观众抑制 ME 显示，返回 `render_ack {owner,instance,hash}`。客户端只有匹配本地待确认实例的 ACK 到达后才开启本地绘制。hello 和 state 本身均不切换 ME。就绪客户端仍占用原来的观众名额，不额外增加 max-viewers。
 
 对于其他玩家，ME 隐藏基础实体时原版追踪包也会被过滤。服务器在 ACK 前仅为该就绪观众及 owner 实体 ID 安装原版追踪通道，用 ME 公共 `ProtectedPacket` 保留出生、位移、朝向、姿态、装备、挥臂及乘客数据，并通过公共 forceSpawn 初始化原版实体。混合 bundle 保留顺序，其他实体包继续经过 ME。通道无法建立时拒绝接管并保持 ME；退租时移除隐藏基础实体的客户端副本及对应例外。被观看者无需握手或安装模组。
+
+解除伪装时，退租删除副本发生在 ME 解除基础实体隐藏之前，Paper 不会因为显示标记恢复而重新配对已追踪的玩家。服务器因此记住本实例接管过的远端观众，恢复原观众过滤器与 forcedInvisible 后补发原版配对数据；仅发送给仍在线、同世界、canSee 且当前追踪集合允许的观众。原版自己、消失的玩家、离开原版追踪距离的观众及其他插件的隐藏关系不在补发范围内。
 
 客户端每 20 tick 发送：
 ```json

@@ -2,7 +2,7 @@ config-version: 3
 
 models:
   default: ysm_01_jk_player
-  allowed: [ysm_01_jk_player, ysm_01_jk_npc]
+  allowed: [ysm_01_jk_player, ysm_01_jk_npc, ysm_02_jk]
 
 disguise:
   scale: 1.0
@@ -110,6 +110,15 @@ animations:
     swing-offhand: [attack_offhand, use_offhand]
     mining: [mining, dig, attack, use_mainhand]
   models:
+    ysm_02_jk:
+      # 基准模型自身的 Root 已经卧倒，保留原轨道；climb/climbing 在此模型中是陆地趴下/爬行。
+      crawl-idle: [climb]
+      crawl-walk: [climbing, climb]
+      crouch-idle: [sneak]
+      crouch-walk: [sneaking, sneak]
+      swim-idle: [swim_stand, swim]
+      swing-mainhand: [swing_hand, use_mainhand]
+      mining: [swing_hand, use_mainhand]
     ysm_01_jk_npc:
       # 0.2.1 安装包为 NPC 模型新增真正的卧倒轨道，保留原有直立 climb 动作。
       # 更新时须同时安装包内两个 bbmodel，再 /meg reload models。

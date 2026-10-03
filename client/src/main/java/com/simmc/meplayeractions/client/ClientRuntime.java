@@ -73,7 +73,7 @@ public final class ClientRuntime {
             releaseBindings();abortTransfers();acknowledged=false;lastHello=0;lastError="服务器同步已超时，恢复 ModelEngine";
         }
         if (options.enabled && !acknowledged && now-lastHello>3*SECOND && ClientPlayNetworking.canSend(ActionPayload.ID)) {
-            JsonObject hello=WireJson.envelope("hello");hello.addProperty("clientVersion","0.3.1");
+            JsonObject hello=WireJson.envelope("hello");hello.addProperty("clientVersion","0.3.2");
             JsonArray caps=new JsonArray();caps.add("local_render");hello.add("capabilities",caps);
             send(hello);lastHello=now;
         }
@@ -456,7 +456,7 @@ public final class ClientRuntime {
     public List<String> status() {
         long active=bindings.values().stream().filter(b->b.active).count();
         List<String> text=new ArrayList<>();
-        text.add("客户端 0.3.1 · "+(acknowledged?"已连接动作服务器":"等待服务器 / 本地预览"));
+        text.add("客户端 0.3.2 · "+(acknowledged?"已连接动作服务器":"等待服务器 / 本地预览"));
         text.add("已接管 "+active+" / "+bindings.size()+" 个模型 · 资产 "+assets.size()+" · 下载 "+transfers.size());
         text.add((options.followServerTimeline?"服务器拖后轨迹 · 缓冲 "+options.interpolationTicks+" tick":"客户端实体即时跟随 · 无额外位置缓冲")
                 +" · 本人模型 "+(options.showSelf?"显示":"隐藏"));

@@ -153,19 +153,33 @@ def main() -> None:
                                 "npc_position_scale": scale, "root_tracks_match": True, "clips": compared}
 
     protocol = PROJECT / "src/main/java/com/simmc/meplayeractions/client/CLIENT_PROTOCOL.md"
+    reference = PROJECT / "examples/blueprints/npc/ysm_02_jk.bbmodel"
+    reference_manifest = json.loads(reference.with_suffix(".manifest.json").read_text(encoding="utf-8"))
+    reference_source = PROJECT.parent / reference_manifest["source"]["path"]
+    assert digest(reference_source) == reference_manifest["source"]["sha256"]
+    assert digest(reference) == reference_manifest["derived_model"]["sha256"]
+    reference_original = json.loads(reference_source.read_text(encoding="utf-8"))
+    reference_export = json.loads(reference.read_text(encoding="utf-8"))
+    assert reference_export["model_identifier"] == "ysm_02_jk"
+    assert all(reference_original.get(key) == reference_export.get(key) for key in ("elements", "outliner", "textures", "animations"))
     install = {
         f"plugins/{name}.jar": jar.read_bytes(),
         "plugins/MEPlayerActions/config.yml": (PROJECT / "src/main/resources/config.yml").read_bytes(),
         "plugins/ModelEngine/blueprints/npc/ysm_01_jk_player.bbmodel": model.read_bytes(),
         "plugins/ModelEngine/blueprints/npc/ysm_01_jk_npc.bbmodel": npc_model.read_bytes(),
+        "plugins/ModelEngine/blueprints/npc/ysm_02_jk.bbmodel": (PROJECT / "examples/blueprints/npc/ysm_02_jk.bbmodel").read_bytes(),
         "README.md": (PROJECT / "README.md").read_bytes(),
         "docs/CLIENT_PROTOCOL.md": protocol.read_bytes(),
         "docs/ysm_01_jk_player.manifest.json": manifest.read_bytes(),
         "docs/ysm_01_jk_npc.manifest.json": npc_manifest.read_bytes(),
+        "docs/ysm_02_jk.manifest.json": (PROJECT / "examples/blueprints/npc/ysm_02_jk.manifest.json").read_bytes(),
     }
     # The tutorial link remains usable after unpacking the installation ZIP.
     install["README.md"] = install["README.md"].replace(
         b"src/main/java/com/simmc/meplayeractions/client/CLIENT_PROTOCOL.md", b"docs/CLIENT_PROTOCOL.md")
+    architecture = PROJECT / "ARCHITECTURE.md"
+    if architecture.is_file():
+        install["ARCHITECTURE.md"] = architecture.read_bytes()
     source_entries = {}
     for root_name in ("src", "examples", "tools"):
         for path in sorted((PROJECT / root_name).rglob("*")):
@@ -174,6 +188,8 @@ def main() -> None:
             source_entries[f"MEPlayerActions/{path.relative_to(PROJECT).as_posix()}"] = path.read_bytes()
     for filename in ("pom.xml", "README.md", ".gitignore"):
         source_entries[f"MEPlayerActions/{filename}"] = (PROJECT / filename).read_bytes()
+    if architecture.is_file():
+        source_entries["MEPlayerActions/ARCHITECTURE.md"] = architecture.read_bytes()
 
     client = PROJECT / "client"
     client_jar = client / "build/libs" / f"MEPlayerActions-Client-{version}.jar"
@@ -246,6 +262,16 @@ def main() -> None:
     game_launch_path = game_report_path.parent / "launch.json"
     observer_launch_path = observer_report_path.parent / "launch.json"
     assert game_passed and observer_passed, "Fresh, passing two-client game reports are required"
+    game_checks = {check["name"]: check["passed"] for check in game_report["checks"]}
+    observer_checks = {check["name"]: check["passed"] for check in observer_report["checks"]}
+    for check_name in (
+            "other-undisguiseRestoresNativePlayer", "undisguisedRemoteKeepsMoving",
+            "other-undisguise-againRestoresNativePlayer", "other-second-modelReferenceModelFallsBackToMe",
+            "other-second-undisguiseRestoresNativePlayer", "other-first-modelLocalModelReturns",
+            "own-second-modelReferenceModelFallsBackToMe", "ownSecondUndisguiseRestoresPlayer",
+            "ownFirstModelReturnsAfterReference"):
+        assert game_checks.get(check_name) is True, f"Missing lifecycle regression proof: {check_name}"
+    assert observer_checks.get("AUndisguiseRestoresNativePlayerForUnmoddedB") is True
     game_launch = json.loads(game_launch_path.read_text(encoding="utf-8"))
     observer_launch = json.loads(observer_launch_path.read_text(encoding="utf-8"))
     assert game_launch["clientJarSha256"].lower() == digest(client_jar), "Game run used another client JAR"

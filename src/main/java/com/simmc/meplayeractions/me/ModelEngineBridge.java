@@ -215,7 +215,10 @@ public final class ModelEngineBridge {
             try {
                 if (nativeEntities == null) nativeEntities = new NativeEntityRelay();
                 if (!nativeEntities.enable(viewer, attachment.playerId(), session.player.getEntityId(), !session.entity.isBaseEntityVisible())) return false;
-                if (!session.entity.isBaseEntityVisible()) ModelEngineAPI.getEntityHandler().forceSpawn(session.entity.getBase(), Bukkit.getPlayer(viewer));
+                if (!session.entity.isBaseEntityVisible()) {
+                    session.nativeViewers.add(viewer);
+                    ModelEngineAPI.getEntityHandler().forceSpawn(session.entity.getBase(), Bukkit.getPlayer(viewer));
+                }
             } catch (RuntimeException failure) {
                 if (nativeEntities != null) nativeEntities.disable(viewer, attachment.playerId());
                 Bukkit.getLogger().warning("客户端原版实体同步未能启用，保持 ME：" + failure.getMessage());
@@ -353,6 +356,17 @@ public final class ModelEngineBridge {
                 ModelEngineAPI.getEntityHandler().setForcedInvisible(session.player, session.previousForcedInvisible);
             } else ModelEngineAPI.getEntityHandler().clearForcedInvisible(session.attachment.playerId());
         }
+        // Ending the local lease removed its native tracking copy while ME still hid the base.
+        // Restoring visibility alone does not make Paper pair the already-tracked player again.
+        // Resend only to former local viewers still admitted by vanilla/ME tracking, after
+        // the audience predicate and forced-invisible state have both been restored.
+        if ((noForeignModel && current.isBaseEntityVisible()) || current == null) {
+            for (Player viewer : NativeEntityRestoration.recipients(session.player, session.nativeViewers, tracked(session), Bukkit::getPlayer)) {
+                try { ModelEngineAPI.getEntityHandler().forceSpawn(session.entity.getBase(), viewer); }
+                catch (RuntimeException problem) { failure = accumulate(failure, problem); }
+            }
+        }
+        if (failure == null) session.nativeViewers.clear();
         if (sameEntity && !current.isDestroyed() && current.getModels().isEmpty()) {
             ModelEngineAPI.removeModeledEntity(session.attachment.playerId());
         }
@@ -430,6 +444,7 @@ public final class ModelEngineBridge {
         final boolean previousForcedInvisible;
         final Map<Integer, OwnedAnimation> layers = new HashMap<>();
         final List<OwnedAnimation> ownedAnimations = new ArrayList<>();
+        final java.util.Set<UUID> nativeViewers = new java.util.HashSet<>();
         final LegacyNpcAnimations.Result compatibility;
         boolean assignedBaseVisible;
         boolean changedBaseVisible;

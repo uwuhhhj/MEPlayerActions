@@ -38,10 +38,13 @@ public final class E2EHarness {
     private static final Logger LOGGER = LoggerFactory.getLogger("MEPlayerActions/E2E");
     private static final String PLAYER = "MPATest";
     private static final UUID OTHER = UUID.nameUUIDFromBytes("OfflinePlayer:MPAObserver".getBytes(StandardCharsets.UTF_8));
-    private static final List<String> STAGES = List.of("idle", "native-follow", "server-trailing", "wave", "crawl", "crawl-side", "bed", "ride", "jump",
+    private static final List<String> STAGES = System.getProperty("meplayeractions.e2e.focus", "").equals("visibility")
+            ? List.of("other-idle", "other-undisguise", "other-native-move", "other-redisguise", "other-undisguise-again", "undisguise")
+            : List.of("idle", "native-follow", "server-trailing", "wave", "crawl", "crawl-side", "bed", "ride", "jump",
             "firstperson", "gsit-sit", "gsit-crawl", "gsit-lay", "gsit-firstperson", "gsit-thirdperson", "gsit-undisguise", "gsit-redisguise", "gsit-reset", "resource-reload", "local-off", "local-on", "npc", "npc-crawl", "npc-crawl-side",
             "menu", "self-hidden", "self-restored", "server-reload", "other-idle", "other-native-follow", "other-crawl", "other-bed",
-            "other-ride", "other-jump", "other-range-out", "other-range-in", "undisguise", "preview", "preview-end");
+            "other-ride", "other-jump", "other-range-out", "other-range-in", "other-undisguise", "other-native-move", "other-redisguise", "other-undisguise-again",
+            "other-second-model", "other-second-undisguise", "other-first-model", "own-second-model", "own-second-undisguise", "own-first-model", "undisguise", "preview", "preview-end");
     private final ClientRuntime runtime;
     private final Path output = Path.of(System.getProperty("meplayeractions.e2e.output", "../build/e2e")).toAbsolutePath();
     private final List<Map<String, Object>> checks = new ArrayList<>();
@@ -59,6 +62,7 @@ public final class E2EHarness {
     private int otherJumpFrames;
     private int followSamples,followWalking;
     private double maxFollowError,maxServerGap;
+    private double restoredPlayerX = Double.NaN;
     private CompletableFuture<Void> reload;
     private ArmorStandEntity sideCamera;
     private Entity gsitCamera;
@@ -177,11 +181,11 @@ public final class E2EHarness {
                 return;
             }
             if (name.equals("server-reload") && stageTicks == 30) command(client, "mpatest " + PLAYER + " disguise ysm_01_jk_npc");
-            if ((name.equals("local-on") || name.equals("npc") || name.equals("server-reload") || name.equals("preview") || name.equals("gsit-redisguise")) && own(client).isEmpty()) {
+            if ((name.equals("local-on") || name.equals("npc") || name.equals("server-reload") || name.equals("preview") || name.equals("gsit-redisguise") || name.equals("own-first-model")) && own(client).isEmpty()) {
                 if (stageTicks > 400) { check(name, false, "No model returned after lifecycle operation"); next(client); }
                 return;
             }
-            if ((name.equals("other-idle") || name.equals("other-range-in")) && otherBindings(client).isEmpty()) {
+            if ((name.equals("other-idle") || name.equals("other-range-in") || name.equals("other-redisguise") || name.equals("other-first-model")) && otherBindings(client).isEmpty()) {
                 if (stageTicks > 200) { check(name, false, "Other player binding unavailable"); next(client); }
                 return;
             }
@@ -294,6 +298,19 @@ public final class E2EHarness {
             case "other-jump" -> command(client, "mpatest MPAObserver jump");
             case "other-range-out" -> { command(client, "mpatest MPAObserver reset"); command(client, "tp MPAObserver 8.5 -60 0.5"); }
             case "other-range-in" -> command(client, "tp MPAObserver 8.0 -60 0.5");
+            // B's independent observer fixture issues undisguise as the actual unmodded player.
+            case "other-undisguise", "other-undisguise-again", "other-second-undisguise" -> command(client, "mpatest MPAObserver reset");
+            case "other-native-move" -> {
+                PlayerEntity other = otherPlayer(client);
+                restoredPlayerX = other == null ? Double.NaN : other.getX();
+                command(client, "mpatest MPAObserver walk");
+            }
+            case "other-redisguise" -> command(client, "mpatest MPAObserver disguise ysm_01_jk_player");
+            case "other-second-model" -> command(client, "mpatest MPAObserver disguise ysm_02_jk");
+            case "other-first-model" -> command(client, "mpatest MPAObserver disguise ysm_01_jk_player");
+            case "own-second-model" -> command(client, "mpatest " + PLAYER + " disguise ysm_02_jk");
+            case "own-second-undisguise" -> command(client, "meplayeractions undisguise");
+            case "own-first-model" -> command(client, "mpatest " + PLAYER + " disguise ysm_01_jk_player");
             case "undisguise" -> command(client, "meplayeractions undisguise");
             case "preview" -> runtime.preview("ysm_01_jk_npc");
             case "preview-end" -> runtime.preview("off");
@@ -393,6 +410,35 @@ public final class E2EHarness {
             case "other-ride" -> check("remoteMinecart", otherHeight > 0 && otherLayers.contains("sit"), "server layer=" + otherLayers + "; native entity present=" + (other != null));
             case "other-range-out" -> check("distanceAt8Hidden", otherBindings.isEmpty() && otherHeight == 0, "Remote binding count=" + otherBindings.size());
             case "other-range-in" -> check("distanceWithin8Visible", !otherBindings.isEmpty() && otherHeight > 0, "Remote binding count=" + otherBindings.size() + "; height=" + otherHeight);
+            case "other-undisguise", "other-undisguise-again", "other-second-undisguise" -> {
+                long copies = client.world.getPlayers().stream().filter(player -> player.getUuid().equals(OTHER)).count();
+                check(name + "RestoresNativePlayer", other != null && !other.isInvisibleTo(client.player)
+                        && otherBindings.isEmpty() && !runtime.shouldHidePlayer(OTHER) && copies == 1,
+                        "Native player present=" + (other != null) + "; visible=" + (other != null && !other.isInvisibleTo(client.player))
+                                + "; bindings=" + otherBindings.size() + "; native copies=" + copies);
+            }
+            case "other-native-move" -> check("undisguisedRemoteKeepsMoving", other != null && !other.isInvisibleTo(client.player)
+                    && Double.isFinite(restoredPlayerX) && other.getX() - restoredPlayerX > .3 && otherBindings.isEmpty(),
+                    "Original x=" + restoredPlayerX + "; current x=" + (other == null ? "missing" : other.getX()));
+            case "other-redisguise", "other-first-model" -> check(name + "LocalModelReturns", otherHeight > 0 && !otherBindings.isEmpty()
+                    && runtime.shouldHidePlayer(OTHER), "Remote binding count=" + otherBindings.size() + "; height=" + otherHeight);
+            case "other-second-model", "own-second-model" -> {
+                UUID owner = name.startsWith("other-") ? OTHER : client.player.getUuid();
+                long displays = 0;
+                PlayerEntity actor = client.world.getPlayerByUuid(owner);
+                if (actor != null || owner.equals(OTHER)) {
+                    double x = actor == null ? 3.5 : actor.getX(), y = actor == null ? -60 : actor.getY(), z = actor == null ? .5 : actor.getZ();
+                    for (Entity entity : client.world.getEntities()) if (entity instanceof net.minecraft.entity.decoration.DisplayEntity.ItemDisplayEntity display
+                            && display.squaredDistanceTo(x,y,z)<36 && display.getRenderState()!=null
+                            && display.getRenderState().transformation().interpolate(1).getScale().lengthSquared()>.0001) displays++;
+                }
+                boolean local = runtime.renderBindings().stream().anyMatch(binding -> binding.owner().equals(owner));
+                check(name + "ReferenceModelFallsBackToMe", !local && displays>=20,
+                        "YSM scripted source retains ME; local=" + local + "; visible-sized ME displays=" + displays);
+            }
+            case "own-second-undisguise" -> check("ownSecondUndisguiseRestoresPlayer", bindings.isEmpty()
+                    && !runtime.shouldHidePlayer(client.player.getUuid()), runtime.status().toString());
+            case "own-first-model" -> check("ownFirstModelReturnsAfterReference", height > 0 && !bindings.isEmpty(), "Local model height=" + height);
             case "undisguise" -> check("undisguiseRestoresPlayer", bindings.isEmpty() && !runtime.shouldHidePlayer(client.player.getUuid()), runtime.status().toString());
             case "preview" -> check("localPreview", height > 0 && bindings.stream().anyMatch(binding -> binding.instance().equals("preview")), "Bundled model preview height=" + height);
             case "preview-end" -> check("localPreviewReleased", bindings.isEmpty() && !runtime.shouldHidePlayer(client.player.getUuid()), runtime.status().toString());
@@ -514,7 +560,7 @@ public final class E2EHarness {
             Files.createDirectories(output);
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("passed", !checks.isEmpty() && checks.stream().allMatch(check -> Boolean.TRUE.equals(check.get("passed"))));
-            result.put("minecraft", "1.21.11"); result.put("clientVersion", "0.3.1");
+            result.put("minecraft", "1.21.11"); result.put("clientVersion", "0.3.2");
             result.put("testedClientSha256", proof.get("clientArtifactSha256")); result.put("testedServerSha256", proof.get("serverArtifactSha256"));
             result.put("artifactProof", proof);result.put("startedAtMillis", startedMillis);result.put("completedAtMillis", System.currentTimeMillis());
             result.put("checks", checks); result.put("screenshots", screenshots); result.put("observations", observations);
