@@ -3,6 +3,7 @@ package com.simmc.meplayeractions.config;
 import com.simmc.meplayeractions.action.ActionState;
 import com.simmc.meplayeractions.action.SyncFeature;
 import com.simmc.meplayeractions.client.PrivateModelSyncService;
+import com.simmc.meplayeractions.client.PrivateModelStore;
 import com.ticxo.modelengine.api.animation.BlueprintAnimation.LoopMode;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
@@ -92,7 +93,9 @@ public final class Settings {
         clientCooldownTicks = integer(c, "client-sync.request-cooldown-ticks", 4, 1, 1200);
         clientViewDistance = number(c, "client-sync.view-distance-blocks", 64, 1, 256);
         ConfigurationSection privateSection = c.getConfigurationSection("client-sync.private-models");
-        if (privateSection != null) validateFields(privateSection, Set.of("enabled", "max-bundle-bytes", "max-stored-bytes", "view-distance-blocks", "max-viewers"));
+        if (privateSection != null) validateFields(privateSection, Set.of("enabled", "max-bundle-bytes", "max-stored-bytes", "view-distance-blocks", "max-viewers",
+                "cache-enabled", "max-cache-bytes", "max-cache-models", "max-cache-models-per-player"));
+        PrivateModelStore.Settings.fromConfiguration(c);
         int privateBundleBytes = integer(c, "client-sync.private-models.max-bundle-bytes", 8 * 1024 * 1024, 1024, 8 * 1024 * 1024);
         privateModels = new PrivateModelSyncService.Policy(clientEnabled && c.getBoolean("client-sync.private-models.enabled", false), clientMaxPayload,
                 privateBundleBytes, integer(c, "client-sync.private-models.max-stored-bytes", 32 * 1024 * 1024, privateBundleBytes + 8 * 1024 * 1024, 256 * 1024 * 1024),

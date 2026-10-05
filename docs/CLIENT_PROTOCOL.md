@@ -1,6 +1,6 @@
 # 客户端协议
 
-本文是 0.4.9 线格式、授权与限制的统一入口。服务器伪装使用 `meplayeractions:main` protocol 3，私人分享使用独立 `meplayeractions:private` protocol 1；两者不能混用。模块与生命周期见 [架构](../ARCHITECTURE.md)，部署见 [模型同步](MODEL_DELIVERY.md)，后台频率见 [性能说明](PERFORMANCE.md)。
+本文是 0.5.0 线格式、授权与限制的统一入口。本地私人外观不上传模型；私人多人分享使用独立 `meplayeractions:private` protocol 1；服务器伪装使用 `meplayeractions:main` protocol 3。私人发布不是服务器伪装实例，两频道身份和权限不能混用。模块与生命周期见 [架构](../ARCHITECTURE.md)，部署见 [模型同步](MODEL_DELIVERY.md)，后台频率见 [性能说明](PERFORMANCE.md)。
 
 频道 `meplayeractions:main`，严格 UTF-8 JSON，每包带整数 `protocol:3`、字符串 `type`。不兼容 v1/v2。所有消息保持分包顺序；不允许重复键、类型强制转换、非法 UTF-8、尾随内容；当前服务端还拒绝客户端请求中的额外字段。每包受 maxPayload（默认 16000 字节）限制；连接流量和下载预算见下文。客户端请求只操作自己，仍经过服务端权限校验。
 
@@ -16,7 +16,7 @@ v3 是玩家模型资产、动画状态及观众渲染接管协议。客户端�
 
 客户端发送：
 ```json
-{"protocol":3,"type":"hello","clientVersion":"0.4.9","capabilities":["local_render","server_push_models","incremental_state"]}
+{"protocol":3,"type":"hello","clientVersion":"0.5.0","capabilities":["local_render","server_push_models","incremental_state"]}
 ```
 `capabilities` 必须含 `local_render`，还可声明 `server_push_models`、旧 `resource_pack_models`，以及 0.4.9 的 `incremental_state`／`server_timeline`；不允许重复，其他 capability 拒绝。客户端默认声明增量能力，显式启用 `followServerTimeline` 时另声明 `server_timeline`。`clientVersion` 可省略（最多 64 字符）。hello 两次接受之间至少相隔一个单调时钟秒；这一时间戳属于玩家连接，未知协议结束会话或重新 hello 都不能重置。新 hello 清理旧绑定并恢复旧 ME 可见性，不授予渲染权限。
 
@@ -159,7 +159,7 @@ bindings 最多 64 项，owner 唯一。只续租已有且 instance/hash 完全�
 
 ## 私人模型同步 v1
 
-独立频道 `meplayeractions:private`，每包严格 UTF-8 JSON `{protocol:1,type:...}`。该频道由 `PrivateModelSyncService` 实现，服务类不引用 ModelEngine，不读取服务器模型路径，也不建立 HTTP/云存储连接。它与 v3 服务器主动推送共享连接和全局流量、并发预算，两个握手各自保留一秒冷却。现有 v3 的能力、授权和服务器 BBModel 主动推送继续有效，私人频道不能索取任意服务器模型。
+独立频道 `meplayeractions:private`，每包严格 UTF-8 JSON `{protocol:1,type:...}`。该频道由 `PrivateModelSyncService` 实现，服务类不引用 ModelEngine，不读取 ME 或管理员服务器模型路径，也不建立 HTTP/云存储连接。它只经 `PrivateModelStore` 读取已验证的 owner/hash 私人资源缓存。它与 v3 服务器主动推送共享连接和全局流量、并发预算，两个握手各自保留一秒冷却。现有 v3 的能力、授权和服务器 BBModel 主动推送继续有效，私人频道不能索取任意服务器模型，也不创建 ME 蓝图或伪装。
 
 服务器须开启 `client-sync.enabled` 和 `client-sync.private-models.enabled`，并授予发布者 `mact.private.upload`、观看者 `mact.private.view`；私人开关与两个权限默认关闭，OP 也须显式授权。客户端须显式选择分享，选择模型本身不上传；关闭分享发送 `clear`，本机外观继续独立使用。
 
@@ -175,9 +175,13 @@ bindings 最多 64 项，owner 唯一。只续租已有且 instance/hash 完全�
 {"protocol":1,"type":"upload_offer","generation":"00000000-0000-0000-0000-000000000001","hash":"0000000000000000000000000000000000000000000000000000000000000000","bytes":123456,"kind":"ysm","appearance":{"scale":1,"offsetX":0,"offsetY":0,"offsetZ":0,"textureId":"default","variables":{"variable.example":1},"radioSelections":{"衣服":0}}}
 ```
 
-generation 为客户端新生成的标准小写 UUID，每次新模型发布使用新代次；hash 是整个完整 ZIP 原始字节的 SHA-256 小写 64 位 hex。server 签发 `upload_accept {uploadId,generation,hash,chunkBytes}` 后，客户端按连续 index 从 0 发送 `upload_chunk {uploadId,index,data}`，data 为标准 Base64 编码的 ZIP 字节，最后发送 `upload_end {uploadId}`。不叠加 GZIP。每片 `min(8192,floor((maxPayload-512)*3/4))`，1024 字节 maxPayload 时为 384；建议客户端每 tick 至多发送一个片段，避免触及两个频道共享的入站预算。
+generation 为客户端新生成的标准小写 UUID，每次新模型发布使用新代次；hash 是整个完整 ZIP 原始字节的 SHA-256 小写 64 位 hex。server 先在同一 owner 的私人磁盘缓存中查验 hash、kind、长度与完整资源；合法命中可直接返回 `upload_committed {generation,hash}`，不要求再次发送字节。未命中或缓存无效时签发 `upload_accept {uploadId,generation,hash,chunkBytes}`，客户端按连续 index 从 0 发送 `upload_chunk {uploadId,index,data}`，data 为标准 Base64 编码的 ZIP 字节，最后发送 `upload_end {uploadId}`。不叠加 GZIP。每片 `min(8192,floor((maxPayload-512)*3/4))`，1024 字节 maxPayload 时为 384；建议客户端每 tick 至多发送一个片段，避免触及两个频道共享的入站预算。
 
-服务端要求实际长度与声明完全一致，验证 SHA-256，并异步进行 ZIP/资源有界检查；成功返回 `upload_committed {generation,hash}`。收到 accept、发完分片或本地缓存命中均不等于发布成功。并发上传最多两份（全服务器），同一连接最多一份；同连接新上传至少相隔 200 tick，冷却不因重新 hello 重置。接收/验证总时限 1200 tick，空闲时限 300 tick。校验中的作业即使被新握手取消，也继续占用全局内存预留直至该作业返回，不能通过换代次绕过预算。连接断开、owner clear、发布者失去权限或租约到期会撤销发布。
+publisher 未收到 accept／committed 时按一秒间隔重试同一 upload_offer；发完分片后保留 uploadId，按一秒间隔重试 upload_end 直到 committed。相同 upload_accept 的 uploadId／chunkBytes 不重置已发送下标。server 对在途同 generation/hash/bytes/kind offer 幂等处理，可重发 accept，但不重置接收下标、不另启缓存／资源校验作业、不延长原始 deadline。客户端发布总等待上限为 90 秒，服务端接收／校验时限仍按下文计算。
+
+服务端要求实际长度与声明完全一致，验证 SHA-256，并异步进行 ZIP/资源有界检查；成功返回 `upload_committed {generation,hash}`。收到 accept、发完分片或本地缓存命中均不等于发布成功。缓存查验与上传共用全服务器最多两个作业、单连接最多一份和内存预留；同连接新上传至少相隔 200 tick，冷却不因重新 hello 重置。接收/验证总时限 1200 tick，空闲时限 300 tick。校验中的作业即使被新握手取消，也继续占用全局内存预留直至该作业返回，不能通过换代次绕过预算。连接断开、owner clear、发布者失去权限或租约到期撤销当前发布，已验证磁盘缓存按独立预算保留。
+
+`upload_committed` 的出站预算不足时保留待发确认；重发当前已发布的同 generation/hash/bytes/kind offer 可重新确认，不重复发布或重置代次。同 generation 改写资源身份返回 `private_generation_reused`。任何确认仍须当前连接、发布身份及上传权限合法。
 
 ### 完整原生资源 bundle
 
@@ -185,7 +189,7 @@ ZIP 根必须含 `manifest.json`，最大 4096 字节，且只有 `{format:1,kin
 
 ZIP 原始上限与所有条目展开总量各 8 MiB，扫描条目（含目录）最多 256；可由服务器进一步缩小 ZIP 原始上限。只允许 json/bbmodel/png/bmp/jpg/jpeg/webp/ogg/molang 文件。拒绝 absolute/path traversal/点段/空段/反斜杠/冒号/控制符、casefold 重名、符号链接、加密、分卷和 ZIP64，逐条目检查 CRC，目录不得携带数据，不落盘解压。JSON 节点最多 200000、深度最多 64，重复字段和非有限数拒绝；图片以格式头检查维度（最多 8192）与全部外部纹理总像素（最多 16777216），服务器不执行图片解码器；BBModel 最大 4096 elements、16 张内嵌 PNG，内嵌纹理总像素也受同一上限。ogg 检查 OggS 头，molang 检查 UTF-8。模型资源字段中的 HTTP/file URL 拒绝。客户端还必须独立完成 bundle、模型解析、图片解码和 GPU 校验，服务器接收不能替代本地验证。
 
-默认全服务器内存资源预算 32 MiB，包含已发布 ZIP、接收中的 ZIP及每个校验作业预留的最多 8 MiB 展开资源；无磁盘或跨重启私人资源缓存。服务端不把客户传来的字符串作为服务器模型 ID、文件路径或 URL。
+默认全服务器内存资源预算 32 MiB，包含已发布 ZIP、接收中的 ZIP及每个校验作业预留的最多 8 MiB 展开资源。0.5.0 私人磁盘缓存默认启用，目录 `plugins/MEPlayerActions/private-models/`，扁平文件名 `<ownerUUID>_<hash>.zip`；默认最多 128 MiB、512 条、同 owner 4 条，后台访问时按最近使用裁剪。设置为 `client-sync.private-models.cache-enabled`、`max-cache-bytes`、`max-cache-models`、`max-cache-models-per-player`。设 cache-enabled=false 不读写既有缓存。异步写入只接收整份校验成功的 bundle，cache 命中重新验证后才发布；缓存不可作为跨 owner 模型查询入口。文件保留不恢复旧 publication、generation、offer 或租约。服务端不把客户传来的字符串作为服务器模型 ID、任意文件路径或 URL。
 
 ### 观看者主动 offer 与租约
 
@@ -197,7 +201,11 @@ S2C `private_offer {owner,generation,hash,kind,offerId,bytes,sequence,appearance
 
 `cached`/`missing` 只接受初始 OFFERED 阶段；仍获授权且 offerId/hash 精确匹配的 `rejected` 可在缓存、下载中、下载完成或 READY 后撤销，服务器释放传输槽并发送精确 `private_remove`。同一观看连接不再推送被拒绝的 owner/generation，直到该 owner 发布新 generation 或客户端重新握手；活动 offer 与拒绝记录合计最多 64 项，不驱逐仍有效的拒绝记录来重试失败模型。
 
-客户端完成缓存 hash 验证、bundle/model/GPU准备后发送 `private_ready {owner,generation,hash}`，收到精确 `private_ack` 后才允许远端私人绘制。此 ACK 仅是私人显示租约，不调用 ME 可见性接管。每 20 tick 发送 `private_heartbeat {bindings:[{owner,generation,hash}]}`；自己的 upload_committed 身份也必须放进 bindings 续期发布，即使没有其他观众。服务端只确认实际被续期的精确合法身份：`heartbeat {bindings:[...]}`，空数组仍表示频道存活。非法、过期、失去跟踪/权限、被服务器伪装遮盖的观看身份不会被 ACK。
+客户端保留当次 offerId/hash/status，不能把本机 send=true 当作服务器收到确认。missing 反馈按一秒间隔重试直到精确 asset_begin；cached 反馈与 private_ready 按一秒间隔重试直到精确 private_ack。完成资源准备后先发送反馈，再发送 ready；不提前绘制、不创建新绑定或重放动作。
+
+private_status、private_ready、upload_offer、upload_end 共用客户端控制预算：滚动一秒最多 16 包，令牌桶初始／突发 8 包、每秒恢复 16 个；各控制身份的重试间隔仍至少一秒。预算延后不扣重试时间、不撤身份，pending 观看者按 tick 轮转。这只限制上述控制包，upload_chunk 仍每 tick 最多一片；服务端两频道合计 48 包／秒入站上限不变。
+
+客户端完成缓存 hash 验证、bundle/model/GPU准备后发送 `private_ready {owner,generation,hash}`，收到精确 `private_ack` 后才允许远端私人绘制。此 ACK 仅是私人显示租约，不调用 ME 可见性接管。每 20 tick 发送 `private_heartbeat {bindings:[{owner,generation,hash}]}`；自己的 upload_committed 身份也必须放进 bindings 续期发布，即使没有其他观众。服务端只确认实际被续期的精确合法身份：`heartbeat {bindings:[...]}`，空数组仍表示频道存活。0.5.0 的 heartbeat 可额外带布尔 `allowedUpload`、`allowedView`，实时更新当前连接权限；缺省保持原协商权限，收到撤权后撤掉对应发布或远端显示。非法、过期、失去跟踪/权限、被服务器伪装遮盖的观看身份不会被 ACK。
 
 publisher 与 ready viewer 租约均 100 tick。模型改变、owner清理、离线、许可变化、失去跟踪、服务器伪装优先或租约到期会发送 `private_remove {owner,generation,hash,reason}`；客户端须按精确代次撤销绘制，资源缓存本身不授予显示权。私人渲染不维护幽灵实体，也不改变非模组玩家的显示。
 
@@ -205,7 +213,7 @@ publisher 与 ready viewer 租约均 100 tick。模型改变、owner清理、离
 
 `appearance` 是完整状态：scale 默认 1、范围 0.05–8；offsetX/Y/Z 默认 0、范围 ±32；textureId 默认空、最长 128 字符；variables/radioSelections 各最多 128 条。variables 键必须已为 Locale.ROOT lowercase 的 canonical `variable.*`，全名最长 128，每个点分段以 Unicode 字母或下划线开头，后续只允许 Unicode 字母、数字或下划线，值有限且绝对值 ≤1000000。radio 键允许安全 Unicode，最长 128、无控制符，wire 值为整数 0–255；本地表单最多 64 个选项。radio 键统一 Locale.ROOT lowercase，casefold 重名拒绝。作者配置中明确关联的 `variable.roaming.*` 可以同步，最多 64 条且该前缀后的名称为单个标识符、最长 32 字符，不允许继续点分段；客户端只发布持久模型配置，不发布逐帧物理等运行时变量，服务器对传入的数值配置统一执行上述边界校验。appearance+extra 的 UTF-8 JSON 总长度最多 maxPayload−768，为身份封装保留空间。
 
-owner 可以发送 `private_state {generation,hash,appearance,extra:{id,loop,locked,sequence}}`。extra.id 为空或 1–128 字符作者动画名，loop 为 ONCE/LOOP/HOLD，locked 为 boolean，extra.sequence 为 0–9007199254740991 的本机单调动作代次；同一 id 的新 sequence 表示重新播放。server 拒绝 extra.sequence 回退，保留完整配置并向当前 ready 合法观看者发送 `private_state {owner,generation,hash,sequence,appearance,extra}`，顶层 sequence 为服务器递增的配置序号。本人仍立即使用本机 UI 选择，不等待远端回包来应用按钮。
+owner 可以发送 `private_state {generation,hash,appearance,extra:{id,loop,locked,sequence}}`。extra.id 为空或 1–128 字符作者动画名，loop 为 ONCE/LOOP/HOLD，locked 为 boolean，extra.sequence 为 0–9007199254740991 的本机单调动作代次；同一 id 的新 sequence 表示重新播放。客户端状态改变后发送，并每两秒重发当前完整 state，恢复被入站预算丢弃的变更；重发保留 extra.sequence。server 拒绝 extra.sequence 回退，对规范化后相同 appearance+extra 只续发布者租约，不递增 sequence、不重复广播或重启动作。状态改变时保留完整配置并向当前 ready 合法观看者发送 `private_state {owner,generation,hash,sequence,appearance,extra}`，顶层 sequence 为服务器递增的配置序号。出站拥堵时按 owner 合并最新完整配置并维护重试，发送前重新确认当次 generation、hash、租约与资格；不堆积旧动作状态或重放作者事件。本人仍立即使用本机 UI 选择，不等待远端回包来应用按钮。
 
 成熟作者 `ysm.sync` 使用独立 `private_event {generation,hash,args:[...]}`，最多 16 个有限数。server 必须匹配本连接的已接收私人发布，随后返回带 owner/generation/hash/独立事件 sequence 的同名 private_event 给 publisher 和当前 ready 合法观看者。联网 listener 生效时作者 sync 是 relay-only，本机也只在服务器回显时执行一次 @sync，收包执行不会再次发送。服务器不执行函数、动画或脚本，不允许为其他 owner 发送事件。owner被服务器伪装遮盖时不转发事件。
 

@@ -69,7 +69,7 @@ public final class ModelSettingsScreen extends Screen {
         int controlY = top + 6, scaleY = top + Math.max(42, available / 3 - 8), offsetsY = top + Math.max(82, available * 2 / 3 - 11);
         enabled = button(draftEnabled ? "本地：开启" : "本地：关闭", innerX, controlY, innerW, () -> {
             draftEnabled = !draftEnabled; updateToggleLabels();
-        }, "保存后开启或关闭私人外观；多人同步单独在客户端设置中开启");
+        }, "保存后开启或关闭私人外观；是否分享给模组玩家在玩家模型主页单独选择");
         if (modelId.equals("openysm_default")) {
             headdress = button(defaultHeaddress() ? "红色蝴蝶结 ✓" : "红色蝴蝶结 ×", innerX, controlY + controlHeight + 4, half,
                     this::toggleDefaultHeaddress, "参考默认模型的红色蝴蝶结头饰；立即保存，预览同步更新");

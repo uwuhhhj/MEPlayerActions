@@ -14,7 +14,7 @@ import java.util.*;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
-/** Opt-in private model relay. Contains no ModelEngine API, filesystem lookup, HTTP or script execution. */
+/** Opt-in private model relay. Its private cache never resolves ME assets, HTTP or model scripts. */
 public final class PrivateModelSyncService implements PluginMessageListener, AutoCloseable {
     public static final String CHANNEL = "meplayeractions:private", CAPABILITY = "private_models_v1";
     public static final int PROTOCOL = 1, HEARTBEAT_TICKS = 20, LEASE_TICKS = 100;
@@ -34,12 +34,15 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
     private final Set<Upload> validations = new HashSet<>();
     private final PrivateAudienceCache audiences = new PrivateAudienceCache();
     private final LinkedHashSet<Offer> pendingTransfers = new LinkedHashSet<>(), activeTransfers = new LinkedHashSet<>();
+    private final LinkedHashSet<UUID> pendingControls=new LinkedHashSet<>();
     private Policy policy = Policy.disabled();
     private BukkitTask maintenance;
     private boolean running;
     private long storedBytes, reservedBytes;
     private int uploads;
     private int validationTicks=20;
+    private PrivateModelStore store;
+    private boolean cacheWarning;
     private long lastMaintenanceTick;
     private boolean maintenanceInitialized;
 
@@ -58,9 +61,11 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         public static Policy fromConfiguration(ConfigurationSection config) {
             Objects.requireNonNull(config);
             ConfigurationSection section=config.getConfigurationSection("client-sync.private-models");
-            Set<String> allowed=Set.of("enabled","max-bundle-bytes","max-stored-bytes","view-distance-blocks","max-viewers");
+            Set<String> allowed=Set.of("enabled","max-bundle-bytes","max-stored-bytes","view-distance-blocks","max-viewers",
+                    "cache-enabled","max-cache-bytes","max-cache-models","max-cache-models-per-player");
             if(section!=null)for(String field:section.getKeys(false))if(!allowed.contains(field) || section.isConfigurationSection(field))
                 throw new IllegalArgumentException("Unknown client-sync.private-models field: "+field);
+            PrivateModelStore.Settings.fromConfiguration(config);
             return new Policy(config.getBoolean("client-sync.enabled",true) && config.getBoolean("client-sync.private-models.enabled",false),config.getInt("client-sync.max-payload-bytes",16000),
                     config.getInt("client-sync.private-models.max-bundle-bytes",PrivateModelBundle.MAX_BYTES),
                     config.getLong("client-sync.private-models.max-stored-bytes",32L*1024*1024),
@@ -85,6 +90,7 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
     }
     public void enable() {
         if(running)return;
+        store=new PrivateModelStore(plugin.getDataFolder().toPath().resolve("private-models"),PrivateModelStore.Settings.fromConfiguration(plugin.getConfig()));
         var messenger=plugin.getServer().getMessenger();messenger.registerOutgoingPluginChannel(plugin,CHANNEL);
         try {
             messenger.registerIncomingPluginChannel(plugin,CHANNEL,this);running=true;
@@ -122,6 +128,7 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         long ready=session==null?0:session.offers.values().stream().filter(offer->offer.status==Status.READY).count();
         return "私人多人同步 " + (session==null?"未协商":"v1") + "；发布许可 " + canUpload(player) + "；观看许可 " + canView(player)
                 + "；本人 " + (publication==null?"未发布":publication.kind) + "；已确认观看 " + ready
+                + "；本人已验证资源缓存 " + (store!=null && store.enabled()?"开启":"关闭")
                 + "；共享入站 48 包/秒、256 KiB/秒；资产出站 512 KiB/秒";
     }
     @Override public void onPluginMessageReceived(String channel,Player player,byte[] bytes) {
@@ -172,11 +179,21 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
     private void offerUpload(Player player,Session session,JsonObject packet,long tick) throws IOException {
         if(!canUpload(player)){error(player,"private_upload_denied");return;}
         if(serverDisguised().contains(player.getUniqueId())){error(player,"server_model_priority");return;}
-        if(session.upload!=null || uploads>=2){error(player,"private_upload_busy");return;}
         int bytes=(int)PrivateModelBundle.integer(packet,"bytes",1,effectiveBundleLimit(policy));
         String hash=PrivateModelBundle.string(packet,"hash",64),kind=PrivateModelBundle.string(packet,"kind",16);
         UUID generation=uuid(packet,"generation");Publication current=publications.get(player.getUniqueId());
-        if(current!=null && current.generation.equals(generation)) {error(player,"private_generation_reused");return;}
+        if(current!=null && current.generation.equals(generation)) {
+            if(current.hash.equals(hash) && current.kind.equals(kind) && current.bytes.length==bytes)sendCommitted(player,session,current);
+            else error(player,"private_generation_reused");return;
+        }
+        if(session.upload!=null) {
+            Upload pending=session.upload;
+            if(pending.generation.equals(generation) && pending.hash.equals(hash) && pending.kind.equals(kind) && pending.expectedBytes==bytes) {
+                if(!pending.validating)acceptUpload(player,session,pending);return;
+            }
+            error(player,"private_upload_busy");return;
+        }
+        if(uploads>=2){error(player,"private_upload_busy");return;}
         long reservation=bytes+(long)PrivateModelBundle.MAX_BYTES;
         if(storedBytes+reservedBytes+reservation>policy.maxStoredBytes()){error(player,"private_storage_busy");return;}
         if(!limits.allowRequest(player.getUniqueId(),"private_upload","",tick,200) || !limits.allowAsset(player.getUniqueId(),hash,tick))
@@ -184,11 +201,37 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         if(!limits.reserveTransfer(player.getUniqueId())){error(player,"private_upload_busy");return;}
         JsonObject appearance=appearance(packet.get("appearance"));
         if(!fitsAppearance(appearance,new JsonObject())){limits.releaseTransfer(player.getUniqueId());error(player,"private_appearance_size");return;}
-        Upload upload=new Upload(player.getUniqueId(),UUID.randomUUID(),generation,hash,kind,bytes,appearance,tick,reservation);
+        boolean probe=store!=null && store.enabled();
+        Upload upload=new Upload(player.getUniqueId(),UUID.randomUUID(),generation,hash,kind,bytes,appearance,tick,reservation,!probe);
         session.upload=upload;reservedBytes+=reservation;uploads++;
-        JsonObject accepted=envelope("upload_accept");accepted.addProperty("uploadId",upload.id.toString());accepted.addProperty("generation",generation.toString());
-        accepted.addProperty("hash",hash);accepted.addProperty("chunkBytes",chunkBytes());
-        if(!send(player,accepted,false))cancelUpload(session);
+        if(probe){probeCache(player,session,upload);return;}
+        acceptUpload(player,session,upload);
+    }
+    private void acceptUpload(Player player,Session session,Upload upload) {
+        JsonObject accepted=envelope("upload_accept");accepted.addProperty("uploadId",upload.id.toString());
+        accepted.addProperty("generation",upload.generation.toString());accepted.addProperty("hash",upload.hash);accepted.addProperty("chunkBytes",chunkBytes());
+        // The client may repeat this same authorized offer after a lost/budget-deferred ACK.
+        // Repeating accept never reallocates bytes or resets the upload's offset or total deadline.
+        send(player,accepted,false);
+    }
+    private void probeCache(Player player,Session session,Upload upload) {
+        upload.validating=true;validations.add(upload);
+        try {plugin.getServer().getScheduler().runTaskAsynchronously(plugin,()->{
+            byte[] cached=null;
+            try {cached=store.load(upload.owner,upload.hash,upload.kind,upload.expectedBytes);}
+            catch(IOException | RuntimeException failure){cacheFailure(failure);}
+            byte[] result=cached;
+            if(plugin.isEnabled())plugin.getServer().getScheduler().runTask(plugin,()->{
+                boolean current=running && sessions.get(upload.owner)==session && session.upload==upload;
+                if(!current){releaseUpload(upload);return;}
+                if(!player.isOnline() || !canUpload(player) || isServerDisguised(upload.owner)) {
+                    session.upload=null;releaseUpload(upload);error(player,"private_upload_denied");return;
+                }
+                if(result!=null){upload.bytes=result;commitUpload(player,session,upload,null);return;}
+                validations.remove(upload);upload.validating=false;upload.bytes=new byte[upload.expectedBytes];upload.lastProgress=tick();
+                acceptUpload(player,session,upload);
+            });
+        });}catch(RuntimeException stopped){upload.validating=false;cancelUpload(session);error(player,"private_upload_unavailable");}
     }
     private int chunkBytes() {return negotiatedChunkBytes(policy.maxPayload());}
     static int negotiatedChunkBytes(int maxPayload) {return Math.min(CHUNK_BYTES,Math.max(384,(maxPayload-512)*3/4));}
@@ -205,8 +248,14 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         System.arraycopy(chunk,0,upload.bytes,upload.offset,chunk.length);upload.offset+=chunk.length;upload.index++;upload.lastProgress=tick;
     }
     private void finishUpload(Player player,Session session,JsonObject packet) throws IOException {
-        Upload upload=session.upload;
-        if(upload==null || !upload.id.equals(uuid(packet,"uploadId")) || upload.validating)return;
+        UUID uploadId=uuid(packet,"uploadId");Upload upload=session.upload;
+        if(upload==null) {
+            Publication previous=session.committedPublication;
+            if(uploadId.equals(session.committedUploadId) && previous!=null && publications.get(session.owner)==previous
+                    && canUpload(player) && !isServerDisguised(session.owner))sendCommitted(player,session,previous);
+            return;
+        }
+        if(!upload.id.equals(uploadId) || upload.validating)return;
         if(!canUpload(player) || upload.offset!=upload.bytes.length) {
             cancelUpload(session);error(player,"private_upload_integrity");return;
         }
@@ -215,7 +264,11 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
             String failure=null;
             try {
                 if(!PrivateModelBundle.hash(upload.bytes).equals(upload.hash))failure="private_upload_integrity";
-                else PrivateModelBundle.validate(upload.bytes,upload.kind);
+                else {
+                    PrivateModelBundle.validate(upload.bytes,upload.kind);
+                    if(store!=null && store.enabled())try{store.saveValidated(upload.owner,upload.hash,upload.bytes);}
+                    catch(IOException | RuntimeException cacheFailed){cacheFailure(cacheFailed);}
+                }
             }catch(IOException | RuntimeException invalid){failure="private_bundle_invalid";}
             String result=failure;
             if(plugin.isEnabled())plugin.getServer().getScheduler().runTask(plugin,()->commitUpload(player,session,upload,result));
@@ -231,8 +284,17 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         removePublication(player.getUniqueId(),"model_changed");
         Publication publication=new Publication(player.getUniqueId(),upload.generation,upload.hash,upload.kind,upload.bytes,upload.appearance,tick());
         publications.put(player.getUniqueId(),publication);storedBytes+=upload.bytes.length;
-        JsonObject committed=envelope("upload_committed");committed.addProperty("generation",upload.generation.toString());committed.addProperty("hash",upload.hash);
-        if(!send(player,committed,false))removePublication(player.getUniqueId(),"upload_ack_failed");
+        session.committedUploadId=upload.id;session.committedPublication=publication;
+        sendCommitted(player,session,publication);
+    }
+    private void sendCommitted(Player player,Session session,Publication publication) {
+        JsonObject committed=envelope("upload_committed");committed.addProperty("generation",publication.generation.toString());committed.addProperty("hash",publication.hash);
+        if(send(player,committed,false)){session.pendingCommit=null;clearPendingIndex(session);}
+        else {session.pendingCommit=publication;pendingControls.add(session.owner);}
+    }
+    private synchronized void cacheFailure(Exception failure) {
+        if(cacheWarning)return;cacheWarning=true;
+        plugin.getLogger().warning("私人模型磁盘缓存不可用，继续普通上传："+failure.getClass().getSimpleName());
     }
     private void cancelUpload(Session session) {
         Upload upload=session.upload;if(upload==null)return;session.upload=null;
@@ -283,7 +345,8 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
                 if(offer!=null && offer.status==Status.READY && matches(offer.publication,generation,hash) && authorized(player,offer.publication,disguised)){offer.lease=tick;renewed.add(entry.deepCopy());}
             }
         }
-        JsonObject confirmation=envelope("heartbeat");confirmation.add("bindings",renewed);send(player,confirmation,false);
+        JsonObject confirmation=envelope("heartbeat");confirmation.add("bindings",renewed);
+        confirmation.addProperty("allowedUpload",canUpload(player));confirmation.addProperty("allowedView",canView(player));send(player,confirmation,false);
     }
     private Publication owned(Player player,JsonObject packet) throws IOException {
         Publication publication=publications.get(player.getUniqueId());
@@ -296,6 +359,10 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         if(sequence<publication.extra.get("sequence").getAsLong())return;
         JsonObject appearance=appearance(packet.get("appearance"));
         if(!fitsAppearance(appearance,extra)){error(player,"private_appearance_size");return;}
+        publication.lease=tick;
+        // Periodic replay of the owner's final state repairs an inbound-budget loss without
+        // allocating a new action sequence or replaying an unchanged author animation.
+        if(publication.appearance.equals(appearance) && publication.extra.equals(extra))return;
         publication.appearance=appearance;publication.extra=extra;publication.sequence++;publication.lease=tick;
         Set<UUID> disguised=serverDisguised();
         for(UUID viewerId:audiences.viewers(publication.owner,publication.generation)) {
@@ -338,6 +405,7 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         }
         // A disabled/private-idle relay never asks the ModelEngine backend for its owners.
         if(!policy.enabled() || publications.isEmpty())return;
+        retryStates();
         for(Publication publication:publications.values()) {
             if(audiences.refreshIfDue(publication.owner,publication.generation,tick,()->discoverAudience(publication)))
                 for(UUID viewer:audiences.viewers(publication.owner,publication.generation))offer(Bukkit.getPlayer(viewer),publication,tick);
@@ -447,6 +515,11 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
     private void removePublication(UUID owner,String reason) {
         Publication publication=publications.remove(owner);if(publication==null)return;storedBytes-=publication.bytes.length;audiences.remove(owner);
         Player publisher=Bukkit.getPlayer(owner);
+        Session publishing=sessions.get(owner);
+        if(publishing!=null) {
+            if(publishing.pendingCommit==publication){publishing.pendingCommit=null;clearPendingIndex(publishing);}
+            if(publishing.committedPublication==publication){publishing.committedPublication=null;publishing.committedUploadId=null;}
+        }
         if(publisher!=null && publisher.isOnline()){JsonObject removed=binding("private_remove",publication);removed.addProperty("reason",reason);send(publisher,removed,false);}
         for(UUID viewer:List.copyOf(publication.offeredViewers)) {
             Session session=sessions.get(viewer);if(session==null)continue;
@@ -455,6 +528,8 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
     }
     private void removeOffer(Player viewer,Session session,Offer offer,String reason) {
         if(!session.offers.remove(offer.publication.owner,offer))return;
+        session.pendingStates.remove(offer.publication.owner);
+        clearPendingIndex(session);
         pendingTransfers.remove(offer);activeTransfers.remove(offer);offer.publication.offeredViewers.remove(session.owner);
         if(offer.reserved){limits.releaseTransfer(session.owner);offer.reserved=false;}
         if(viewer!=null && viewer.isOnline()){JsonObject remove=binding("private_remove",offer.publication);remove.addProperty("reason",reason);send(viewer,remove,false);}
@@ -462,13 +537,42 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
     private void endSession(UUID owner,Session session,String reason) {
         cancelUpload(session);removePublication(owner,reason);
         for(Offer offer:List.copyOf(session.offers.values()))removeOffer(Bukkit.getPlayer(owner),session,offer,reason);
+        pendingControls.remove(owner);
         audiences.removeViewer(owner);
     }
     private void clearSessions(String reason) {
         for(var entry:List.copyOf(sessions.entrySet()))endSession(entry.getKey(),entry.getValue(),reason);
-        sessions.clear();publications.clear();storedBytes=0;audiences.clear();pendingTransfers.clear();activeTransfers.clear();maintenanceInitialized=false;
+        sessions.clear();publications.clear();storedBytes=0;audiences.clear();pendingTransfers.clear();activeTransfers.clear();pendingControls.clear();maintenanceInitialized=false;
     }
-    private void sendState(Player player,Publication publication) {JsonObject state=binding("private_state",publication);addAppearance(state,publication);send(player,state,false);}
+    private void sendState(Player player,Publication publication) {
+        if(player==null)return;Session session=sessions.get(player.getUniqueId());if(session==null)return;
+        JsonObject state=binding("private_state",publication);addAppearance(state,publication);
+        if(send(player,state,false)){session.pendingStates.remove(publication.owner);clearPendingIndex(session);}
+        else if(session.pendingStates.size()<MAX_OFFERS || session.pendingStates.containsKey(publication.owner)) {
+            session.pendingStates.remove(publication.owner);session.pendingStates.put(publication.owner,publication);pendingControls.add(session.owner);
+        }
+    }
+    private void clearPendingIndex(Session session) {if(session.pendingCommit==null && session.pendingStates.isEmpty())pendingControls.remove(session.owner);}
+    private void retryStates() {
+        List<UUID> waiting=List.copyOf(pendingControls);
+        for(UUID viewer:waiting) {
+            Session session=sessions.get(viewer);if(session==null){pendingControls.remove(viewer);continue;}
+            Player player=Bukkit.getPlayer(session.owner);Publication committed=session.pendingCommit;
+            if(committed!=null) {
+                if(publications.get(session.owner)!=committed || player==null || !player.isOnline() || !canUpload(player))session.pendingCommit=null;
+                else if(isServerDisguised(session.owner)){session.pendingCommit=null;removePublication(session.owner,"server_model_priority");}
+                else sendCommitted(player,session,committed);
+            }
+            int attempts=0;
+            for(Publication publication:List.copyOf(session.pendingStates.values())) {
+                if(++attempts>4)break;Offer offer=session.offers.get(publication.owner);
+                if(offer==null || offer.publication!=publication || offer.status!=Status.READY || !authorized(player,publication))session.pendingStates.remove(publication.owner);
+                else sendState(player,publication);
+            }
+            clearPendingIndex(session);
+        }
+        if(!waiting.isEmpty() && pendingControls.remove(waiting.getFirst()))pendingControls.add(waiting.getFirst());
+    }
     private boolean fitsAppearance(JsonObject appearance,JsonObject extra) {
         return GSON.toJson(appearance).getBytes(StandardCharsets.UTF_8).length+GSON.toJson(extra).getBytes(StandardCharsets.UTF_8).length<=policy.maxPayload()-768;
     }
@@ -566,13 +670,14 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
     private static String hash(JsonObject packet) throws IOException {String hash=PrivateModelBundle.string(packet,"hash",64);if(!HASH.matcher(hash).matches())throw new IOException("hash");return hash;}
     private enum Status {OFFERED,CACHED,QUEUED,SENDING,DELIVERED,READY}
     private static final class Session {
-        final UUID owner;final Map<UUID,Offer> offers=new LinkedHashMap<>();final Map<UUID,UUID> rejected=new LinkedHashMap<>();Upload upload;
+        final UUID owner;final Map<UUID,Offer> offers=new LinkedHashMap<>();final Map<UUID,UUID> rejected=new LinkedHashMap<>();
+        final Map<UUID,Publication> pendingStates=new LinkedHashMap<>();Publication pendingCommit,committedPublication;UUID committedUploadId;Upload upload;
         Session(UUID owner){this.owner=owner;}
     }
     private static final class Upload {
-        final UUID owner,id,generation;final String hash,kind;final byte[] bytes;final JsonObject appearance;final long created,reservation;
+        final UUID owner,id,generation;final String hash,kind;byte[] bytes;final int expectedBytes;final JsonObject appearance;final long created,reservation;
         int offset,index;long lastProgress;boolean validating,released,transferReserved=true;
-        Upload(UUID owner,UUID id,UUID generation,String hash,String kind,int bytes,JsonObject appearance,long tick,long reservation){this.owner=owner;this.id=id;this.generation=generation;this.hash=hash;this.kind=kind;this.bytes=new byte[bytes];this.appearance=appearance;created=lastProgress=tick;this.reservation=reservation;}
+        Upload(UUID owner,UUID id,UUID generation,String hash,String kind,int bytes,JsonObject appearance,long tick,long reservation,boolean allocate){this.owner=owner;this.id=id;this.generation=generation;this.hash=hash;this.kind=kind;expectedBytes=bytes;this.bytes=allocate?new byte[bytes]:null;this.appearance=appearance;created=lastProgress=tick;this.reservation=reservation;}
     }
     private static final class Publication {
         final UUID owner,generation;final String hash,kind;final byte[] bytes;JsonObject appearance,extra;

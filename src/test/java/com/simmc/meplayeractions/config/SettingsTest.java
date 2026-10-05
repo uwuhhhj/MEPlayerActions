@@ -282,6 +282,21 @@ class SettingsTest {
         config.set("client-sync.private-models.max-stored-bytes",8388608);assertThrows(IllegalArgumentException.class,()->Settings.load(config));
     }
 
+    @Test void privateCacheSettingsAreValidatedWithoutEnablingSharing() throws IOException {
+        var config = configuration();
+        config.set("client-sync.private-models.cache-enabled", true);
+        config.set("client-sync.private-models.max-cache-bytes", 134217728);
+        config.set("client-sync.private-models.max-cache-models", 512);
+        config.set("client-sync.private-models.max-cache-models-per-player", 4);
+        assertFalse(Settings.load(config).privateModels.enabled());
+        assertAll(
+                () -> assertThrows(IllegalArgumentException.class, () -> loadWith("client-sync.private-models.max-cache-bytes", -1)),
+                () -> assertThrows(IllegalArgumentException.class, () -> loadWith("client-sync.private-models.max-cache-models", 0)),
+                () -> assertThrows(IllegalArgumentException.class, () -> loadWith("client-sync.private-models.max-cache-models-per-player", 0)),
+                () -> assertThrows(IllegalArgumentException.class, () -> loadWith("client-sync.private-models.cache-enabld", true))
+        );
+    }
+
     private static Settings loadWith(String path, Object value) throws IOException {
         YamlConfiguration configuration = configuration();
         configuration.set(path, value);

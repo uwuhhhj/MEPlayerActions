@@ -2,7 +2,7 @@
 
 [文档索引](README.md) · [快速安装](../README.md#快速安装) · [客户端配置](CLIENT_CONFIG.md) · [客户端协议](CLIENT_PROTOCOL.md)
 
-当前服务端与客户端均为 **0.4.9**。服务器主动推送授权伪装的完整原模型；安装客户端模组的观看者完成校验与确认后接管渲染。未安装模组或尚未接管的观看者使用 ModelEngine 显示，被伪装者本人无需安装模组。
+当前服务端与客户端均为 **0.5.0**。本地私人外观、私人模型多人分享、服务器伪装分别管理：前者不上传；私人分享由有权限的玩家上传、服务器授权分发、各模组客户端渲染；服务器伪装才使用 ModelEngine 后端与客户端接管，未安装模组或尚未接管的观看者由 ME 显示，被伪装者本人无需安装模组。
 
 ## 职责与部署方式
 
@@ -10,12 +10,12 @@
 | --- | --- |
 | ModelEngine | 导入蓝图、生成原版资源、向未接管的观看者显示模型 |
 | CraftEngine 等现有资源包流程 | 合并、托管、保护与下发服务器资源包 |
-| MEPlayerActions 服务端 | 管理伪装、动作、观看许可与绑定；主动推送已有完整原模型 |
+| MEPlayerActions 服务端 | 管理服务器伪装、动作、观看许可与绑定；独立校验、缓存和中继玩家上传的私人模型 |
 | MEPlayerActions 客户端 | 校验资产、计算本地动画并接管授权模型；可独立使用私人外观 |
 
 MPA 不生成或重打包 ME／CE 资源包。完整原模型含内嵌贴图，可能与服务器资源包中的贴图重复；当前推送路径尚未跨包复用材质。ME／CE 的资源包保护也不加密 MPA 推送的原模型，被授权接收者可以取得这份资产。
 
-仅中继私人模型分享时，同一个服务端 JAR 可运行在 Paper 1.21.11／Java 21 上，无需 ModelEngine 或服务器资源包。客户端本地私人外观无需服务端；多人分享需双方主动启用并通过权限检查，与服务器伪装推送分开。
+仅中继私人模型分享时，同一个服务端 JAR 可运行在 Paper 1.21.11／Java 21 上，无需 ModelEngine 或服务器资源包。客户端本地私人外观无需服务端；多人分享由发布者主动选择、服务器启用并授权，获准观看者被动接收。私人上传不创建 ME 蓝图、伪装实体或原版资源包，原版玩家仍看见原版人物。
 
 ## 服务端配置
 
@@ -33,6 +33,9 @@ MPA 不生成或重打包 ME／CE 资源包。完整原模型含内嵌贴图，�
 | `client-sync.private-models.enabled` | `false`，私人多人分享开关，与服务器模型推送分开 |
 | `client-sync.private-models.max-bundle-bytes` | `8388608`（8 MiB），私人完整归档及展开资源各自的上限 |
 | `client-sync.private-models.max-stored-bytes` | `33554432`（32 MiB），含已发布、接收和验证预留的内存预算 |
+| `client-sync.private-models.cache-enabled` | `true`，为合法上传保留独立磁盘缓存；仍须开启私人分享与权限 |
+| `client-sync.private-models.max-cache-bytes` | `134217728`（128 MiB），服务器私人磁盘缓存总预算 |
+| `client-sync.private-models.max-cache-models` / `max-cache-models-per-player` | `512` / `4`，总缓存条目与单个上传者上限 |
 | `client-sync.private-models.view-distance-blocks` / `max-viewers` | `64` 格 / `10` 名其他观看者，仍检查权限、同世界、实体跟踪与可见性 |
 
 伪装命令可按本次覆盖配置，例如：
@@ -43,11 +46,21 @@ MPA 不生成或重打包 ME／CE 资源包。完整原模型含内嵌贴图，�
 
 `delay` 默认 2 tick，只影响 ME 视觉轨迹，客户端默认即时跟随；`effect` 默认无，只允许缓慢效果并需 `mact.disguise.effects`。手动动作使用 `play <动作> [速度] [ONCE|LOOP|HOLD]`，`stop` 停动作，`undisguise` 解除本插件伪装；`pose sit`／`pose crawl` 需要 GSit，`reset` 清理本插件姿态与效果。`animations`／`menu` 查看动作，`sync` 调整同步项目，`status` 查看诊断。完整帮助用 `/meplayeractions help`。
 
-私人分享另需授予发布者 `mact.private.upload`、观看者 `mact.private.view`，两个权限默认均为 `false`；发布者在客户端主页齿轮中主动开启分享。本人已有服务器伪装时，手动 CLIENT 私人覆盖只供本人，不分享该覆盖。
+私人分享另需授予发布者 `mact.private.upload`、观看者 `mact.private.view`，两个权限默认均为 `false`；发布者在客户端 CLIENT 页主动选择“分享给模组玩家”。观看者无需开启自己的分享开关。本人已有服务器伪装时，手动 CLIENT 私人覆盖只供本人，不分享该覆盖。
 
 后台发现与动画更新使用独立频率，配置、默认值与边界集中在[性能配置](PERFORMANCE.md)。两端均升级后协商增量同步，旧客户端继续收到完整状态。
 
-## 原模型的正确放置
+## 私人玩家上传与资源缓存
+
+玩家把 `.ysm`、YSM 目录／ZIP 或自包含 `.bbmodel` 放入自己实例的 `config/meplayeractions/models/`，选择“使用模型”先在本机应用，再主动开启私人分享。客户端保留原生资源与作者能力，服务器校验完整 bundle 后确认发布；只上传成功并不绕过观看权限或自动变为服务器伪装。
+
+服务器将已校验上传缓存于 `plugins/MEPlayerActions/private-models/`，扁平文件名为 `<上传者UUID>_<完整资源SHA256>.zip`。缓存只可由同一上传者重新发布，需重新核对长度、类型、hash、资源有效性以及当次权限；命中时可免重传，失败则按正常上传流程处理。所有查验和写入使用有界后台作业，展示资产仍占用独立内存预算。后台访问时按磁盘容量、总条目和每玩家上限裁剪；不要把缓存复制到 `models/` 或 ME `blueprints/` 来公开它。
+
+关闭分享、离线、撤权或租约失效撤销展示和观众授权，磁盘缓存按预算保留，服务器重启也不自动恢复发布。重连后玩家仍要满足开关、权限和当次协商。`cache-enabled: false` 不读取或写入既有缓存，保留普通上传流程；该目录与自定义服务器原模型和历史发布包独立。
+
+资源分发只回应服务器对当前关系签发的 offer。观看客户端不能指定其他玩家、模型 ID、磁盘路径或 URL 请求资产；发布者也不能凭别人知道的 hash 使用他人的缓存。已接收的资源无法远程撤回，上传和分享需遵守模型许可。
+
+## 服务器伪装原模型的正确放置
 
 MPA 依次查找：
 
@@ -69,7 +82,7 @@ MPA 不自动把内置原模型复制到自己的 `models/` 目录。升级时�
 
 资产按原始 JSON 字节的 SHA-256 标识。客户端完成 hash 校验、解析及纹理准备，服务器确认当前绑定后才接管显示；单纯收到文件或命中缓存不会先隐藏 ME。校验、解析、纹理或租约失败时，服务器保持或恢复该观看者的 ME 显示。消息字段、传输预算和限流集中见 [客户端协议](CLIENT_PROTOCOL.md)。
 
-服务器模型缓存位于当前 Minecraft 实例的 `config/meplayeractions/cache/`，总量最多 128 MiB、最多 512 个有效条目，按最近使用时间裁剪，**离服后保留**。跨服或重连仍需当次授权和确认；缓存不会自动加入私人图库。私人导入目录为 `config/meplayeractions/models/`，私人选择保存在 `config/meplayeractions-client.json`。
+客户端接收资源缓存位于当前 Minecraft 实例的 `config/meplayeractions/cache/`，总量最多 128 MiB、最多 512 个有效条目，按最近使用时间裁剪，**离服后保留**。它与服务器的私人上传缓存是两个目录。跨服或重连仍需当次授权和确认；缓存不会自动加入私人图库。私人导入目录为 `config/meplayeractions/models/`，私人选择保存在 `config/meplayeractions-client.json`。
 
 资源重载撤销显示租约并重建纹理，保留完整推送模型和有效在途下载，确认后恢复当前来源。断线、世界切换或授权消失清理当前绑定与下载授权，磁盘缓存继续保留。更完整的显示优先级见 [客户端配置](CLIENT_CONFIG.md)。
 

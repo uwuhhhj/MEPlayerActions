@@ -136,7 +136,7 @@ public class LocalAppearanceScreen extends Screen {
                 () -> client.setScreen(new ImportHelpScreen(this)), "查看 YSM 原始模型、模型包与 BBModel 导入方式");
 
         use = button("使用模型", left + 5, bottom - 44, previewWidth - 10, this::useSelectedModel,
-                "将当前浏览的模型用于自己；默认仅本机，多人同步需在客户端设置中显式开启");
+                "将当前浏览的模型用于自己；默认仅本机，分享给模组玩家需在玩家模型主页主动开启");
         int half = (previewWidth - 13) / 2;
         settings = button(settingsButtonLabel(half), left + 5, bottom - 21, half,
                 () -> client.setScreen(new ModelSettingsScreen(runtime, selection.modelId(), this)), "查看模型信息，设置缩放、XYZ 位置与有效模型参数");
@@ -404,7 +404,7 @@ public class LocalAppearanceScreen extends Screen {
     }
     protected void renderHeader(DrawContext context) {
         context.drawCenteredTextWithShadow(textRenderer, title, width / 2, 7, 0xfff3f6ff);
-        if (height >= 230) context.drawCenteredTextWithShadow(textRenderer, "本地模型 · 多人同步在客户端设置中开启", width / 2, 23, 0xffbccce0);
+        if (height >= 230) context.drawCenteredTextWithShadow(textRenderer, "本地模型 · 分享在玩家模型主页主动开启", width / 2, 23, 0xffbccce0);
     }
     protected void renderAlternateContent(DrawContext context,float delta) { }
     private void renderGallery(DrawContext context,float delta) {

@@ -250,6 +250,13 @@ client-sync:
     max-bundle-bytes: 8388608
     # 内存总预算包含已发布 ZIP、接收中的 ZIP 与验证时预留的展开上限。
     max-stored-bytes: 33554432
+    # 仅缓存该玩家实际上传并验证过的完整私人资源；不用于 ME 蓝图，也不自动恢复离线伪装。
+    # clear/退出撤销分享，但缓存可供同一玩家以后重新分享；读取、写入与校验均在后台完成。
+    cache-enabled: true
+    # plugins/MEPlayerActions/private-models/：默认磁盘 128 MiB、512 份、每玩家 4 份，满后淘汰最久未使用资源。
+    max-cache-bytes: 134217728
+    max-cache-models: 512
+    max-cache-models-per-player: 4
     # 必须同时满足同世界、真实实体跟踪、canSee、距离和最近观看者名额。
     view-distance-blocks: 64
     max-viewers: 10

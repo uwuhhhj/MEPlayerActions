@@ -1,6 +1,6 @@
 # MEPlayerActions 架构
 
-本文对应服务端和客户端 0.4.9。安装与命令见 [README](README.md)，开发流程见 [CONTRIBUTING](CONTRIBUTING.md)，消息字段与限制以 [协议](docs/CLIENT_PROTOCOL.md) 为准。
+本文对应服务端和客户端 0.5.0。安装与命令见 [README](README.md)，开发流程见 [CONTRIBUTING](CONTRIBUTING.md)，消息字段与限制以 [协议](docs/CLIENT_PROTOCOL.md) 为准。
 
 ## 职责
 
@@ -14,7 +14,7 @@
 
 服务器伪装当前使用 ModelEngine R4.1.1；插件入口通过反射隔离这个可选后端。没有可用的 ME 时，同一 JAR 进入私人多人同步模式，不能提供服务器伪装。客户端不引用 Bukkit、ME 或 GSit；更换服务器引擎需要服务端实现相同的资产、绑定、追踪与接管语义。
 
-MPA 发送完整原 `.bbmodel`，不依赖原版资源包恢复被烘焙掉的动画表达式。默认只由服务器对当前授权绑定签发资产 offer。私人模型默认仅本机可见，显式分享使用独立协议和权限，服务器不执行私人模型脚本。配置与模型放置见 [模型部署](docs/MODEL_DELIVERY.md)。
+三条路径分别是本地私人外观、服务器中继私人多人分享、服务器 ME 伪装。本地外观不发送资源；私人分享使用独立权限与频道，服务器只校验、缓存和分发完整资源，不执行 YSM 脚本、不创建 ME 蓝图或伪装实体。服务器伪装发送完整原 `.bbmodel`，不依赖原版资源包恢复已烘焙的表达式，只有当前授权绑定可获得资产 offer。配置与模型放置见 [模型部署](docs/MODEL_DELIVERY.md)。
 
 ## 模块索引
 
@@ -28,7 +28,7 @@ MPA 发送完整原 `.bbmodel`，不依赖原版资源包恢复被烘焙掉的�
 | ME 与观众 | [ModelEngineBridge](src/main/java/com/simmc/meplayeractions/me/ModelEngineBridge.java)、[ModelAudience](src/main/java/com/simmc/meplayeractions/me/ModelAudience.java)；创建或接管模型，按观众选择显示路径 |
 | 原版实体追踪 | [NativeEntityRelay](src/main/java/com/simmc/meplayeractions/me/NativeEntityRelay.java) 与 `NativeEntity*`；异步安装通道，保护授权玩家的原版追踪包及恢复配对 |
 | 通信与资产 | [ClientSyncService](src/main/java/com/simmc/meplayeractions/client/ClientSyncService.java)、[ModelAssets](src/main/java/com/simmc/meplayeractions/client/ModelAssets.java)、[RenderLeases](src/main/java/com/simmc/meplayeractions/client/RenderLeases.java)、[ConnectionLimits](src/main/java/com/simmc/meplayeractions/client/ConnectionLimits.java) |
-| 私人分享 | [PrivateModelSyncService](src/main/java/com/simmc/meplayeractions/client/PrivateModelSyncService.java)、[PrivateModelBundle](src/main/java/com/simmc/meplayeractions/client/PrivateModelBundle.java)、[PrivateAudienceCache](src/main/java/com/simmc/meplayeractions/client/PrivateAudienceCache.java) |
+| 私人分享 | [PrivateModelSyncService](src/main/java/com/simmc/meplayeractions/client/PrivateModelSyncService.java)、[PrivateModelBundle](src/main/java/com/simmc/meplayeractions/client/PrivateModelBundle.java)、[PrivateModelStore](src/main/java/com/simmc/meplayeractions/client/PrivateModelStore.java)、[PrivateAudienceCache](src/main/java/com/simmc/meplayeractions/client/PrivateAudienceCache.java) |
 | 玩法与表达式 | [gameplay/](src/main/java/com/simmc/meplayeractions/gameplay/) 管理真实姿态、飞行与药水所有权；[expression/](src/main/java/com/simmc/meplayeractions/expression/) 与 [YsmAnimations](src/main/java/com/simmc/meplayeractions/me/YsmAnimations.java) 处理有界脚本及实例物理 |
 
 客户端源码位于 `client/src/main/java/com/simmc/meplayeractions/client/`：
@@ -70,7 +70,9 @@ flowchart LR
 
 纯本地外观使用自己的模型选择、配置与动画生命周期，没有服务器插件也能使用。服务器本人伪装默认优先；同一实例内手动选择 CLIENT 可覆盖本人显示，服务器绑定和其他观看者许可仍独立维护。恢复期间等待服务器显示接管，避免与 ME 回退叠加。
 
-私人多人分享须客户端显式开启、服务器启用及发布/观看权限同时满足。它上传经过有界验证的完整 bundle，由服务器向符合追踪和观众条件的模组玩家签发 offer；原版玩家继续看到原版人物。服务器伪装期间停止远端私人分发，客户端自己的手动覆盖不会转为分享。协议与预算见 [私人同步](docs/CLIENT_PROTOCOL.md#私人模型同步-v1)，用户开关见 [客户端配置](docs/CLIENT_CONFIG.md)。
+私人多人分享须客户端显式开启、服务器启用及发布/观看权限同时满足。客户端将选中的 `.ysm`、YSM 目录／ZIP 或自包含 `.bbmodel` 导出为完整原生 bundle，由服务器向符合追踪和观众条件的模组玩家签发 offer；原版玩家继续看到原版人物。服务器伪装期间停止远端私人分发，客户端自己的手动覆盖不会转为分享。
+
+服务器磁盘缓存按上传者 UUID 与内容 hash 隔离，保留已验证完整资源，同一上传者再次选择时仍需当次权限与重新校验才能发布。clear、离线或撤权结束展示，不因缓存存在保留观众租约；资源缓存也不是管理员公开模型目录。观众 offer、资源确认、ready／ACK、状态合并与重试各有独立生命周期。协议与预算见 [私人同步](docs/CLIENT_PROTOCOL.md#私人模型同步-v1)，用户开关见 [客户端配置](docs/CLIENT_CONFIG.md)。
 
 ## 时序、线程与关键约束
 

@@ -40,6 +40,143 @@ class PrivateModelSyncClientTest {
         rig.receive(offer.identity("private_ack"),NOW);assertEquals(offer.generation,rig.host.visible.get(offer.owner));
     }
 
+    @Test void cachedFeedbackAndReadinessRetryOncePerSecondUntilTheExactAcknowledgement() throws Exception {
+        Rig rig=new Rig();rig.acknowledge(false,true);rig.host.cached=CompletableFuture.completedFuture(rig.bundle);
+        rig.host.blockedTypes.addAll(Set.of("private_status","private_ready"));Offer offer=rig.offer();
+        rig.receive(offer.packet(),NOW);rig.host.drain();
+        assertEquals(1,rig.host.attempts("private_status"));assertEquals(0,rig.host.attempts("private_ready"));
+        rig.receive(offer.packet(),NOW+SECOND/2);rig.client.tick(NOW+SECOND/2);
+        assertEquals(1,rig.host.attempts("private_status"));assertFalse(rig.client.remote(offer.owner).active);
+        rig.host.blockedTypes.remove("private_status");rig.receive(heartbeat(),NOW+SECOND);rig.client.tick(NOW+SECOND);
+        assertEquals(1,rig.host.sent("private_status").size());assertEquals(1,rig.host.attempts("private_ready"));
+        rig.client.tick(NOW+SECOND+SECOND/2);assertEquals(1,rig.host.attempts("private_ready"));
+        rig.host.blockedTypes.remove("private_ready");rig.receive(heartbeat(),NOW+2*SECOND);rig.client.tick(NOW+2*SECOND);
+        assertEquals(1,rig.host.sent("private_ready").size());assertTrue(rig.host.visible.isEmpty());
+        JsonObject stale=offer.identity("private_ack");stale.addProperty("generation",UUID.randomUUID().toString());rig.receive(stale,NOW+2*SECOND);
+        assertFalse(rig.client.remote(offer.owner).active);
+        rig.receive(heartbeat(),NOW+3*SECOND);rig.client.tick(NOW+3*SECOND);assertEquals(2,rig.host.sent("private_ready").size());
+        rig.receive(offer.identity("private_ack"),NOW+3*SECOND);rig.client.tick(NOW+3*SECOND+SECOND/2);
+        assertEquals(2,rig.host.sent("private_ready").size());assertEquals(offer.generation,rig.host.visible.get(offer.owner));
+    }
+
+    @Test void missingFeedbackSurvivesCongestionWithoutRequestingAnotherModelOrDecodingUnsentBytes() throws Exception {
+        Rig rig=new Rig();rig.acknowledge(false,true);rig.host.blockedTypes.add("private_status");Offer offer=rig.offer();
+        rig.receive(offer.packet(),NOW);rig.host.drain();assertEquals(0,rig.host.decodes);
+        rig.host.blockedTypes.remove("private_status");rig.receive(heartbeat(),NOW+SECOND);rig.client.tick(NOW+SECOND);
+        assertEquals(offer.offerId.toString(),rig.host.sent("private_status").getLast().get("offerId").getAsString());
+        assertEquals("missing",rig.host.sent("private_status").getLast().get("status").getAsString());
+        assertEquals(1,rig.host.cacheReads);assertTrue(rig.host.sent("asset_request").isEmpty());
+    }
+
+    @Test void successfulTransportWritesRetryFeedbackUntilTheServerConfirmsTheirMeaning() throws Exception {
+        Rig missing=new Rig();missing.acknowledge(false,true);Offer download=missing.offer();
+        missing.receive(download.packet(),NOW);missing.host.drain();
+        missing.receive(heartbeat(),NOW+SECOND);missing.client.tick(NOW+SECOND);
+        assertEquals(2,missing.host.sent("private_status").size());
+        missing.begin(download);missing.receive(heartbeat(),NOW+2*SECOND);missing.client.tick(NOW+2*SECOND);
+        assertEquals(2,missing.host.sent("private_status").size());
+        Rig cached=new Rig();cached.acknowledge(false,true);cached.host.cached=CompletableFuture.completedFuture(cached.bundle);Offer ready=cached.offer();
+        cached.receive(ready.packet(),NOW);cached.host.drain();
+        cached.receive(heartbeat(),NOW+SECOND);cached.client.tick(NOW+SECOND);
+        assertEquals(2,cached.host.sent("private_status").size());assertEquals(2,cached.host.sent("private_ready").size());
+        cached.receive(ready.identity("private_ack"),NOW+SECOND);cached.client.tick(NOW+SECOND+SECOND/2);
+        assertEquals(2,cached.host.sent("private_status").size());assertEquals(2,cached.host.sent("private_ready").size());
+    }
+
+    @Test void publicationOffersAndEndsRetryTheirExactIdentityAndDuplicateAcceptNeverRestartsChunks() throws Exception {
+        Rig rig=new Rig();rig.acknowledge(true,false);rig.host.explicitLocal=true;
+        rig.host.blockedTypes.add("upload_offer");rig.client.tick(NOW);rig.host.drain();assertEquals(1,rig.host.attempts("upload_offer"));
+        rig.host.blockedTypes.remove("upload_offer");rig.receive(heartbeat(),NOW+SECOND);rig.client.tick(NOW+SECOND);
+        JsonObject offer=rig.host.sent("upload_offer").getLast();
+        rig.receive(heartbeat(),NOW+2*SECOND);rig.client.tick(NOW+2*SECOND);
+        assertEquals(offer,rig.host.sent("upload_offer").getLast());
+        JsonObject accept=publicationNotice("upload_accept",rig.host.local.owner(),offer);accept.addProperty("uploadId",UUID.randomUUID().toString());accept.addProperty("chunkBytes",128);
+        rig.receive(accept,NOW+2*SECOND);rig.client.tick(NOW+2*SECOND);assertEquals(0,rig.host.sent("upload_chunk").getLast().get("index").getAsInt());
+        rig.receive(accept,NOW+2*SECOND);rig.client.tick(NOW+2*SECOND);assertEquals(1,rig.host.sent("upload_chunk").getLast().get("index").getAsInt());
+        for(int i=0;i<rig.bundle.length/128+2;i++)rig.client.tick(NOW+2*SECOND);
+        assertEquals(1,rig.host.sent("upload_end").size());JsonObject end=rig.host.sent("upload_end").getLast();
+        int chunks=rig.host.sent("upload_chunk").size();rig.client.tick(NOW+2*SECOND+SECOND/2);assertEquals(1,rig.host.sent("upload_end").size());
+        rig.receive(heartbeat(),NOW+3*SECOND);rig.client.tick(NOW+3*SECOND);
+        assertEquals(2,rig.host.sent("upload_end").size());assertEquals(end,rig.host.sent("upload_end").getLast());assertEquals(chunks,rig.host.sent("upload_chunk").size());
+        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),offer),NOW+3*SECOND);rig.receive(heartbeat(),NOW+4*SECOND);rig.client.tick(NOW+4*SECOND);
+        assertTrue(rig.client.committed());assertEquals(2,rig.host.sent("upload_end").size());
+    }
+
+    @Test void sixteenOfferedModelsShareABoundedControlBudgetAndLaterOwnersStillBecomeReady() throws Exception {
+        Rig rig=new Rig();rig.acknowledge(false,true);rig.host.cached=CompletableFuture.completedFuture(rig.bundle);
+        List<Offer> offers=new ArrayList<>();
+        for(int i=0;i<16;i++){Offer offer=rig.offer();offers.add(offer);rig.receive(offer.packet(),NOW);rig.host.drain();}
+        Set<String> controls=Set.of("private_status","private_ready","upload_offer","upload_end");
+        assertEquals(8,rig.host.controlTimes.stream().filter(value->controls.contains(value.type)&&value.time==NOW).count());
+        Set<UUID> acknowledged=new HashSet<>();
+        for(int frame=1;frame<=80;frame++) {
+            long now=NOW+frame*50_000_000L;rig.host.now=now;
+            JsonObject heartbeat=heartbeat();JsonArray bindings=heartbeat.getAsJsonArray("bindings");
+            for(Offer offer:offers){JsonObject value=offer.identity("heartbeat");value.remove("protocol");value.remove("type");bindings.add(value);}
+            rig.receive(heartbeat,now);rig.client.tick(now);
+            for(JsonObject packet:rig.host.sent("private_ready")) {
+                UUID owner=UUID.fromString(packet.get("owner").getAsString());
+                if(acknowledged.add(owner))rig.receive(offers.stream().filter(value->value.owner.equals(owner)).findFirst().orElseThrow().identity("private_ack"),now);
+            }
+        }
+        assertEquals(16,acknowledged.size());assertEquals(16,rig.host.visible.size());
+        List<FakeHost.TimedControl> attempts=rig.host.controlTimes.stream().filter(value->controls.contains(value.type)).toList();
+        for(FakeHost.TimedControl attempt:attempts)
+            assertTrue(attempts.stream().filter(value->value.time>=attempt.time&&value.time<attempt.time+SECOND).count()<=16,"One-second handshake budget exceeded");
+    }
+
+    @Test void heartbeatPermissionsRevokeUploadsAndViewingIndependentlyWithoutLosingTheUsersShareIntent() throws Exception {
+        Rig rig=new Rig();rig.acknowledge(true,true);rig.host.explicitLocal=true;
+        rig.host.cached=CompletableFuture.completedFuture(rig.bundle);Offer offer=rig.offer();rig.activate(offer);
+        rig.client.tick(NOW);rig.host.drain();JsonObject upload=rig.host.sent("upload_offer").getLast();
+        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),upload),NOW);assertTrue(rig.client.committed());
+        JsonObject revokeUpload=heartbeat();revokeUpload.addProperty("allowedUpload",false);rig.receive(revokeUpload,NOW);
+        assertFalse(rig.client.available());assertFalse(rig.client.committed());assertTrue(rig.client.canView());
+        assertNotNull(rig.client.remote(offer.owner));assertEquals(1,rig.host.sent("clear").size());assertTrue(rig.host.explicitLocal);
+        JsonObject revokeView=heartbeat();revokeView.addProperty("allowedView",false);rig.receive(revokeView,NOW);
+        assertFalse(rig.client.canView());assertTrue(rig.client.remotes().isEmpty());assertTrue(rig.host.visible.isEmpty());
+        JsonObject grant=heartbeat();grant.addProperty("allowedUpload",true);grant.addProperty("allowedView",true);rig.receive(grant,NOW+1);
+        rig.client.tick(NOW+1);rig.host.drain();assertTrue(rig.client.available());assertTrue(rig.client.canView());
+        assertEquals(2,rig.host.sent("upload_offer").size());
+        assertNotEquals(upload.get("generation"),rig.host.sent("upload_offer").getLast().get("generation"));
+    }
+
+    @Test void legacyHeartbeatsPreserveNegotiatedPermissionsAndViewingDoesNotRequirePublishing() throws Exception {
+        Rig rig=new Rig();rig.acknowledge(false,true);rig.receive(heartbeat(),NOW);
+        assertFalse(rig.client.available());assertTrue(rig.client.canView());assertFalse(rig.host.explicitLocal);
+        rig.host.cached=CompletableFuture.completedFuture(rig.bundle);Offer offer=rig.offer();rig.activate(offer);
+        assertEquals(offer.generation,rig.host.visible.get(offer.owner));assertEquals(0,rig.host.bundleReads);
+    }
+
+    @Test void aServerCachedPublicationCommitsWithoutAnUploadAcceptOrDuplicateBytes() throws Exception {
+        Rig rig=new Rig();rig.acknowledge(true,false);rig.host.explicitLocal=true;
+        rig.client.tick(NOW);rig.host.drain();JsonObject upload=rig.host.sent("upload_offer").getLast();
+        assertEquals(rig.bundle.length,rig.client.publicationBytes());assertEquals(0,rig.client.uploadedBytes());
+        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),upload),NOW);rig.client.tick(NOW);
+        assertTrue(rig.client.committed());assertTrue(rig.host.sent("upload_chunk").isEmpty());assertTrue(rig.host.sent("upload_end").isEmpty());
+        assertEquals(0,rig.client.uploadedBytes());assertTrue(rig.client.status().contains("已分享"));assertTrue(rig.client.status().contains("复用服务器缓存"));
+    }
+
+    @Test void theLastPublishedAppearanceRetriesEveryTwoSecondsWithoutStartingTheActionAgain() throws Exception {
+        Rig rig=new Rig();rig.acknowledge(true,false);rig.host.explicitLocal=true;
+        rig.client.tick(NOW);rig.host.drain();JsonObject upload=rig.host.sent("upload_offer").getLast();
+        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),upload),NOW);rig.client.tick(NOW);
+        JsonObject initial=rig.host.sent("private_state").getLast();assertEquals(1,rig.host.sent("private_state").size());
+        rig.receive(heartbeat(),NOW+SECOND);rig.client.tick(NOW+SECOND);assertEquals(1,rig.host.sent("private_state").size());
+        rig.receive(heartbeat(),NOW+2*SECOND);rig.client.tick(NOW+2*SECOND);
+        assertEquals(2,rig.host.sent("private_state").size());assertEquals(initial,rig.host.sent("private_state").getLast());
+        assertEquals(0,rig.host.sent("private_state").getLast().getAsJsonObject("extra").get("sequence").getAsInt());
+    }
+
+    @Test void uploadProgressAndServerRejectionAreReadableWithoutClearingExplicitSharing() throws Exception {
+        Rig rig=new Rig();rig.acknowledge(true,false);rig.host.explicitLocal=true;
+        rig.client.tick(NOW);rig.host.drain();JsonObject upload=rig.host.sent("upload_offer").getLast();
+        JsonObject accept=publicationNotice("upload_accept",rig.host.local.owner(),upload);accept.addProperty("uploadId",UUID.randomUUID().toString());accept.addProperty("chunkBytes",128);rig.receive(accept,NOW);
+        rig.client.tick(NOW);assertEquals(128,rig.client.uploadedBytes());assertTrue(rig.client.status().contains("%"));
+        JsonObject error=PrivateModelSyncClient.envelope("error");error.addProperty("code","private_upload_denied");rig.receive(error,NOW);
+        assertEquals("没有私人模型上传权限",rig.client.status());assertTrue(rig.host.explicitLocal);assertEquals(0,rig.client.publicationBytes());
+    }
+
     @Test void bytesWithTheWrongChecksumAbortTheOfferAndNeverReachTheDecoder() throws Exception {
         Rig rig=new Rig();rig.acknowledge(false,true);Offer offer=rig.offer();rig.receive(offer.packet(),NOW);rig.host.drain();
         rig.begin(offer);byte[] corrupt=rig.bundle.clone();corrupt[corrupt.length-1]^=1;
@@ -258,12 +395,17 @@ class PrivateModelSyncClientTest {
         final Deque<CompletableFuture<LocalModelLibrary.Loaded>> decodeResults=new ArrayDeque<>();
         final Deque<Runnable> dispatch=new ArrayDeque<>();
         final List<JsonObject> packets=new ArrayList<>();
+        final List<String> controlAttempts=new ArrayList<>();
+        final Set<String> blockedTypes=new HashSet<>();
+        private record TimedControl(String type,long time) { }
+        final List<TimedControl> controlTimes=new ArrayList<>();
+        long now=NOW;
         final Map<UUID,UUID> visible=new HashMap<>();
         final List<Event> events=new ArrayList<>();
         final PrivateModelSyncClient.Local local;
         FakeHost(byte[] bundle) {publication=CompletableFuture.completedFuture(bundle);local=new PrivateModelSyncClient.Local(UUID.randomUUID(),"local:test.bbmodel",appearance(1),extra());}
         public boolean channelAvailable(){return channel;}
-        public boolean send(JsonObject packet){packets.add(packet.deepCopy());return true;}
+        public boolean send(JsonObject packet){String type=packet.get("type").getAsString();controlAttempts.add(type);controlTimes.add(new TimedControl(type,now));if(blockedTypes.contains(type))return false;packets.add(packet.deepCopy());return true;}
         public PrivateModelSyncClient.Local local(){return explicitLocal?local:null;}
         public CompletableFuture<byte[]> bundle(String modelId){bundleReads++;return publication;}
         public CompletableFuture<byte[]> cached(String hash){cacheReads++;return cached;}
@@ -280,6 +422,7 @@ class PrivateModelSyncClientTest {
         public void event(UUID owner,UUID generation,List<Double> args){events.add(new Event(owner,generation,args));}
         void drain(){while(!dispatch.isEmpty())dispatch.removeFirst().run();}
         List<JsonObject> sent(String type){return packets.stream().filter(packet->packet.get("type").getAsString().equals(type)).toList();}
+        long attempts(String type){return controlAttempts.stream().filter(type::equals).count();}
     }
     private static JsonObject heartbeat(){JsonObject packet=PrivateModelSyncClient.envelope("heartbeat");packet.add("bindings",new JsonArray());return packet;}
     private static JsonObject appearance(double scale){

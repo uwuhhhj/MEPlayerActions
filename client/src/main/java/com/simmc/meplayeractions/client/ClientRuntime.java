@@ -554,9 +554,20 @@ public final class ClientRuntime {
     }
     public boolean privateSyncAvailable(){return privateModels.available();}
     public boolean privateSyncEnabled(){return options.privateSyncEnabled;}
-    public String privateSyncStatus(){return privateModels.status();}
+    public boolean canShareLocalModel(){return privateSyncAvailable()&&!serverOwnModelPresent();}
+    public String privateSyncStatus(){
+        if(serverOwnModelPresent())return "服务器伪装期间，私人覆盖仅自己可见；分享设置已保留";
+        if(!options.privateSyncEnabled)return privateSyncAvailable()?"仅自己可见 · 可主动开启分享":"仅自己可见 · "+privateModels.status();
+        if(!localAppearance().enabled()&&privateSyncAvailable())return "分享已开启 · 使用本地模型后上传";
+        return privateModels.status();
+    }
+    public Map<String,Object> privateSharingDiagnostics(){
+        return Map.of("requested",options.privateSyncEnabled,"canUpload",privateModels.available(),
+                "canView",privateModels.canView(),"canShare",canShareLocalModel(),"committed",privateModels.committed(),
+                "bytes",privateModels.publicationBytes(),"uploadedBytes",privateModels.uploadedBytes(),"status",privateSyncStatus());
+    }
     public boolean setPrivateSyncEnabled(boolean enabled){
-        if(enabled&&!privateSyncAvailable())return false;
+        if(enabled&&!canShareLocalModel())return false;
         options.privateSyncEnabled=enabled;options.save();if(!enabled)privateModels.stopPublishing();return true;
     }
     public void receivePrivate(byte[] bytes){privateModels.receive(bytes,System.nanoTime());}
@@ -1292,7 +1303,7 @@ public final class ClientRuntime {
         if(!localAppearanceError.isEmpty())return localAppearanceError;
         if(localAppearancePending)return "正在加载本地模型";
         if(localAppearancePrepared() && !localAppearanceActive())return "等待服务器显示接管；本地设置已保留";
-        return localAppearanceActive()?(privateModels.committed()?"私人模型已同步给允许观看的模组客户端":"本地外观仅自己可见"):"等待本地模型";
+        return localAppearanceActive()?(options.privateSyncEnabled?privateSyncStatus():"本地外观仅自己可见"):"等待本地模型";
     }
     public boolean playLocal(String animation) {
         if(!canUseLocalActions() || animation==null || !localAppearancePrepared())return false;

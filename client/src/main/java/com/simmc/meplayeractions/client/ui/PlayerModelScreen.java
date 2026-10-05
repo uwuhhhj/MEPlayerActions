@@ -24,7 +24,7 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
     private final Map<ButtonWidget,String> roles=new IdentityHashMap<>();
     private boolean clientTab,advanced,initializedLocalMode;
     private String initializedInstance="";
-    private String initializedSyncStatus="";
+    private ButtonWidget selfOnly,sharedModel;
 
     public PlayerModelScreen(ClientRuntime runtime) {this(runtime,null);}
     public PlayerModelScreen(ClientRuntime runtime,Screen parent) {
@@ -38,21 +38,32 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
             clientTab=localMode;advanced=false;clearGalleryPreviews();
         }
         initializedLocalMode=localMode;initializedInstance=instance;roles.clear();
-        initializedSyncStatus=runtime.privateSyncStatus();
         super.init();
     }
-    @Override protected int galleryTop() {return height<210?52:58;}
+    @Override protected int galleryTop() {return (height<210?52:58)+(clientTab?24:0);}
     @Override protected boolean clientGalleryVisible() {return clientTab && !advanced;}
     @Override protected boolean requiresLocalSource() {return false;}
     @Override protected boolean showRotationHint() {return false;}
     @Override protected String settingsButtonLabel(int buttonWidth) {return "外观设置…";}
 
     @Override protected void buildHeaderControls() {
-        int half=(panelWidth-6)/2,y=top-29;
+        int half=(panelWidth-6)/2,y=top-(clientTab?53:29);
         roles.put(flatButton(clientTab?"客户端 ✓":"客户端",left,y,half,24,()->switchSource(true),
-                "本地图库与私人设置；默认本机可见，可开启协商同步；手动覆盖服务器伪装仍只在本机显示",clientTab),"clientSource");
+                "本地图库与私人设置；选择仅自己可见或授权分享。手动覆盖服务器伪装仍只在本机显示",clientTab),"clientSource");
         roles.put(flatButton(clientTab?"服务器下发":"服务器下发 ✓",left+half+6,y,panelWidth-half-6,24,()->switchSource(false),
                 "仅展示当前服务器绑定的模型；模型选择与分发由服务器决定",!clientTab),"serverSource");
+        selfOnly=sharedModel=null;
+        if(clientTab) {
+            boolean sharing=runtime.privateSyncEnabled()&&!runtime.serverOwnModelPresent();
+            selfOnly=flatButton(sharing?"仅自己可见":"仅自己可见 ✓",left,top-26,half,20,()->{
+                runtime.setPrivateSyncEnabled(false);clearAndInit();
+            },"只在自己的客户端显示，不上传模型，也不改变服务器伪装",!sharing);
+            sharedModel=flatButton(sharing?"分享给模组玩家 ✓":"分享给模组玩家",left+half+6,top-26,panelWidth-half-6,20,()->{
+                runtime.setPrivateSyncEnabled(true);clearAndInit();
+            },sharingTooltip(),sharing);
+            sharedModel.active=runtime.canShareLocalModel();
+            roles.put(selfOnly,"selfOnly");roles.put(sharedModel,"sharePrivateModel");
+        }
     }
 
     @Override protected void buildFooterControls() {
@@ -116,13 +127,12 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
                 runtime.updateLocalAppearance(new LocalAppearanceSettings(!current.enabled(),current.modelId(),current.scale(),current.offsetX(),current.offsetY(),current.offsetZ()));clearAndInit();
             },"保留模型选择与设置；只改变私人外观是否启用"),"privateEnabled");
             y+=25;
-            var sync=flatButton(runtime.privateSyncEnabled()?"多人同步：开启":"多人同步：关闭",x,y,w,20,()->{
-                runtime.setPrivateSyncEnabled(!runtime.privateSyncEnabled());clearAndInit();
-            },"默认仅本机；服务器允许后才可共享私人模型、动作与作者参数。\n"+runtime.privateSyncStatus(),runtime.privateSyncEnabled());
-            sync.active=runtime.privateSyncEnabled() || runtime.privateSyncAvailable();
-            roles.put(sync,"privateSync");
         }
         roles.put(button("返回图库",x,Math.max(y+25,bottom-22),w,()->{advanced=false;clearAndInit();},"关闭轮盘选项并回到当前来源"),"gallery");
+    }
+    private String sharingTooltip() {
+        return "主动将已使用的 .ysm 或 .bbmodel 上传给服务器，供获准观看的模组玩家下载并本地渲染；原版玩家仍看见原版人物。\n"
+                +runtime.privateSyncStatus();
     }
 
     private void switchSource(boolean local) {
@@ -136,7 +146,7 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
         if(initializedLocalMode!=runtime.interactionLocalMode() || !initializedInstance.equals(runtime.serverOwnModelInstance())) {
             clientTab=runtime.interactionLocalMode();advanced=false;clearGalleryPreviews();clearAndInit();
         }
-        if(advanced && !initializedSyncStatus.equals(runtime.privateSyncStatus()))clearAndInit();
+        if(sharedModel!=null){sharedModel.active=runtime.canShareLocalModel();sharedModel.setTooltip(Tooltip.of(Text.literal(sharingTooltip())));}
         super.tick();
     }
 
@@ -187,6 +197,7 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
         result.put("serverAppearance",runtime.ownServerAppearanceDiagnostics());
         result.put("privateSyncEnabled",runtime.privateSyncEnabled());result.put("privateSyncAvailable",runtime.privateSyncAvailable());
         result.put("privateSyncStatus",runtime.privateSyncStatus());
+        result.put("privateSharing",runtime.privateSharingDiagnostics());
         result.put("widgets",children().stream().filter(value->value instanceof ButtonWidget).map(value->{
             var button=(ButtonWidget)value;var widget=new LinkedHashMap<String,Object>();
             widget.put("label",button.getMessage().getString());widget.put("role",roles.getOrDefault(button,"galleryControl"));

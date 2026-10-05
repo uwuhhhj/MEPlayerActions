@@ -8,9 +8,11 @@ import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitScheduler;
 import org.bukkit.scheduler.BukkitTask;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import java.io.ByteArrayOutputStream;
 import java.lang.reflect.*;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.ZipEntry;
@@ -126,6 +128,116 @@ class PrivateModelPerformanceTest {
             assertFalse(scene.publications().containsKey(scene.owner.id));assertTrue(scene.publications().containsKey(scene.viewer.id));
         }
     }
+    @Test void cacheMissAndHitRemainBoundedJobsAndOnlyTheOriginalOwnerAvoidsReupload(@TempDir Path directory) throws Exception {
+        try(var scene=new Scene(true,10)) {
+            var store=new PrivateModelStore(directory,PrivateModelStore.Settings.defaults());setField(scene.service,"store",store);scene.hello(scene.owner);
+            scene.uploadOffer(scene.owner,scene.hash);Object pending=field(scene.session(scene.owner),"upload");
+            assertNull(field(pending,"bytes"));assertEquals(1,scene.workers.size());
+            scene.send(scene.owner,scene.pendingOffer(pending));assertEquals(1,scene.workers.size());assertEquals(0,scene.owner.count("upload_accept"));
+            scene.runWorker();assertEquals(1,scene.owner.count("upload_accept"));assertNotNull(field(pending,"bytes"));
+            scene.send(scene.owner,scene.pendingOffer(pending));assertSame(pending,field(scene.session(scene.owner),"upload"));assertEquals(2,scene.owner.count("upload_accept"));
+            scene.finishAccepted(scene.owner);scene.runWorker();assertEquals(1,scene.owner.count("upload_committed"));
+            scene.send(scene.owner,packet("clear"));assertTrue(scene.publications().isEmpty());scene.tick=200;
+            scene.uploadOffer(scene.owner,scene.hash);assertEquals(1,scene.workers.size());assertEquals(2,scene.owner.count("upload_accept"));
+            scene.runWorker();assertEquals(2,scene.owner.count("upload_committed"));assertEquals(2,scene.owner.count("upload_accept"));
+            assertEquals(0,((Number)field(scene.service,"uploads")).intValue());assertEquals(0,((Number)field(scene.service,"reservedBytes")).longValue());
+            scene.hello(scene.viewer);scene.uploadOffer(scene.viewer,scene.hash);scene.runWorker();
+            assertEquals(1,scene.viewer.count("upload_accept"));assertEquals(0,scene.viewer.count("upload_committed"));
+        }
+    }
+    @Test void cancelledOrRevokedCacheProbesCannotPublishButKeepReservationsUntilTheirWorkersReturn(@TempDir Path directory) throws Exception {
+        try(var scene=new Scene(true,10)) {
+            var store=new PrivateModelStore(directory,PrivateModelStore.Settings.defaults());store.saveValidated(scene.owner.id,scene.hash,scene.bundle);
+            setField(scene.service,"store",store);scene.hello(scene.owner);scene.uploadOffer(scene.owner,scene.hash);
+            scene.send(scene.owner,packet("clear"));assertEquals(1,((Number)field(scene.service,"uploads")).intValue());
+            scene.runWorker();assertEquals(0,((Number)field(scene.service,"uploads")).intValue());assertTrue(scene.publications().isEmpty());
+            scene.tick=200;scene.uploadOffer(scene.owner,scene.hash);scene.owner.allowed=false;scene.runWorker();
+            assertTrue(scene.publications().isEmpty());assertEquals(0,scene.owner.count("upload_committed"));
+            assertEquals(0,((Number)field(scene.service,"reservedBytes")).longValue());
+            assertArrayEquals(scene.bundle,store.load(scene.owner.id,scene.hash,"ysm",scene.bundle.length));
+        }
+    }
+    @Test void unavailableDiskCacheFallsBackToTheSameAuthorizedOrdinaryUpload(@TempDir Path directory) throws Exception {
+        try(var scene=new Scene(true,10)) {
+            Path unusable=directory.resolve("not-a-directory");java.nio.file.Files.writeString(unusable,"fixture");
+            setField(scene.service,"store",new PrivateModelStore(unusable,PrivateModelStore.Settings.defaults()));
+            scene.hello(scene.owner);scene.uploadOffer(scene.owner,scene.hash);scene.runWorker();assertEquals(1,scene.owner.count("upload_accept"));
+            scene.finishAccepted(scene.owner);scene.runWorker();assertEquals(1,scene.owner.count("upload_committed"));assertTrue(scene.publications().containsKey(scene.owner.id));
+        }
+    }
+    @Test void privateStateRetriesOnlyTheLatestAppearanceAndDropsRevokedViewerWork() throws Exception {
+        try(var scene=new Scene(true,10)) {
+            scene.start();scene.ready();int sent=scene.viewer.count("private_state");scene.saturate();
+            scene.send(scene.owner,scene.state());JsonObject latest=scene.state();latest.getAsJsonObject("appearance").addProperty("scale",2);
+            latest.getAsJsonObject("extra").addProperty("id","nod");latest.getAsJsonObject("extra").addProperty("sequence",2);scene.send(scene.owner,latest);
+            assertEquals(sent,scene.viewer.count("private_state"));assertEquals(1,((Map<?,?>)field(scene.session(scene.viewer),"pendingStates")).size());
+            scene.tick=1;scene.maintain();assertEquals(sent+1,scene.viewer.count("private_state"));
+            assertEquals(2,scene.viewer.last("private_state").getAsJsonObject("appearance").get("scale").getAsDouble());
+            assertEquals("nod",scene.viewer.last("private_state").getAsJsonObject("extra").get("id").getAsString());
+            assertTrue(((Set<?>)field(scene.service,"pendingControls")).isEmpty());
+            scene.saturate();latest.getAsJsonObject("extra").addProperty("sequence",3);scene.send(scene.owner,latest);scene.viewer.allowed=false;
+            scene.tick=2;scene.maintain();assertEquals(sent+1,scene.viewer.count("private_state"));assertTrue(((Set<?>)field(scene.service,"pendingControls")).isEmpty());
+        }
+    }
+    @Test void readyAndCommitAcknowledgmentsRecoverFromBudgetPressureWithoutNewUploads() throws Exception {
+        try(var scene=new Scene(true,10)) {
+            scene.start();scene.feedback("cached");scene.saturate();scene.readyPacket();
+            assertEquals("CACHED",field(scene.offer(),"status").toString());assertEquals(0,scene.viewer.count("private_ack"));
+            scene.tick=1;scene.readyPacket();assertEquals("READY",field(scene.offer(),"status").toString());assertEquals(1,scene.viewer.count("private_ack"));
+        }
+        try(var scene=new Scene(true,10)) {
+            scene.hello(scene.owner);scene.upload(scene.owner,scene.hash);scene.workers.removeFirst().run();scene.saturate();scene.callbacks.removeFirst().run();
+            assertTrue(scene.publications().containsKey(scene.owner.id));assertEquals(0,scene.owner.count("upload_committed"));
+            scene.tick=1;scene.maintain();assertEquals(1,scene.owner.count("upload_committed"));
+            JsonObject repeatedEnd=packet("upload_end");repeatedEnd.addProperty("uploadId",scene.owner.last("upload_accept").get("uploadId").getAsString());scene.send(scene.owner,repeatedEnd);
+            assertEquals(2,scene.owner.count("upload_committed"));
+            Object publication=scene.publications().get(scene.owner.id);JsonObject same=packet("upload_offer");
+            same.addProperty("generation",field(publication,"generation").toString());same.addProperty("hash",scene.hash);same.addProperty("bytes",scene.bundle.length);
+            same.addProperty("kind","ysm");same.add("appearance",new JsonObject());scene.send(scene.owner,same);
+            assertSame(publication,scene.publications().get(scene.owner.id));assertEquals(3,scene.owner.count("upload_committed"));assertTrue(scene.workers.isEmpty());
+            same.addProperty("hash","a".repeat(64));scene.send(scene.owner,same);assertEquals("private_generation_reused",scene.owner.last("error").get("code").getAsString());
+        }
+    }
+    @Test void pendingCommitCannotActivateAfterAServerDisguiseTakesPriority() throws Exception {
+        try(var scene=new Scene(true,10)) {
+            scene.hello(scene.owner);scene.upload(scene.owner,scene.hash);scene.workers.removeFirst().run();scene.saturate();scene.callbacks.removeFirst().run();
+            scene.disguised.add(scene.owner.id);scene.tick=1;scene.maintain();
+            assertEquals(0,scene.owner.count("upload_committed"));assertTrue(scene.publications().isEmpty());assertTrue(((Set<?>)field(scene.service,"pendingControls")).isEmpty());
+        }
+    }
+    @Test void repeatedAcceptedOffersKeepTheBufferedBytesIndexAndDeadline() throws Exception {
+        try(var scene=new Scene(true,10)) {
+            scene.hello(scene.owner);scene.uploadOffer(scene.owner,scene.hash);Object upload=field(scene.session(scene.owner),"upload");
+            JsonObject first=packet("upload_chunk");first.addProperty("uploadId",field(upload,"id").toString());first.addProperty("index",0);
+            first.addProperty("data",Base64.getEncoder().encodeToString(Arrays.copyOf(scene.bundle,100)));scene.send(scene.owner,first);
+            long created=((Number)field(upload,"created")).longValue();scene.tick=10;scene.send(scene.owner,scene.pendingOffer(upload));
+            assertSame(upload,field(scene.session(scene.owner),"upload"));assertEquals(100,field(upload,"offset"));assertEquals(1,field(upload,"index"));
+            assertEquals(created,((Number)field(upload,"created")).longValue());assertArrayEquals(Arrays.copyOf(scene.bundle,100),Arrays.copyOf((byte[])field(upload,"bytes"),100));
+            JsonObject wrong=scene.pendingOffer(upload);wrong.addProperty("bytes",scene.bundle.length+1);scene.send(scene.owner,wrong);
+            assertEquals("private_upload_busy",scene.owner.last("error").get("code").getAsString());assertSame(upload,field(scene.session(scene.owner),"upload"));
+            scene.send(scene.owner,packet("clear"));assertEquals(0,((Number)field(scene.service,"reservedBytes")).longValue());
+        }
+    }
+    @Test void heartbeatReportsCurrentPermissionsSoGrantAndRevocationDoNotRequireReconnect() throws Exception {
+        try(var scene=new Scene(true,10)) {
+            scene.start();scene.ready();scene.viewer.allowed=false;scene.heartbeat(scene.viewer);
+            assertFalse(scene.viewer.last("heartbeat").get("allowedView").getAsBoolean());assertFalse(scene.viewer.last("heartbeat").get("allowedUpload").getAsBoolean());
+            assertEquals(0,scene.viewer.last("heartbeat").getAsJsonArray("bindings").size());
+            scene.viewer.allowed=true;scene.heartbeat(scene.viewer);assertTrue(scene.viewer.last("heartbeat").get("allowedView").getAsBoolean());
+            scene.owner.allowed=false;scene.heartbeat(scene.owner);assertFalse(scene.owner.last("heartbeat").get("allowedUpload").getAsBoolean());
+        }
+    }
+    @Test void periodicFinalStateReplayRenewsThePublisherWithoutRestartingAnUnchangedAction() throws Exception {
+        try(var scene=new Scene(true,10)) {
+            scene.start();scene.ready();JsonObject state=scene.state();scene.send(scene.owner,state);
+            Object publication=scene.publications().get(scene.owner.id);long sequence=((Number)field(publication,"sequence")).longValue();
+            int states=scene.viewer.count("private_state");scene.tick=40;scene.send(scene.owner,state);
+            assertEquals(sequence,((Number)field(publication,"sequence")).longValue());assertEquals(states,scene.viewer.count("private_state"));
+            assertEquals(40,((Number)field(publication,"lease")).longValue());assertTrue(((Set<?>)field(scene.service,"pendingControls")).isEmpty());
+            state.getAsJsonObject("extra").addProperty("sequence",2);scene.send(scene.owner,state);
+            assertEquals(sequence+1,((Number)field(publication,"sequence")).longValue());assertEquals(states+1,scene.viewer.count("private_state"));
+        }
+    }
 
     private static final class Scene implements AutoCloseable {
         final Field bukkitServer=Bukkit.class.getDeclaredField("server");final Object previousServer;
@@ -150,6 +262,7 @@ class PrivateModelPerformanceTest {
             });
             Plugin plugin=proxy(Plugin.class,(instance,method,args)->switch(method.getName()) {
                 case "getServer" -> server;case "isEnabled" -> true;case "getName" -> "PrivatePerformanceFixture";
+                case "getLogger" -> java.util.logging.Logger.getLogger("PrivatePerformanceFixture");
                 default -> objectMethod(instance,method,args);
             });
             bukkitServer.setAccessible(true);previousServer=bukkitServer.get(null);bukkitServer.set(null,server);
@@ -171,17 +284,28 @@ class PrivateModelPerformanceTest {
         void send(Person person,JsonObject value){service.onPluginMessageReceived(PrivateModelSyncService.CHANNEL,person.player,value.toString().getBytes(StandardCharsets.UTF_8));}
         void maintain() throws Exception {invoke(service,"maintain");}
         void feedback(String status) throws Exception {JsonObject value=packet("private_status");value.addProperty("offerId",field(offer(),"id").toString());value.addProperty("hash",hash);value.addProperty("status",status);send(viewer,value);}
-        void ready() throws Exception {feedback("cached");JsonObject ready=identity("private_ready");ready.addProperty("owner",owner.id.toString());send(viewer,ready);}
+        void ready() throws Exception {feedback("cached");readyPacket();}
+        void readyPacket(){JsonObject ready=identity("private_ready");ready.addProperty("owner",owner.id.toString());send(viewer,ready);}
         void heartbeat(Person person){JsonObject heartbeat=packet("private_heartbeat");JsonArray identities=new JsonArray();JsonObject entry=identity(null);entry.addProperty("owner",owner.id.toString());identities.add(entry);heartbeat.add("bindings",identities);send(person,heartbeat);}
         JsonObject state(){JsonObject state=identity("private_state");state.add("appearance",new JsonObject());JsonObject extra=new JsonObject();extra.addProperty("id","wave");extra.addProperty("loop","ONCE");extra.addProperty("locked",false);extra.addProperty("sequence",1);state.add("extra",extra);return state;}
         JsonObject event(){JsonObject event=identity("private_event");JsonArray args=new JsonArray();args.add(1);event.add("args",args);return event;}
         JsonObject identity(String type){JsonObject result=type==null?new JsonObject():packet(type);result.addProperty("generation",generation.toString());result.addProperty("hash",hash);return result;}
         void uploadOffer(Person person,String advertisedHash){JsonObject value=packet("upload_offer");value.addProperty("generation",UUID.randomUUID().toString());value.addProperty("hash",advertisedHash);value.addProperty("bytes",bundle.length);value.addProperty("kind","ysm");value.add("appearance",new JsonObject());send(person,value);}
         void upload(Person person,String advertisedHash) {
-            uploadOffer(person,advertisedHash);String id=person.last("upload_accept").get("uploadId").getAsString();int chunk=person.last("upload_accept").get("chunkBytes").getAsInt();
+            uploadOffer(person,advertisedHash);finishAccepted(person);
+        }
+        void finishAccepted(Person person) {
+            String id=person.last("upload_accept").get("uploadId").getAsString();int chunk=person.last("upload_accept").get("chunkBytes").getAsInt();
             for(int start=0,index=0;start<bundle.length;start+=chunk,index++){JsonObject value=packet("upload_chunk");value.addProperty("uploadId",id);value.addProperty("index",index);value.addProperty("data",Base64.getEncoder().encodeToString(Arrays.copyOfRange(bundle,start,Math.min(start+chunk,bundle.length))));send(person,value);}
             JsonObject end=packet("upload_end");end.addProperty("uploadId",id);send(person,end);
         }
+        Object session(Person person) throws Exception{return ((Map<?,?>)field(service,"sessions")).get(person.id);}
+        JsonObject pendingOffer(Object upload) throws Exception {
+            JsonObject offer=packet("upload_offer");offer.addProperty("generation",field(upload,"generation").toString());offer.addProperty("hash",hash);
+            offer.addProperty("bytes",bundle.length);offer.addProperty("kind","ysm");offer.add("appearance",new JsonObject());return offer;
+        }
+        void runWorker(){workers.removeFirst().run();callbacks.removeFirst().run();}
+        void saturate() {while(limits.allowOutbound(viewer.id,1024,false,System.nanoTime(),tick)){}while(limits.allowOutbound(viewer.id,1,false,System.nanoTime(),tick)){};}
         @SuppressWarnings("unchecked") Map<UUID,Object> publications() throws Exception{return (Map<UUID,Object>)field(service,"publications");}
         @SuppressWarnings("unchecked") Map<UUID,Object> offers(Person person) throws Exception {Object session=((Map<?,?>)field(service,"sessions")).get(person.id);return (Map<UUID,Object>)field(session,"offers");}
         Object offer() throws Exception{return offers(viewer).get(owner.id);}

@@ -1,8 +1,14 @@
 # MEPlayerActions
 
-Paper 玩家伪装与动画插件，配套可选的 Fabric 客户端模组。当前服务端与客户端均为 **0.4.9**，目标版本 **Minecraft 1.21.11／Java 21**。作者：SIMMC、Loliiiico。
+Paper 玩家伪装与动画插件，配套可选的 Fabric 客户端模组。当前服务端与客户端均为 **0.5.0**，目标版本 **Minecraft 1.21.11／Java 21**。作者：SIMMC、Loliiiico。
 
-服务器伪装可同时由两类观看者看到：未安装模组的玩家通过 ModelEngine 和服务器资源包显示；安装模组的玩家接收服务器授权的完整原模型，在本机计算动画并接管渲染。被伪装者本人无需安装模组。客户端还可独立使用私人 YSM 模型，默认仅自己可见，可按服务器许可主动分享。
+同一个客户端提供三条独立路径。模型上传到服务器不等于创建服务器伪装：
+
+| 路径 | 模型与渲染 | 其他人看到什么 |
+| --- | --- | --- |
+| 本地私人外观 | 本地选择，仅本人客户端渲染，不上传 | 原版玩家 |
+| 私人模型多人分享 | 有权限的玩家主动上传完整 YSM／BBModel 资源，服务器授权分发，各客户端渲染 | 获准的模组观看者看到私人模型；原版观看者看到原版玩家 |
+| 服务器伪装 | 服务器管理伪装、绑定和动作；模组观看者在本机接管 | 模组观看者看到本地动画，其他观看者通过 ModelEngine 与资源包看到服务器伪装 |
 
 ## 快速安装
 
@@ -15,7 +21,7 @@ Paper 玩家伪装与动画插件，配套可选的 Fabric 客户端模组。当
 1. 关闭游戏或服务器，替换对应安装包内的 JAR：客户端放入 `mods/`，服务端放入 `plugins/`，避免同时加载两个版本。升级保留已有配置、私人模型和自定义蓝图。
 2. 服务器伪装首次安装时，将安装包的 `plugins/ModelEngine/blueprints/meplayeractions/` 一并部署。两套示例的完整原模型已内置于服务端 JAR，无需另复制到 MPA 的 `models/` 目录。
 3. 执行 `/meg reload models` 加载 ME 模型，并沿用原有 ModelEngine／CraftEngine 的资源包生成、合并与下发流程。客户端默认由 MPA 主动推送原模型接管，不需要额外合并工具或 MPA 资源包索引。
-4. 仅私人分享时，启用 `client-sync.private-models.enabled`，授予发布者 `mact.private.upload`、观看者 `mact.private.view`；发布者再在客户端设置中主动开启分享。服务器开关、两项权限和客户端分享默认均关闭。
+4. 仅私人分享时，启用 `client-sync.private-models.enabled`，授予发布者 `mact.private.upload`、观看者 `mact.private.view`；发布者再主动开启分享。开关与两项权限默认关闭，OP 也需显式授权。私人资源使用独立有界缓存，不放进 ME 蓝图目录。
 
 真实坐下／爬行指令另需可选的 [GSit](https://github.com/Gecolay/GSit)；原生爬行、床睡眠和载具动画无需 GSit。自定义模型来源、服务器配置和部署排查见 [模型同步与部署](docs/MODEL_DELIVERY.md)。
 
@@ -35,7 +41,7 @@ Paper 玩家伪装与动画插件，配套可选的 Fabric 客户端模组。当
 
 客户端默认 **J** 打开动作轮盘，右上齿轮进入玩家模型主页；也可执行 `/mpaclient settings`。主页顶部的 **CLIENT／SERVER** 切换私人模型和服务器下发模型。服务器伪装接管默认开启，私人模型初始未启用。关闭客户端渲染仍可使用有效的 SERVER 动作轮盘。
 
-私人模型放入当前实例的 `config/meplayeractions/models/`，支持当前范围内的 `.ysm`、ZIP、YSM 文件夹和自包含 `.bbmodel`。在图库刷新并点击卡片预览，点击“使用模型”才应用；按 **F5** 查看第三人称。导入格式、显隐、来源优先级、分享与排查见 [客户端配置](docs/CLIENT_CONFIG.md)。
+私人模型放入当前实例的 `config/meplayeractions/models/`，支持当前范围内的 `.ysm`、ZIP、YSM 文件夹和自包含 `.bbmodel`。在图库刷新并点击卡片预览，点击“使用模型”才应用；默认仅本人可见，分享须另行开启。按 **F5** 查看第三人称。导入、显隐、来源、分享与排查见 [客户端配置](docs/CLIENT_CONFIG.md)。
 
 客户端没有 ModelEngine 或服务器插件的硬依赖；单人和无插件服务器仍可使用私人模型。其他服务器模型引擎需适配相同协议。YSM 行为参考并适配 OpenYSM 等项目，具体支持范围见 [YSM 兼容说明](docs/YSM_COMPATIBILITY.md)，来源与资源许可见 [第三方说明](THIRD_PARTY_NOTICES.md)。
 
