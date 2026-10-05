@@ -1,0 +1,6 @@
+JWebP 0.2.0
+Copyright 2026 Glavo
+Published Maven release licensed under Apache-2.0 (POM and sources.jar headers).
+Source: https://repo.maven.apache.org/maven2/org/glavo/webp/0.2.0/webp-0.2.0-sources.jar
+Upstream: https://github.com/Glavo/jwebp
+The release is included unmodified. Newer upstream releases may use another license.

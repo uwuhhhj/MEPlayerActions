@@ -3,9 +3,16 @@ package com.simmc.meplayeractions.client.ui;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.simmc.meplayeractions.client.ClientRuntime;
 import com.simmc.meplayeractions.client.MEPlayerActionsClient;
+import com.simmc.meplayeractions.client.VanillaYsmQueries;
 import com.simmc.meplayeractions.client.model.BbModel;
 import com.simmc.meplayeractions.client.model.YsmModelProfile;
+import com.simmc.meplayeractions.client.render.YsmItemRenderer;
+import com.simmc.meplayeractions.client.render.YsmEquipmentRenderer;
+import com.simmc.meplayeractions.client.render.YsmPlayerSkin;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.network.OtherClientPlayerEntity;
+import net.minecraft.client.world.ClientWorld;
+import com.mojang.authlib.GameProfile;
 import net.minecraft.client.gl.RenderPipelines;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.ScreenRect;
@@ -29,6 +36,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -36,7 +44,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * Neither preparing nor drawing a preview changes gameplay bindings or client readiness.
  */
 public final class ModelPreview implements AutoCloseable {
-    public enum Context { OWNER, CARD }
+    public enum Context { OWNER, CARD, SELECTED }
     private static final Logger LOGGER = LoggerFactory.getLogger("MEPlayerActions/Preview");
     private static final int MAX_MODELS = 12, MAX_DIMENSION = 4096;
     private static final long MAX_ASSET_PIXELS = 16L * 1024 * 1024;
@@ -122,11 +130,17 @@ public final class ModelPreview implements AutoCloseable {
         }
         try {
             boolean nativeCamera = NativeGuiPreviewCamera.appliesTo(profile);
-            ClientRuntime.GuiPreviewInput nativeInput = nativeCamera && runtime != null ? runtime.guiPreviewInput() : null;
+            ClientRuntime.GuiPreviewInput nativeInput = nativeCamera && previewContext == Context.OWNER && runtime != null
+                    ? runtime.guiPreviewInput() : null;
             PreviewScene.NativeInputs sceneInput = nativeCamera && previewContext == Context.OWNER && runtime != null
                     ? new PreviewScene.NativeInputs(nativeInput.sample(), Map.of(),
                             ctx -> runtime.configureGuiPreviewExpressionContext(ctx, profile.selectedTexture()))
                     : PreviewScene.NativeInputs.EMPTY;
+            if (nativeCamera && previewContext != Context.OWNER) {
+                var dummy = asset.previewDummy(client.world, previewContext);
+                sceneInput = PreviewScene.NativeInputs.card(environment ->
+                        VanillaYsmQueries.populate(client, dummy, 20, profile.selectedTexture(), environment));
+            }
             PreviewScene.Sample sample = asset.sample(previewContext, tick, parameters, sceneInput);
             NativeGuiPreviewCamera.Camera camera = null;
             if (nativeCamera) {
@@ -135,44 +149,71 @@ public final class ModelPreview implements AutoCloseable {
                 camera = NativeGuiPreviewCamera.select(previewContext == Context.CARD, nativeHeight, nativeScale,
                         yaw, pitch, asset.settings.disableRotation()).withModelScale(profile.properties());
             }
-            List<PreviewMesh.Quad> projected = camera == null
-                    ? PreviewMesh.project(sample.vertices(), x, y, width, height, yaw, pitch, asset.settings)
-                    : PreviewMesh.project(sample.vertices(), x, y, width, height, asset.settings, camera);
+            PreviewMesh.Projection boundsProjection = camera == null
+                    ? PreviewMesh.projectBounds(sample.vertices(), x, y, width, height, yaw, pitch, asset.settings)
+                    : null;
+            List<PreviewMesh.Quad> projected = boundsProjection == null
+                    ? PreviewMesh.project(sample.vertices(), x, y, width, height, asset.settings, camera)
+                    : boundsProjection.quads();
+            float pixelsPerBlock = camera == null ? boundsProjection.pixelsPerBlock() : camera.pixelsPerBlock();
             // Native previews already have the author's/native player clock and fixed source camera.
             List<PreviewMesh.Quad> modelQuads = nativeCamera ? projected
                     : PreviewMesh.entrance(projected, x, y, width, height, sample.entryProgress());
             if (modelQuads.isEmpty()) return false;
+            boolean nativeCard = nativeCamera && previewContext == Context.CARD;
             boolean decorate = !nativeCamera || previewContext == Context.CARD;
-            List<PreviewMesh.Quad> quads = PreviewMesh.compose(modelQuads, x, y, width, height,
+            // OpenYSM ModelButton paints its author's images over the full 52×90
+            // widget, but renders the entity in a 76px viewport clipped to 70px.
+            int decorationHeight = nativeCard ? 90 : height;
+            int modelClipHeight = nativeCard ? 70 : height;
+            List<PreviewMesh.Quad> quads = PreviewMesh.compose(modelQuads, x, y, width, decorationHeight,
                     decorate && asset.rects.containsKey(-1), decorate && asset.rects.containsKey(-2));
             Matrix3x2f pose = new Matrix3x2f(context.getMatrices());
-            ScreenRect viewport = new ScreenRect(x, y, width, height).transformEachVertex(pose);
+            ScreenRect viewport = new ScreenRect(x, y, width, modelClipHeight).transformEachVertex(pose);
+            ScreenRect decorationViewport = new ScreenRect(x, y, width, decorationHeight).transformEachVertex(pose);
             ScreenRect priorScissor = context.scissorStack.peekLast();
             ScreenRect scissor = priorScissor == null ? viewport : viewport.intersection(priorScissor);
+            ScreenRect decorationScissor = priorScissor == null ? decorationViewport : decorationViewport.intersection(priorScissor);
             if (scissor == null || scissor.width() <= 0 || scissor.height() <= 0) return false;
             TextureSetup textureSetup = TextureSetup.of(asset.texture.getGlTextureView(), asset.texture.getSampler());
-            NativeGuiRenderBackend.Evidence nativeExecution = null;
-            if (nativeCamera) {
-                List<PreviewMesh.Quad> background = quads.stream().filter(quad -> quad.texture() == -1).toList();
-                List<PreviewMesh.Quad> foreground = quads.stream().filter(quad -> quad.texture() == -2).toList();
-                if (!background.isEmpty()) {
-                    context.state.addSimpleElement(new MeshState(pose, background, asset.rects, textureSetup,
-                            scissor, scissor, emittedVertices));
-                    context.state.goUpLayer();
-                }
-                nativeExecution = new NativeGuiRenderBackend.Evidence();
-                context.state.addSpecialElement(new NativeGuiRenderBackend.State(x, y, x + width, y + height,
-                        pose, scissor, scissor, modelQuads, asset.rects, asset.id, asset.texture.getSampler(),
-                        camera.pixelsPerBlock(), emittedVertices, nativeExecution));
-                if (!foreground.isEmpty()) {
-                    context.state.goUpLayer();
-                    context.state.addSimpleElement(new MeshState(pose, foreground, asset.rects, textureSetup,
-                            scissor, scissor, emittedVertices));
-                }
-            } else {
-                context.state.addSimpleElement(new MeshState(pose, quads, asset.rects, textureSetup,
-                        scissor, scissor, emittedVertices));
+            // OpenYSM submits GUI players to Minecraft's 3D entity renderer. Both YSM
+            // and server bbmodel meshes need its per-pixel depth path; a 2D face sort
+            // loses the thin eye planes even though their real depth is already available.
+            List<PreviewMesh.Quad> background = quads.stream().filter(quad -> quad.texture() == -1).toList();
+            List<PreviewMesh.Quad> foreground = quads.stream().filter(quad -> quad.texture() == -2).toList();
+            if (!background.isEmpty() && decorationScissor != null) {
+                context.state.addSimpleElement(new MeshState(pose, background, asset.rects, textureSetup,
+                        decorationScissor, decorationScissor, emittedVertices));
+                context.state.goUpLayer();
             }
+            NativeGuiRenderBackend.Evidence nativeExecution = new NativeGuiRenderBackend.Evidence();
+            NativeGuiRenderBackend.Attachments attachments = NativeGuiRenderBackend.Attachments.EMPTY;
+            if (camera != null && previewContext == Context.OWNER && client.player != null) {
+                try {
+                    var scene = asset.scenes.get(Context.OWNER);
+                    var items = YsmItemRenderer.extract(client.player, scene.animationPlayer());
+                    var equipment = runtime != null && (runtime.options.hideVanillaEquipment || runtime.isServerDisguised(client.player.getUuid()))
+                            ? List.<YsmEquipmentRenderer.Attachment>of()
+                            : YsmEquipmentRenderer.extract(client.player, scene.animationPlayer());
+                    attachments = new NativeGuiRenderBackend.Attachments(camera.projectedBodyMatrix(), items, equipment);
+                } catch (RuntimeException failure) {
+                    LOGGER.debug("Cannot extract optional GUI attachments for {}: {}", key, failure.toString());
+                }
+            }
+            int hashSeparator = key.lastIndexOf(':');
+            String sourceId = hashSeparator < 0 ? key : key.substring(0, hashSeparator);
+            Identifier skin = profile.isYsm() ? YsmPlayerSkin.resolve(sourceId,
+                    previewContext == Context.OWNER ? client.player : null).orElse(null) : null;
+            context.state.addSpecialElement(new NativeGuiRenderBackend.State(x, y, x + width, y + height,
+                    pose, scissor, scissor, modelQuads, asset.rects, asset.id, asset.texture.getSampler(),
+                    pixelsPerBlock, emittedVertices, nativeExecution, attachments, skin == null ? Map.of() : Map.of(0, skin)));
+            if (!foreground.isEmpty() && decorationScissor != null) {
+                context.state.goUpLayer();
+                context.state.addSimpleElement(new MeshState(pose, foreground, asset.rects, textureSetup,
+                        decorationScissor, decorationScissor, emittedVertices));
+            }
+            // ModelButton draws its label/hover/favorite after the foreground image.
+            context.state.goUpLayer();
             usedThisFrame.add(asset);
             frameModels++; frameQuads += quads.size();
             if (draws.size() < 32) draws.add(new DrawSnapshot(key, x, y, width, height, sample, quads, asset.rects,
@@ -207,8 +248,12 @@ public final class ModelPreview implements AutoCloseable {
 
     /** Restart an already cached model only when the user selects it, never on ordinary draws. */
     public void restart(String key) {
+        restart(key, Context.OWNER);
+    }
+
+    public void restart(String key, Context previewContext) {
         Asset asset = assets.get(key);
-        if (asset != null && asset.scenes.containsKey(Context.OWNER)) asset.scenes.get(Context.OWNER).restart();
+        if (asset != null && asset.scenes.containsKey(previewContext)) asset.scenes.get(previewContext).restart();
     }
 
     /** Screen.removed() should call this. The same instance may be reused on return. */
@@ -250,6 +295,9 @@ public final class ModelPreview implements AutoCloseable {
             Map<String, Object> info = new LinkedHashMap<>();
             info.put("key", draw.key); info.put("x", draw.x); info.put("y", draw.y);
             info.put("context", draw.previewContext.name());
+            Asset asset=assets.get(draw.key);
+            PreviewScene scene=asset==null?null:asset.scenes.get(draw.previewContext);
+            info.put("queryFallbacks",scene==null?List.of():scene.queryDiagnostics());
             info.put("cameraSource", draw.camera == null ? "bbmodel-bounds-fit" : draw.camera.source());
             info.put("nativeCamera", draw.camera != null);
             if (draw.camera != null) {
@@ -258,15 +306,15 @@ public final class ModelPreview implements AutoCloseable {
                 info.put("anchorY", draw.camera.translationY());
                 var scale = draw.camera.modelScale();
                 info.put("modelScale", Map.of("x", scale.x(), "y", scale.y(), "z", scale.z()));
-                info.put("nativeBackend", NativeGuiRenderBackend.pipelineDiagnostics());
-                info.put("nativeExecution", draw.nativeExecution.diagnostics());
-                info.put("modelVertexDepthRange", List.of(draw.quads.stream().filter(quad -> quad.texture() >= 0)
-                                .flatMap(quad -> quad.points().stream()).mapToDouble(PreviewMesh.Point::depth).min().orElse(0),
-                        draw.quads.stream().filter(quad -> quad.texture() >= 0).flatMap(quad -> quad.points().stream())
-                                .mapToDouble(PreviewMesh.Point::depth).max().orElse(0)));
             } else {
-                info.put("backend", "bbmodel-simple-gui-2d");
+                info.put("backend", "bbmodel-native-gui-depth");
             }
+            info.put("nativeBackend", NativeGuiRenderBackend.pipelineDiagnostics());
+            info.put("nativeExecution", draw.nativeExecution.diagnostics());
+            info.put("modelVertexDepthRange", List.of(draw.quads.stream().filter(quad -> quad.texture() >= 0)
+                            .flatMap(quad -> quad.points().stream()).mapToDouble(PreviewMesh.Point::depth).min().orElse(0),
+                    draw.quads.stream().filter(quad -> quad.texture() >= 0).flatMap(quad -> quad.points().stream())
+                            .mapToDouble(PreviewMesh.Point::depth).max().orElse(0)));
             info.put("width", draw.width); info.put("height", draw.height);
             info.put("clip", Map.of("x", draw.scissor.getLeft(), "y", draw.scissor.getTop(),
                     "width", draw.scissor.width(), "height", draw.scissor.height()));
@@ -346,7 +394,7 @@ public final class ModelPreview implements AutoCloseable {
 
     private void destroy(Asset asset) {
         MinecraftClient.getInstance().getTextureManager().destroyTexture(asset.id);
-        asset.scenes.values().forEach(PreviewScene::restart);
+        asset.scenes.values().forEach(PreviewScene::dispose);
     }
 
     private Asset prepare(BbModel model, String previewAnimation, YsmModelProfile profile) throws IOException {
@@ -474,6 +522,7 @@ public final class ModelPreview implements AutoCloseable {
         final String previewAnimation;
         final YsmModelProfile profile;
         final PreviewMesh.Settings settings;
+        private final Map<Context, OtherClientPlayerEntity> dummies = new EnumMap<>(Context.class);
 
         Asset(BbModel model, Identifier id, NativeImageBackedTexture texture,
               Map<Integer, PreviewAtlasUv> rects, long pixels, String previewAnimation,
@@ -483,9 +532,20 @@ public final class ModelPreview implements AutoCloseable {
             this.previewAnimation = previewAnimation;
         }
 
+        /** The source gallery has a fresh standing player with empty inventory, never the live owner's gear. */
+        OtherClientPlayerEntity previewDummy(ClientWorld world, Context previewContext) {
+            if (world == null) return null;
+            OtherClientPlayerEntity dummy = dummies.get(previewContext);
+            if (dummy == null || dummy.getEntityWorld() != world)
+                dummy = new OtherClientPlayerEntity(world, new GameProfile(UUID.randomUUID(), "mpa_preview"));
+            dummies.put(previewContext, dummy);
+            return dummy;
+        }
+
         PreviewScene.Sample sample(Context context, float tick, Map<String, Double> parameters,
                                    PreviewScene.NativeInputs inputs) {
             PreviewScene scene = scenes.computeIfAbsent(context, slot -> new PreviewScene(model, previewAnimation, slot));
+            if(profile.isYsm()){scene.enableNativeYsm();scene.enableQueryDiagnostics();}
             PreviewScene.Sample sample = scene.sample(tick, parameters, inputs);
             for (BbModel.Vertex vertex : sample.vertices()) if (!rects.containsKey(vertex.texture()))
                 throw new IllegalArgumentException("Missing preview texture reference");

@@ -44,27 +44,35 @@ public final class YsmModelEffects implements AutoCloseable {
         this.profile = currentProfile; tick();
     }
     public Object handle(String function, List<Object> arguments) {
+        return handle(function, arguments, false);
+    }
+    /** Native YSM function arity/ranges are separate from the legacy bbmodel keyframe shorthand. */
+    public Object handle(String function, List<Object> arguments, boolean nativeYsm) {
+        return handle(function, arguments, nativeYsm, "");
+    }
+    public Object handle(String function, List<Object> arguments, boolean nativeYsm, String controllerScope) {
         requireThread(); tick();
         if (owner == null || world == null || arguments == null) return false;
         try {
             return switch (function) {
-                case "ysm.play_sound" -> play(SoundRequest.parse(arguments));
-                case "ysm.stop_sound" -> stop(arguments);
-                case "ysm.stop_all_sounds" -> stopAll(arguments);
+                case "ysm.play_sound" -> play(nativeYsm ? SoundRequest.parseNative(arguments) : SoundRequest.parse(arguments), nativeYsm, controllerScope);
+                case "ysm.stop_sound" -> stop(arguments, nativeYsm, controllerScope);
+                case "ysm.stop_all_sounds" -> stopAll(arguments, nativeYsm, controllerScope);
                 case "ysm.particle" -> emit(ParticleSpec.parse(arguments), false);
                 case "ysm.abs_particle" -> emit(ParticleSpec.parse(arguments), true);
                 default -> false;
             };
         } catch (IllegalArgumentException invalid) { rejected++; return false; }
     }
-    private boolean play(SoundRequest request) {
+    private boolean play(SoundRequest request, boolean nativeYsm, String controllerScope) {
+        String scope = soundScope(nativeYsm, request.global(), controllerScope);
         if (request.name().contains(":")) {
             Identifier id = Identifier.tryParse(request.name());
             // The private namespace is issued only after this profile authorizes its bytes.
             if (id == null || YsmAudioRegistry.isPrivate(id)) return false;
         }
         Playing existing = sounds.stream().filter(playing -> !request.key().isEmpty() && playing.key.equals(request.key())
-                && playing.global == request.global()).findFirst().orElse(null);
+                && playing.scope.equals(scope)).findFirst().orElse(null);
         if (existing != null && !request.replace()) return false;
         if (live() - (existing == null ? 0 : 1) >= MAX_INSTANCE_LIVE || !GLOBAL.charge(true, System.nanoTime())) { rejected++; return false; }
         Identifier identifier; boolean custom = !request.name().contains(":");
@@ -84,20 +92,23 @@ public final class YsmModelEffects implements AutoCloseable {
             ModelSound sound = new ModelSound(identifier, owner, world, custom, request.loop(), request.volume(), request.pitch());
             SoundSystem.PlayResult result = client.getSoundManager().play(sound);
             if (result == SoundSystem.PlayResult.NOT_STARTED) { sound.finish(); GLOBAL.release(); return false; }
-            sounds.add(new Playing(request.key(), request.global(), sound, System.nanoTime())); soundStarts++; return true;
+            sounds.add(new Playing(request.key(), scope, sound, System.nanoTime())); soundStarts++; return true;
         } catch (RuntimeException invalid) { GLOBAL.release(); rejected++; return false; }
     }
-    private boolean stop(List<Object> arguments) {
+    private boolean stop(List<Object> arguments, boolean nativeYsm, String controllerScope) {
         if (arguments.size() < 1 || arguments.size() > 2) throw new IllegalArgumentException("Sound stop arguments");
-        String key = soundKey(arguments.getFirst()); boolean global = arguments.size() == 2 && number(arguments.get(1)) != 0;
+        String key = nativeYsm ? nativeSoundKey(arguments.getFirst()) : soundKey(arguments.getFirst());
+        boolean global = arguments.size() == 2 && number(arguments.get(1)) != 0;
+        String scope = soundScope(nativeYsm, global, controllerScope);
         if (key.isEmpty()) return false;
-        Playing found = sounds.stream().filter(playing -> playing.key.equals(key) && playing.global == global).findFirst().orElse(null);
+        Playing found = sounds.stream().filter(playing -> playing.key.equals(key) && playing.scope.equals(scope)).findFirst().orElse(null);
         if (found == null) return false; release(found); return true;
     }
-    private boolean stopAll(List<Object> arguments) {
+    private boolean stopAll(List<Object> arguments, boolean nativeYsm, String controllerScope) {
         if (arguments.size() > 1) throw new IllegalArgumentException("Sound stop arguments");
         boolean global = !arguments.isEmpty() && number(arguments.getFirst()) != 0;
-        for (Playing playing : List.copyOf(sounds)) if (playing.global == global) release(playing);
+        String scope = soundScope(nativeYsm, global, controllerScope);
+        for (Playing playing : List.copyOf(sounds)) if (playing.scope.equals(scope)) release(playing);
         return true;
     }
     private void release(Playing playing) {
@@ -163,7 +174,7 @@ public final class YsmModelEffects implements AutoCloseable {
                 "packPlaying", sounds.stream().filter(playing -> !playing.sound.custom && client.getSoundManager().isPlaying(playing.sound)).count());
     }
     private void requireThread() { if (!client.isOnThread()) throw new IllegalStateException("Model effects require the client thread"); }
-    private record Playing(String key, boolean global, ModelSound sound, long started) { }
+    private record Playing(String key, String scope, ModelSound sound, long started) { }
     private static final class ModelSound extends AbstractSoundInstance implements TickableSoundInstance {
         private final Entity owner;
         private final ClientWorld world;
@@ -190,16 +201,25 @@ public final class YsmModelEffects implements AutoCloseable {
     }
     public record SoundRequest(String key, String name, boolean replace, boolean global, boolean loop, float volume, float pitch) {
         public static SoundRequest parse(List<Object> arguments) {
+            return parse(arguments, false);
+        }
+        public static SoundRequest parseNative(List<Object> arguments) {
+            return parse(arguments, true);
+        }
+        private static SoundRequest parse(List<Object> arguments, boolean nativeYsm) {
             if (arguments.isEmpty() || arguments.size() > 5) throw new IllegalArgumentException("Sound arguments");
+            if (nativeYsm && arguments.size() < 2) throw new IllegalArgumentException("Native PlaySound requires id and soundName");
             boolean keyframe = arguments.size() == 1;
-            String key = keyframe ? "" : soundKey(arguments.get(0));
+            String key = keyframe ? "" : nativeYsm ? nativeSoundKey(arguments.get(0)) : soundKey(arguments.get(0));
             Object sound = arguments.get(keyframe ? 0 : 1);
             if (!(sound instanceof String name) || name.isBlank() || name.length() > 256 || name.chars().anyMatch(Character::isISOControl)
                     || !name.contains(":") && (name.contains("/") || name.contains("\\") || name.contains("..")))
                 throw new IllegalArgumentException("Sound name");
-            int flags = arguments.size() > 2 ? integer(arguments.get(2), 0, 7) : 0;
-            float volume = (float) (arguments.size() > 3 ? bounded(number(arguments.get(3)), .001, 4) : 1);
-            float pitch = (float) (arguments.size() > 4 ? bounded(number(arguments.get(4)), .01, 4) : 1);
+            int flags = arguments.size() > 2 ? nativeYsm ? nativeInteger(arguments.get(2), 0, 7)
+                    : integer(arguments.get(2), 0, 7) : 0;
+            float volume = (float) (arguments.size() > 3 ? bounded(number(arguments.get(3)), .001, nativeYsm ? 1000 : 4) : 1);
+            float pitch = (float) (arguments.size() > 4 ? bounded(number(arguments.get(4)), nativeYsm ? .001 : .01,
+                    nativeYsm ? 1000 : 4) : 1);
             return new SoundRequest(key, name, (flags & 1) != 0, (flags & 2) != 0, (flags & 4) != 0, volume, pitch);
         }
     }
@@ -218,6 +238,29 @@ public final class YsmModelEffects implements AutoCloseable {
         double number = number(value);
         if (number < 0 || number > Integer.MAX_VALUE) throw new IllegalArgumentException("Sound id");
         int id = (int) number; return id == 0 ? "" : "n:" + id;
+    }
+    /** Upstream truncates numeric IDs before rejecting negative IDs; string and numeric namespaces stay distinct. */
+    static String nativeSoundKey(Object value) {
+        if (!(value instanceof Number)) return soundKey(value);
+        double number = number(value);
+        if (number < Integer.MIN_VALUE || number > Integer.MAX_VALUE) throw new IllegalArgumentException("Sound id");
+        int id = (int) number;
+        if (id < 0) throw new IllegalArgumentException("Sound id");
+        return id == 0 ? "" : "n:" + id;
+    }
+    /** An entity's global manager is also the native fallback when no controller/playback context exists. */
+    static String soundScope(boolean nativeYsm, boolean global, String controllerScope) {
+        if (!nativeYsm) return global ? "bbmodel.global" : "bbmodel.local";
+        if (global || controllerScope == null || controllerScope.isEmpty()) return "ysm.global";
+        if (controllerScope.length() > 512) throw new IllegalArgumentException("Sound context");
+        return "ysm.local:" + controllerScope;
+    }
+    private static int nativeInteger(Object value, int min, int max) {
+        double valueNumber = number(value);
+        if (valueNumber < Integer.MIN_VALUE || valueNumber > Integer.MAX_VALUE) throw new IllegalArgumentException("Effect integer");
+        int integer = (int) valueNumber;
+        if (integer < min || integer > max) throw new IllegalArgumentException("Effect integer");
+        return integer;
     }
     private static int integer(Object value, int min, int max) {
         double number = number(value);

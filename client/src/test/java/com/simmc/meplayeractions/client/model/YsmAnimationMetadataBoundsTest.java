@@ -10,15 +10,15 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class YsmAnimationMetadataBoundsTest {
-    @Test void nativeTimelineRunsSixtyFourIndependentProgramsInOrderAndRejectsTheSixtyFifth() throws Exception {
+    @Test void nativeTimelineRunsTwoHundredFiftySixIndependentProgramsInOrderAndRejectsTheNext() throws Exception {
         JsonObject raw = fixture(65535);
         JsonObject clip = clip(raw, "parallel0", .01, "LOOP");
         var scripts = new ArrayList<String>(); scripts.add("v.n+=1;return 99;");
-        for (int i = 1; i < 64; i++) scripts.add("v.n+=1;v.last=" + i + ";");
+        for (int i = 1; i < 256; i++) scripts.add("v.n+=1;v.last=" + i + ";");
         effect(clip, "timeline", 0, scripts);
         AnimationPlayer player = new AnimationPlayer(parse(raw)); player.sample(0, List.of());
-        assertEquals(64d, player.expressionVariables().get("variable.n"));
-        assertEquals(63d, player.expressionVariables().get("variable.last"));
+        assertEquals(256d, player.expressionVariables().get("variable.n"));
+        assertEquals(255d, player.expressionVariables().get("variable.last"));
         scripts.add("v.n+=1;"); effect(clip, "timeline", 0, scripts);
         assertThrows(IllegalArgumentException.class, () -> parse(raw));
     }

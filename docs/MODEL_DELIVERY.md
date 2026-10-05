@@ -1,59 +1,85 @@
-# 模型同步与部署（0.4.3）
+# 模型同步与部署
 
-[文档索引](README.md) · [安装和使用](../README.md) · [客户端配置](CLIENT_CONFIG.md)
+[文档索引](README.md) · [快速安装](../README.md#快速安装) · [客户端配置](CLIENT_CONFIG.md) · [客户端协议](CLIENT_PROTOCOL.md)
 
-0.4.3 沿用服务器默认主动同步完整原模型。观看者安装客户端模组后，服务器根据当前伪装和观众许可决定同步哪份资产；客户端校验原始 hash、解析模型并准备纹理，再完成服务器确认后接管显示。无需手动选择服务器模型，也无需为模组增加 MPA 资源包索引或执行离线合并工具。
+当前服务端与客户端均为 **0.4.9**。服务器主动推送授权伪装的完整原模型；安装客户端模组的观看者完成校验与确认后接管渲染。未安装模组或尚未接管的观看者使用 ModelEngine 显示，被伪装者本人无需安装模组。
 
-## 三条资源路径
+## 职责与部署方式
 
-| 路径 | 资源来源与用途 |
+| 组件 | 职责 |
 | --- | --- |
-| 原版客户端显示 | ModelEngine 导入数值蓝图并生成资源，CraftEngine 等现有流程继续合并、保护和下发完整服务器资源包。未安装模组或未完成接管的观看者继续使用该显示路径。 |
-| 模组显示服务器伪装 | MPA 向当次被授权的观看者同步完整原始 `.bbmodel`，包含骨架、动画、表达式和内嵌 PNG；客户端按模型身份校验、缓存并解释。 |
-| 私人本地外观 | 客户端内置 CC0 默认模型、三套 CC BY-NC-SA 4.0 酒狐可选模型及 `config/meplayeractions/models/` 的本地文件，资产许可见 [第三方说明](../THIRD_PARTY_NOTICES.md)。只改变自己在本机看到的外观，与服务器模型缓存分开。 |
+| ModelEngine | 导入蓝图、生成原版资源、向未接管的观看者显示模型 |
+| CraftEngine 等现有资源包流程 | 合并、托管、保护与下发服务器资源包 |
+| MEPlayerActions 服务端 | 管理伪装、动作、观看许可与绑定；主动推送已有完整原模型 |
+| MEPlayerActions 客户端 | 校验资产、计算本地动画并接管授权模型；可独立使用私人外观 |
 
-私人 YSM 模型作为玩家本地“皮肤”的用途属于 OpenYSM 原有能力，在本项目中对应 CLIENT 私人模型路线。当前可导入普通 YSM `spec:2` 文件夹及本地 `.bbmodel`，加密 `.ysm` 文件加载尚未实现。私人文件由玩家自行安装，不成为 SERVER 下发资产，也不改变其他观看者看到的服务器外观。
+MPA 不生成或重打包 ME／CE 资源包。完整原模型含内嵌贴图，可能与服务器资源包中的贴图重复；当前推送路径尚未跨包复用材质。ME／CE 的资源包保护也不加密 MPA 推送的原模型，被授权接收者可以取得这份资产。
 
-服务器 `.bbmodel` 伪装则由服务器决定。未安装客户端模组者可通过 ME／服务器资源包观看；安装模组者可通过 MPA 完整原模型推送接管同一个玩家的本地渲染，被伪装者本人无需安装模组。两类观看者可以同时存在，继续遵守相同的服务器观看许可；这就是服务端插件与可选客户端组合的核心用途。
+仅中继私人模型分享时，同一个服务端 JAR 可运行在 Paper 1.21.11／Java 21 上，无需 ModelEngine 或服务器资源包。客户端本地私人外观无需服务端；多人分享需双方主动启用并通过权限检查，与服务器伪装推送分开。
 
-MPA 的新职责是同步已有完整原模型，不负责生成或重打包 ModelEngine／CraftEngine 资源包。现有资源包生成、保护、优化和下发设置可继续使用。推送原模型的内嵌贴图可能与资源包贴图重复；从 ME／CE 资源包复用纹理尚未实现。
+## 服务端配置
 
-## 安装与原模型来源
+配置位于 `plugins/MEPlayerActions/config.yml`。首次安装可使用安装包默认配置；升级保留已有文件，缺少的新字段采用默认值。修改后执行 `/meplayeractions reload` 并重新伪装；ME 蓝图变化还需加载新 ME 模型并按原流程更新服务器资源包。
 
-客户端和插件建议一同升级到 0.4.3。客户端放入当前 Minecraft 实例的 `mods/`，服务器按安装 ZIP 的 `plugins/` 布局部署；随后加载 ME 模型并沿用服务器原有资源包发布流程。
+| 配置 | 默认值与作用 |
+| --- | --- |
+| `models.default` / `models.allowed` | `ysm_01_jk` / 两套示例；默认模型与可用模型白名单 |
+| `disguise.scale` | `1.0`，在原始尺寸上缩放 |
+| `disguise.hide-self` / `show-self` | 均 `true`；隐藏原版本人并显示伪装，第一人称由客户端跳过完整身体 |
+| `disguise.view-distance` / `max-viewers` | `8` 格 / `10` 名其他观看者，不包含本人；距离须严格小于设置值 |
+| `disguise.adopt-original` | `true`，识别可接管的原生 `/meg` 伪装；对应模型须使用 `state_machine` |
+| `client-sync.enabled` | `true`，开启客户端同步；服务端伪装仍可供原版观看者使用 |
+| `client-sync.view-distance-blocks` | `64`，客户端同步的距离上限；仍须满足服务器伪装许可与跟踪条件 |
+| `client-sync.private-models.enabled` | `false`，私人多人分享开关，与服务器模型推送分开 |
+| `client-sync.private-models.max-bundle-bytes` | `8388608`（8 MiB），私人完整归档及展开资源各自的上限 |
+| `client-sync.private-models.max-stored-bytes` | `33554432`（32 MiB），含已发布、接收和验证预留的内存预算 |
+| `client-sync.private-models.view-distance-blocks` / `max-viewers` | `64` 格 / `10` 名其他观看者，仍检查权限、同世界、实体跟踪与可见性 |
 
-MPA 的服务器资产查找顺序为：
+伪装命令可按本次覆盖配置，例如：
 
-1. `plugins/MEPlayerActions/models/<模型ID>.bbmodel`。
-2. 服务端 JAR 的 `models/<模型ID>.bbmodel`。
-3. ModelEngine `blueprints/` 中匹配文件名，再匹配 `model_identifier` 的 `.bbmodel`。
+```text
+/meplayeractions disguise ysm_02_jk scale=0.8 show-self=true view-distance=8 max-viewers=10 delay=2 effect=slowness:1
+```
 
-服务端 JAR 包含 `ysm_01_jk`、`ysm_02_jk` 两套完整原模型作为后备；客户端 JAR 不内置这两套服务器示例。客户端内置的 `openysm_default` 是独立的私人默认模型。
+`delay` 默认 2 tick，只影响 ME 视觉轨迹，客户端默认即时跟随；`effect` 默认无，只允许缓慢效果并需 `mact.disguise.effects`。手动动作使用 `play <动作> [速度] [ONCE|LOOP|HOLD]`，`stop` 停动作，`undisguise` 解除本插件伪装；`pose sit`／`pose crawl` 需要 GSit，`reset` 清理本插件姿态与效果。`animations`／`menu` 查看动作，`sync` 调整同步项目，`status` 查看诊断。完整帮助用 `/meplayeractions help`。
 
-安装包的 `plugins/ModelEngine/blueprints/meplayeractions/` 保存 ME 数值蓝图；完整表达式原模型来自服务端 JAR，安装包 `examples/models/` 的副本仅供参考。0.4.2 不再自动把这两套 raw 复制到 `plugins/MEPlayerActions/models/`，避免旧文件优先于升级后的 JAR。升级已有安装时，管理员应核对这里的显式覆盖文件；想使用新的内置模型时需移除对应旧覆盖，自定义覆盖则继续保留。
+私人分享另需授予发布者 `mact.private.upload`、观看者 `mact.private.view`，两个权限默认均为 `false`；发布者在客户端主页齿轮中主动开启分享。本人已有服务器伪装时，手动 CLIENT 私人覆盖只供本人，不分享该覆盖。
 
-两类模型用途不同：示例原模型包含 60 个动作及脚本，ME 蓝图是 57 个数值动作。数值蓝图可以提供其中的数值动画，但不能恢复已经烘焙掉的表达式、物理脚本或原始文件 hash；不要用它覆盖完整原模型。
+后台发现与动画更新使用独立频率，配置、默认值与边界集中在[性能配置](PERFORMANCE.md)。两端均升级后协商增量同步，旧客户端继续收到完整状态。
 
-其他自定义模型可以从 ME `blueprints/` 直接读取，但文件应是客户端支持的完整 `.bbmodel`，包含骨架、动画和内嵌 PNG；已烘焙缺失的语义需要管理员在第一项目录提供完整 raw 覆盖。ME 模型 ID、MPA 白名单和原模型 ID 应一致。缺失、过大、解析失败或尚在后台准备时保留 ME 显示。修改原模型后执行 `/meplayeractions reload` 并重新伪装；ME 蓝图变化还需加载新的 ME 模型并按原流程更新原版资源包。
+## 原模型的正确放置
 
-## 自动同步与缓存
+MPA 依次查找：
 
-服务器先为当前可见绑定提出资产 offer。客户端只反馈该 offer 对应的缓存状态；缓存缺失时服务器分片推送模型，缓存命中时仍须重新校验资产和完成当前绑定的显示接管。客户端不能发送任意模型 ID、文件路径或 URL 来选择下载。
+1. `plugins/MEPlayerActions/models/<模型ID>.bbmodel`：管理员可选的显式覆盖。
+2. 服务端 JAR 的 `models/<模型ID>.bbmodel`：内置示例原模型。
+3. `plugins/ModelEngine/blueprints/`：递归匹配文件名，再匹配 `model_identifier`。
 
-模型按原始 JSON 字节的 SHA-256 标识；传输压缩不改变身份。SHA 校验、模型解析及 GPU 纹理准备完成后，客户端才发就绪确认；只有匹配 owner、instance、hash 的服务器 ACK 到达后才绘制。握手、缓存命中或收到文件本身都不会先隐藏 ME。
+**通常自定义模型只需放在 ModelEngine 的 `blueprints/` 中**，不必再复制进 MPA。该文件须保留客户端需要的完整骨架、动画和内嵌 PNG；只有 ME 蓝图已经烘焙、缺少原始表达式或资源时，才需第一项目录提供完整原模型覆盖。ME 模型 ID、MPA 白名单与原模型 ID 应一致。
 
-已校验的服务器模型保存在当前实例的 `config/meplayeractions/cache/`，缓存总量上限 128 MiB、最多 512 个有效条目，按最近使用时间裁剪，离服后保留。缓存文件存在不等于当前服务器授予使用权；跨服或重连仍需当次 offer 和可见绑定。此目录不是私人模型图库的导入目录。
+服务端 JAR 内置 `ysm_01_jk`、`ysm_02_jk` 完整原模型；客户端 JAR 不内置这两套服务器示例。安装包的 `plugins/ModelEngine/blueprints/meplayeractions/` 是 ME 数值蓝图，`examples/models/` 仅供参考。示例完整原模型有 60 个动作及脚本，ME 数值蓝图有 57 个动作；烘焙蓝图不能恢复已移除的表达式、物理脚本或原始文件 hash，不应用它覆盖完整原模型。
 
-若发生资产校验、解析、纹理准备或租约失败，服务器保持或恢复对应观看者的 ME 显示。用 `/mpaclient status` 查看连接、资产模式、同步阶段、服务器来源/原因与确认数量；服务器侧 `/meplayeractions status` 也提供本人资产诊断。排查首先确认两端版本、服务器完整原模型、观众许可与客户端渲染总开关。0.4.3 默认路线无需检查旧 MPA 资源包索引。
+MPA 不自动把内置原模型复制到自己的 `models/` 目录。升级时检查该目录中的旧覆盖，它们会遮蔽新版 JAR：需要使用新内置模型时移走对应旧覆盖，自定义文件继续保留。优先来源无效会报告失败，不会悄悄改用下一来源。
 
-资源重载撤销显示租约并重建 GPU 纹理，保留完整推送模型与有效在途下载；完成新的 ready/ACK 后恢复显示。0.4.3 的本人显示来源在同一伪装实例内保留：默认 SERVER，可在模型主页手动 CLIENT 私人覆盖；新的伪装实例重新 SERVER，解除后恢复保存的私人选择。断开、世界切换或授权消失会清理当前绑定和下载授权，磁盘缓存继续保留。
+服务器原模型最多 8 MiB，压缩后最多 4 MiB。缺失、过大、解析失败或尚在后台准备时保留 ME 显示。生产资源包应继续包含服务器自身其他模型和素材，示例资源不能替代完整生产包。
 
-## 兼容与适配边界
+## 推送、权限与缓存
 
-服务端保留有界的旧资源包模式与旧客户端下载模式。旧资源包索引和离线工具见 [旧客户端资源包格式](CLIENT_RESOURCE_PACK.md)；它们不是新版默认部署步骤。新客户端要求服务端协商 `server-push`，旧服务端不支持时保持后端显示并提示升级，不能只凭双方使用 v3 就认定兼容。
+服务器根据当前伪装、观看许可和可见绑定选择资产。客户端仅反馈该 offer 对应的缓存状态；缓存缺失时由服务器分片推送，不能提交任意模型 ID、路径或 URL 申请下载。播放服务器动作也必须使用当前授权目录，不因关闭客户端渲染而失效。
 
-客户端没有 ModelEngine 硬依赖；单人或无插件服务器仍可使用私人模型。其他服务端模型引擎需要实现同一 v3 协议的授权模型同步、状态映射、原版玩家追踪、ready/ACK 和失败回退；本项目当前的服务端适配器仍使用 ModelEngine，不会自动识别未知引擎。MPA 与 OpenYSM／Freesia 的网络协议不互通。
+资产按原始 JSON 字节的 SHA-256 标识。客户端完成 hash 校验、解析及纹理准备，服务器确认当前绑定后才接管显示；单纯收到文件或命中缓存不会先隐藏 ME。校验、解析、纹理或租约失败时，服务器保持或恢复该观看者的 ME 显示。消息字段、传输预算和限流集中见 [客户端协议](CLIENT_PROTOCOL.md)。
 
-被授权接收者可以取得推送的完整原模型。ME／CE 的资源包保护只作用于那条资源包路径，不加密 MPA 推送资产；模型与贴图应具有相应分发许可。
+服务器模型缓存位于当前 Minecraft 实例的 `config/meplayeractions/cache/`，总量最多 128 MiB、最多 512 个有效条目，按最近使用时间裁剪，**离服后保留**。跨服或重连仍需当次授权和确认；缓存不会自动加入私人图库。私人导入目录为 `config/meplayeractions/models/`，私人选择保存在 `config/meplayeractions-client.json`。
 
-消息字段和限流见 [客户端协议 v3](../src/main/java/com/simmc/meplayeractions/client/CLIENT_PROTOCOL.md)，运行生命周期见 [架构](../ARCHITECTURE.md)。
+资源重载撤销显示租约并重建纹理，保留完整推送模型和有效在途下载，确认后恢复当前来源。断线、世界切换或授权消失清理当前绑定与下载授权，磁盘缓存继续保留。更完整的显示优先级见 [客户端配置](CLIENT_CONFIG.md)。
+
+## 部署排查与兼容
+
+1. 确认两端版本、ME 模型加载、白名单和观众许可；客户端检查 `/mpaclient status`，服务器检查 `/meplayeractions status`。
+2. 接管数为 0、模型“加载中”时，查看服务器资产来源与原因，核对上面的完整原模型来源。默认推送路线无需排查 MPA 资源包索引。
+3. 服务端日志搜索“客户端模型资产”，关注 `missing`／`invalid`、模型 ID、来源与原因。缺失／无效覆盖文件、哈希不符和纹理解析失败分别按资产原因处理。
+4. 渲染成功但本人不可见时，按 F5 查看第三人称，检查“伪装显示”和服务器本人观看许可；玩家／装备显隐是不同选项。
+
+服务器保留有界的旧资源包与旧下载兼容路线，见 [旧资源包格式](CLIENT_RESOURCE_PACK.md)，它们不是当前安装步骤。当前客户端要求协商 `server-push`；旧服务端未支持时保留服务器后端显示，不能仅凭双方同为协议 v3 判断兼容。
+
+客户端没有 ModelEngine 硬依赖，但未知服务器模型引擎需要适配相同的资产身份、授权、状态与接管／回退约定，不会自动识别。本项目的网络协议与 OpenYSM／Freesia 原协议不互通。资产分发须遵守模型与贴图许可，见 [第三方说明](../THIRD_PARTY_NOTICES.md)。

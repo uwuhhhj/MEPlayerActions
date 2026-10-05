@@ -24,6 +24,7 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
     private final Map<ButtonWidget,String> roles=new IdentityHashMap<>();
     private boolean clientTab,advanced,initializedLocalMode;
     private String initializedInstance="";
+    private String initializedSyncStatus="";
 
     public PlayerModelScreen(ClientRuntime runtime) {this(runtime,null);}
     public PlayerModelScreen(ClientRuntime runtime,Screen parent) {
@@ -37,6 +38,7 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
             clientTab=localMode;advanced=false;clearGalleryPreviews();
         }
         initializedLocalMode=localMode;initializedInstance=instance;roles.clear();
+        initializedSyncStatus=runtime.privateSyncStatus();
         super.init();
     }
     @Override protected int galleryTop() {return height<210?52:58;}
@@ -48,44 +50,77 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
     @Override protected void buildHeaderControls() {
         int half=(panelWidth-6)/2,y=top-29;
         roles.put(flatButton(clientTab?"客户端 ✓":"客户端",left,y,half,24,()->switchSource(true),
-                "本地图库与私人设置；仅自己可见，可手动覆盖本人服务器伪装",clientTab),"clientSource");
+                "本地图库与私人设置；默认本机可见，可开启协商同步；手动覆盖服务器伪装仍只在本机显示",clientTab),"clientSource");
         roles.put(flatButton(clientTab?"服务器下发":"服务器下发 ✓",left+half+6,y,panelWidth-half-6,24,()->switchSource(false),
                 "仅展示当前服务器绑定的模型；模型选择与分发由服务器决定",!clientTab),"serverSource");
     }
 
     @Override protected void buildFooterControls() {
         roles.put(button("返回",left,height-27,46,this::close,"返回上一页"),"back");
-        roles.put(button("◉",left+50,height-27,20,()->{
+        // Like OpenYSM ConfigCheckBoxForge / BooleanOptionRow, visible selection
+        // comes from the actual option; the label also identifies each separate switch.
+        boolean serverDisguise = runtime.serverOwnModelPresent();
+        int toggleX = left + 50, toggleY = height - 27;
+        boolean hidePlayer = serverDisguise || runtime.options.hideVanillaPlayer;
+        var vanillaPlayer = flatButton(hidePlayer?"玩家隐藏":"玩家显示",toggleX,toggleY,44,20,()->{
+            if (runtime.serverOwnModelPresent()) return;
+            runtime.options.hideVanillaPlayer=!runtime.options.hideVanillaPlayer;runtime.options.save();clearAndInit();
+        },serverDisguise?"服务器伪装期间，原版玩家本体保持隐藏；伪装模型单独控制"
+                :"只切换原版玩家本体；装备和伪装模型分别控制",hidePlayer);
+        vanillaPlayer.active = !serverDisguise;
+        roles.put(vanillaPlayer,"vanillaPlayer");
+        boolean hideEquipment = serverDisguise || runtime.options.hideVanillaEquipment;
+        var vanillaEquipment = flatButton(hideEquipment?"装备隐藏":"装备显示",toggleX+48,toggleY,44,20,()->{
+            if (runtime.serverOwnModelPresent()) return;
+            runtime.options.hideVanillaEquipment=!runtime.options.hideVanillaEquipment;runtime.options.save();clearAndInit();
+        },serverDisguise?"服务器伪装期间，原版盔甲、披风和鞘翅保持隐藏；伪装模型单独控制"
+                :"只切换原版盔甲、披风和鞘翅；玩家本体和伪装模型分别控制",hideEquipment);
+        vanillaEquipment.active = !serverDisguise;
+        roles.put(vanillaEquipment,"vanillaEquipment");
+        roles.put(flatButton(runtime.options.showSelf?"伪装显示":"伪装隐藏",toggleX+96,toggleY,44,20,()->{
             runtime.options.showSelf=!runtime.options.showSelf;runtime.options.save();clearAndInit();
-        },runtime.options.showSelf?"本人模型：显示；点击隐藏":"本人模型：隐藏；点击显示"),"selfVisibility");
-        roles.put(button("▣",left+74,height-27,20,()->{runtime.toggleEnabled();clearAndInit();},
-                runtime.options.enabled?"客户端渲染：开启；点击关闭":"客户端渲染：关闭；点击开启"),"clientRendering");
-        var gear=new ButtonWidget(left+98,height-27,20,20,Text.literal("⚙"),button->{advanced=!advanced;clearAndInit();},narration->narration.get()) {
+        },"只切换本人的伪装模型；原版玩家和装备分别控制",runtime.options.showSelf),"selfVisibility");
+        var gear=new ButtonWidget(left+194,height-27,20,20,Text.literal("⚙"),button->{advanced=!advanced;clearAndInit();},narration->narration.get()) {
             @Override protected void drawIcon(DrawContext context,int mouseX,int mouseY,float delta) {
                 context.fill(getX(),getY(),getRight(),getBottom(),-12369342);
                 if(hovered || isFocused())context.drawStrokedRectangle(getX(),getY(),getWidth(),getHeight(),-790560);
                 context.drawTexture(RenderPipelines.GUI_TEXTURED,SETTINGS_ICON,getX()+2,getY()+2,0f,0f,16,16,32,32,32,32);
             }
         };
-        gear.setTooltip(Tooltip.of(Text.literal("轮盘选项")));roles.put(addDrawableChild(gear),"wheelOptions");
+        gear.setTooltip(Tooltip.of(Text.literal(advanced?"返回图库":"客户端设置：渲染与轮盘选项")));roles.put(addDrawableChild(gear),"clientSettings");
     }
+    @Override protected int footerStatusInset() {return 223;}
 
     @Override protected void buildAlternateControls() {
         if(!advanced)return;
         int x=right+8,w=rightWidth-16,y=top+30;
-        roles.put(button(runtime.wheelPreferences().keepOpen()?"选择后保持轮盘：开启":"选择后保持轮盘：关闭",x,y,w,()->{
+        boolean compact = bottom - top < 185;
+        int controlWidth = compact ? (w - 4) / 2 : w;
+        roles.put(flatButton(runtime.options.enabled?compact?"渲染开启":"客户端渲染：开启":compact?"渲染关闭":"客户端渲染：关闭",x,y,controlWidth,20,()->{
+            runtime.toggleEnabled();clearAndInit();
+        },"暂停客户端模型渲染并恢复服务器显示；保留模型、显隐和轮盘设置",runtime.options.enabled),"clientRendering");
+        if(!compact)y+=25;
+        roles.put(button(runtime.wheelPreferences().keepOpen()?compact?"轮盘保留":"选择后保持轮盘：开启":compact?"轮盘收起":"选择后保持轮盘：关闭",
+                compact?x+controlWidth+4:x,y,controlWidth,()->{
             runtime.updateWheelPreferences(runtime.wheelPreferences().withKeepOpen(!runtime.wheelPreferences().keepOpen()));clearAndInit();
         },"选择动作后保留 J 轮盘；再次按 J 或返回可关闭"),"keepOpen");
         y+=25;
         if(clientTab && runtime.canEditLocalAppearance()) {
-            roles.put(button(runtime.localActionLocked()?"移动时保留本地动作：开启":"移动时保留本地动作：关闭",x,y,w,()->{
+            roles.put(button(runtime.localActionLocked()?compact?"动作保留":"移动时保留本地动作：开启":compact?"动作自动":"移动时保留本地动作：关闭",x,y,controlWidth,()->{
                 runtime.setLocalActionLocked(!runtime.localActionLocked());clearAndInit();
             },"仅影响本地显式动作；服务器真实动作由服务器决定"),"localActionLock");
-            y+=25;
-            roles.put(button(runtime.localAppearance().enabled()?"本地外观：开启":"本地外观：关闭",x,y,w,()->{
+            if(!compact)y+=25;
+            roles.put(button(runtime.localAppearance().enabled()?compact?"本地开启":"本地外观：开启":compact?"本地关闭":"本地外观：关闭",
+                    compact?x+controlWidth+4:x,y,controlWidth,()->{
                 LocalAppearanceSettings current=runtime.localAppearance();
                 runtime.updateLocalAppearance(new LocalAppearanceSettings(!current.enabled(),current.modelId(),current.scale(),current.offsetX(),current.offsetY(),current.offsetZ()));clearAndInit();
             },"保留模型选择与设置；只改变私人外观是否启用"),"privateEnabled");
+            y+=25;
+            var sync=flatButton(runtime.privateSyncEnabled()?"多人同步：开启":"多人同步：关闭",x,y,w,20,()->{
+                runtime.setPrivateSyncEnabled(!runtime.privateSyncEnabled());clearAndInit();
+            },"默认仅本机；服务器允许后才可共享私人模型、动作与作者参数。\n"+runtime.privateSyncStatus(),runtime.privateSyncEnabled());
+            sync.active=runtime.privateSyncEnabled() || runtime.privateSyncAvailable();
+            roles.put(sync,"privateSync");
         }
         roles.put(button("返回图库",x,Math.max(y+25,bottom-22),w,()->{advanced=false;clearAndInit();},"关闭轮盘选项并回到当前来源"),"gallery");
     }
@@ -101,6 +136,7 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
         if(initializedLocalMode!=runtime.interactionLocalMode() || !initializedInstance.equals(runtime.serverOwnModelInstance())) {
             clientTab=runtime.interactionLocalMode();advanced=false;clearGalleryPreviews();clearAndInit();
         }
+        if(advanced && !initializedSyncStatus.equals(runtime.privateSyncStatus()))clearAndInit();
         super.tick();
     }
 
@@ -110,7 +146,8 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
     @Override protected void renderAlternateContent(DrawContext context,float delta) {
         if(clientTab)renderSelectedPreview(context,delta);else renderServerPreview(context,delta);
         if(advanced) {
-            clipped(context,"轮盘选项",right+8,top+8,rightWidth-16,0xfff3f0e0);
+            clipped(context,"客户端设置",right+8,top+8,rightWidth-16,0xfff3f0e0);
+            clipped(context,runtime.privateSyncStatus(),right+8,top+19,rightWidth-16,0xff92b9df);
             return;
         }
         String model=runtime.serverOwnModelPresent()?runtime.serverOwnModelId():"暂无服务器模型";
@@ -148,6 +185,8 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
         result.put("contentTop",top);result.put("contentBottom",bottom);result.put("scroll",0);result.put("maximumScroll",0);
         result.put("leftPreview",gallery.get("leftPreview"));result.put("cards",gallery.get("cards"));result.put("gallery",gallery);
         result.put("serverAppearance",runtime.ownServerAppearanceDiagnostics());
+        result.put("privateSyncEnabled",runtime.privateSyncEnabled());result.put("privateSyncAvailable",runtime.privateSyncAvailable());
+        result.put("privateSyncStatus",runtime.privateSyncStatus());
         result.put("widgets",children().stream().filter(value->value instanceof ButtonWidget).map(value->{
             var button=(ButtonWidget)value;var widget=new LinkedHashMap<String,Object>();
             widget.put("label",button.getMessage().getString());widget.put("role",roles.getOrDefault(button,"galleryControl"));

@@ -88,11 +88,11 @@ class VanillaYsmQueriesTest {
         assertEquals("sleep",control(0,"sleep","swim"));assertEquals("swim",control(0,"swim","prone"));
         assertEquals("climb",control(0,"prone","walk"));assertEquals("climbing",control(0,"prone"));
         assertEquals("ladder_up",control(.1,"ladder","fly"));assertEquals("ladder_down",control(-.1,"ladder"));
-        assertEquals("ladder_stillness",control(0,"ladder"));assertEquals("fly",control(0,"fly","elytra"));
+        assertEquals("ladder_stillness",control(0,"ladder"));assertEquals("elytra_fly",control(0,"fly","elytra"));
         assertEquals("elytra_fly",control(0,"elytra","water","air"));assertEquals("swim_stand",control(0,"water","air","hurt"));
         assertEquals("attacked",control(0,"hurt","air"));assertEquals("jump",control(0,"air"));
         assertEquals("sneak",control(0,"sneak","walk","run"));assertEquals("sneaking",control(0,"sneak"));
-        assertEquals("run",control(0,"run"));assertEquals("walk",control(0,"walk"));assertEquals("idle",control(0));
+        assertEquals("run",control(0,"run","walk"));assertEquals("idle",control(0,"run"));assertEquals("walk",control(0,"walk"));assertEquals("idle",control(0));
         assertEquals("",control(0,"vehicle","death","walk"));
     }
     @Test void nativeConditionalFunctionsMatchEquipmentAndNativeActionsRatherThanClipInventory() {
@@ -137,7 +137,7 @@ class VanillaYsmQueriesTest {
         assertEquals(-8.2,context.get("query.position_2"));
         assertEquals(.1,context.get("query.position_delta_0"),1e-10);assertEquals(.05,context.get("query.position_delta_1"),1e-10);
         assertEquals(-.2,context.get("query.position_delta_2"),1e-10);
-        assertEquals(10,context.get("query.ground_speed"),1e-10);assertEquals(4,context.get("query.vertical_speed"),1e-10);
+        assertEquals(Math.hypot(.1,.2)*80,context.get("query.ground_speed"),1e-10);assertEquals(4,context.get("query.vertical_speed"),1e-10);
         assertEquals(Math.hypot(.1,.2)*80,context.get("ysm.ground_speed2"),1e-10);
         assertEquals(.0125,context.get("query.delta_time"));assertEquals(40,context.get("query.yaw_speed"));
         assertEquals(102,VanillaYsmQueries.relativeCoordinate(context.get("query.position_0"),0));
@@ -155,10 +155,11 @@ class VanillaYsmQueriesTest {
         assertEquals(1,context.get("query.is_in_water")); // Spatial/environment values survive the type boundary.
     }
     @Test void nativeEquipmentFunctionsRequireLivingEntityWhileSpaceAndRideUseEveryEntity() {
-        for(String function:List.of("query.max_durability","query.is_item_name_any","ysm.effect_level","ctrl.hold","ctrl.swing","ctrl.use","ctrl.armor"))
+        for(String function:List.of("query.max_durability","query.is_item_name_any","ctrl.hold","ctrl.swing","ctrl.use","ctrl.armor"))
             assertTrue(VanillaYsmQueries.requiresLiving(function),function);
         for(String function:List.of("query.position","query.position_delta","query.rotation_to_camera",
                 "query.biome_has_any_tag","ysm.relative_block_name","ctrl.ride","ysm.keyboard"))
             assertFalse(VanillaYsmQueries.requiresLiving(function),function);
+        assertFalse(VanillaYsmQueries.requiresLiving("ysm.effect_level")); // Native arrows also carry potion effects.
     }
 }

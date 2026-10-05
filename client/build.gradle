@@ -3,7 +3,7 @@ plugins {
 }
 
 group = 'com.simmc'
-version = '0.4.3'
+version = '0.4.9'
 base { archivesName = 'MEPlayerActions-Client' }
 
 repositories {
@@ -16,6 +16,10 @@ dependencies {
     mappings 'net.fabricmc:yarn:1.21.11+build.3:v2'
     modImplementation 'net.fabricmc:fabric-loader:0.18.4'
     modImplementation 'net.fabricmc.fabric-api:fabric-api:0.140.2+1.21.11'
+    implementation 'com.github.luben:zstd-jni:1.5.7-6'
+    include 'com.github.luben:zstd-jni:1.5.7-6'
+    implementation 'org.glavo:webp:0.2.0'
+    include 'org.glavo:webp:0.2.0'
     testImplementation 'org.junit.jupiter:junit-jupiter:5.12.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.12.2'
 }
@@ -30,6 +34,7 @@ java {
 sourceSets.main.java.srcDir('../src/main/java/com/simmc/meplayeractions/expression')
 sourceSets.main.java.srcDir('../src/main/java/com/simmc/meplayeractions/config')
 sourceSets.main.java.exclude('Settings.java')
+sourceSets.main.java.exclude('PerformanceSettings.java')
 
 tasks.withType(JavaCompile).configureEach {
     options.release = 21
@@ -77,7 +82,6 @@ loom {
     runs {
         client {
             runDir = 'run'
-            vmArg '-Dmeplayeractions.test=false'
         }
     }
 }

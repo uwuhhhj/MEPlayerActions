@@ -14,6 +14,18 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class NativeGuiPreviewCameraTest {
     private static final PreviewMesh.Settings SETTINGS = new PreviewMesh.Settings(true, false, "", "");
+    @Test void nativeItemParentExactlyMatchesEveryProjectedBodyVertex() {
+        var properties = new JsonObject(); properties.addProperty("height_scale", .6f); properties.addProperty("width_scale", .8f);
+        var camera = NativeGuiPreviewCamera.owner(1.8f, 1, 37, -21).withModelScale(properties);
+        for (var point : List.of(new org.joml.Vector3f(0, 0, 0), new org.joml.Vector3f(.4f, 1.7f, -.2f),
+                new org.joml.Vector3f(-.3f, .9f, .5f))) {
+            var projected = camera.project(point.x, point.y, point.z, 10, 20, 125, 171);
+            var attached = camera.projectedBodyMatrix().transformPosition(new org.joml.Vector3f(point));
+            assertEquals(projected.x() - (10 + 125 * .5f), attached.x, .0001);
+            assertEquals(projected.y() - (20 + 171 * .5f), attached.y, .0001);
+            assertEquals(projected.depth() * camera.pixelsPerBlock(), attached.z, .0001);
+        }
+    }
 
     @Test void nativeConvertedProfilesUseFixedCameraWhileStandaloneBbModelsKeepTheirBoundsFit() throws Exception {
         for (String id : List.of(YsmFolderModel.DEFAULT_ID, BuiltinYsmModels.TAISHO_MAID_ID, BuiltinYsmModels.NEW_YEAR_ID)) {

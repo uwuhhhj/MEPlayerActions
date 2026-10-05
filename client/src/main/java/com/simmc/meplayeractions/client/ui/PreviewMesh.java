@@ -10,11 +10,14 @@ import java.util.List;
 
 /** GUI-only orthographic camera. Authored model coordinates never enter a world renderer. */
 final class PreviewMesh {
-    /** Per-corner native camera depth is retained for a depth-tested GUI model pass. */
+    /** Per-corner camera depth is retained for a depth-tested GUI model pass. */
     record Point(float x, float y, float u, float v, float depth) {
         Point(float x, float y, float u, float v) { this(x, y, u, v, 0); }
     }
     record Quad(List<Point> points, int texture, int color, float depth) { }
+    record Projection(List<Quad> quads, float pixelsPerBlock) {
+        static final Projection EMPTY = new Projection(List.of(), 1);
+    }
     record Settings(boolean noLighting, boolean disableRotation, String background, String foreground) { }
 
     private PreviewMesh() { }
@@ -70,8 +73,14 @@ final class PreviewMesh {
 
     static List<Quad> project(List<BbModel.Vertex> vertices, int x, int y, int width, int height,
                               float yaw, float pitch, Settings settings) {
+        return projectBounds(vertices, x, y, width, height, yaw, pitch, settings).quads();
+    }
+
+    /** Ordinary bbmodels retain their bounds-fit camera; depth uses the same scale as X/Y. */
+    static Projection projectBounds(List<BbModel.Vertex> vertices, int x, int y, int width, int height,
+                                    float yaw, float pitch, Settings settings) {
         if (width <= 0 || height <= 0 || !Float.isFinite(yaw) || !Float.isFinite(pitch)
-                || vertices.isEmpty() || vertices.size() % 4 != 0) return List.of();
+                || vertices.isEmpty() || vertices.size() % 4 != 0) return Projection.EMPTY;
         if (settings.disableRotation()) { yaw = 0; pitch = 0; }
         double a = Math.toRadians(yaw % 360), b = Math.toRadians(pitch % 360);
         double cy = Math.cos(a), sy = Math.sin(a), cp = Math.cos(b), sp = Math.sin(b);
@@ -80,11 +89,11 @@ final class PreviewMesh {
         float maxX = Float.NEGATIVE_INFINITY, maxY = Float.NEGATIVE_INFINITY;
         for (int i = 0; i < vertices.size(); i++) {
             BbModel.Vertex v = vertices.get(i);
-            if (!finite(v)) return List.of();
+            if (!finite(v)) return Projection.EMPTY;
             double vx = cy * v.x() + sy * v.z(), vz = -sy * v.x() + cy * v.z();
             float px = (float) vx, py = (float) (cp * v.y() - sp * vz);
             float depth = (float) (sp * v.y() + cp * vz);
-            if (!Float.isFinite(px) || !Float.isFinite(py) || !Float.isFinite(depth)) return List.of();
+            if (!Float.isFinite(px) || !Float.isFinite(py) || !Float.isFinite(depth)) return Projection.EMPTY;
             positions[i * 3] = px;
             positions[i * 3 + 1] = py;
             positions[i * 3 + 2] = depth;
@@ -103,7 +112,7 @@ final class PreviewMesh {
             float depth = 0;
             for (int corner = 0; corner < 4; corner++) {
                 BbModel.Vertex v = vertices.get(i + corner);
-                if (v.texture() != face.texture()) return List.of();
+                if (v.texture() != face.texture()) return Projection.EMPTY;
                 // From negative Z, the camera's right vector is negative X; using
                 // positive X would mirror the authored front texture and asymmetry.
                 points.add(new Point(x + width * .5f - (positions[(i + corner) * 3] - centerX) * scale,
@@ -119,14 +128,14 @@ final class PreviewMesh {
             // gameplay renderer, so thin hair/clothing sheets remain visible on rotation.
             double light = normalLength < 1e-8 ? 0 : Math.max(0, (-.45 * nx + .7 * ny - .8 * nz)
                     / (Math.sqrt(.45 * .45 + .7 * .7 + .8 * .8) * normalLength));
-            int shade = settings.noLighting() ? 255 : (int) Math.round(255 * (.58 + .42 * light));
+            int shade = settings.noLighting() || face.emissive() ? 255 : (int) Math.round(255 * (.58 + .42 * light));
             int color = 0xff000000 | shade << 16 | shade << 8 | shade;
             quads.add(new Quad(List.copyOf(points), face.texture(), color, depth));
         }
-        // All quads stay in one GUI element/atlas. Minecraft may sort GUI elements
-        // by texture, but cannot reorder these far-to-near faces within the batch.
+        // Keep transparent surfaces far-to-near while the GPU also tests each pixel's
+        // actual depth. A whole-face average cannot resolve intersecting thin eye/hair planes.
         quads.sort(Comparator.comparingDouble(Quad::depth).reversed());
-        return List.copyOf(quads);
+        return new Projection(List.copyOf(quads), scale);
     }
 
     /** Native YSM previews use the entity-height anchor and fixed source size, never geometry bounds. */
@@ -154,7 +163,7 @@ final class PreviewMesh {
             double light = length < 1e-8 ? 0 : Math.max(0,
                     (-.45 * normal.x() + .7 * normal.y() - .8 * normal.depth())
                             / (Math.sqrt(.45 * .45 + .7 * .7 + .8 * .8) * length));
-            int shade = settings.noLighting() ? 255 : (int) Math.round(255 * (.58 + .42 * light));
+            int shade = settings.noLighting() || face.emissive() ? 255 : (int) Math.round(255 * (.58 + .42 * light));
             quads.add(new Quad(List.copyOf(points), face.texture(),
                     0xff000000 | shade << 16 | shade << 8 | shade, depth));
         }

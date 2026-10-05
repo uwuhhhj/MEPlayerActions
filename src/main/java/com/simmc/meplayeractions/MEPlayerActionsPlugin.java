@@ -1,297 +1,143 @@
 package com.simmc.meplayeractions;
 
-import com.simmc.meplayeractions.action.ActionController;
-import com.simmc.meplayeractions.action.DisguiseOptions;
-import com.simmc.meplayeractions.action.SyncFeature;
-import com.simmc.meplayeractions.client.ClientSyncService;
-import com.simmc.meplayeractions.config.Settings;
-import com.simmc.meplayeractions.gameplay.GameplayBackend;
-import com.simmc.meplayeractions.gameplay.PaperEffectPort;
-import com.simmc.meplayeractions.me.ModelEngineBridge;
-import com.simmc.meplayeractions.ui.ActionMenu;
 import com.simmc.meplayeractions.command.CommandLayout;
-import com.ticxo.modelengine.api.animation.BlueprintAnimation.LoopMode;
+import com.simmc.meplayeractions.server.PrivateOnlyBackend;
+import com.simmc.meplayeractions.server.ServerBackend;
 import org.bukkit.Bukkit;
 import org.bukkit.command.*;
+import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
-import org.bukkit.event.EventPriority;
+import org.bukkit.event.HandlerList;
 import org.bukkit.event.Listener;
-import org.bukkit.event.entity.EntityDamageEvent;
-import org.bukkit.event.entity.PlayerDeathEvent;
-import org.bukkit.event.entity.EntityPotionEffectEvent;
-import org.bukkit.event.block.BlockDamageEvent;
-import org.bukkit.event.block.BlockDamageAbortEvent;
-import org.bukkit.event.block.BlockBreakEvent;
-import io.papermc.paper.event.player.PlayerArmSwingEvent;
-import com.destroystokyo.paper.event.player.PlayerJumpEvent;
-import com.ticxo.modelengine.api.events.BoneTransformReadEvent;
-import org.bukkit.event.player.*;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.java.JavaPlugin;
+import java.lang.reflect.InvocationTargetException;
+import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
 
-import java.util.*;
-
+/** Pure Bukkit entry point: optional ModelEngine signatures never participate in listener scanning. */
 public final class MEPlayerActionsPlugin extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
-    private Settings settings;
-    private ActionController controller;
-    private GameplayBackend gameplay;
-    private ClientSyncService clients;
-    private ActionMenu menu;
+    private ServerBackend backend;
 
     @Override public void onEnable() {
         if (!Bukkit.getBukkitVersion().startsWith("1.21.11-")) {
             getLogger().severe("MEPlayerActions " + getDescription().getVersion() + " 仅支持 Paper 1.21.11");
             Bukkit.getPluginManager().disablePlugin(this); return;
         }
-        if (!Objects.requireNonNull(Bukkit.getPluginManager().getPlugin("ModelEngine"))
-                .getDescription().getVersion().equals("R4.1.1")) {
-            getLogger().severe("需要本项目指定的 ModelEngine R4.1.1");
-            Bukkit.getPluginManager().disablePlugin(this); return;
-        }
         saveDefaultConfig();
-        try {
-            settings = Settings.load(getConfig());
-            initialize();
-        } catch (RuntimeException ex) {
-            getLogger().severe("启动失败：" + ex.getMessage());
+        try { startBackend(prepareBackend()); }
+        catch (RuntimeException | LinkageError failure) {
+            shutdown();
+            getLogger().severe("启动失败：" + failure);
             Bukkit.getPluginManager().disablePlugin(this); return;
         }
         PluginCommand command = Objects.requireNonNull(getCommand(CommandLayout.NAME));
         command.setExecutor(this); command.setTabCompleter(this);
-        menu = new ActionMenu(this, () -> controller, () -> settings, this::handleAction);
-        Bukkit.getPluginManager().registerEvents(menu, this);
         Bukkit.getPluginManager().registerEvents(this, this);
-        getLogger().info("MEPlayerActions " + getDescription().getVersion() + " 已启用；" + gameplay.diagnosis());
+        getLogger().info("MEPlayerActions " + getDescription().getVersion() + " 已启用；" + backend.diagnosis());
     }
-    private void initialize() {
-        gameplay = new GameplayBackend(this);
-        controller = new ActionController(this, settings, new ModelEngineBridge(), gameplay);
-        clients = new ClientSyncService(this, controller::snapshots,
-                request -> handleAction(request.player(), CommandLayout.clientAction(request.action(), request.argument())));
-        clients.configure(settings.clientEnabled, settings.clientMaxPayload,
-                settings.clientCooldownTicks, settings.clientViewDistance);
-        clients.audience(controller::canView);
-        clients.rendering(controller::localRendering);
-        controller.clients(clients);
-        clients.enable(); controller.start();
+    private ServerBackend prepareBackend() {
+        var engine = Bukkit.getPluginManager().getPlugin("ModelEngine");
+        String reason = unavailableReason(engine != null, engine != null && engine.isEnabled(),
+                engine == null ? null : engine.getDescription().getVersion());
+        if (reason == null) {
+            try {
+                // Keep this class out of the bootstrap constant pool's class/method signatures.
+                Class<?> adapter = Class.forName("com.simmc.meplayeractions.me.ModelEngineBackend", true, getClass().getClassLoader());
+                return (ServerBackend) adapter.getConstructor(MEPlayerActionsPlugin.class, FileConfiguration.class).newInstance(this, getConfig());
+            } catch (InvocationTargetException failure) {
+                Throwable cause = failure.getCause();
+                if (cause instanceof RuntimeException runtime) throw runtime;
+                if (!(cause instanceof LinkageError)) throw new IllegalStateException("ModelEngine 后端初始化失败", cause);
+                reason = "ModelEngine API 不兼容";
+                getLogger().warning(reason + "：" + cause);
+            } catch (ReflectiveOperationException | LinkageError failure) {
+                reason = "ModelEngine API 不兼容";
+                getLogger().warning(reason + "：" + failure);
+            }
+        }
+        return new PrivateOnlyBackend(this, getConfig(), reason);
     }
-    @Override public void onDisable() { shutdown(); }
+    /** Dependency checks are separate from class loading, including the disabled-plugin case. */
+    static String unavailableReason(boolean installed, boolean enabled, String version) {
+        if (!installed) return "未安装 ModelEngine";
+        if (!enabled) return "ModelEngine 未启用";
+        if (!"R4.1.1".equals(version)) return "ModelEngine 版本不兼容（需要 R4.1.1，当前 " + version + "）";
+        return null;
+    }
+    private void startBackend(ServerBackend next) {
+        backend = next;
+        try { next.start(); }
+        catch (RuntimeException | LinkageError failure) {
+            if (!next.modelEngine()) throw failure;
+            try { next.close(); } catch (RuntimeException | LinkageError cleanup) { failure.addSuppressed(cleanup); }
+            getLogger().warning("ModelEngine 动作后端启动失败，启用私人同步模式：" + failure);
+            backend = new PrivateOnlyBackend(this, getConfig(), "ModelEngine 后端启动失败");
+            backend.start();
+        }
+    }
+    @Override public void onDisable() { HandlerList.unregisterAll((Listener)this); shutdown(); }
     private void shutdown() {
-        if (menu != null) menu.closeAll();
-        try { if (controller != null) controller.close(); }
-        finally {
-            try { if (gameplay != null) gameplay.close(); }
-            finally { if (clients != null) clients.close(); }
+        ServerBackend old = backend; backend = null;
+        if (old != null) {
+            try { old.close(); }
+            catch (RuntimeException | LinkageError failure) { getLogger().warning("后端清理失败：" + failure); }
         }
     }
     @Override public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        if (args.length > 0 && args[0].equalsIgnoreCase("reload")) {
-            try { CommandLayout.normalize(args); }
-            catch (IllegalArgumentException ex) { message(sender, ex.getMessage()); return true; }
+        String[] normalized;
+        try { normalized = CommandLayout.normalize(args); }
+        catch (IllegalArgumentException failure) { message(sender, failure.getMessage()); return true; }
+        if (normalized[0].equals("reload")) {
             if (!sender.hasPermission("mact.admin")) { message(sender, "缺少权限：mact.admin"); return true; }
             try {
-                reloadConfig(); Settings next = Settings.load(getConfig());
-                shutdown(); settings = next; initialize();
-                message(sender, "配置已重载，旧动作和本插件伪装已清理，请重新伪装。");
-            } catch (RuntimeException ex) { message(sender, "重载失败：" + ex.getMessage()); }
+                reloadConfig();
+                ServerBackend next = prepareBackend(); // Validate before releasing the active mode.
+                shutdown(); startBackend(next);
+                message(sender, "配置已重载，旧伪装和私人共享会话已清理；" + backend.diagnosis() + "。客户端将重新协商共享。");
+            } catch (RuntimeException | LinkageError failure) { message(sender, "重载失败：" + failure.getMessage()); }
             return true;
         }
-        if (!(sender instanceof Player player)) {
-            message(sender, "玩家使用 /meplayeractions；控制台可用 /meplayeractions reload。"); return true;
-        }
-        handleAction(player, args); return true;
+        if (sender instanceof Player player) { handleAction(player, args); return true; }
+        if (normalized[0].equals("status")) {
+            if (!sender.hasPermission("mact.debug")) message(sender, "缺少权限：mact.debug");
+            else if (backend != null) backend.status(sender);
+        } else message(sender, "玩家使用 " + CommandLayout.PREFIX + "；控制台可用 status 查看后端与私人同步状态，reload 重载配置。");
+        return true;
     }
+    /** Kept as the stable callback for ActionMenu and the authorized client-action bridge. */
     public void handleAction(Player player, String[] args) {
         try {
-            ActionController.permission(player, "mact.use");
-            args = CommandLayout.normalize(args);
-            String sub = args[0];
-            switch (sub) {
-                case "help" -> help(player);
-                case "disguise" -> {
-                    ActionController.permission(player, "mact.disguise");
-                    var options = DisguiseOptions.parse(args, DisguiseOptions.defaults(settings.defaultModel, settings));
-                    controller.disguise(player, options);
-                    message(player, "已伪装为 " + controller.modelId(player) + "；" + options.description() + "。/meplayeractions menu 打开动作菜单。");
-                }
-                case "attach" -> {
-                    ActionController.permission(player, "mact.disguise");
-                    controller.attach(player, args.length > 1 ? Settings.id(args[1]) : settings.defaultModel);
-                    message(player, "已接管现有伪装的动作。");
-                }
-                case "undisguise" -> {
-                    ActionController.permission(player, "mact.disguise");
-                    if (!controller.controlled(player)) throw new IllegalStateException("当前没有动作会话");
-                    boolean owned = controller.remove(player, "command");
-                    message(player, owned ? "伪装已解除。" : "动作接管已停止；原生伪装用 /meg undisguise 解除。");
-                }
-                case "models" -> message(player, "已加载且允许的模型：" + String.join(", ", controller.models()));
-                case "animations" -> message(player, "当前模型动画：" + String.join("，", controller.animations(player)
-                        .stream().map(clip -> settings.animationLabel(clip) + " (" + clip + ")").toList()));
-                case "menu" -> menu.open(player, 0);
-                case "play" -> {
-                    if (args.length < 2) throw new IllegalArgumentException("用法：/meplayeractions play <动作> [速度] [ONCE|LOOP|HOLD]");
-                    Double speed = args.length > 2 ? Double.valueOf(args[2]) : null;
-                    LoopMode loop = args.length > 3 ? LoopMode.valueOf(args[3].toUpperCase(Locale.ROOT)) : null;
-                    controller.play(player, Settings.id(args[1]), speed, loop);
-                    message(player, "播放：" + settings.actionLabel(args[1]) + " (" + args[1] + ")");
-                }
-                case "stop" -> { controller.stop(player); message(player, "手动动作已停止。"); }
-                case "reset" -> {
-                    controller.clearDisguiseEffects(player); controller.reset(player, true);
-                    message(player, "动作、本插件姿态与伪装药水已重置。");
-                }
-                case "sit" -> {
-                    ActionController.permission(player, "mact.sit"); controller.sit(player);
-                    message(player, "已坐下。Shift 或 /meplayeractions reset 起身。");
-                }
-                case "crawl" -> {
-                    ActionController.permission(player, "mact.crawl"); controller.crawl(player);
-                    message(player, "已进入爬行。/meplayeractions reset 退出。");
-                }
-                case "fly" -> {
-                    boolean enable = args.length < 2 ? !player.isFlying() : bool(args[1]);
-                    controller.flight(player, enable);
-                    message(player, enable ? "已开启本插件飞行。" : "已释放本插件授予的飞行；原有飞行能力保留。");
-                }
-                case "sync" -> {
-                    ActionController.permission(player, "mact.sync");
-                    if (args.length < 2) {
-                        for (SyncFeature f : SyncFeature.values()) message(player, f.key() + "=" + controller.syncEnabled(player, f));
-                    } else {
-                        SyncFeature f = SyncFeature.parse(args[1]);
-                        if (args.length < 3) throw new IllegalArgumentException("用法：/meplayeractions sync <类型> <on|off|default>");
-                        Boolean enabled = args[2].equalsIgnoreCase("default") ? null : bool(args[2]);
-                        controller.synchronization(player, f, enabled);
-                        message(player, f.key() + " 动画同步=" + controller.syncEnabled(player, f) + "（不改变真实姿态）");
-                    }
-                }
-                case "status" -> {
-                    ActionController.permission(player, "mact.debug"); controller.debug(player).forEach(line -> message(player, line));
-                }
-                default -> throw new IllegalArgumentException("未知子命令；使用 " + CommandLayout.PREFIX + " help");
-            }
-        } catch (NumberFormatException ex) { message(player, "速度请输入有效数字。"); }
-        catch (IllegalArgumentException | IllegalStateException ex) { message(player, Objects.toString(ex.getMessage(), "动作失败")); }
-        catch (RuntimeException ex) {
-            getLogger().warning("指令执行失败 " + player.getName() + ": " + ex);
-            message(player, "动作执行失败，请查看服务器日志和 /meplayeractions status。");
+            permission(player, "mact.use");
+            if (backend == null) throw new IllegalStateException("插件后端未启动");
+            backend.handleAction(player, args);
+        } catch (IllegalArgumentException | IllegalStateException failure) { message(player, Objects.toString(failure.getMessage(), "动作失败")); }
+        catch (RuntimeException failure) {
+            getLogger().warning("指令执行失败 " + player.getName() + ": " + failure);
+            message(player, "动作执行失败，请查看服务器日志和 " + CommandLayout.PREFIX + " status。");
         }
     }
-    private void help(Player player) {
-        String prefix = CommandLayout.PREFIX;
-        for (String line : List.of("§e模型：" + prefix + " disguise <模型名> [参数...]；undisguise 解除；models 列出模型；attach [模型名] 接管。",
-                "伪装参数：scale、hide-self、delay、effect=slowness:等级[:秒数]；药水仅支持缓慢。",
-                "观众参数：show-self（默认 " + settings.showSelf + "）、view-distance（默认 " + settings.modelViewDistance
-                        + " 格）、max-viewers（默认 " + settings.maxViewers + " 名其他玩家）。",
-                "§e动画：" + prefix + " menu 中文菜单；animations 动画列表；play <动作名> [速度] [ONCE|LOOP|HOLD]。",
-                "§e姿态：" + prefix + " pose sit 坐下；pose crawl 爬行；pose fly [on|off] 飞行。",
-                "§e停止／重置：" + prefix + " stop 停止手动动作；reset 重置动作、姿态和受管药水。",
-                "§e同步：" + prefix + " sync <类型> <on|off|default>，省略全部参数查看设置；类型："
-                        + String.join("、", Arrays.stream(SyncFeature.values()).map(SyncFeature::key).toList()) + "。",
-                "§e管理：" + prefix + " status 查看诊断；reload 重载配置。")) message(player, line);
+    public static void permission(CommandSender sender, String permission) {
+        if (!sender.hasPermission(permission)) throw new IllegalStateException("缺少权限：" + permission);
     }
-    private static boolean bool(String value) {
-        return switch (value.toLowerCase(Locale.ROOT)) {
-            case "on", "true" -> true;
-            case "off", "false" -> false;
-            default -> throw new IllegalArgumentException("参数使用 on 或 off");
-        };
-    }
-    public static void message(CommandSender sender, String text) { sender.sendMessage("§b[动作] §f" + text); }
-    private static String commandPermission(String root) {
+    public static String commandPermission(String root) {
         return switch (root.toLowerCase(Locale.ROOT)) {
             case "disguise", "undisguise", "attach" -> "mact.disguise";
             case "play" -> "mact.play";
+            case "sit" -> "mact.sit";
+            case "crawl" -> "mact.crawl";
+            case "fly" -> "mact.flight";
             case "sync" -> "mact.sync";
             case "status" -> "mact.debug";
             case "reload" -> "mact.admin";
             default -> "mact.use";
         };
     }
-
+    public static void message(CommandSender sender, String text) { sender.sendMessage("§b[动作] §f" + text); }
     @Override public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
-        if (!(sender instanceof Player p) || !p.hasPermission("mact.use")) return List.of();
-        if (args.length == 0 || (args.length > 1 && !p.hasPermission(commandPermission(args[0])))) return List.of();
-        if (args.length >= 2 && args[0].equalsIgnoreCase("disguise")) {
-            if (!p.hasPermission("mact.disguise")) return List.of();
-            return DisguiseOptions.suggestions(args, controller.models(),
-                    p.hasPermission("mact.disguise.effects") ? PaperEffectPort.names() : List.of());
-        }
-        List<String> options = new ArrayList<>();
-        if (args.length == 1) {
-            for (String root : CommandLayout.ROOTS) {
-                if (p.hasPermission(commandPermission(root))) options.add(root);
-            }
-            String prefix = args[0].toLowerCase(Locale.ROOT);
-            return options.stream().filter(s -> s.startsWith(prefix)).toList();
-        } else if (args.length == 2) {
-            switch (args[0].toLowerCase(Locale.ROOT)) {
-                case "disguise", "attach" -> options.addAll(controller.models());
-                case "play" -> {
-                    if (!p.hasPermission("mact.play")) break;
-                    for (var action : settings.customActions.values())
-                        if (action.permission().isEmpty() || p.hasPermission(action.permission())) options.add(action.id());
-                    if (controller.controlled(p) && settings.rawPlay) {
-                        try { options.addAll(controller.animations(p)); } catch (IllegalStateException ignored) {}
-                    }
-                }
-                case "sync" -> { for (SyncFeature f : SyncFeature.values()) options.add(f.key()); }
-                case "pose" -> {
-                    if (p.hasPermission("mact.sit")) options.add("sit");
-                    if (p.hasPermission("mact.crawl")) options.add("crawl");
-                    if (settings.allowFlight && p.hasPermission("mact.flight")) options.add("fly");
-                }
-            }
-        } else if (args.length == 3 && args[0].equalsIgnoreCase("sync")) options.addAll(List.of("on", "off", "default"));
-        else if (args.length == 3 && args[0].equalsIgnoreCase("pose") && args[1].equalsIgnoreCase("fly")
-                && settings.allowFlight && p.hasPermission("mact.flight")) options.addAll(List.of("on", "off"));
-        else if (args.length == 3 && args[0].equalsIgnoreCase("play")) options.addAll(List.of("0.5", "1.0", "1.5", "2.0"));
-        else if (args.length == 4 && args[0].equalsIgnoreCase("play")) options.addAll(List.of("ONCE", "LOOP", "HOLD"));
-        String prefix = args[args.length - 1].toLowerCase(Locale.ROOT);
-        return options.stream().distinct().filter(s -> s.toLowerCase(Locale.ROOT).startsWith(prefix)).sorted().toList();
+        return backend == null ? List.of() : backend.tabComplete(sender, command, alias, args);
     }
-    @EventHandler public void quit(PlayerQuitEvent e) {
-        controller.remove(e.getPlayer(), "quit"); clients.forget(e.getPlayer());
-    }
-    @EventHandler public void death(PlayerDeathEvent e) { controller.remove(e.getEntity(), "death"); }
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void potion(EntityPotionEffectEvent e) {
-        if (e.getEntity() instanceof Player player)
-            controller.potionChanged(player, e.getModifiedType().getKey().getKey(),
-                    e.getCause() == EntityPotionEffectEvent.Cause.EXPIRATION);
-    }
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void swing(PlayerArmSwingEvent e) { controller.swung(e.getPlayer(), e.getHand()); }
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void jump(PlayerJumpEvent e) { controller.jumped(e.getPlayer()); }
-    @EventHandler
-    public void modelTransform(BoneTransformReadEvent e) { controller.visualTransform(e); }
-    @EventHandler(priority = EventPriority.MONITOR)
-    public void blockDamage(BlockDamageEvent e) {
-        if (e.isCancelled() || e.getInstaBreak()) controller.miningStopped(e.getPlayer(), e.getBlock());
-        else controller.mining(e.getPlayer(), e.getBlock());
-    }
-    @EventHandler(priority = EventPriority.MONITOR)
-    public void blockAbort(BlockDamageAbortEvent e) { controller.miningStopped(e.getPlayer(), e.getBlock()); }
-    @EventHandler(priority = EventPriority.MONITOR)
-    public void blockBreak(BlockBreakEvent e) { controller.miningStopped(e.getPlayer(), e.getBlock()); }
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void itemHeld(PlayerItemHeldEvent e) {
-        if (controller.controlled(e.getPlayer())) controller.clearInteractions(e.getPlayer());
-    }
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void swapHands(PlayerSwapHandItemsEvent e) { controller.clearInteractions(e.getPlayer()); }
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void damage(EntityDamageEvent e) { if (e.getEntity() instanceof Player p) controller.damaged(p); }
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void teleport(PlayerTeleportEvent e) {
-        Player player = e.getPlayer();
-        Bukkit.getScheduler().runTask(this, () -> { if (player.isOnline()) controller.reset(player, false); });
-    }
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void gameMode(PlayerGameModeChangeEvent e) {
-        Player player = e.getPlayer();
-        Bukkit.getScheduler().runTask(this, () -> { if (player.isOnline()) controller.reset(player, false); });
-    }
+    @EventHandler public void quit(PlayerQuitEvent event) { if (backend != null) backend.forget(event.getPlayer()); }
 }

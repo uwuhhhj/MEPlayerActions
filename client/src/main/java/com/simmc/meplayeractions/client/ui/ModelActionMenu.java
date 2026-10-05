@@ -6,7 +6,8 @@ import java.util.*;
 
 /** Extra animation keys are clips/categories; their values are labels or configuration links. */
 public final class ModelActionMenu {
-    public record Entry(String id, String label, String configGroup) {
+    public record Entry(String id, String label, String configGroup, String description) {
+        public Entry(String id, String label, String configGroup) { this(id, label, configGroup, ""); }
         public boolean category() { return id.startsWith("#") && !id.equals("#return"); }
         public boolean back() { return id.equals("#return"); }
     }
@@ -36,7 +37,9 @@ public final class ModelActionMenu {
                     : forms.group(config).map(ModelConfigSchema.Group::name).orElse(id);
             if (id.equals("#return")) label = "返回上级";
             else if (id.startsWith("#") && value.isEmpty()) label = id.substring(1);
-            entries.add(new Entry(id, profile.localized(locale, label, label), config));
+            String path="properties.extra_animation."+id;
+            entries.add(new Entry(id, profile.localized(locale, path, profile.localized(locale, label, label)), config,
+                    profile.localized(locale, path+".desc", "")));
         });
         return List.copyOf(entries);
     }

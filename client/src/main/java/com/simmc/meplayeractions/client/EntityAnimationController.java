@@ -8,7 +8,12 @@ public final class EntityAnimationController {
     public record Sample(double x, double y, double z, boolean grounded, boolean bedSleeping, boolean prone,
                          boolean inWater, boolean flying, boolean gliding, boolean sneaking, boolean sprinting,
                          String vehicle, boolean swinging, int swingTick, boolean offhand, boolean mining, boolean localPlayer,
-                         boolean climbing, VanillaYsmAnimations.VanillaState vanilla) {
+                         boolean climbing, VanillaYsmAnimations.VanillaState vanilla, VanillaYsmQueries.MovementFallback nativeFallback) {
+        public Sample(double x,double y,double z,boolean grounded,boolean bedSleeping,boolean prone,boolean inWater,
+                      boolean flying,boolean gliding,boolean sneaking,boolean sprinting,String vehicle,boolean swinging,
+                      int swingTick,boolean offhand,boolean mining,boolean localPlayer,boolean climbing,VanillaYsmAnimations.VanillaState vanilla) {
+            this(x,y,z,grounded,bedSleeping,prone,inWater,flying,gliding,sneaking,sprinting,vehicle,swinging,swingTick,offhand,mining,localPlayer,climbing,vanilla,null);
+        }
         public Sample(double x,double y,double z,boolean grounded,boolean bedSleeping,boolean prone,boolean inWater,
                       boolean flying,boolean gliding,boolean sneaking,boolean sprinting,String vehicle,boolean swinging,
                       int swingTick,boolean offhand,boolean mining,boolean localPlayer,boolean climbing) {
@@ -51,7 +56,15 @@ public final class EntityAnimationController {
         double dz = previous == null ? 0 : sample.z - previous.z;
         boolean discontinuity = previous == null || tick < lastTick || dx * dx + dy * dy + dz * dz > 16 || tick - lastTick > 40;
         if (discontinuity) { jumping = false; landed = -1; state = ""; suppressedManual = "";handLayers.clear();handPlayback.reset();automaticAnimation=""; }
-        boolean moving = !discontinuity && (dx * dx + dz * dz > policy.movementThreshold() * policy.movementThreshold()
+        boolean nativeMovement=sample.vanilla!=null&&catalog.formatVersion()>0;
+        double elapsed=discontinuity?1:Math.max(1,tick-lastTick);
+        double groundSpeed=discontinuity?0:Math.hypot(dx,dz)*20/elapsed;
+        double verticalSpeed=discontinuity?0:dy*20/elapsed;
+        if(nativeMovement&&sample.nativeFallback!=null) {
+            if(groundSpeed<=1e-4)groundSpeed=sample.nativeFallback.groundSpeed();
+            if(discontinuity||Math.abs(dy)<=1e-4)verticalSpeed=sample.nativeFallback.verticalSpeed();
+        }
+        boolean moving = nativeMovement?groundSpeed>.05:!discontinuity && (dx * dx + dz * dz > policy.movementThreshold() * policy.movementThreshold()
                 || (sample.flying || sample.climbing) && Math.abs(dy) > policy.movementThreshold());
         String posture = posture(sample, policy);
         boolean blocked = !posture.equals("standing") && !posture.equals("sneak") || !policy.enabled("jump");
@@ -70,7 +83,18 @@ public final class EntityAnimationController {
             }
         }
         String next = select(sample, policy, posture, moving, air, dy);
-        if(sample.vanilla!=null && sample.vanilla.hurtTime()>0 && policy.enabled("movement")
+        String nativeState="";
+        if(nativeMovement&&policy.specialPose().isEmpty()&&policy.forcedPose().isEmpty()) {
+            nativeState=VanillaYsmQueries.controlState(new VanillaYsmQueries.ControlSample(sample.vanilla.dead(),sample.vanilla.riptide(),
+                    sample.bedSleeping||sample.vanilla.sleeping(),sample.vanilla.swimming(),sample.prone,sample.climbing,verticalSpeed,
+                    sample.flying,sample.gliding,sample.inWater,sample.grounded,sample.vanilla.hurtTime()>0,sample.sneaking,
+                    sample.sprinting,moving,sample.vanilla.vehicleAlive()&&!sample.vehicle.isEmpty()));
+            if(nativeState.equals("run")&&!policy.enabled("sprint"))nativeState="walk";
+            // The canonical RIDE state has an empty animation name and suppresses body actions.
+            if(sample.vanilla.vehicleAlive()&&!sample.vehicle.isEmpty())next=policy.enabled("ride")?sample.vehicle:"";
+            else next=nativePolicyState(nativeState,policy);
+        }
+        if(!nativeMovement&&sample.vanilla!=null && sample.vanilla.hurtTime()>0 && policy.enabled("movement")
                 && Set.of("standing","sneak").contains(posture) && !catalog.first("attacked","hurt").isEmpty())next="attacked";
         boolean newHurt=next.equals("attacked") && sample.vanilla!=null && (previous==null || previous.vanilla==null
                 || sample.vanilla.hurtTime()>previous.vanilla.hurtTime());
@@ -79,12 +103,14 @@ public final class EntityAnimationController {
         Layer automatic = policy.layer(state, "posture", postureStarted);
         if(sample.vanilla!=null) {
             boolean riding=sample.vanilla.vehicleAlive() && !sample.vehicle.isEmpty() && policy.specialPose().isEmpty()
-                    && !sample.bedSleeping && !sample.vanilla.sleeping() && !sample.vanilla.dead();
+                    && (nativeMovement||!sample.bedSleeping && !sample.vanilla.sleeping() && !sample.vanilla.dead());
             String condition=riding && policy.enabled("ride")?catalog.vehicle(sample.vanilla):"";
-            String nativeClip=!condition.isEmpty()?condition:automatic==null?nativeClip(state):automatic.animation();
+            String direct=nativeMovement&&!nativeState.isEmpty()&& !next.isEmpty()?catalog.first(nativeState):"";
+            String nativeClip=!condition.isEmpty()?condition:!direct.isEmpty()?direct:automatic==null?nativeClip(state):automatic.animation();
             if(!nativeClip.isEmpty()) {
                 if(!nativeClip.equals(automaticAnimation))postureStarted=tick;
                 String loop=automatic==null?Set.of("death","attacked").contains(state)?"ONCE":"LOOP":automatic.loop();
+                if(nativeMovement&&!nativeState.isEmpty()&&catalog.contains(nativeClip))loop=catalog.authoredLoop(nativeClip);
                 automatic=new Layer(riding?"player.vehicle":"posture",nativeClip,postureStarted,
                         automatic==null?1:automatic.speed(),loop,automatic==null?2:automatic.inTicks(),automatic==null?2:automatic.outTicks());
             }
@@ -158,6 +184,30 @@ public final class EntityAnimationController {
         if (sample.inWater && !sample.grounded) return "swim";
         if (sample.climbing) return "ladder";
         return sample.sneaking ? "sneak" : "standing";
+    }
+    /** Sparkle ControllerActionResolver uses one native action; policy switches remain authorized overrides. */
+    private static String nativePolicyState(String state,LocalMotionPolicy p) {
+        return switch(state) {
+            case "death"->"death";
+            case "riptide"->p.enabled("swim")?"riptide":"";
+            case "sleep"->p.enabled("sleep")?"bed-sleep":"";
+            case "swim"->p.enabled("swim")?"swim-walk":"";
+            case "climb"->p.enabled("crawl")?"crawl-walk":"";
+            case "climbing"->p.enabled("crawl")?"crawl-idle":"";
+            case "ladder_up"->p.enabled("movement")?"ladder-move":"";
+            case "ladder_down"->p.enabled("movement")?"ladder-down":"";
+            case "ladder_stillness"->p.enabled("movement")?"ladder-idle":"";
+            case "fly"->p.enabled("flight")?"fly":"";
+            case "elytra_fly"->p.enabled("elytra")?"elytra":"";
+            case "swim_stand"->p.enabled("swim")?"swim-idle":"";
+            case "attacked"->p.enabled("movement")?"attacked":"";
+            case "jump"->p.enabled("jump")?"jump":"";
+            case "sneak"->p.enabled("sneak")?"crouch-walk":"";
+            case "sneaking"->p.enabled("sneak")?"crouch-idle":"";
+            case "run"->p.enabled("movement")?p.enabled("sprint")?"run":"walk":"";
+            case "walk","idle"->p.enabled("movement")?state:"";
+            default->"";
+        };
     }
     private static String select(Sample sample, LocalMotionPolicy p, String posture, boolean moving, String air, double vertical) {
         return switch (posture) {

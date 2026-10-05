@@ -4,6 +4,7 @@ import com.simmc.meplayeractions.client.model.BbModel;
 import com.simmc.meplayeractions.client.model.BuiltinYsmModels;
 import com.simmc.meplayeractions.client.model.YsmFolderModel;
 import com.simmc.meplayeractions.client.model.YsmModelProfile;
+import com.simmc.meplayeractions.client.model.NativeModelBundle;
 import com.simmc.meplayeractions.client.network.AssetTransfer;
 import java.io.IOException;
 import java.io.InputStream;
@@ -14,6 +15,8 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.LinkedHashMap;
 
 /** Private models use one bounded renderer; server-distributed models are not bundled client choices. */
 public final class LocalModelLibrary {
@@ -23,6 +26,8 @@ public final class LocalModelLibrary {
         public Loaded(String hash, BbModel model, String previewAnimation) { this(hash, model, previewAnimation, YsmModelProfile.empty()); }
     }
     private final Path directory;
+    private final Map<String, byte[]> sourceBundles = new LinkedHashMap<>();
+    private final Map<String, String> sourceBundleErrors = new LinkedHashMap<>();
 
     public LocalModelLibrary(Path directory) { this.directory = directory.toAbsolutePath().normalize(); }
     public Path directory() { return directory; }
@@ -32,17 +37,31 @@ public final class LocalModelLibrary {
         for (var builtin : BuiltinYsmModels.models()) models.add(new Entry(builtin.id(), builtin.label()));
         if (!Files.exists(directory)) Files.createDirectories(directory);
         checkDirectory();
-        try (var files = Files.list(directory)) {
-            for (Path file : files.sorted(Comparator.comparing(path -> path.getFileName().toString())).limit(128).toList()) {
-                String name = file.getFileName().toString();
-                if (Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) && LocalAppearanceSettings.isValidModelId("local:" + name))
+        collectModels(directory, models, new int[]{0}, 0);
+        return List.copyOf(models);
+    }
+
+    private void collectModels(Path folder, List<Entry> models, int[] scanned, int depth) throws IOException {
+        if (depth > 8 || models.size() >= BuiltinYsmModels.models().size() + 128 || scanned[0] >= 512) return;
+        try (var children = Files.list(folder)) {
+            for (Path file : children.limit(513 - scanned[0]).sorted(Comparator.comparing(path -> path.getFileName().toString())).toList()) {
+                if (++scanned[0] > 512 || models.size() >= BuiltinYsmModels.models().size() + 128) return;
+                BasicFileAttributes attributes = Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                if (attributes.isSymbolicLink() || attributes.isOther()) continue;
+                String relative = directory.relativize(file).toString().replace('\\', '/'), name = file.getFileName().toString();
+                if (attributes.isRegularFile() && depth == 0 && LocalAppearanceSettings.isValidModelId("local:" + name))
                     models.add(new Entry("local:" + name, "本地 · " + name.substring(0, name.length() - 8)));
-                else if (Files.isDirectory(file, LinkOption.NOFOLLOW_LINKS) && LocalAppearanceSettings.isValidModelId("ysm:" + name)
-                        && Files.isRegularFile(file.resolve("ysm.json"), LinkOption.NOFOLLOW_LINKS))
-                    models.add(new Entry("ysm:" + name, "YSM · " + name));
+                else if (attributes.isDirectory() && LocalAppearanceSettings.isValidModelId("ysm:" + relative)) {
+                    boolean model = Files.isRegularFile(file.resolve("ysm.json"), LinkOption.NOFOLLOW_LINKS)
+                            || Files.isRegularFile(file.resolve("main.json"), LinkOption.NOFOLLOW_LINKS)
+                            && Files.isRegularFile(file.resolve("arm.json"), LinkOption.NOFOLLOW_LINKS);
+                    if (model) models.add(new Entry("ysm:" + relative, "YSM · " + name));
+                    else collectModels(file, models, scanned, depth + 1);
+                } else if (attributes.isRegularFile() && LocalAppearanceSettings.isValidModelId("ysm:" + relative)
+                        && (name.toLowerCase(java.util.Locale.ROOT).endsWith(".ysm") || name.toLowerCase(java.util.Locale.ROOT).endsWith(".zip")))
+                    models.add(new Entry("ysm:" + relative, "YSM · " + name));
             }
         }
-        return List.copyOf(models);
     }
 
     public Loaded load(String id) throws IOException {
@@ -67,15 +86,53 @@ public final class LocalModelLibrary {
                 throw new IOException("模型必须是本地模型目录内的普通 .bbmodel 文件");
             if (Files.size(file) > AssetTransfer.MAX_RAW) throw new IOException("模型大小不能超过 8 MiB");
             try (InputStream input = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) { raw = read(input); }
+            if (!hasSource(id)) rememberFiles(id, "bbmodel", "model.bbmodel", Map.of("model.bbmodel", raw));
         } else if (id.startsWith("ysm:")) {
             checkDirectory();
             var imported = YsmFolderModel.readWithProfile(directory.resolve(id.substring(4)), textureId);
             raw = imported.raw(); previewAnimation = imported.previewAnimation(); profile = imported.profile();
+            rememberImported(id, imported);
         } else {
             var imported = YsmFolderModel.bundledWithProfile(id, textureId);
             raw = imported.raw(); previewAnimation = imported.previewAnimation(); profile = imported.profile();
+            rememberImported(id, imported);
         }
-        return new Loaded(AssetTransfer.hash(raw), BbModel.parse(raw), previewAnimation, profile);
+        return new Loaded(AssetTransfer.hash(raw), BbModel.parseLocal(raw), previewAnimation, profile);
+    }
+
+    /** Skin and variable snapshots stay outside this stable full-asset identity. */
+    public synchronized byte[] sourceBundle(String id) throws IOException {
+        byte[] cached = sourceBundles.get(id);
+        if (cached == null && sourceBundleErrors.containsKey(id)) throw new IOException(sourceBundleErrors.get(id));
+        if (cached == null) { load(id); cached = sourceBundles.get(id); }
+        if (cached == null && sourceBundleErrors.containsKey(id)) throw new IOException(sourceBundleErrors.get(id));
+        if (cached == null) throw new IOException("模型完整原始资产不可用");
+        return cached.clone();
+    }
+
+    /** Explicit library reload can invalidate source identity; selecting a skin does not. */
+    public synchronized void clearSourceBundleCache() { sourceBundles.clear(); sourceBundleErrors.clear(); }
+    private synchronized boolean hasSource(String id) { return sourceBundles.containsKey(id) || sourceBundleErrors.containsKey(id); }
+    private void rememberImported(String id, YsmFolderModel.Imported imported) throws IOException {
+        if (!hasSource(id)) rememberFiles(id, "ysm", "ysm.json", imported.sourceFiles());
+    }
+
+    private void rememberFiles(String id, String kind, String entry, Map<String, byte[]> files) throws IOException {
+        try { rememberSource(id, NativeModelBundle.encode(kind, entry, files)); }
+        catch (NativeModelBundle.NetworkBudgetExceededException limit) {
+            synchronized (this) {
+                sourceBundleErrors.put(id, limit.getMessage());
+                while (sourceBundleErrors.size() > 16) sourceBundleErrors.remove(sourceBundleErrors.keySet().iterator().next());
+            }
+        }
+    }
+
+    private synchronized void rememberSource(String id, byte[] bytes) {
+        sourceBundleErrors.remove(id);
+        // Cache transfer bytes across texture/profile changes; explicit reload is a separate operation.
+        byte[] previous = sourceBundles.get(id);
+        if (previous == null || !java.util.Arrays.equals(previous, bytes)) sourceBundles.put(id, bytes);
+        while (sourceBundles.size() > 16) sourceBundles.remove(sourceBundles.keySet().iterator().next());
     }
 
     private void checkDirectory() throws IOException {

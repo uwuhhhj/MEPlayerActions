@@ -31,7 +31,8 @@ class ClientOptionsTest {
         assertEquals(LocalAppearanceSettings.defaults(),new ClientOptions(path).localAppearance());
         Files.writeString(path,"{\"enabled\":false,\"showSelf\":false,\"followServerTimeline\":true,\"interpolationTicks\":4}");
         var old=new ClientOptions(path);
-        assertFalse(old.enabled);assertFalse(old.showSelf);assertTrue(old.followServerTimeline);assertEquals(4,old.interpolationTicks);
+        assertFalse(old.enabled);assertTrue(old.showSelf);assertTrue(old.hideVanillaPlayer);assertTrue(old.hideVanillaEquipment);
+        assertTrue(old.followServerTimeline);assertEquals(4,old.interpolationTicks);
         assertEquals(LocalAppearanceSettings.defaults(),old.localAppearance());
         old.save();
         assertEquals(LocalAppearanceSettings.defaults(),new ClientOptions(path).localAppearance());

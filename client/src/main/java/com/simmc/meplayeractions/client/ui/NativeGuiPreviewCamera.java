@@ -3,6 +3,7 @@ package com.simmc.meplayeractions.client.ui;
 import com.google.gson.JsonObject;
 import com.simmc.meplayeractions.client.model.YsmModelProfile;
 import com.simmc.meplayeractions.client.model.YsmRenderScale;
+import org.joml.Matrix4f;
 
 /**
  * Fixed native GUI camera adapted from OpenYSM-Updated 0306e1f:
@@ -43,6 +44,14 @@ final class NativeGuiPreviewCamera {
             // Native-height anchor and display size are independent of the author's model scale.
             return new Position(left + width * .5f - pixelsPerBlock * rotated.x,
                     top + height * .5f + pixelsPerBlock * (translationY - rotated.y), rotated.depth);
+        }
+
+        /** Native held/equipment renderers receive the same parent as the already projected body mesh. */
+        Matrix4f projectedBodyMatrix() {
+            return new Matrix4f().translation(0, pixelsPerBlock * translationY, 0)
+                    .scale(-pixelsPerBlock, -pixelsPerBlock, pixelsPerBlock)
+                    .rotateX((float) Math.toRadians(pitch)).rotateY((float) Math.toRadians(yaw))
+                    .translate(0, GEO_Y_OFFSET, 0).scale(modelScale.x(), modelScale.y(), modelScale.z());
         }
     }
 

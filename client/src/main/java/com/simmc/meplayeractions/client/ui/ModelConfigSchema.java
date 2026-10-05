@@ -17,11 +17,16 @@ public final class ModelConfigSchema {
             Molang.Context context = new Molang.Context();
             variables.forEach(context::set); return Molang.compile(expression).evaluate(context);
         }
+        public int selectedIndex(double value) {
+            int selected = Double.isFinite(value) ? Math.round((float) value) : 0;
+            return selected >= 0 && selected < choices.size() ? selected : 0;
+        }
         public double snap(double value) {
             if (!Double.isFinite(value)) throw new IllegalArgumentException("请输入有效数字");
-            double result = Math.max(minimum, Math.min(maximum, value));
+            double low=Math.min(minimum,maximum),high=Math.max(minimum,maximum);
+            double result = Math.max(low, Math.min(high, value));
             if (step > 0) result = step * Math.round(result / step);
-            return Math.max(minimum, Math.min(maximum, result));
+            return Math.max(low, Math.min(high, result));
         }
         public String checkboxScript(boolean selected) {
             if (kind != Kind.CHECKBOX) throw new IllegalStateException("Not a checkbox");
@@ -41,8 +46,11 @@ public final class ModelConfigSchema {
             return Collections.unmodifiableSet(result);
         }
         private static void collect(String script, Set<String> target) {
-            for (String reference : Molang.compile(script).references()) {
-                try { target.add(ClientOptions.normalizeModelVariable(reference)); }
+            // GUI metadata must not reject mature scripts because the legacy numeric parser lacks a type.
+            // Ignore quoted text; the runtime engine validates and executes the complete author script.
+            var references = java.util.regex.Pattern.compile("(?i)(?<![\\p{L}\\p{N}_.])(?:v|variable)\\.[\\p{L}_][\\p{L}\\p{N}_]*(?:\\.[\\p{L}_][\\p{L}\\p{N}_]*)*").matcher(unquotedCode(script));
+            while (references.find()) {
+                try { target.add(ClientOptions.normalizeModelVariable(references.group())); }
                 catch (IllegalArgumentException ignored) { }
             }
         }
@@ -51,11 +59,15 @@ public final class ModelConfigSchema {
         public Group { forms = List.copyOf(forms); }
     }
     private final List<Group> groups;
-    private ModelConfigSchema(List<Group> groups) { this.groups = List.copyOf(groups); }
+    private final Set<String> functionVariables;
+    private ModelConfigSchema(List<Group> groups) { this(groups,Set.of()); }
+    private ModelConfigSchema(List<Group> groups,Set<String> functionVariables) {
+        this.groups=List.copyOf(groups);this.functionVariables=Set.copyOf(functionVariables);
+    }
     public List<Group> groups() { return groups; }
     public Optional<Group> group(String id) { return groups.stream().filter(group -> group.id().equals(id)).findFirst(); }
     public Set<String> variables() {
-        Set<String> variables = new LinkedHashSet<>();
+        Set<String> variables = new LinkedHashSet<>(functionVariables);
         groups.forEach(group -> group.forms().forEach(form -> variables.addAll(form.variables())));
         if (variables.size() > ClientOptions.MAX_MODEL_VARIABLES) throw new IllegalArgumentException("模型配置变量过多");
         return Collections.unmodifiableSet(variables);
@@ -66,17 +78,24 @@ public final class ModelConfigSchema {
         List<Group> localized = new ArrayList<>();
         for (Group group : original.groups) {
             List<Form> forms = new ArrayList<>();
-            for (Form form : group.forms()) {
-                List<Radio> choices = form.choices().stream().map(choice -> new Radio(
-                        profile.localized(locale, choice.label(), choice.label()), choice.script())).toList();
-                forms.add(new Form(form.key(), form.kind(), profile.localized(locale, form.title(), form.title()),
-                        profile.localized(locale, form.description(), form.description()), form.expression(),
+            for (int index = 0; index < group.forms().size(); index++) {
+                Form form = group.forms().get(index);
+                String path = "properties.extra_animation_buttons." + group.id() + ".config_forms." + index;
+                List<Radio> choices = new ArrayList<>();
+                for (int choice = 0; choice < form.choices().size(); choice++) {
+                    Radio radio = form.choices().get(choice);
+                    choices.add(new Radio(localized(profile, locale, path + ".labels." + choice, radio.label()), radio.script()));
+                }
+                forms.add(new Form(form.key(), form.kind(), localized(profile, locale, path + ".title", form.title()),
+                        localized(profile, locale, path + ".description", form.description()), form.expression(),
                         form.minimum(), form.maximum(), form.step(), choices));
             }
-            localized.add(new Group(group.id(), profile.localized(locale, group.name(), group.name()),
-                    profile.localized(locale, group.description(), group.description()), forms));
+            String path = "properties.extra_animation_buttons." + group.id();
+            localized.add(new Group(group.id(), localized(profile, locale, path + ".name", group.name()),
+                    localized(profile, locale, path + ".description", group.description()), forms));
         }
-        return new ModelConfigSchema(localized);
+        ModelConfigSchema result=new ModelConfigSchema(localized,configurationFunctionVariables(original,profile.functions()));
+        result.variables();return result;
     }
     public static ModelConfigSchema parse(JsonArray buttons) {
         if (buttons.size() > 32) throw new IllegalArgumentException("模型配置分组过多");
@@ -93,10 +112,11 @@ public final class ModelConfigSchema {
                     case "checkbox" -> Kind.CHECKBOX; case "range" -> Kind.RANGE; case "radio" -> Kind.RADIO;
                     default -> throw new IllegalArgumentException("不支持的模型配置类型");
                 };
-                String expression = text(config, "value", ""); Molang.compile(expression);
+                String expression = text(config, "value", "");
+                if (expression.isBlank()) throw new IllegalArgumentException("模型配置表达式为空");
                 if (kind != Kind.RADIO) ClientOptions.normalizeModelVariable(expression);
-                double min = number(config, "min", 0), max = number(config, "max", 0), step = number(config, "step", 0);
-                if (kind == Kind.RANGE && (min > max || step < 0 || Math.abs(min) > 1_000_000 || Math.abs(max) > 1_000_000))
+                double min = number(config, "min", 0), max = number(config, "max", 0), step = Math.abs(number(config, "step", 0));
+                if (kind == Kind.RANGE && (step > 1_000_000 || Math.abs(min) > 1_000_000 || Math.abs(max) > 1_000_000))
                     throw new IllegalArgumentException("模型范围配置无效");
                 List<Radio> choices = new ArrayList<>();
                 if (kind == Kind.RADIO) {
@@ -104,7 +124,8 @@ public final class ModelConfigSchema {
                     if (labels.isEmpty() || labels.size() > 64) throw new IllegalArgumentException("模型单选选项无效");
                     for (var label : labels.entrySet()) {
                         if (!label.getValue().isJsonPrimitive() || !label.getValue().getAsJsonPrimitive().isString()) throw new IllegalArgumentException("模型单选脚本无效");
-                        String script = label.getValue().getAsString(); Molang.compile(script);
+                        String script = label.getValue().getAsString();
+                        if (script.isBlank()) throw new IllegalArgumentException("模型单选脚本为空");
                         choices.add(new Radio(bounded(label.getKey()), bounded(script)));
                     }
                 }
@@ -115,6 +136,38 @@ public final class ModelConfigSchema {
             groups.add(new Group(id, text(group, "name", id), text(group, "description", ""), forms));
         }
         ModelConfigSchema schema = new ModelConfigSchema(groups); schema.variables(); return schema;
+    }
+    private static String localized(YsmModelProfile profile, String locale, String path, String fallback) {
+        return profile.localized(locale, path, profile.localized(locale, fallback, fallback));
+    }
+    private static Set<String> configurationFunctionVariables(ModelConfigSchema schema,Map<String,String> functions) {
+        Set<String> variables=new LinkedHashSet<>(),visited=new HashSet<>();Deque<String> scripts=new ArrayDeque<>();
+        for(var group:schema.groups)for(var form:group.forms()) {
+            scripts.add(form.expression());for(var choice:form.choices())scripts.add(choice.script());
+        }
+        var calls=java.util.regex.Pattern.compile("(?i)(?<![\\p{L}\\p{N}_.])fn\\.([\\p{L}_][\\p{L}\\p{N}_]*)\\s*\\(");
+        while(!scripts.isEmpty()) {
+            var references=calls.matcher(unquotedCode(scripts.removeFirst()));
+            while(references.find()) {
+                String name=references.group(1).toLowerCase(Locale.ROOT);
+                if(!visited.add(name))continue;
+                String script=functions.entrySet().stream().filter(entry->entry.getKey().equalsIgnoreCase(name)).map(Map.Entry::getValue).findFirst().orElse(null);
+                if(script!=null){Form.collect(script,variables);scripts.addLast(script);}
+            }
+        }
+        return variables;
+    }
+    private static String unquotedCode(String script) {
+        StringBuilder code=new StringBuilder(script.length());char quote=0;boolean escape=false;
+        for(int i=0;i<script.length();i++) {
+            char c=script.charAt(i);
+            if(quote!=0) {
+                code.append(' ');
+                if(escape)escape=false;else if(c=='\\')escape=true;else if(c==quote)quote=0;
+            }else if(c=='\'' || c=='"'){quote=c;code.append(' ');}
+            else code.append(c);
+        }
+        return code.toString();
     }
     private static double number(JsonObject object, String key, double fallback) {
         if (!object.has(key)) return fallback;

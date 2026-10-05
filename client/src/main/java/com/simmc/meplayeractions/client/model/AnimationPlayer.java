@@ -18,6 +18,7 @@ public final class AnimationPlayer {
     private final YsmAnimationController ysm;
     private final Map<String, Group> groups = new LinkedHashMap<>();
     private final Map<String, Spring> springs = new HashMap<>();
+    private final Map<String,NativeYsmPhysics> nativeSprings = new HashMap<>();
     private Consumer<Molang.Context> configureFrame = context -> { };
     private BbModel.Pose sampledPose;
     private BbModel.Pose readingPose;
@@ -26,15 +27,105 @@ public final class AnimationPlayer {
     private int functionDepth;
     private int eventDepth;
     private boolean lifecycleInitialized;
+    private final Map<String,Molang.StructValue> boneValues = new HashMap<>();
+    private Consumer<List<Double>> syncListener;
+    private boolean applyingSync;
+    private final Deque<List<Double>> pendingSync = new ArrayDeque<>();
+    private final Map<String,Double> roamingInputs = new HashMap<>();
 
     public AnimationPlayer(BbModel model) { this.model = Objects.requireNonNull(model); ysm = model.ysmControllers() ? new YsmAnimationController(model) : null; sampledPose = model.emptyPose(); readingPose = sampledPose; }
 
-    public void reset() { states.clear(); lastTick = Double.NaN; expressions.clear(); initialized = false; lifecycleInitialized = false; physicsRemainder = 0; groups.clear(); springs.clear(); if (ysm != null) ysm.reset(); sampledPose = model.emptyPose(); readingPose = sampledPose; instanceStart = Double.NaN; }
+    public void reset() { states.clear(); lastTick = Double.NaN; expressions.clear(); initialized = false; lifecycleInitialized = false; physicsRemainder = 0; groups.clear(); springs.clear(); nativeSprings.clear(); boneValues.clear(); pendingSync.clear(); roamingInputs.clear(); if (ysm != null) ysm.reset(); sampledPose = model.emptyPose(); readingPose = sampledPose; instanceStart = Double.NaN; }
+    /** Disposing a model drops pending author work; it never dispatches effects from the old world. */
+    public void dispose() { reset(); configureFrame = context -> { }; expressions.functions(null); installedResolver = null; syncListener = null; }
     public Map<String,Double> expressionVariables() { return expressions.variables(); }
     public Map<String,Object> expressionValues() { return expressions.values(); }
+    /** The caller opts in only for the trusted local YSM loading path. */
+    public void enableQueryDiagnostics() { expressions.enableDiagnostics(); }
+    public void enableNativeYsm() { expressions.enableNativeYsm();expressions.enableNativeRoaming(); }
+    /** Root consumes this only for its locally owned world-body instance, never GUI/arm/observer instances. */
+    public Map<String,Double> consumeRoamingChanges() { return expressions.consumeRoamingChanges(); }
+    /** Installed only for the locally owned private YSM instance when transport is available. */
+    public void syncListener(Consumer<List<Double>> listener) { syncListener = listener; }
+    /** Apply a server-confirmed author event without forwarding it back to the server. */
+    public boolean applySync(List<Double> arguments) {
+        List<Object> values = BbModel.syncArguments(new ArrayList<>(arguments));
+        if (values == null || eventDepth >= 16) return false;
+        if (!lifecycleInitialized || installedResolver==null) {
+            if (pendingSync.size()>=32) return false;
+            pendingSync.addLast(List.copyOf(arguments));return true;
+        }
+        dispatchSync(values);return true;
+    }
+    private void dispatchSync(List<Object> values) {
+        boolean previous = applyingSync; applyingSync = true; eventDepth++;
+        try {
+            Runnable dispatch = () -> model.authorEvent("sync",values,expressions);
+            if (ysm == null) dispatch.run(); else ysm.withoutBuiltinEvent(dispatch);
+        } finally { eventDepth--; applyingSync = previous; }
+    }
+    public List<Molang.QueryDiagnostic> expressionDiagnostics() { return expressions.diagnostics(); }
+    /** Explicit UI author scripts use normal native fn/query bindings in a separate variable scope. */
+    public Map<String,Double> authorConfiguration(List<String> scripts,Map<String,Double> draftVariables) {
+        if (scripts.size()>64) throw new IllegalArgumentException("Author configuration script limit");
+        Molang.Context scope=configurationContext(draftVariables,true);
+        for(String script:scripts) Molang.compileNativeYsm(script).evaluateValue(scope);
+        return scope.variables();
+    }
+    /** Reading a form never mutates running variables or sends world effects/network events. */
+    public double readConfiguration(String expression,Map<String,Double> draftVariables) {
+        return Molang.compileNativeYsm(expression).evaluate(configurationContext(draftVariables,false));
+    }
+    private Molang.Context configurationContext(Map<String,Double> draftVariables,boolean effects) {
+        if (draftVariables.size()>4096) throw new IllegalArgumentException("Author configuration variable limit");
+        Molang.Context scope=new Molang.Context();scope.enableNativeYsm();scope.frame(Map.of());
+        scope.restoreValues(expressions.values());
+        scope.enableNativeRoaming();
+        model.initialVariables().forEach((name,value)->{if(!scope.has(name))scope.set(name,value);});
+        draftVariables.forEach((name,value)->{
+            if (!name.startsWith("variable.") || value==null || !Double.isFinite(value)) throw new IllegalArgumentException("Author configuration variable");
+            scope.set(name,value);
+        });
+        configureFrame.accept(scope);
+        Molang.FunctionResolver fallback=scope.functionResolver();Map<String,NativeYsmPhysics> physics=new HashMap<>();
+        scope.functions((name,args)->resolve(name,args,fallback,scope,effects,physics));
+        installChildBindings(scope,fallback,effects,physics);
+        return scope;
+    }
+    private void seedChangedRoamingInputs(Map<String,Double> parameters) {
+        expressions.enableNativeRoaming();Map<String,Double> changed=new LinkedHashMap<>();
+        parameters.forEach((key,value)-> {
+            if(!key.startsWith("variable.roaming."))return;
+            String name=key.substring("variable.roaming.".length());
+            if(name.contains(".")||name.length()>Molang.Context.MAX_ROAMING_VARIABLE_NAME_LENGTH)return;
+            if(!Objects.equals(roamingInputs.get(key),value))changed.put(key,value);
+            roamingInputs.put(key,value);
+        });
+        expressions.seedRoamingValues(changed);
+    }
+    private static void applyLocalParameters(Molang.Context context,Map<String,Double> parameters) {
+        parameters.forEach((name,value)-> {
+            // The source's numeric roaming channel owns its live values; an unchanged saved profile is not a frame override.
+            if(!context.nativeYsm()||!name.startsWith("variable.roaming."))context.set(name,value);
+        });
+    }
+    private void installChildBindings(Molang.Context parent,Molang.FunctionResolver world,boolean effects,
+                                      Map<String,NativeYsmPhysics> physics) {
+        parent.childScope(child->{
+            Molang.FunctionResolver entity=child.functionResolver();
+            Molang.FunctionResolver fallback=(name,args)-> {
+                boolean worldEffect=Set.of("ysm.play_sound","ysm.stop_sound","ysm.stop_all_sounds",
+                        "ysm.particle","ysm.abs_particle").contains(name);
+                Molang.FunctionResolver selected=worldEffect?world:entity;
+                return selected==null?null:selected.call(name,args);
+            };
+            child.functions((name,args)->resolve(name,args,fallback,child,effects,physics));
+        });
+    }
     /** Native bindings are injected after frame inputs, before any author code executes. */
     public void configureFrame(Consumer<Molang.Context> configure) { configureFrame = Objects.requireNonNull(configure); }
     public Map<String,Matrix4f> boneTransforms() { return model.boneTransforms(sampledPose); }
+    public boolean hasBone(String name) { return model.hasBone(name); }
     public Optional<Matrix4f> boneTransform(String name) { return Optional.ofNullable(boneTransforms().get(name)); }
     public List<BbModel.Vertex> filteredVertices(Set<String> selected) { return model.vertices(sampledPose, Set.copyOf(selected)); }
     public Map<String,String> controllerStates() { return ysm == null ? Map.of() : ysm.states(); }
@@ -93,7 +184,10 @@ public final class AnimationPlayer {
         Molang.FunctionResolver nativeResolver = expressions.functionResolver();
         installedResolver = (name, arguments) -> resolve(name, arguments, nativeResolver);
         expressions.functions(installedResolver);
+        if(expressions.nativeYsm()) installChildBindings(expressions,nativeResolver,true,nativeSprings);
+        if(expressions.nativeYsm()) seedChangedRoamingInputs(localParameters);
         if (!lifecycleInitialized) { lifecycleInitialized = true; model.authorEvent("player_init", List.of(), expressions); }
+        while (!pendingSync.isEmpty()) dispatchSync(new ArrayList<>(pendingSync.removeFirst()));
         boolean firstPerson = expressions.has("ysm.is_first_person") ? expressions.get("ysm.is_first_person") != 0
                 : expressions.has("query.is_first_person") ? expressions.get("query.is_first_person") != 0
                 : Set.of("fp.arm", "fp_arm").contains(model.controllerFamily());
@@ -101,7 +195,7 @@ public final class AnimationPlayer {
         for (BbModel.Layer layer : incoming) if (!expressions.has("ctrl." + layer.animation())) expressions.query("ctrl." + layer.animation(), 1);
         expressions.query("ctrl.playing_extra_animation", incoming.stream().anyMatch(layer -> layer.layer().equals("manual")) ? 1 : 0);
         if (ysm != null) {
-            localParameters.forEach(expressions::set);
+            applyLocalParameters(expressions,localParameters);
             if (!accessories.isEmpty()) {
                 expressions.set("variable.roaming.a", accessories.get("a")); expressions.set("variable.roaming.b", accessories.get("b"));
             }
@@ -123,7 +217,7 @@ public final class AnimationPlayer {
             expressions.set("variable.roaming.a", accessories.get("a"));
             expressions.set("variable.roaming.b", accessories.get("b"));
         }
-        localParameters.forEach(expressions::set);
+        applyLocalParameters(expressions,localParameters);
         Set<String> present = new HashSet<>();
         for (BbModel.Layer layer : incoming) {
             present.add(layer.layer());
@@ -171,24 +265,35 @@ public final class AnimationPlayer {
     private List<BbModel.Vertex> sampleYsm(double tick, List<BbModel.Layer> incoming, float yaw, float pitch,
                                                  Map<String,Double> accessories, Map<String,Double> localParameters) {
         double delta = Double.isNaN(lastTick) ? 0 : Math.max(0, Math.min(.25, (tick - lastTick) / 20));
-        springs.values().forEach(spring -> spring.update(delta)); lastTick = tick;
+        springs.values().forEach(spring -> spring.update(delta));
+        if (!Double.isNaN(lastTick) && lastTick>0 && tick>lastTick)
+            nativeSprings.values().forEach(spring -> spring.update((float)((tick-lastTick)/20)));
+        lastTick = tick;
         BbModel.Pose combined = model.emptyPose(); readingPose = sampledPose;
         double[] headWeights = model.defaultHeadWeights(); boolean[] authoredLook = { false };
         ysm.sample(tick, incoming, expressions, (frame, context) -> {
             BbModel.Pose target = model.emptyPose();
+            Group previousGroup=groups.get(frame.name());
+            BbModel.Pose previousController=previousGroup==null ? model.emptyPose() : previousGroup.current.copy();
             for (YsmAnimationController.Run run : frame.runs()) {
-                if (run.events()) model.clipEvents(run.animation(), run.loop(), run.before(), run.elapsed(), context);
-                // Saved user fields and authoritative server accessories win over first-frame author defaults.
-                localParameters.forEach(context::set);
-                if (!accessories.isEmpty()) {
-                    context.set("variable.roaming.a", accessories.get("a")); context.set("variable.roaming.b", accessories.get("b"));
-                }
-                if (!run.active()) continue;
-                BbModel.Evaluated evaluated = model.evaluateClip(run.animation(), run.elapsed(), run.loop(), context);
-                // Multiple clips in the same state sum position/rotation and multiply weighted scale.
-                addState(target, evaluated.pose(), evaluated.weight());
-                authoredLook[0] |= model.ownsHeadLook(run.animation());
-                readingPose = previewPose(combined, target, frame.deprecated());
+                ysm.withPlayback(run.playback(), false, context, () -> {
+                    if (run.events()) ysm.withCapture(run.active(),
+                            () -> model.ysmEvents(run.animation(), run.playback(), run.elapsed(), false, run.active(), context));
+                    // Saved user fields and authoritative server accessories win over first-frame author defaults.
+                    applyLocalParameters(context,localParameters);
+                    if (!accessories.isEmpty()) {
+                        context.set("variable.roaming.a", accessories.get("a")); context.set("variable.roaming.b", accessories.get("b"));
+                    }
+                    if (run.active()) {
+                        BbModel.Evaluated evaluated = expressions.nativeYsm()
+                                ? model.evaluateClip(run.animation(),run.elapsed(),run.loop(),context,previousController)
+                                : model.evaluateClip(run.animation(), run.elapsed(), run.loop(), context);
+                        // Multiple clips in the same state sum position/rotation and multiply weighted scale.
+                        addState(target, evaluated.pose(), evaluated.weight());
+                        authoredLook[0] |= model.ownsHeadLook(run.animation());
+                        if (!expressions.nativeYsm()) readingPose = previewPose(combined, target, frame.deprecated());
+                    }
+                });
             }
             Group group = groups.get(frame.name());
             if (group == null) {
@@ -203,7 +308,7 @@ public final class AnimationPlayer {
             BbModel.Pose pose = group.at(tick);
             applyGroup(combined, pose, frame.deprecated());
             if (frame.cap()) model.suppressManualLook(headWeights, pose, frame.blend().fraction(tick - frame.changedAt()));
-            readingPose = combined;
+            if (!expressions.nativeYsm()) readingPose = combined;
         });
         if (!authoredLook[0]) model.applyLook(combined, yaw, pitch, headWeights);
         sampledPose = combined.copy(); readingPose = sampledPose;
@@ -251,25 +356,52 @@ public final class AnimationPlayer {
         return euler.mul((float)(180 / Math.PI));
     }
     private Object resolve(String name, List<Object> args, Molang.FunctionResolver fallback) {
+        return resolve(name,args,fallback,expressions,true,nativeSprings);
+    }
+    private Object resolve(String name,List<Object> args,Molang.FunctionResolver fallback,
+                           Molang.Context target,boolean effects,Map<String,NativeYsmPhysics> physics) {
+        if (!effects && Set.of("ysm.sync", "ysm.defer", "ysm.play_sound", "ysm.stop_sound", "ysm.stop_all_sounds",
+                "ysm.particle", "ysm.abs_particle").contains(name)) return target.nativeYsm() ? null : 0d;
+        if (name.equals("ysm.defer")) return ysm == null ? null : ysm.defer(args);
         if (name.equals("ysm.sync")) {
             List<Object> values = BbModel.syncArguments(args);
-            if (values == null || eventDepth >= 16) return 0d;
+            if (values == null || eventDepth >= 16 || applyingSync) return target.nativeYsm() ? null : 0d;
+            if (syncListener != null && target.nativeYsm()) {
+                syncListener.accept(values.stream().map(value -> ((Number)value).doubleValue()).toList());
+                return null;
+            }
             eventDepth++;
             try {
-                Runnable dispatch = () -> model.authorEvent("sync", values, expressions);
+                Runnable dispatch = () -> model.authorEvent("sync", values, target);
                 if (ysm == null) dispatch.run(); else ysm.withoutBuiltinEvent(dispatch);
             } finally { eventDepth--; }
-            return 0d;
+            return target.nativeYsm() ? null : 0d;
         }
         if (name.startsWith("fn.")) {
             Molang.Program program = model.authorFunctions().get(name.substring(3));
-            if (program == null || args.size() > 32 || functionDepth >= 16) return 0d;
+            if (program == null || args.size() > 32 || functionDepth >= (target.nativeYsm() ? 32 : 16)) return target.nativeYsm() ? null : 0d;
             functionDepth++;
-            try { return BbModel.callAuthorFunction(expressions, program, args); }
+            try { return BbModel.callAuthorFunction(target, program, args); }
             finally { functionDepth--; }
         }
         if (name.equals("ysm.first_order") || name.equals("ysm.second_order")) {
             if (args.size() < 2 || !(args.get(0) instanceof String key) || key.isEmpty() || key.length() > 128) return 0d;
+            if (target.nativeYsm()) {
+                boolean second=name.equals("ysm.second_order");
+                String scoped=second && target.physicsScope()!=null ? target.physicsScope()+"\0"+key : key;
+                NativeYsmPhysics spring=physics.get(scoped);
+                float input=nativeFloat(args.get(1));
+                boolean created=spring==null;
+                if (created) {
+                    if (physics.size()>=256) return (double)input;
+                    spring=new NativeYsmPhysics(second); physics.put(scoped,spring);
+                }
+                float frequency=second && args.size()>2 ? nativeFloat(args.get(2)) : 1;
+                float damping=second && args.size()>3 ? nativeFloat(args.get(3)) : 1;
+                float response=args.size()>(second?4:2) ? nativeFloat(args.get(second?4:2)) : 1;
+                spring.args(input,second?frequency:response,second?damping:0,second?response:0);
+                return (double)(created ? input : spring.value());
+            }
             Spring spring = springs.get(key); double input = safeNumber(args.get(1), 36_000);
             if (spring == null) {
                 if (springs.size() >= 256) return input;
@@ -280,6 +412,10 @@ public final class AnimationPlayer {
         if (Set.of("ysm.bone_rot", "ysm.bone_pos", "ysm.bone_scale", "ysm.bone_pivot_abs").contains(name)) {
             String bone = args.isEmpty() ? "" : String.valueOf(args.get(0));
             int channel = switch (name) { case "ysm.bone_rot" -> 1; case "ysm.bone_scale" -> 2; case "ysm.bone_pivot_abs" -> 3; default -> 0; };
+            if (target.nativeYsm()) {
+                if (args.size()!=1 || !(args.get(0) instanceof String) || !model.hasBone(bone)) return null;
+                return boneValues.computeIfAbsent(channel + ":" + bone,key -> new LiveBoneValue(bone,channel));
+            }
             Vector3f value = model.boneValue(bone, channel, readingPose);
             if (channel == 1) { value.x = -value.x; value.y = -value.y; }
 
@@ -290,6 +426,25 @@ public final class AnimationPlayer {
         if (Set.of("ysm.play_sound", "ysm.stop_sound", "ysm.stop_all_sounds", "ysm.particle", "ysm.abs_particle").contains(name))
             return fallback == null ? 0d : fallback.call(name, args);
         return fallback == null ? 0d : fallback.call(name, args);
+    }
+    private static float nativeFloat(Object value) {
+        double number=value==null ? 0 : value instanceof Number n ? n.doubleValue() : value instanceof Boolean b ? b ? 1 : 0 : 1;
+        float result=(float)number; return Float.isFinite(result)?result:0;
+    }
+    /** Like upstream Vec3fStruct.copy(), a captured bone remains a live readonly bone handle. */
+    private final class LiveBoneValue implements Molang.StructValue {
+        private final String bone;
+        private final int channel;
+        private LiveBoneValue(String bone,int channel) { this.bone = bone; this.channel = channel; }
+        public Object getProperty(String name) {
+            if (!Set.of("x","y","z").contains(name)) return null;
+            Vector3f value = model.boneValue(bone,channel,readingPose);
+            if (channel==1) { value.x=-value.x; value.y=-value.y; }
+            return (double)switch(name) { case "x" -> value.x; case "y" -> value.y; default -> value.z; };
+        }
+        public void putProperty(String name,Object value) { }
+        public Molang.StructValue copy() { return this; }
+        public String toString() { return "vec3{x=" + getProperty("x") + ", y=" + getProperty("y") + ", z=" + getProperty("z") + "}"; }
     }
     private static double safeNumber(Object value, double bound) {
         double number = value instanceof Number n ? n.doubleValue() : 0;

@@ -7,8 +7,8 @@ import java.util.*;
 final class NativeEntityPackets {
     private static final String PREFIX="net.minecraft.network.protocol.game.";
     private final Map<Class<?>,MethodHandle[]> readers=new LinkedHashMap<>();
-    private final Class<?> bundleClass;
-    private final MethodHandle bundleItems,removeConstructor;
+    private final Class<?> bundleClass,removeClass;
+    private final MethodHandle bundleItems,removeIds,removeConstructor;
     NativeEntityPackets() {
         try {
             method("ClientboundAddEntityPacket","getId");
@@ -20,11 +20,13 @@ final class NativeEntityPackets {
             method("ClientboundSetEntityDataPacket","id");
             method("ClientboundSetEquipmentPacket","getEntity");
             method("ClientboundAnimatePacket","getId");
-            method("ClientboundRemoveEntitiesPacket","getEntityIds");
-            method("ClientboundSetPassengersPacket","getVehicle","getPassengers");
+            // Removals can contain unrelated entities, so they must be partitioned by ID.
+            // Passengers retain ME's normal pivot-passenger augmentation and are never exempted.
+            removeClass=Class.forName(PREFIX+"ClientboundRemoveEntitiesPacket");
+            removeIds=MethodHandles.publicLookup().unreflect(removeClass.getMethod("getEntityIds"));
             bundleClass=Class.forName(PREFIX+"ClientboundBundlePacket");
             bundleItems=MethodHandles.publicLookup().unreflect(bundleClass.getMethod("subPackets"));
-            removeConstructor=MethodHandles.publicLookup().unreflectConstructor(Class.forName(PREFIX+"ClientboundRemoveEntitiesPacket").getConstructor(int[].class));
+            removeConstructor=MethodHandles.publicLookup().unreflectConstructor(removeClass.getConstructor(int[].class));
         } catch(ReflectiveOperationException failure) {
             throw new IllegalStateException("Minecraft 1.21.11 native entity packet contract unavailable",failure);
         }
@@ -57,9 +59,35 @@ final class NativeEntityPackets {
     }
     static boolean contains(Object ids,Set<Integer> owners) {
         if(ids instanceof Number id)return owners.contains(id.intValue());
-        if(ids instanceof int[] many) { for(int id:many)if(owners.contains(id))return true;return false; }
-        if(ids instanceof Iterable<?> many) { for(Object id:many)if(id instanceof Number number && owners.contains(number.intValue()))return true;return false; }
-        throw new IllegalArgumentException("Unexpected native entity ID accessor");
+        throw new IllegalArgumentException("Native entity exemption requires a single entity ID");
+    }
+    NativeEntityPacketHandler.Removal partitionRemoval(Object packet,Set<Integer> owners) {
+        if(!removeClass.isInstance(packet))return null;
+        try {
+            IdPartition ids=partitionIds(removeIds.invoke(packet),owners);
+            if(ids.approved.length==0)return null;
+            if(ids.remaining.length==0)return new NativeEntityPacketHandler.Removal(packet,null);
+            return new NativeEntityPacketHandler.Removal(removeConstructor.invoke(ids.approved),
+                    removeConstructor.invoke(ids.remaining));
+        } catch(Throwable failure) { throw new IllegalStateException("Cannot partition native entity removal",failure); }
+    }
+    record IdPartition(int[] approved,int[] remaining) {}
+    static IdPartition partitionIds(Object ids,Set<Integer> owners) {
+        int[] all;
+        if(ids instanceof int[] many)all=many;
+        else if(ids instanceof Iterable<?> many) {
+            List<Integer> values=new ArrayList<>();
+            for(Object value:many) {
+                if(!(value instanceof Number number))throw new IllegalArgumentException("Unexpected native entity ID");
+                values.add(number.intValue());
+            }
+            all=values.stream().mapToInt(Integer::intValue).toArray();
+        } else throw new IllegalArgumentException("Unexpected native entity removal accessor");
+        int approvedCount=0;for(int id:all)if(owners.contains(id))approvedCount++;
+        int[] approved=new int[approvedCount],remaining=new int[all.length-approvedCount];
+        int approvedIndex=0,remainingIndex=0;
+        for(int id:all)if(owners.contains(id))approved[approvedIndex++]=id;else remaining[remainingIndex++]=id;
+        return new IdPartition(approved,remaining);
     }
     Object remove(int id) {
         try { return removeConstructor.invoke(new int[]{id}); }

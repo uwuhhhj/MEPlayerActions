@@ -1,6 +1,7 @@
 package com.simmc.meplayeractions.me;
 
 import com.simmc.meplayeractions.action.DisguiseOptions;
+import com.simmc.meplayeractions.config.PerformanceSettings;
 import com.ticxo.modelengine.api.nms.entity.wrapper.TrackedEntity;
 import org.bukkit.Location;
 import org.bukkit.World;
@@ -18,14 +19,19 @@ class ModelAudienceTest {
                 switch (m.getName()) { case "equals" -> p == a[0]; case "hashCode" -> System.identityHashCode(p); default -> null; });
     }
     private static class Person {
-        final UUID id = UUID.randomUUID(); final Player player;
+        final UUID id; final Player player;
         Location location; boolean online = true, visible = true;
+        int locations;
         final Set<Player> tracking = new HashSet<>();
         Person(World world, double x, double y, double z) {
+            this(UUID.randomUUID(), world, x, y, z);
+        }
+        Person(UUID id, World world, double x, double y, double z) {
+            this.id = id;
             location = new Location(world, x, y, z);
             player = (Player) Proxy.newProxyInstance(Player.class.getClassLoader(), new Class[]{Player.class}, (p, m, a) ->
                     switch (m.getName()) {
-                        case "getUniqueId" -> id; case "getLocation" -> location.clone(); case "getWorld" -> location.getWorld();
+                        case "getUniqueId" -> id; case "getLocation" -> { locations++; yield location.clone(); } case "getWorld" -> location.getWorld();
                         case "getTrackedPlayers" -> Set.copyOf(tracking); case "isOnline" -> online; case "canSee" -> visible;
                         case "equals" -> p == a[0]; case "hashCode" -> id.hashCode(); case "toString" -> id.toString(); default -> null;
                     });
@@ -34,12 +40,13 @@ class ModelAudienceTest {
     /** ME forced pairings bypass predicates; forced hide removes pairing. */
     private static class Tracker implements TrackedEntity {
         final Person owner; final Set<UUID> paired = new HashSet<>(), hidden = new HashSet<>();
-        Predicate<Player> predicate = DEFAULT_PREDICATE; int dirty;
+        Predicate<Player> predicate = DEFAULT_PREDICATE; int dirty, reads;
         Tracker(Person owner) { this.owner = owner; }
         public Entity getEntity() { return owner.player; }
         public int getBaseRange() { return 64; } public void setBaseRange(int range) {} public int getEffectiveRange() { return 64; }
         public Set<UUID> getTrackedPlayer() { return getTrackedPlayer(p -> true); }
         public Set<UUID> getTrackedPlayer(Predicate<Player> extra) {
+            reads++;
             var result = new HashSet<>(paired);
             for (Player p : owner.tracking) if (predicate.test(p) && extra.test(p) && !hidden.contains(p.getUniqueId())) result.add(p.getUniqueId());
             return result;
@@ -53,14 +60,18 @@ class ModelAudienceTest {
         public void markViewersDirty() { dirty++; }
     }
     private static class Scene {
-        final World world = world(); final Person owner = new Person(world, 0, 0, 0);
-        final Tracker tracker = new Tracker(owner); final Map<UUID, Player> people = new HashMap<>();
+        final World world = world(); final Person owner;
+        final Tracker tracker; final Map<UUID, Player> people = new HashMap<>();
+        long tick; int lookups;
+        Scene() { this(UUID.randomUUID()); }
+        Scene(UUID ownerId) { owner = new Person(ownerId, world, 0, 0, 0); tracker = new Tracker(owner); }
         Person viewer(double x, double y, double z) {
             Person p = new Person(world, x, y, z); owner.tracking.add(p.player); people.put(p.id, p.player); return p;
         }
         ModelAudience audience(boolean self, double distance, int cap) {
             people.put(owner.id, owner.player);
-            return new ModelAudience(new DisguiseOptions("ysm_02_jk", 1, true, 2, self, distance, cap, List.of()), people::get);
+            return new ModelAudience(new DisguiseOptions("ysm_02_jk", 1, true, 2, self, distance, cap, List.of()),
+                    id -> { lookups++; return people.get(id); }, () -> tick, PerformanceSettings.defaults());
         }
     }
     @Test void strictThreeDimensionalBoundaryAndNearestCapApplyToActualTracker() {
@@ -73,9 +84,9 @@ class ModelAudienceTest {
     @Test void movementVacanciesAndNewEntrantsUseRawNativeTracking() {
         var s = new Scene(); var near = s.viewer(1, 0, 0); var waiting = s.viewer(3, 0, 0);
         var a = s.audience(false, 8, 1); a.update(s.owner.player, s.tracker);
-        near.location.setX(8); a.update(s.owner.player, s.tracker); assertEquals(Set.of(waiting.id), s.tracker.getTrackedPlayer());
-        var entering = s.viewer(0.5, 0, 0); a.update(s.owner.player, s.tracker); assertEquals(Set.of(entering.id), s.tracker.getTrackedPlayer());
-        entering.online = false; a.update(s.owner.player, s.tracker); assertEquals(Set.of(waiting.id), s.tracker.getTrackedPlayer());
+        near.location.setX(8); s.tick += 40; a.update(s.owner.player, s.tracker); assertEquals(Set.of(waiting.id), s.tracker.getTrackedPlayer());
+        var entering = s.viewer(0.5, 0, 0); s.tick += 40; a.update(s.owner.player, s.tracker); assertEquals(Set.of(entering.id), s.tracker.getTrackedPlayer());
+        entering.online = false; s.tick += 40; a.update(s.owner.player, s.tracker); assertEquals(Set.of(waiting.id), s.tracker.getTrackedPlayer());
         assertTrue(s.tracker.dirty >= 4);
     }
     @Test void selfVisibilityUsesPairingAndDoesNotOccupyOtherViewerSlots() {
@@ -107,8 +118,8 @@ class ModelAudienceTest {
     @Test void forcedViewerReentersWhenInRangeAndLeavesAtExactBoundary() {
         var s = new Scene(); var p = s.viewer(9, 0, 0); s.owner.tracking.remove(p.player); s.tracker.addForcedPairing(p.id);
         var a = s.audience(false, 8, 10); a.update(s.owner.player, s.tracker); assertTrue(s.tracker.getTrackedPlayer().isEmpty());
-        p.location.setX(7.9); a.update(s.owner.player, s.tracker); assertEquals(Set.of(p.id), s.tracker.getTrackedPlayer());
-        p.location.setX(8); a.update(s.owner.player, s.tracker); assertTrue(s.tracker.getTrackedPlayer().isEmpty());
+        p.location.setX(7.9); s.tick += 40; a.update(s.owner.player, s.tracker); assertEquals(Set.of(p.id), s.tracker.getTrackedPlayer());
+        p.location.setX(8); s.tick += 20; a.update(s.owner.player, s.tracker); assertTrue(s.tracker.getTrackedPlayer().isEmpty());
         a.close(s.tracker, s.owner.id); assertTrue(s.tracker.paired.contains(p.id));
     }
     @Test void equalDistancesHaveDeterministicUuidOrderAndDuplicateEntriesDoNotConsumeSlots() {
@@ -151,5 +162,72 @@ class ModelAudienceTest {
         var next = new Tracker(s.owner); next.predicate = s.tracker.predicate; a.update(s.owner.player, next);
         assertTrue(a.allows(other.id)); a.localRendering(other.id, false); a.update(s.owner.player, next);
         assertEquals(Set.of(other.id), next.getTrackedPlayer());
+    }
+
+    @Test void stableTicksDoNoTrackingOrPlayerLookupsAndValidationOnlyLooksUpAdmittedViewers() {
+        var s = new Scene(new UUID(0, 40));
+        for (int i = 0; i < 100; i++) s.viewer(1 + i * .01, 0, 0);
+        var a = s.audience(false, 8, 2); a.update(s.owner.player, s.tracker);
+        s.lookups = 0; s.tracker.reads = 0;
+        for (s.tick = 1; s.tick < 20; s.tick++) assertFalse(a.update(s.owner.player, s.tracker));
+        assertEquals(0, s.lookups); assertEquals(0, s.tracker.reads, "No native tracking scan on stable ticks");
+        assertFalse(a.update(s.owner.player, s.tracker));
+        assertEquals(2, s.lookups, "Light validation checks only admitted viewers, not all 100 candidates");
+        s.lookups = 0; s.tick = 40; a.update(s.owner.player, s.tracker);
+        assertEquals(100, s.lookups, "Only the full refresh discovers and ranks all candidates");
+    }
+
+    @Test void admissionWaitsForHeavyRefreshButDeparturesAreRevokedAtTheLightDeadline() {
+        var s = new Scene(new UUID(0, 40)); var near = s.viewer(1, 0, 0);
+        var a = s.audience(false, 8, 1); a.update(s.owner.player, s.tracker);
+        var entering = s.viewer(.5, 0, 0); near.visible = false;
+        s.tick = 19; assertFalse(a.update(s.owner.player, s.tracker)); assertTrue(a.allows(near.id));
+        s.tick = 20; assertTrue(a.update(s.owner.player, s.tracker));
+        assertFalse(a.allows(near.id)); assertFalse(a.allows(entering.id));
+        s.tick = 39; assertFalse(a.update(s.owner.player, s.tracker));
+        s.tick = 40; assertTrue(a.update(s.owner.player, s.tracker)); assertTrue(a.allows(entering.id));
+    }
+
+    @Test void stoppedNativeTrackingIsRevokedWithinTwentyTicks() {
+        var s = new Scene(new UUID(0, 40)); var viewer = s.viewer(1, 0, 0);
+        var a = s.audience(false, 8, 1); a.update(s.owner.player, s.tracker);
+        s.owner.tracking.remove(viewer.player); s.tick = 20;
+        assertTrue(a.update(s.owner.player, s.tracker)); assertFalse(a.allows(viewer.id));
+    }
+
+    @Test void localRendererChangesReconcileImmediatelyWithoutRediscoveringCandidates() {
+        var s = new Scene(new UUID(0, 40)); var viewer = s.viewer(1, 0, 0);
+        s.owner.tracking.remove(viewer.player); s.tracker.addForcedPairing(viewer.id);
+        var a = s.audience(false, 8, 1); a.update(s.owner.player, s.tracker); s.lookups = 0; s.tick = 1;
+        assertTrue(a.localRendering(viewer.id, true)); a.update(s.owner.player, s.tracker);
+        assertTrue(a.allows(viewer.id)); assertTrue(s.tracker.paired.isEmpty()); assertEquals(0, s.lookups);
+        assertTrue(a.localRendering(viewer.id, false)); a.update(s.owner.player, s.tracker);
+        assertEquals(Set.of(viewer.id), s.tracker.paired); assertEquals(0, s.lookups);
+    }
+
+    @Test void wrappersAndExternallyReplacedFiltersAreCheckedOnEveryTick() {
+        var s = new Scene(new UUID(0, 40)); var a = s.audience(false, 8, 1); a.update(s.owner.player, s.tracker);
+        s.tick = 1; var replacement = new Tracker(s.owner);
+        assertThrows(IllegalStateException.class, () -> a.update(s.owner.player, replacement));
+        s.tracker.setPlayerPredicate(p -> true);
+        assertThrows(IllegalStateException.class, () -> a.update(s.owner.player, s.tracker));
+    }
+
+    @Test void fullRefreshDeadlinesSpreadOwnersAcrossEveryTickOfTheConfiguredPeriod() {
+        Set<Long> deadlines = new HashSet<>();
+        for (int i = 0; i < 40; i++) deadlines.add(ModelAudience.nextDeadline(0, new UUID(0, i), 40));
+        assertEquals(40, deadlines.size()); assertTrue(deadlines.contains(1L)); assertTrue(deadlines.contains(40L));
+        assertEquals(80, ModelAudience.nextDeadline(40, new UUID(0, 40), 40));
+    }
+
+    @Test void boundedNearestSelectionMatchesSortingForLargeDuplicateAndTieHeavyInput() {
+        var random = new Random(7); UUID owner = new UUID(0, 9999);
+        List<AudienceSelector.Candidate> candidates = new ArrayList<>();
+        for (int i = 0; i < 2000; i++) candidates.add(new AudienceSelector.Candidate(new UUID(0, random.nextInt(1200)), random.nextInt(100)));
+        var expected = candidates.stream().filter(c -> c.distanceSquared() < 64)
+                .sorted(Comparator.comparingDouble(AudienceSelector.Candidate::distanceSquared).thenComparing(AudienceSelector.Candidate::id))
+                .map(AudienceSelector.Candidate::id).distinct().limit(10).collect(java.util.stream.Collectors.toSet());
+        assertEquals(expected, AudienceSelector.select(owner, false, 8, 10, candidates));
+        assertEquals(Set.of(owner), AudienceSelector.select(owner, true, 8, 0, candidates));
     }
 }

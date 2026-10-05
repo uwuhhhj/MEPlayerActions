@@ -2,6 +2,7 @@ package com.simmc.meplayeractions.client;
 
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.simmc.meplayeractions.client.network.ActionPayload;
+import com.simmc.meplayeractions.client.network.PrivateModelPayload;
 import com.simmc.meplayeractions.client.render.ModelRenderer;
 import com.simmc.meplayeractions.client.ui.PlayerModelScreen;
 import com.simmc.meplayeractions.client.ui.AnimationWheelScreen;
@@ -30,15 +31,19 @@ public final class MEPlayerActionsClient implements ClientModInitializer {
         MinecraftClient client=MinecraftClient.getInstance();runtime=new ClientRuntime(client);
         PayloadTypeRegistry.playS2C().register(ActionPayload.ID,ActionPayload.CODEC);
         PayloadTypeRegistry.playC2S().register(ActionPayload.ID,ActionPayload.CODEC);
+        PayloadTypeRegistry.playS2C().register(PrivateModelPayload.ID,PrivateModelPayload.CODEC);
+        PayloadTypeRegistry.playC2S().register(PrivateModelPayload.ID,PrivateModelPayload.CODEC);
         ClientPlayNetworking.registerGlobalReceiver(ActionPayload.ID,(payload,context)->
                 context.client().execute(()->runtime.receive(payload.data())));
+        ClientPlayNetworking.registerGlobalReceiver(PrivateModelPayload.ID,(payload,context)->
+                context.client().execute(()->runtime.receivePrivate(payload.data())));
         ClientPlayConnectionEvents.JOIN.register((handler,sender,mc)->runtime.joined());
-        ClientPlayConnectionEvents.DISCONNECT.register((handler,mc)->runtime.reset());
+        ClientPlayConnectionEvents.DISCONNECT.register((handler,mc)->{YsmNativeInputState.reset();runtime.reset();});
         ModelRenderer.register(runtime);
         // A new binding identifier retires the old saved G binding as well as the G/Y/N entry points.
         actionWheelKey=KeyBindingHelper.registerKeyBinding(new KeyBinding("key.meplayeractions.action_wheel",InputUtil.Type.KEYSYM,
                 GLFW.GLFW_KEY_J,KeyBinding.Category.create(Identifier.of("meplayeractions","actions"))));
-        ClientTickEvents.END_CLIENT_TICK.register(mc->{runtime.tick();
+        ClientTickEvents.END_CLIENT_TICK.register(mc->{YsmNativeInputState.tick(mc);runtime.tick();
             while(actionWheelKey.wasPressed())if(mc.world!=null && mc.currentScreen==null) {
                 var screen=new AnimationWheelScreen(runtime);screen.setReleaseKey(KeyBindingHelper.getBoundKeyOf(actionWheelKey));mc.setScreen(screen);
             }
@@ -63,6 +68,7 @@ public final class MEPlayerActionsClient implements ClientModInitializer {
                 .then(literal("preview").then(argument("model",StringArgumentType.word())
                         .suggests((ctx,builder)->{builder.suggest("ysm_02_jk");builder.suggest("ysm_01_jk");builder.suggest("off");return builder.buildFuture();})
                         .executes(ctx->{runtime.preview(StringArgumentType.getString(ctx,"model"));return 1;})))));
-        LOGGER.info("MEPlayerActions Client 0.4.3 initialized for Minecraft 1.21.11 (local bone rendering, protocol 3, server-push models)");
+        LOGGER.info("MEPlayerActions Client {} initialized for Minecraft 1.21.11 (local bone rendering, protocol 3, optional private-model protocol 1)",
+                net.fabricmc.loader.api.FabricLoader.getInstance().getModContainer("meplayeractions").orElseThrow().getMetadata().getVersion().getFriendlyString());
     }
 }

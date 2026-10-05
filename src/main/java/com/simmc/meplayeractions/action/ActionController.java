@@ -38,6 +38,7 @@ public final class ActionController {
     private final ModelEngineBridge bridge;
     private final GameplayBackend gameplay;
     private final Map<UUID, Session> sessions = new LinkedHashMap<>();
+    private Set<UUID> ownerIds = Set.of();
     private final Map<ActiveModel, VisualOffset> visualOffsets = new ConcurrentHashMap<>();
     private final Set<UUID> adoptWarning = new HashSet<>();
     private final Set<UUID> adoptPaused = new HashSet<>();
@@ -46,13 +47,14 @@ public final class ActionController {
     private BukkitTask task;
     private ClientSyncService clients;
     private long clock;
-    private long nextAdopt;
+    private final RollingScan<Player> adoption;
 
     private static final class Session {
         final Player player;
         final Attachment attachment;
         final UUID instance = UUID.randomUUID();
         final List<String> animations;
+        final List<AnimationInfo> actionDirectory;
         final DisguiseOptions options;
         final DisguiseEffects effects;
         long sequence, manualStarted, postureStarted, interactionStarted, nextManual, nextSample, nextAnimation, lastSwing, appliedJumpCycle;
@@ -76,6 +78,7 @@ public final class ActionController {
         String manualPosture = "standing";
         Session(Player player, Attachment attachment, List<String> animations, Settings settings, DisguiseOptions options) {
             this.player = player; this.attachment = attachment; this.animations = List.copyOf(animations);
+            actionDirectory = ActionDirectory.build(settings, this.animations);
             this.options = options;
             effects = new DisguiseEffects(new PaperEffectPort(player));
             interactions = new InteractionTracker(Math.max(settings.swingTicks, settings.animationInterval + 1),
@@ -86,6 +89,7 @@ public final class ActionController {
     public ActionController(JavaPlugin plugin, Settings settings, ModelEngineBridge bridge,
                             GameplayBackend gameplay) {
         this.plugin = plugin; this.settings = settings; this.bridge = bridge; this.gameplay = gameplay;
+        adoption = new RollingScan<>(settings.performance.adoptionScanTicks());
         clock = Integer.toUnsignedLong(Bukkit.getCurrentTick());
         preferenceFile = new File(plugin.getDataFolder(), "players.yml");
         preferences = YamlConfiguration.loadConfiguration(preferenceFile);
@@ -132,6 +136,7 @@ public final class ActionController {
         session.jumpDuration = settings.jumpMinTicks > 0 ? settings.jumpMinTicks
                 : (int) Math.max(1, Math.min(100, Math.ceil(length * 20 / jumpPlayback.speed()) + jumpPlayback.inTicks()));
         sessions.put(player.getUniqueId(), session);
+        ownerIds = Set.copyOf(sessions.keySet());
         adoptWarning.remove(player.getUniqueId());
         adoptPaused.remove(player.getUniqueId());
         try {
@@ -162,6 +167,7 @@ public final class ActionController {
         failure = attempt(failure, () -> bridge.release(s.attachment));
         if (failure != null) throw new IllegalStateException("会话清理尚未完成，将继续尝试", failure);
         sessions.remove(player.getUniqueId(), s); adoptWarning.remove(player.getUniqueId());
+        ownerIds = Set.copyOf(sessions.keySet());
         visualOffsets.remove(s.attachment.activeModel());
         if (!owned && reason.equals("command")) adoptPaused.add(player.getUniqueId());
         return owned;
@@ -335,6 +341,13 @@ public final class ActionController {
         return lines;
     }
     public List<StateSnapshot> snapshots() { return sessions.values().stream().map(this::snapshot).toList(); }
+    /** Immutable owner membership, rebuilt only when a session is added or removed. */
+    public Set<UUID> ownerIds() { return ownerIds; }
+    /** Build only the requested owner's current state; absent sessions have no snapshot. */
+    public StateSnapshot snapshot(UUID owner) {
+        Session session = sessions.get(owner);
+        return session == null ? null : snapshot(session);
+    }
     public boolean canView(Player viewer, UUID owner) {
         Session session = sessions.get(owner);
         return session != null && bridge.isAttached(session.attachment) && bridge.canView(session.attachment, viewer.getUniqueId());
@@ -362,10 +375,9 @@ public final class ActionController {
                 s.failure = Objects.toString(ex.getMessage(), ex.getClass().getSimpleName());
             }
         }
-        if (settings.adoptOriginal && clock >= nextAdopt) {
-            nextAdopt = clock + 20;
-            for (Player player : Bukkit.getOnlinePlayers()) {
-                if (controlled(player) || adoptPaused.contains(player.getUniqueId()) || !player.hasPermission("mact.use")) continue;
+        if (settings.adoptOriginal) {
+            for (Player player : adoption.next(clock, Bukkit::getOnlinePlayers)) {
+                if (!player.isOnline() || controlled(player) || adoptPaused.contains(player.getUniqueId()) || !player.hasPermission("mact.use")) continue;
                 for (String model : settings.allowedModels) {
                     try { register(player, bridge.attachExisting(player, model)); break; }
                     catch (IllegalArgumentException ignored) { /* This model is not attached. */ }
@@ -532,7 +544,6 @@ public final class ActionController {
         Location location = s.player.getLocation();
         var model = s.attachment.activeModel();
         var visual = s.visualFrame != null && s.visualFrame.world().equals(location.getWorld().getUID()) ? s.visualFrame : null;
-        List<AnimationInfo> animations = ActionDirectory.build(settings, s.animations);
         return new StateSnapshot(s.attachment.playerId(), s.instance, s.attachment.modelId(), s.sequence,
                 Integer.toUnsignedLong(Bukkit.getCurrentTick()), List.copyOf(layers), location.getWorld().getUID(),
                 visual == null ? location.getX() : visual.x(),
@@ -541,7 +552,7 @@ public final class ActionController {
                 visual == null ? model.getYBodyRot() : visual.bodyYaw(),
                 visual == null ? model.getYHeadRot() : visual.headYaw(),
                 visual == null ? model.getXHeadRot() : visual.headPitch(), model.getScale().x(),
-                s.options.hideSelf(), s.options.showSelf(), animations, bridge.supportsLocalRendering(s.attachment), motion(s, location),
+                s.options.hideSelf(), s.options.showSelf(), s.actionDirectory, bridge.supportsLocalRendering(s.attachment), motion(s, location),
                 bridge.accessories(s.attachment));
     }
     private MotionState motion(Session s, Location location) {
@@ -578,6 +589,6 @@ public final class ActionController {
                 remove(s.player, "plugin-close");
             } catch (RuntimeException ex) { plugin.getLogger().warning("会话清理失败：" + ex.getMessage()); }
         }
-        sessions.clear(); visualOffsets.clear(); adoptPaused.clear(); adoptWarning.clear();
+        sessions.clear(); ownerIds = Set.of(); adoption.clear(); visualOffsets.clear(); adoptPaused.clear(); adoptWarning.clear();
     }
 }

@@ -3,8 +3,10 @@ package com.simmc.meplayeractions.client.ui;
 import com.simmc.meplayeractions.client.EntityAnimationController;
 import com.simmc.meplayeractions.client.AnimationFormatValidator;
 import com.simmc.meplayeractions.client.LocalMotionPolicy;
+import com.simmc.meplayeractions.client.VanillaYsmQueries;
 import com.simmc.meplayeractions.client.model.AnimationPlayer;
 import com.simmc.meplayeractions.client.model.BbModel;
+import com.simmc.meplayeractions.client.model.YsmQueryDiagnostics;
 import com.simmc.meplayeractions.expression.Molang;
 
 import java.util.ArrayList;
@@ -13,7 +15,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.function.Consumer;
 
-/** Each owner/card has its own clock, author environment, controller state and springs. */
+/** Each owner, card and browsing preview has its own clock, author environment, controller state and springs. */
 final class PreviewScene {
     static final double ENTRY_TICKS = 12;
     private static final Map<String, Double> CARD_QUERIES = Map.ofEntries(
@@ -33,8 +35,15 @@ final class PreviewScene {
     private Sample last;
 
     record NativeInputs(EntityAnimationController.Sample motion, Map<String, Double> queries,
-                        Consumer<Molang.Context> configure) {
+                        Consumer<Molang.Context> configure, boolean cardDummy) {
         static final NativeInputs EMPTY = new NativeInputs(null, Map.of(), ignored -> { });
+        NativeInputs(EntityAnimationController.Sample motion, Map<String, Double> queries, Consumer<Molang.Context> configure) {
+            this(motion, queries, configure, false);
+        }
+        /** Only the independently constructed preview dummy can supply a gallery entity binding. */
+        static NativeInputs card(Consumer<Molang.Context> configure) {
+            return new NativeInputs(null, Map.of(), configure, true);
+        }
         NativeInputs {
             queries = Map.copyOf(queries);
             Objects.requireNonNull(configure);
@@ -62,7 +71,7 @@ final class PreviewScene {
             if (model.animations().contains("idle")) selected.add(layer("posture", "idle", "LOOP"));
             if (previewAnimation != null && !previewAnimation.equals("idle")
                     && model.animations().contains(previewAnimation)) selected.add(layer("gui", previewAnimation, "LOOP"));
-        } else if (context == ModelPreview.Context.CARD && previewAnimation != null
+        } else if (context != ModelPreview.Context.OWNER && previewAnimation != null
                 && model.animations().contains(previewAnimation)) {
             // OpenYSM's dummy stops main/hand predicates and submits currentAnimation to cap.
             // An explicit cap slot also keeps ctrl.playing_extra_animation false in the dummy.
@@ -77,6 +86,12 @@ final class PreviewScene {
         return new BbModel.Layer(slot, animation, 0, 1, loop, 0, 0);
     }
 
+    void enableQueryDiagnostics() { player.enableQueryDiagnostics(); }
+    void enableNativeYsm() { player.enableNativeYsm(); }
+    /** GUI attachments use this scene's final sampled pose, never the gameplay controller's pose. */
+    AnimationPlayer animationPlayer() { return player; }
+    List<Map<String,Object>> queryDiagnostics() { return YsmQueryDiagnostics.describe(player); }
+
     Sample sample(double clock, Map<String, Double> parameters) {
         return sample(clock, parameters, NativeInputs.EMPTY);
     }
@@ -88,7 +103,8 @@ final class PreviewScene {
         if (Double.isNaN(startedAt)) { startedAt = clock; startCount++; }
         previousClock = clock;
         boolean owner = model.ysmControllers() && context == ModelPreview.Context.OWNER;
-        NativeInputs effective = owner ? inputs : NativeInputs.EMPTY;
+        NativeInputs effective = owner ? inputs.cardDummy() ? NativeInputs.EMPTY : inputs
+                : context != ModelPreview.Context.OWNER && inputs.cardDummy() ? inputs : NativeInputs.EMPTY;
         // Repeated draws and partial-tick jitter do not replay events or rewind physics.
         double nextAge = Math.max(age, clock - startedAt);
         if (last == null || nextAge != age || !lastParameters.equals(parameters)
@@ -100,7 +116,8 @@ final class PreviewScene {
                 layers = motion.layers();
             }
             player.configureFrame(environment -> {
-                if (owner) effective.configure().accept(environment);
+                effective.configure().accept(environment);
+                if (context != ModelPreview.Context.OWNER) VanillaYsmQueries.populatePreviewDefaults(environment);
                 // Inventory mode is third person even if the world camera behind the menu is first person.
                 environment.query("ysm.rendering_in_inventory", 1d);
                 environment.query("ysm.rendering_in_paperdoll", 0d);
@@ -128,5 +145,11 @@ final class PreviewScene {
         player.reset(); motion = new EntityAnimationController();
         startedAt = Double.NaN; previousClock = Double.NaN; age = 0; last = null;
         lastParameters = Map.of(); lastQueries = Map.of(); lastMotion = null;
+    }
+
+    /** A retired screen must release its live-entity expression binding as well as pose state. */
+    void dispose() {
+        restart();
+        player.dispose();
     }
 }

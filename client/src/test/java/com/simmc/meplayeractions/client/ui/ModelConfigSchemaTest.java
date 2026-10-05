@@ -45,8 +45,31 @@ class ModelConfigSchemaTest {
         for (String bad : java.util.List.of(
                 "[{\"id\":\"x\",\"config_forms\":[{\"type\":\"checkbox\",\"value\":\"query.x\"}]}]",
                 "[{\"id\":\"x\"},{\"id\":\"x\"}]",
-                "[{\"id\":\"x\",\"config_forms\":[{\"type\":\"range\",\"value\":\"v.x\",\"min\":2,\"max\":1}]}]",
+                "[{\"id\":\"x\",\"config_forms\":[{\"type\":\"range\",\"value\":\"v.x\",\"min\":0,\"max\":1000001}]}]",
                 "[{\"id\":\"x\",\"config_forms\":[{\"type\":\"radio\",\"value\":\"v.x\",\"labels\":{}}]}]"))
             assertThrows(IllegalArgumentException.class, () -> ModelConfigSchema.parse(JsonParser.parseString(bad).getAsJsonArray()));
+    }
+    @Test void completeRadioScriptsAreDeferredToTheRuntimeAndQuotedTextIsNotPersistedAsAVariable() {
+        String source="""
+            [{"id":"type_scope","config_forms":[{"type":"radio","value":"q.health > 0 ? v.mode : 0","labels":{
+              "完整脚本":"v.label='v.fake'; t.counter=0; loop(2, {v.count=v.count+1;}); v.mode=q.health > 0 ? 1 : 0;"
+            }}]}]
+            """;
+        var schema=ModelConfigSchema.parse(JsonParser.parseString(source).getAsJsonArray());
+        var form=schema.groups().getFirst().forms().getFirst();
+        assertTrue(form.radioScript(0).contains("loop(2"));
+        assertTrue(schema.variables().containsAll(java.util.Set.of("variable.label","variable.count","variable.mode")));
+        assertFalse(schema.variables().contains("variable.fake"));
+    }
+    @Test void invalidReadIndexFallsBackToFirstChoiceRatherThanACachedSelection() {
+        var radio=ModelConfigSchema.parse(JsonParser.parseString(FORMS).getAsJsonArray()).groups().getFirst().forms().get(2);
+        assertEquals(0,radio.selectedIndex(-1));assertEquals(0,radio.selectedIndex(2));
+        assertEquals(0,radio.selectedIndex(Double.NaN));assertEquals(1,radio.selectedIndex(.7));
+    }
+    @Test void reversedAuthorRangesAndNegativeStepUseTheClassicSliderSemantics() {
+        var source=JsonParser.parseString("[{\"id\":\"reverse\",\"config_forms\":[{\"type\":\"range\",\"value\":\"v.x\",\"min\":3,\"max\":-3,\"step\":-0.5}]}]").getAsJsonArray();
+        var form=ModelConfigSchema.parse(source).groups().getFirst().forms().getFirst();
+        assertEquals(.5,form.step());assertEquals(1.5,form.snap(1.3));
+        assertEquals(-3,form.snap(-20));assertEquals(3,form.snap(20));
     }
 }

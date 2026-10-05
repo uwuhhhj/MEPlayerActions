@@ -69,18 +69,34 @@ public final class WheelSelection {
         public int scaled(double value) { return (int) Math.round(value * scale); }
         public int x(double offset) { return centerX + scaled(offset); }
         public int y(double offset) { return centerY + scaled(offset); }
+        public int panelRight() { return panelX + panelWidth; }
+        /** MPA source controls mirror the author panel without shifting the classic wheel. */
+        public int sourcePanelX() { return 2 * centerX - panelRight(); }
+        public int navigationWidth() { return Math.max(1, Math.min(panelWidth / 3, Math.max(20, scaled(30)))); }
+        public int navigationY() { return y(-102); }
+        public int navigationHeight() { return Math.max(26, scaled(30)); }
+        public int backY() { return navigationY() + navigationHeight() + Math.max(1, scaled(2)); }
+        public int backHeight() { return Math.max(18, scaled(22)); }
+        public int scrollbarWidth() { return Math.max(1, Math.min(panelWidth / 3, Math.max(16, scaled(28)))); }
+        public int formWidth() { return Math.max(1, panelWidth - scrollbarWidth() - Math.max(1, scaled(2))); }
+        public int formRight() { return panelX + formWidth(); }
     }
 
-    /** Fit both the original left roulette and right 145-wide author panel together. */
+    /** Keep the wheel at the unlocked mouse's screen centre; fit the source author panel on its right. */
     public static RouletteLayout layout(int width, int height) {
         int w = Math.max(1, width), h = Math.max(1, height);
-        double scale = Math.min(1, Math.min(Math.max(1, w - 24) / 385d, Math.max(1, h - 36) / 230d));
-        int compositeWidth = (int) Math.round(385 * scale);
-        int centerX = (w - compositeWidth) / 2 + (int) Math.round(115 * scale);
-        int centerY = h / 2 - (int) Math.round(8 * scale);
+        int centerX = w / 2, centerY = h / 2;
+        // 270 is the source panel's right edge; 115 includes the hovered polygon expansion.
+        // Reserve space for the title/settings above and the scroll hint/status below.
+        double scale = Math.min(1, Math.min(Math.max(1, w - centerX - 12) / 270d,
+                Math.max(1, Math.min(centerY - 34, h - centerY - 38)) / 115d));
+        int gap = Math.max(1, (int) Math.round(2 * scale));
+        int viewportY = centerY - (int) Math.round(102 * scale) + Math.max(26, (int) Math.round(30 * scale))
+                + Math.max(18, (int) Math.round(22 * scale)) + 2 * gap;
+        int viewportBottom = centerY + (int) Math.round(110 * scale);
         return new RouletteLayout(centerX, centerY, scale, centerX + (int) Math.round(125 * scale),
-                Math.max(1, (int) Math.round(145 * scale)), centerY - (int) Math.round(46 * scale),
-                Math.max(1, (int) Math.round(156 * scale)));
+                Math.max(1, (int) Math.round(145 * scale)), viewportY,
+                Math.max(1, viewportBottom - viewportY));
     }
     public static int clampScroll(int requested, int contentHeight, int viewportHeight) {
         return Math.max(0, Math.min(requested, Math.max(0, contentHeight - viewportHeight)));

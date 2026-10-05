@@ -167,7 +167,9 @@ class PreviewSceneTest {
                     "Explicit cap remains active even when the gui_focus predicate stops; the dummy extra flag is false");
             var elapsed = card.sample(525, Map.of());
             assertEquals(loop, elapsed.layers().getFirst().loop());
-            assertEquals(loop.equals("ONCE") ? 0 : 1, minimumX(elapsed.vertices()), 1e-5);
+            // The first observed ONCE end starts OpenYSM's fixed three-tick ending transition.
+            assertEquals(1, minimumX(elapsed.vertices()), 1e-5);
+            assertEquals(loop.equals("ONCE") ? 0 : 1, minimumX(card.sample(528, Map.of()).vertices()), 1e-5);
         }
         var legacy = new PreviewScene(tinyModel("gui", "16", "HOLD", 18, null), "gui");
         assertEquals("LOOP", legacy.sample(5, Map.of()).layers().getFirst().loop());
@@ -207,18 +209,73 @@ class PreviewSceneTest {
                 "Typed owner bindings are retained rather than replaced with the dummy's empty-hand inputs");
     }
 
-    @Test void fourBuiltinsUseOnlyTheirDeclaredCardPreviewWithoutSyntheticHoverOrFocus() throws Exception {
+    @Test void builtinsUseOnlyTheirDeclaredCardPreviewWithoutSyntheticHoverOrFocus() throws Exception {
         for (String id : BuiltinYsmModels.ids()) {
             var imported = YsmFolderModel.bundledWithProfile(id, null);
             BbModel model = BbModel.parse(imported.raw());
-            assertEquals("gui", imported.previewAnimation());
+            var sourceManifest = JsonParser.parseString(new String(imported.sourceFiles().get("ysm.json"), StandardCharsets.UTF_8))
+                    .getAsJsonObject().getAsJsonObject("properties");
+            String authored = sourceManifest.has("preview_animation") ? sourceManifest.get("preview_animation").getAsString() : "";
+            assertEquals(authored, imported.previewAnimation(), id);
             assertTrue(List.of("hover", "hover_fadeout", "focus").stream().noneMatch(model.animations()::contains), id);
             var card = new PreviewScene(model, imported.previewAnimation(), ModelPreview.Context.CARD).sample(800, Map.of());
-            assertEquals(List.of("gui"), card.animations(), id);
-            assertEquals(List.of("player.cap"), card.slots(), id);
-            assertEquals(model.animationLoop("gui"), card.layers().getFirst().loop(), id);
+            assertEquals(authored.isEmpty() ? List.of() : List.of(authored), card.animations(), id);
+            assertEquals(authored.isEmpty() ? List.of() : List.of("player.cap"), card.slots(), id);
+            if (!authored.isEmpty()) assertEquals(model.animationLoop(authored), card.layers().getFirst().loop(), id);
             assertFalse(card.vertices().isEmpty(), id);
         }
+    }
+
+    @Test void galleryBindsItsExplicitDummyWithoutAcceptingOwnerBindingsOrSharingItBackToOwner() throws Exception {
+        BbModel model = tinyModel("gui", "ysm.entity_type == 'player' ? 32 : 0", "LOOP", 65535, null);
+        AtomicInteger dummyBindings = new AtomicInteger();
+        var dummy = PreviewScene.NativeInputs.card(context -> {
+            dummyBindings.incrementAndGet(); context.stringQuery("ysm.entity_type", "player");
+        });
+        var card = new PreviewScene(model, "gui", ModelPreview.Context.CARD).sample(300, Map.of(), dummy);
+        assertEquals(1, dummyBindings.get());
+        assertEquals(2, minimumX(card.vertices()), 1e-5, "The independent dummy supplies real typed player properties to gallery author expressions");
+        new PreviewScene(model, "gui", ModelPreview.Context.OWNER).sample(300, Map.of(), dummy);
+        assertEquals(1, dummyBindings.get(), "The gallery dummy is never bound to the live owner preview");
+    }
+
+    @Test void selectedPreviewRetainsItsAuthorsGuiAndParametersWithoutTheCurrentOwnersHands() throws Exception {
+        BbModel model = tinyModel("gui", "ysm.has_mainhand ? 160 : v.roaming.preview_position * 16", "HOLD", 65535, null);
+        AtomicInteger ownerBindings = new AtomicInteger();
+        var owner = new PreviewScene.NativeInputs(nativeSample(0, VanillaYsmAnimations.VanillaState.NONE),
+                Map.of("ysm.has_mainhand", 1d), context -> {
+                    ownerBindings.incrementAndGet(); context.query("ysm.has_mainhand", 1d);
+                });
+        var selected = new PreviewScene(model, "gui", ModelPreview.Context.SELECTED)
+                .sample(300, Map.of("variable.roaming.preview_position", 3d), owner);
+        assertEquals(ModelPreview.Context.SELECTED, selected.context());
+        assertEquals(List.of("gui"), selected.animations());
+        assertEquals(List.of("player.cap"), selected.slots());
+        assertEquals("HOLD", selected.layers().getFirst().loop());
+        assertEquals(3, minimumX(selected.vertices()), 1e-5,
+                "The selected model uses its own author parameter and empty preview hands");
+        assertEquals(0, ownerBindings.get(), "Pending selection never binds the current world owner's entity");
+    }
+
+    @Test void restartingTheLargeSelectionDoesNotRestartItsCardOrLiveOwnerClock() throws Exception {
+        var events = JsonParser.parseString("""
+                {"player_init":["v.updates=0;"],"player_update":["v.updates+=1;"]}
+                """).getAsJsonObject();
+        BbModel model = tinyModel("gui", "v.updates*16", "LOOP", 65535, events);
+        var card = new PreviewScene(model, "gui", ModelPreview.Context.CARD);
+        var selected = new PreviewScene(model, "gui", ModelPreview.Context.SELECTED);
+        var owner = new PreviewScene(model, "gui", ModelPreview.Context.OWNER);
+        card.sample(100, Map.of()); var cardBefore = card.sample(110, Map.of());
+        selected.sample(100, Map.of()); selected.sample(105, Map.of());
+        var ownerInput = new PreviewScene.NativeInputs(nativeSample(0, VanillaYsmAnimations.VanillaState.NONE), Map.of(), ignored -> { });
+        owner.sample(100, Map.of(), ownerInput); var ownerBefore = owner.sample(108, Map.of(), ownerInput);
+        selected.restart();
+        var restarted = selected.sample(110, Map.of());
+        assertEquals(0, restarted.age()); assertEquals(2, restarted.startCount());
+        assertEquals(1, minimumX(restarted.vertices()), 1e-5);
+        assertSame(cardBefore, card.sample(110, Map.of()), "Selection changes preserve the visible card's author clock");
+        assertSame(ownerBefore, owner.sample(108, Map.of(), ownerInput), "Selection changes preserve the live-owner preview clock");
+        assertEquals(1, cardBefore.startCount()); assertEquals(1, ownerBefore.startCount());
     }
 
     private static EntityAnimationController.Sample nativeSample(double x, VanillaYsmAnimations.VanillaState vanilla) {

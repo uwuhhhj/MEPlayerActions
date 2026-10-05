@@ -15,6 +15,7 @@ import java.math.BigDecimal;
 import java.util.Map;
 import java.util.LinkedHashMap;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
 
 /** Actual common appearance settings and supported model parameters, with no invented controls. */
 public final class ModelSettingsScreen extends Screen {
@@ -22,14 +23,15 @@ public final class ModelSettingsScreen extends Screen {
     private final Screen parent;
     private final ModelPreview preview = new ModelPreview();
     private String modelId, modelLabel, scaleText, xText, yText, zText, message = "", previewError = "";
-    private boolean draftEnabled, draftShowSelf, activeView, pending, rotating;
+    private boolean draftEnabled, draftHideVanillaPlayer, draftHideVanillaEquipment, draftShowSelf,
+            activeView, pending, rotating, serverDisguisePresent;
     private LocalModelLibrary.Loaded loaded;
     private long previewRequest;
     private float yaw = 0, pitch = -8, ticks;
     private int left, top, bottom, panelWidth, previewWidth, right, rightWidth;
     private int previewX, previewY, previewW, previewH, drawnPreviewCount, controlHeight = 20, labelGap = 11;
     private TextFieldWidget scale, offsetX, offsetY, offsetZ;
-    private ButtonWidget enabled, showSelf, headdress, skin, authorConfig;
+    private ButtonWidget enabled, hideVanillaPlayer, hideVanillaEquipment, showSelf, headdress, skin, authorConfig, save, savePreview;
     private Set<String> formVariables = Set.of();
 
     public ModelSettingsScreen(ClientRuntime runtime, String id, Screen parent) {
@@ -40,7 +42,10 @@ public final class ModelSettingsScreen extends Screen {
         modelId = id;
     }
     private void loadDraft(LocalAppearanceSettings value) {
-        modelId = value.modelId(); draftEnabled = value.enabled(); draftShowSelf = runtime.options.showSelf;
+        modelId = value.modelId(); draftEnabled = value.enabled();
+        draftHideVanillaPlayer = runtime.options.hideVanillaPlayer;
+        draftHideVanillaEquipment = runtime.options.hideVanillaEquipment;
+        draftShowSelf = runtime.options.showSelf;
         scaleText = number(value.scale()); xText = number(value.offsetX());
         yText = number(value.offsetY()); zText = number(value.offsetZ());
     }
@@ -50,6 +55,7 @@ public final class ModelSettingsScreen extends Screen {
     @Override protected void init() {
         activeView = true;
         modelLabel = runtime.localModels().stream().filter(model -> model.id().equals(modelId)).map(ClientRuntime.Action::label).findFirst().orElse(modelId);
+        if(loaded!=null)modelLabel=loaded.profile().localized(client.getLanguageManager().getLanguage(),"metadata.name",modelLabel);
         panelWidth = Math.max(220, Math.min(780, width - 16));
         left = (width - panelWidth) / 2; top = height < 230 ? 29 : 38; bottom = height - 34;
         previewWidth = Math.max(88, Math.min(260, panelWidth * 34 / 100));
@@ -61,12 +67,9 @@ public final class ModelSettingsScreen extends Screen {
         controlHeight = height < 230 ? 18 : 20; labelGap = height < 230 ? 9 : 11;
         // Fixed footer plus proportionally spaced inputs keeps all controls inside small GUI windows.
         int controlY = top + 6, scaleY = top + Math.max(42, available / 3 - 8), offsetsY = top + Math.max(82, available * 2 / 3 - 11);
-        enabled = button(draftEnabled ? "本地：开启" : "本地：关闭", innerX, controlY, half, () -> {
+        enabled = button(draftEnabled ? "本地：开启" : "本地：关闭", innerX, controlY, innerW, () -> {
             draftEnabled = !draftEnabled; updateToggleLabels();
-        }, "保存后开启或关闭本地外观；仅自己可见");
-        showSelf = button(draftShowSelf ? "本人：显示" : "本人：隐藏", innerX + half + 4, controlY, half, () -> {
-            draftShowSelf = !draftShowSelf; updateToggleLabels();
-        }, "第三人称显示本人模型；第一人称不显示身体");
+        }, "保存后开启或关闭私人外观；多人同步单独在客户端设置中开启");
         if (modelId.equals("openysm_default")) {
             headdress = button(defaultHeaddress() ? "红色蝴蝶结 ✓" : "红色蝴蝶结 ×", innerX, controlY + controlHeight + 4, half,
                     this::toggleDefaultHeaddress, "参考默认模型的红色蝴蝶结头饰；立即保存，预览同步更新");
@@ -82,22 +85,48 @@ public final class ModelSettingsScreen extends Screen {
         offsetY = field(innerX + col + 4, offsetsY, col, "位置 Y", yText, "世界 Y 轴偏移；正值向上，单位为方块，范围 -32 到 32");
         offsetZ = field(innerX + (col + 4) * 2, offsetsY, col, "位置 Z", zText, "世界 Z 轴偏移，单位为方块，范围 -32 到 32");
         offsetX.setChangedListener(value -> xText = value); offsetY.setChangedListener(value -> yText = value); offsetZ.setChangedListener(value -> zText = value);
-        button("保存", innerX, bottom - 44, half, () -> saveSettings(false), "保存并立即应用当前设置，保留本页");
-        button("保存并预览", innerX + half + 4, bottom - 44, half, () -> saveSettings(true), "开启本地外观与本人显示；在世界中切换到第三人称查看");
+        save=button("保存", innerX, bottom - 44, half, () -> saveSettings(false), "保存并立即应用当前设置，保留本页");
+        savePreview=button("保存并预览", innerX + half + 4, bottom - 44, half, () -> saveSettings(true), "开启并显示本人的本地伪装，在世界中切换到第三人称；玩家本体和装备显隐单独保存");
         button("恢复默认", innerX, bottom - 21, half, this::restoreDefaults, "恢复默认模型、缩放和位置，并关闭本地外观");
         button("关闭本地", innerX + half + 4, bottom - 21, half, () -> {
             runtime.disableLocalAppearance(); draftEnabled = false; updateToggleLabels(); message = "已恢复服务器显示或原版人物";
         }, "立即关闭本地外观，恢复服务器显示或原版人物");
-        button("返回", left, height - 27, 52, this::close, "返回上一页；未保存的缩放与位置不应用");
+        button("返回", left, height - 27, 52, this::close, "返回上一页；未保存的外观设置不应用");
+        hideVanillaPlayer = layerToggle("玩家隐藏", left + 56, height - 27,
+                () -> runtime.serverOwnModelPresent() || draftHideVanillaPlayer, () -> {
+                    if (runtime.serverOwnModelPresent()) return;
+                    draftHideVanillaPlayer = !draftHideVanillaPlayer; updateToggleLabels();
+                }, "保存后只切换原版玩家本体；装备与伪装模型单独控制");
+        hideVanillaEquipment = layerToggle("装备隐藏", left + 104, height - 27,
+                () -> runtime.serverOwnModelPresent() || draftHideVanillaEquipment, () -> {
+                    if (runtime.serverOwnModelPresent()) return;
+                    draftHideVanillaEquipment = !draftHideVanillaEquipment; updateToggleLabels();
+                }, "保存后只切换原版盔甲、披风和鞘翅；玩家本体与伪装模型单独控制");
+        showSelf = layerToggle("伪装显示", left + 152, height - 27, () -> draftShowSelf,
+                () -> { draftShowSelf = !draftShowSelf; updateToggleLabels(); },
+                "保存后只切换本人的伪装模型；玩家本体与装备单独控制");
+        updateToggleLabels();
         authorConfig = button("作者配置 / 皮肤…", left + 4, bottom - 49, previewWidth - 8, () -> {
             client.setScreen(new ModelConfigScreen(runtime, modelId, this));
-        }, "作者定义的 checkbox、range、radio 和原始皮肤；按模型保存，仅自己可见");
+        }, "作者定义的 checkbox、range、radio 和原始皮肤；按模型保存");
         authorConfig.active = loaded != null;
         loadPreview();
     }
 
     private ButtonWidget button(String label, int x, int y, int w, Runnable action, String tooltip) {
         var button = ButtonWidget.builder(Text.literal(textRenderer.trimToWidth(label, Math.max(1, w - 8))), b -> action.run()).dimensions(x, y, Math.max(20, w), controlHeight).build();
+        button.setTooltip(Tooltip.of(Text.literal(tooltip)));
+        return addDrawableChild(button);
+    }
+    private ButtonWidget layerToggle(String label, int x, int y, BooleanSupplier selected, Runnable action, String tooltip) {
+        var button = new ButtonWidget(x, y, 44, controlHeight, Text.literal(label), b -> action.run(), narration -> narration.get()) {
+            @Override protected void drawIcon(DrawContext context, int mouseX, int mouseY, float delta) {
+                context.fill(getX(), getY(), getRight(), getBottom(), selected.getAsBoolean() ? -14774017 : -12369342);
+                if (hovered || isFocused()) context.drawStrokedRectangle(getX(), getY(), getWidth(), getHeight(), -790560);
+                context.drawCenteredTextWithShadow(textRenderer, textRenderer.trimToWidth(getMessage().getString(), getWidth() - 6),
+                        getX() + getWidth() / 2, getY() + (getHeight() - 8) / 2, active ? 0xfff3f0e0 : 0xff8a929c);
+            }
+        };
         button.setTooltip(Tooltip.of(Text.literal(tooltip)));
         return addDrawableChild(button);
     }
@@ -108,7 +137,22 @@ public final class ModelSettingsScreen extends Screen {
     }
     private void updateToggleLabels() {
         setButtonText(enabled, draftEnabled ? "本地：开启" : "本地：关闭");
-        setButtonText(showSelf, draftShowSelf ? "本人：显示" : "本人：隐藏");
+        serverDisguisePresent = runtime.serverOwnModelPresent();
+        setButtonText(hideVanillaPlayer, serverDisguisePresent || draftHideVanillaPlayer ? "玩家隐藏" : "玩家显示");
+        setButtonText(hideVanillaEquipment, serverDisguisePresent || draftHideVanillaEquipment ? "装备隐藏" : "装备显示");
+        setButtonText(showSelf, draftShowSelf ? "伪装显示" : "伪装隐藏");
+        if (hideVanillaPlayer != null) {
+            hideVanillaPlayer.active = !serverDisguisePresent;
+            hideVanillaPlayer.setTooltip(Tooltip.of(Text.literal(serverDisguisePresent
+                    ? "服务器伪装期间，原版玩家本体保持隐藏；伪装模型单独控制"
+                    : "保存后只切换原版玩家本体；装备与伪装模型单独控制")));
+        }
+        if (hideVanillaEquipment != null) {
+            hideVanillaEquipment.active = !serverDisguisePresent;
+            hideVanillaEquipment.setTooltip(Tooltip.of(Text.literal(serverDisguisePresent
+                    ? "服务器伪装期间，原版盔甲、披风和鞘翅保持隐藏；伪装模型单独控制"
+                    : "保存后只切换原版盔甲、披风和鞘翅；玩家本体与伪装模型单独控制")));
+        }
         setButtonText(headdress, defaultHeaddress() ? "红色蝴蝶结 ✓" : "红色蝴蝶结 ×");
         setButtonText(skin, defaultBlueTexture() ? "皮肤：蓝色" : "皮肤：默认");
     }
@@ -122,6 +166,7 @@ public final class ModelSettingsScreen extends Screen {
             if (!activeView || request != previewRequest || !modelId.equals(id)) return;
             pending = false; loaded = model; previewError = error == null ? "" : LocalAppearanceScreen.loadError(error);
             if (loaded != null) {
+                modelLabel=loaded.profile().localized(client.getLanguageManager().getLanguage(),"metadata.name",modelLabel);
                 try { formVariables = ModelConfigSchema.from(loaded.profile(), client.getLanguageManager().getLanguage()).variables(); }
                 catch (RuntimeException invalid) { formVariables = Set.of(); }
             }
@@ -131,6 +176,14 @@ public final class ModelSettingsScreen extends Screen {
 
     public String selectedModelId() { return modelId; }
     public void setDraftEnabled(boolean value) { draftEnabled = value; updateToggleLabels(); }
+    public void setDraftHideVanillaPlayer(boolean value) {
+        if (!runtime.serverOwnModelPresent()) draftHideVanillaPlayer = value;
+        updateToggleLabels();
+    }
+    public void setDraftHideVanillaEquipment(boolean value) {
+        if (!runtime.serverOwnModelPresent()) draftHideVanillaEquipment = value;
+        updateToggleLabels();
+    }
     public void setDraftShowSelf(boolean value) { draftShowSelf = value; updateToggleLabels(); }
     public int drawnPreviewCount() { return drawnPreviewCount; }
     public Map<String, Object> previewDiagnostics() { return preview.diagnostics(); }
@@ -147,7 +200,7 @@ public final class ModelSettingsScreen extends Screen {
             message = "头饰设置未保存，请等待模型加载完成"; return;
         }
         runtime.options.defaultHeaddress = next;
-        runtime.options.save(); updateToggleLabels(); message = "头饰设置已保存，仅自己可见";
+        runtime.options.save(); updateToggleLabels(); message = "头饰设置已保存";
     }
     public boolean defaultBlueTexture() {
         String texture = runtime.options.modelProfile("openysm_default").textureId();
@@ -159,7 +212,7 @@ public final class ModelSettingsScreen extends Screen {
         if (!runtime.selectLocalTexture(modelId, next ? "blue" : "default")) { message = "皮肤设置未保存"; return; }
         runtime.options.defaultBlueTexture = next; runtime.options.save();
         runtime.refreshLocalAppearance(); loaded = null; pending = false; previewError = ""; previewRequest++; preview.clear();
-        updateToggleLabels(); loadPreview(); message = "皮肤设置已保存，仅自己可见";
+        updateToggleLabels(); loadPreview(); message = "皮肤设置已保存";
     }
     public void setDraftNumbers(String scaleValue, String x, String y, String z) {
         scaleText = scaleValue; xText = x; yText = y; zText = z;
@@ -185,9 +238,15 @@ public final class ModelSettingsScreen extends Screen {
                 throw new IllegalArgumentException(previewError.isEmpty() ? "请等待模型预览加载完成" : "模型无法使用：" + previewError);
             if (worldPreview) draft = new LocalAppearanceSettings(true, draft.modelId(), draft.scale(), draft.offsetX(), draft.offsetY(), draft.offsetZ());
             runtime.updateLocalAppearance(draft);
-            runtime.options.showSelf = worldPreview || draftShowSelf; runtime.options.save();
-            draftEnabled = draft.enabled(); draftShowSelf = runtime.options.showSelf; updateToggleLabels();
-            message = draft.enabled() ? client.world == null ? "已保存，进入世界后显示" : "已保存，本地外观仅自己可见" : "已保存，本地外观关闭";
+            runtime.options.hideVanillaPlayer = draftHideVanillaPlayer;
+            runtime.options.hideVanillaEquipment = draftHideVanillaEquipment;
+            runtime.options.showSelf = worldPreview || draftShowSelf;
+            runtime.options.save();
+            draftEnabled = draft.enabled();
+            draftHideVanillaPlayer = runtime.options.hideVanillaPlayer;
+            draftHideVanillaEquipment = runtime.options.hideVanillaEquipment;
+            draftShowSelf = runtime.options.showSelf; updateToggleLabels();
+            message = draft.enabled() ? client.world == null ? "已保存，进入世界后显示" : "已保存，私人外观已应用" : "已保存，私人外观关闭";
             if (worldPreview && client.world != null) {
                 client.options.setPerspective(Perspective.THIRD_PERSON_BACK); client.setScreen(null);
             }
@@ -209,6 +268,7 @@ public final class ModelSettingsScreen extends Screen {
 
     @Override public void tick() {
         if (!runtime.canEditLocalAppearance()) { client.setScreen(new PlayerModelScreen(runtime)); return; }
+        if (serverDisguisePresent != runtime.serverOwnModelPresent()) updateToggleLabels();
         ticks++;
     }
     @Override public void render(DrawContext context, int mouseX, int mouseY, float delta) {
@@ -216,7 +276,7 @@ public final class ModelSettingsScreen extends Screen {
         drawnPreviewCount = 0;
         context.fill(0, 0, width, height, 0xCF10171F);
         context.drawCenteredTextWithShadow(textRenderer, title, width / 2, 7, 0xfff3f6ff);
-        if (height >= 230) context.drawCenteredTextWithShadow(textRenderer, "仅自己可见 · 参数保存后应用", width / 2, 23, 0xffbccce0);
+        if (height >= 230) context.drawCenteredTextWithShadow(textRenderer, "私人模型 · 参数保存后应用", width / 2, 23, 0xffbccce0);
         context.fill(left, top, left + previewWidth, bottom, 0xE6222730);
         context.fill(right, top, right + rightWidth, bottom, 0xE6222730);
         clipped(context, modelLabel, left + 6, top + 6, previewWidth - 12, 0xfff3f6ff);
@@ -235,7 +295,7 @@ public final class ModelSettingsScreen extends Screen {
             clipped(context, "Y（上为正）", offsetY.getX(), offsetY.getY() - labelGap, offsetY.getWidth(), 0xffc6d5e7);
             clipped(context, "Z 位置", offsetZ.getX(), offsetZ.getY() - labelGap, offsetZ.getWidth(), 0xffc6d5e7);
         }
-        clipped(context, message.isEmpty() ? runtime.localAppearanceStatus() : message, left + 59, height - 21, panelWidth - 59, 0xffffd589);
+        clipped(context, message.isEmpty() ? runtime.localAppearanceStatus() : message, left + 205, height - 21, panelWidth - 205, 0xffffd589);
         super.render(context, mouseX, mouseY, delta);
     }
     private boolean insidePreview(double x, double y) { return x >= previewX && x < previewX + previewW && y >= previewY && y < previewY + previewH; }
@@ -250,7 +310,8 @@ public final class ModelSettingsScreen extends Screen {
     @Override public boolean mouseDragged(Click click, double dx, double dy) {
         if (rotating && click.button() == 0) {
             if (rotationDisabled()) { rotating = false; return true; }
-            yaw = (yaw + (float) dx * 1.5f) % 360; pitch = Math.max(-65, Math.min(65, pitch + (float) dy)); return true;
+            // OpenYSM PlayerTextureScreen.mouseDragged/adjustPitch: screen Y is inverted.
+            yaw = (yaw + (float) dx * 1.5f) % 360; pitch = Math.max(-90, Math.min(90, pitch - (float) dy)); return true;
         }
         return super.mouseDragged(click, dx, dy);
     }

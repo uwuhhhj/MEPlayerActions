@@ -5,6 +5,25 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class YsmModelEffectsTest {
+    @Test void nativeSoundFunctionsUseIdThenNameAndMatureRangesWithoutChangingBbmodelShorthand() {
+        assertThrows(IllegalArgumentException.class, () -> YsmModelEffects.SoundRequest.parseNative(List.of("minecraft:entity.cat.ambient")));
+        var nativeSound = YsmModelEffects.SoundRequest.parseNative(List.of("authorVoice", "voice", 7d, 1001d, .0001d));
+        assertEquals("s:authorVoice", nativeSound.key());
+        assertTrue(nativeSound.replace()); assertTrue(nativeSound.global()); assertTrue(nativeSound.loop());
+        assertEquals(1000f, nativeSound.volume()); assertEquals(.001f, nativeSound.pitch());
+        assertEquals("", YsmModelEffects.nativeSoundKey(-.5));
+        assertThrows(IllegalArgumentException.class, () -> YsmModelEffects.nativeSoundKey(-1d));
+        assertEquals("", YsmModelEffects.SoundRequest.parse(List.of("minecraft:entity.cat.ambient")).key());
+    }
+    @Test void localSoundIdsBelongToTheAuthorControllerAndGlobalUsesTheEntityFallbackManager() {
+        assertNotEquals(YsmModelEffects.soundScope(true, false, "player.main"),
+                YsmModelEffects.soundScope(true, false, "player.extra"));
+        assertEquals(YsmModelEffects.soundScope(true, true, "player.main"),
+                YsmModelEffects.soundScope(true, true, "player.extra"));
+        assertEquals(YsmModelEffects.soundScope(true, true, "player.main"),
+                YsmModelEffects.soundScope(true, false, ""));
+        assertNotEquals(YsmModelEffects.soundScope(false, false, ""), YsmModelEffects.soundScope(false, true, ""));
+    }
     @Test void soundParametersKeepAuthorFlagsAndKeyframeShorthand() {
         var sound = YsmModelEffects.SoundRequest.parse(List.of("voice", "music", 7d, 1000d, .001d));
         assertEquals("s:voice", sound.key()); assertEquals("music", sound.name());

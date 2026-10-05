@@ -20,7 +20,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 /** Vanilla item models attached to the final sampled YSM hand pose, without a remote mod handshake. */
 public final class YsmItemRenderer {
@@ -36,29 +35,46 @@ public final class YsmItemRenderer {
     public static List<Attachment> extract(PlayerEntity entity, AnimationPlayer player) {
         if (entity == null) return List.of();
         List<Attachment> result = new ArrayList<>(2);
-        append(result, entity, player, entity.getMainArm(), entity.getMainHandStack(), "mainhand");
-        append(result, entity, player, entity.getMainArm().getOpposite(), entity.getOffHandStack(), "offhand");
+        Map<String, Matrix4f> bones = player.boneTransforms();
+        append(result, entity, player, bones, entity.getMainArm(), entity.getMainHandStack(), "mainhand");
+        append(result, entity, player, bones, entity.getMainArm().getOpposite(), entity.getOffHandStack(), "offhand");
         return List.copyOf(result);
     }
 
-    private static void append(List<Attachment> result, PlayerEntity entity, AnimationPlayer player,
+    private static void append(List<Attachment> result, PlayerEntity entity, AnimationPlayer player, Map<String, Matrix4f> bones,
                                Arm arm, ItemStack source, String hand) {
         if (source.isEmpty()) return;
         String side = arm == Arm.LEFT ? "Left" : "Right";
         // A locator is an authored attachment position. A hand bone is also an explicit position;
         // an arm pivot is not a hand position and must not receive a guessed universal offset.
-        for (String bone : List.of(side + "HandLocator", side + "Hand")) {
-            Optional<Matrix4f> transform = player.boneTransform(bone);
-            if (transform.isEmpty() || !usable(transform.get())) continue;
+        for (String bone : attachmentBones(bones, side, player.hasBone(side + "HandLocator"))) {
+            Matrix4f transform = bones.get(bone);
             ItemRenderState state = new ItemRenderState();
             // Native use predicates compare the stack with entity.getActiveItem() by identity.
             // Resolve synchronously from that native stack; the queued render state owns no inventory reference.
             MinecraftClient.getInstance().getItemModelManager().updateForLivingEntity(state, source,
                     arm == Arm.LEFT ? ItemDisplayContext.THIRD_PERSON_LEFT_HAND : ItemDisplayContext.THIRD_PERSON_RIGHT_HAND, entity);
-            if (!state.isEmpty()) result.add(new Attachment(state, itemTransform(transform.get()), hand,
+            if (!state.isEmpty()) result.add(new Attachment(state, itemTransform(transform), hand,
                     Registries.ITEM.getId(source.getItem()).toString(), bone));
-            return;
         }
+    }
+
+    /** OpenYSM's primary locator plus its seven explicitly authored extra hand locator chains. */
+    static List<String> attachmentBones(Map<String, Matrix4f> transforms, String side) {
+        return attachmentBones(transforms, side, transforms.containsKey(side + "HandLocator"));
+    }
+    static List<String> attachmentBones(Map<String, Matrix4f> transforms, String side, boolean locatorDeclared) {
+        List<String> selected = new ArrayList<>(8);
+        // An author-hidden locator is intentional. Falling back to the hand would undo that hide.
+        String primary = side + (locatorDeclared ? "HandLocator" : "Hand");
+        Matrix4f primaryTransform = transforms.get(primary);
+        if (primaryTransform != null && usable(primaryTransform)) selected.add(primary);
+        for (int i = 2; i <= 8; i++) {
+            String name = side + "HandLocator" + i;
+            Matrix4f transform = transforms.get(name);
+            if (transform != null && usable(transform)) selected.add(name);
+        }
+        return List.copyOf(selected);
     }
 
     /** Bedrock locator axes to the native third-person item basis, after the model's body transform. */

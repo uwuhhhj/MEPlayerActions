@@ -1019,7 +1019,7 @@ def write_zip(path: Path, entries: dict[str, bytes]) -> None:
 def rebase_documentation(entries: dict[str, bytes], version: str, prefix: str = "") -> None:
     """Keep navigation local; source links omitted from an installer point to its release tag."""
     origins = {}
-    protocol = PROJECT / "src/main/java/com/simmc/meplayeractions/client/CLIENT_PROTOCOL.md"
+    protocol = PROJECT / "docs/CLIENT_PROTOCOL.md"
     for entry in entries:
         relative = entry.removeprefix(prefix)
         origin = protocol if relative == "docs/CLIENT_PROTOCOL.md" else PROJECT / relative
@@ -1046,6 +1046,8 @@ def rebase_documentation(entries: dict[str, bytes], version: str, prefix: str = 
             if present(archive_target):
                 return match.group(0)
             target = (origin.parent / path).resolve()
+            if target == (PROJECT / "src/main/java/com/simmc/meplayeractions/client/CLIENT_PROTOCOL.md").resolve():
+                target = protocol.resolve()
             assert target.exists() and target.is_relative_to(PROJECT), f"Missing documentation source: {entry}: {href}"
             mapped = destinations.get(target)
             if mapped:
@@ -1178,7 +1180,7 @@ def main() -> None:
         model_facts[model_id] = fact
     animation_names = model_facts["ysm_01_jk"]["animations"]
     assert len(set(animation_names)) == 60
-    protocol = PROJECT / "src/main/java/com/simmc/meplayeractions/client/CLIENT_PROTOCOL.md"
+    protocol = PROJECT / "docs/CLIENT_PROTOCOL.md"
     install = {
         f"plugins/{name}.jar": jar.read_bytes(),
         "plugins/MEPlayerActions/config.yml": (PROJECT / "src/main/resources/config.yml").read_bytes(),

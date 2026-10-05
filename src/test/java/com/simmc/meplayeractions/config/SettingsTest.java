@@ -272,6 +272,16 @@ class SettingsTest {
         );
     }
 
+    @Test void privatePublishingRemainsDisabledForBothNewAndRetainedConfigurations() throws IOException {
+        var config=configuration();assertFalse(Settings.load(config).privateModels.enabled());
+        config.set("client-sync.private-models",null);var retained=Settings.load(config);
+        assertFalse(retained.privateModels.enabled());assertEquals("mact.private.upload",retained.privateModels.uploadPermission());
+        assertEquals("mact.private.view",retained.privateModels.viewPermission());
+        config.set("client-sync.private-models.enabled",true);assertTrue(Settings.load(config).privateModels.enabled());
+        config.set("client-sync.enabled",false);assertFalse(Settings.load(config).privateModels.enabled());
+        config.set("client-sync.private-models.max-stored-bytes",8388608);assertThrows(IllegalArgumentException.class,()->Settings.load(config));
+    }
+
     private static Settings loadWith(String path, Object value) throws IOException {
         YamlConfiguration configuration = configuration();
         configuration.set(path, value);

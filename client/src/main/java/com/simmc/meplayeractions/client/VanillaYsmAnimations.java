@@ -31,9 +31,24 @@ public final class VanillaYsmAnimations {
     public record VanillaState(boolean dead, int hurtTime, boolean riptide, boolean sleeping, boolean swimming,
                                ItemState mainhand, ItemState offhand, Hand usingHand, int useTicks,
                                Hand swingingHand, int swingTicks, boolean fishing, String vehicleId,
-                               Set<String> vehicleTags, boolean vehicleAlive, boolean vehicleSaddled) {
+                               Set<String> vehicleTags, boolean vehicleAlive, boolean vehicleSaddled,
+                               Map<String,ItemState> armor, String passengerId, Set<String> passengerTags, boolean passengerAlive,
+                               long swingSequence) {
         public static final VanillaState NONE = new VanillaState(false, 0, false, false, false,
                 ItemState.EMPTY, ItemState.EMPTY, Hand.NONE, 0, Hand.NONE, 0, false, "", Set.of(), false, false);
+        public VanillaState(boolean dead,int hurtTime,boolean riptide,boolean sleeping,boolean swimming,
+                            ItemState mainhand,ItemState offhand,Hand usingHand,int useTicks,Hand swingingHand,
+                            int swingTicks,boolean fishing,String vehicleId,Set<String> vehicleTags,boolean vehicleAlive,boolean vehicleSaddled) {
+            this(dead,hurtTime,riptide,sleeping,swimming,mainhand,offhand,usingHand,useTicks,swingingHand,swingTicks,
+                    fishing,vehicleId,vehicleTags,vehicleAlive,vehicleSaddled,Map.of(),"",Set.of(),false,0);
+        }
+        public VanillaState(boolean dead,int hurtTime,boolean riptide,boolean sleeping,boolean swimming,
+                            ItemState mainhand,ItemState offhand,Hand usingHand,int useTicks,Hand swingingHand,
+                            int swingTicks,boolean fishing,String vehicleId,Set<String> vehicleTags,boolean vehicleAlive,boolean vehicleSaddled,
+                            Map<String,ItemState> armor,String passengerId,Set<String> passengerTags,boolean passengerAlive) {
+            this(dead,hurtTime,riptide,sleeping,swimming,mainhand,offhand,usingHand,useTicks,swingingHand,swingTicks,
+                    fishing,vehicleId,vehicleTags,vehicleAlive,vehicleSaddled,armor,passengerId,passengerTags,passengerAlive,0);
+        }
         public VanillaState {
             Objects.requireNonNull(mainhand); Objects.requireNonNull(offhand);
             Objects.requireNonNull(usingHand); Objects.requireNonNull(swingingHand);
@@ -41,6 +56,11 @@ public final class VanillaYsmAnimations {
                     || vehicleId == null || !vehicleId.isEmpty() && !resourceId(vehicleId))
                 throw new IllegalArgumentException("Vanilla entity state");
             vehicleTags = checkedTags(vehicleTags);
+            Objects.requireNonNull(armor);armor=Map.copyOf(armor);
+            if(!Set.of("head","chest","legs","feet").containsAll(armor.keySet()))throw new IllegalArgumentException("Vanilla armor slots");
+            if(passengerId==null||!passengerId.isEmpty()&&!resourceId(passengerId))throw new IllegalArgumentException("Vanilla passenger");
+            passengerTags=checkedTags(passengerTags);
+            if(swingSequence<0)throw new IllegalArgumentException("Native local swing sequence");
         }
         public ItemState item(Hand hand) { return hand == Hand.OFF ? offhand : mainhand; }
     }
@@ -74,7 +94,7 @@ public final class VanillaYsmAnimations {
         private Catalog(Collection<String> animations, int formatVersion, Map<String,String> authoredLoops,
                         Set<String> primaryAnimations, boolean metadata) {
             Objects.requireNonNull(animations);
-            if (animations.size() > 128) throw new IllegalArgumentException("Animation inventory");
+            if (animations.size() > (formatVersion > 0 ? 1024 : 128)) throw new IllegalArgumentException("Animation inventory");
             var copy = new LinkedHashSet<String>();
             for (String name : animations) {
                 if (name == null || name.length() > 128 || name.chars().anyMatch(Character::isISOControl))
@@ -122,6 +142,18 @@ public final class VanillaYsmAnimations {
             for (String name : names) if (name.startsWith("vehicle#") && state.vehicleTags.contains(name.substring(8))) return name;
             return "";
         }
+        public String passenger(VanillaState state) {
+            if(!state.passengerAlive||state.passengerId.isEmpty())return "";
+            String exact=first("passenger$"+state.passengerId);if(!exact.isEmpty())return exact;
+            for(String name:names)if(name.startsWith("passenger#")&&state.passengerTags.contains(name.substring(10)))return name;
+            return "";
+        }
+        private String armor(String slot,ItemState item) {
+            if(item.empty)return "";
+            String exact=first(slot+"$"+item.id);if(!exact.isEmpty())return exact;
+            for(String name:names)if(name.startsWith(slot+"#")&&item.tags.contains(name.substring(slot.length()+1)))return name;
+            return first(slot+":default");
+        }
     }
 
     public static Decision select(VanillaState state, Catalog catalog) {
@@ -134,7 +166,7 @@ public final class VanillaYsmAnimations {
         if (!state.sleeping && state.swingingHand != Hand.NONE) {
             String prefix = state.swingingHand == Hand.MAIN ? "swing" : "swing_offhand";
             String name = state.item(state.swingingHand).empty ? "" : catalog.condition(prefix, state.item(state.swingingHand));
-            if (name.isEmpty()) name = catalog.first(state.swingingHand == Hand.MAIN ? "swing_hand" : "swing_offhand");
+            if (name.isEmpty()) name = state.swingingHand == Hand.MAIN ? catalog.first("swing_hand","attack_empty") : catalog.first("swing_offhand");
             swing = playAnimationWithValid(catalog, name, "ONCE", state.swingingHand + ":" + state.item(state.swingingHand).eventKey());
         }
         if (!state.sleeping && state.usingHand != Hand.NONE) {
@@ -144,6 +176,13 @@ public final class VanillaYsmAnimations {
             use = playAnimationWithValid(catalog, name, "LOOP", state.usingHand + ":" + state.item(state.usingHand).eventKey());
         }
         result.put("player.swing", swing); result.put("player.use", use);
+        // Armor and passenger predicates have independent native slots and force LOOP in both mature projects.
+        for(String slot:List.of("head","chest","legs","feet")) {
+            String name=catalog.armor(slot,state.armor.getOrDefault(slot,ItemState.EMPTY));
+            result.put("player.armor_"+slot,name.isEmpty()?Selection.STOP:new Selection(Directive.PLAY,name,"LOOP",state.armor.get(slot).eventKey()));
+        }
+        String passenger=catalog.passenger(state);
+        result.put("player.passenger",passenger.isEmpty()?Selection.STOP:new Selection(Directive.PLAY,passenger,"LOOP",state.passengerId));
         return new Decision(result);
     }
     private static Selection hold(VanillaState state, Catalog catalog, Hand hand) {
@@ -170,7 +209,7 @@ public final class VanillaYsmAnimations {
      * PAUSE/CONTINUE callers retain the previous layer and do not reset this clock.
      */
     public static final class HandPlayback {
-        private record Request(String animation, String loop, long started) { }
+        private record Request(String animation, String loop, long started, long nativeEvent) { }
         private final Map<String,Request> requests = new HashMap<>();
         private final Map<String,ItemState> heldItems = new HashMap<>();
 
@@ -194,18 +233,26 @@ public final class VanillaYsmAnimations {
         public long start(String slot, Selection selection, VanillaState state, long tick) {
             if (selection.directive() != Directive.PLAY) throw new IllegalArgumentException("Hand playback request");
             if (slot.equals("player.swing") || slot.equals("player.use")) {
+                if(slot.equals("player.swing")&&state.swingSequence()>0) {
+                    Request previous=requests.get(slot);
+                    if(previous!=null&&previous.nativeEvent()==state.swingSequence()&&previous.animation().equals(selection.animation())&&previous.loop().equals(selection.loop()))
+                        return previous.started();
+                    requests.put(slot,new Request(selection.animation(),selection.loop(),tick,state.swingSequence()));
+                    return tick;
+                }
                 long started = slot.equals("player.swing") ? tick - state.swingTicks()
                         : tick - Math.max(0, state.useTicks() - 1L);
-                requests.put(slot, new Request(selection.animation(), selection.loop(), started));
+                requests.put(slot, new Request(selection.animation(), selection.loop(), started,0));
                 return started;
             }
-            if (!slot.equals("player.hold_mainhand") && !slot.equals("player.hold_offhand"))
+            if (!slot.equals("player.hold_mainhand") && !slot.equals("player.hold_offhand")
+                    && !slot.startsWith("player.armor_") && !slot.equals("player.passenger"))
                 throw new IllegalArgumentException("Hand controller slot");
             observe(slot, selection, state);
             Request previous = requests.get(slot);
             if (previous != null && previous.animation.equals(selection.animation()) && previous.loop.equals(selection.loop()))
                 return previous.started;
-            requests.put(slot, new Request(selection.animation(), selection.loop(), tick));
+            requests.put(slot, new Request(selection.animation(), selection.loop(), tick,0));
             return tick;
         }
         public void stop(String slot) { requests.remove(slot); }

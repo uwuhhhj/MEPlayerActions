@@ -2,7 +2,7 @@ package com.simmc.meplayeractions.client;
 
 import com.simmc.meplayeractions.client.model.BuiltinYsmModels;
 
-/** A private viewer-side appearance; none of these values are sent to the server. */
+/** A local appearance; sharing is a separate explicit option gated by server negotiation. */
 public record LocalAppearanceSettings(boolean enabled, String modelId, float scale,
                                       double offsetX, double offsetY, double offsetZ) {
     public static final float MIN_SCALE = .05f, MAX_SCALE = 8f;
@@ -27,7 +27,11 @@ public record LocalAppearanceSettings(boolean enabled, String modelId, float sca
             String filename = id.substring(6);
             return filename.length() > 8 && filename.endsWith(".bbmodel") && safeName(filename);
         }
-        return id.startsWith("ysm:") && safeName(id.substring(4));
+        if (!id.startsWith("ysm:")) return false;
+        String[] segments=id.substring(4).split("/",-1);
+        if(segments.length>9)return false;
+        for(String segment:segments)if(!safeName(segment))return false;
+        return true;
     }
 
     private static boolean safeName(String name) {

@@ -52,6 +52,16 @@ public final class YsmModelProfile {
                     List<Component> components, String defaultTexture, String selectedTexture,
                     Map<String, byte[]> pngResources, Map<String, byte[]> soundResources,
                     JsonObject functions, JsonObject events) {
+        this(manifest, languages, controllers, animationFiles, textures, components, defaultTexture, selectedTexture,
+                pngResources, soundResources, functions, events, AssetTransfer.MAX_RAW);
+    }
+
+    YsmModelProfile(JsonObject manifest, JsonObject languages, JsonObject controllers,
+                    Map<String, String> animationFiles, List<TextureChoice> textures,
+                    List<Component> components, String defaultTexture, String selectedTexture,
+                    Map<String, byte[]> pngResources, Map<String, byte[]> soundResources,
+                    JsonObject functions, JsonObject events, int maximumBytes) {
+        if (maximumBytes < 1 || maximumBytes > LocalModelBudget.MAX_BYTES) throw new IllegalArgumentException("YSM resource budget");
         checkJson(manifest); checkJson(languages); checkJson(controllers);
         checkJson(functions); checkJson(events);
         if (functions.size() > 64 || events.size() > 64) throw new IllegalArgumentException("YSM function/event count");
@@ -84,7 +94,7 @@ public final class YsmModelProfile {
         Map<String, byte[]> resources = new LinkedHashMap<>();
         int bytes = 0;
         for (var entry : pngResources.entrySet()) {
-            if ((bytes += entry.getValue().length) > AssetTransfer.MAX_RAW) throw new IllegalArgumentException("YSM resource budget");
+            if ((bytes += entry.getValue().length) > maximumBytes) throw new IllegalArgumentException("YSM resource budget");
             resources.put(entry.getKey(), entry.getValue().clone());
         }
         this.pngResources = Collections.unmodifiableMap(resources);
@@ -92,7 +102,7 @@ public final class YsmModelProfile {
         for (var entry : soundResources.entrySet()) {
             String name = entry.getKey(); byte[] sound = entry.getValue();
             if (name.length() > 128 || name.contains("/") || !YsmFolderModel.safeRelativePath(name + ".ogg")
-                    || sound.length == 0 || (bytes += sound.length) > AssetTransfer.MAX_RAW)
+                    || sound.length == 0 || (bytes += sound.length) > maximumBytes)
                 throw new IllegalArgumentException("YSM sound resource budget/name");
             sounds.put(name, sound.clone());
         }
@@ -151,6 +161,16 @@ public final class YsmModelProfile {
             JsonObject strings = objectOrEmpty(languages, candidate);
             if (strings.has(key) && strings.get(key).isJsonPrimitive() && strings.get(key).getAsJsonPrimitive().isString())
                 return strings.get(key).getAsString();
+            JsonElement nested = strings;
+            for (String segment : key.split("\\.")) {
+                if (nested.isJsonObject()) nested = nested.getAsJsonObject().get(segment);
+                else if (nested.isJsonArray() && segment.matches("[0-9]{1,4}")) {
+                    int index = Integer.parseInt(segment);
+                    nested = index < nested.getAsJsonArray().size() ? nested.getAsJsonArray().get(index) : null;
+                } else nested = null;
+                if (nested == null) break;
+            }
+            if (nested != null && nested.isJsonPrimitive() && nested.getAsJsonPrimitive().isString()) return nested.getAsString();
         }
         return fallback;
     }
@@ -181,12 +201,17 @@ public final class YsmModelProfile {
         private final JsonObject metadata;
         Component(String id, String kind, List<String> matches, List<TextureChoice> textures,
                   String selectedTexture, byte[] raw, JsonObject metadata) {
-            if (matches.size() > 32 || textures.size() > 16 || raw.length > AssetTransfer.MAX_RAW)
+            this(id, kind, matches, textures, selectedTexture, raw, metadata, AssetTransfer.MAX_RAW);
+        }
+        Component(String id, String kind, List<String> matches, List<TextureChoice> textures,
+                  String selectedTexture, byte[] raw, JsonObject metadata, int maximumBytes) {
+            if (maximumBytes < 1 || maximumBytes > LocalModelBudget.MAX_BYTES
+                    || matches.size() > 32 || textures.size() > 16 || raw.length > maximumBytes)
                 throw new IllegalArgumentException("YSM component budget");
             this.id = Objects.requireNonNull(id); this.kind = Objects.requireNonNull(kind);
             this.matches = List.copyOf(matches); this.textures = List.copyOf(textures);
             this.selectedTexture = Objects.requireNonNull(selectedTexture); this.raw = raw.clone();
-            this.hash = AssetTransfer.hash(raw); this.model = BbModel.parse(raw);
+            this.hash = AssetTransfer.hash(raw); this.model = maximumBytes == AssetTransfer.MAX_RAW ? BbModel.parse(raw) : BbModel.parseLocal(raw);
             checkJson(metadata); this.metadata = metadata.deepCopy();
         }
         public String id() { return id; }

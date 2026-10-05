@@ -19,15 +19,26 @@ public final class YsmFolderModel {
     public static final String DEFAULT_ID = BuiltinYsmModels.DEFAULT_ID;
     private static final int MAX_BONES = 2047, MAX_CUBES = 4096, MAX_FRAMES = 200_000;
     // Original wine-fox parallel4 has 64 ordered programs; hold_mainhand:spear lasts 10,000 seconds.
-    private static final int MAX_TIMELINE_PROGRAMS = 64, MAX_TIMELINE_BYTES = 32_768;
+    private static final int MAX_TIMELINE_BYTES = 32_768;
     private static final double MAX_ANIMATION_SECONDS = 10_000;
     private YsmFolderModel() { }
 
-    /** Profile data is local-only; converted animation/controller data belongs to these bytes' hash. */
-    public record Imported(byte[] raw, String previewAnimation, YsmModelProfile profile) {
-        public Imported { raw = raw.clone(); }
+    /** Rendering bytes and the complete native source/profile retain separate hashes during private synchronization. */
+    public record Imported(byte[] raw, String previewAnimation, YsmModelProfile profile, Map<String, byte[]> sourceFiles) {
+        public Imported {
+            raw = raw.clone();
+            Map<String, byte[]> copy = new LinkedHashMap<>();
+            sourceFiles.forEach((path, bytes) -> copy.put(path, bytes.clone()));
+            sourceFiles = Collections.unmodifiableMap(copy);
+        }
+        public Imported(byte[] raw, String previewAnimation, YsmModelProfile profile) { this(raw, previewAnimation, profile, Map.of()); }
         public Imported(byte[] raw, String previewAnimation) { this(raw, previewAnimation, YsmModelProfile.empty()); }
         @Override public byte[] raw() { return raw.clone(); }
+        @Override public Map<String, byte[]> sourceFiles() {
+            Map<String, byte[]> copy = new LinkedHashMap<>();
+            sourceFiles.forEach((path, bytes) -> copy.put(path, bytes.clone()));
+            return Collections.unmodifiableMap(copy);
+        }
     }
 
     public static byte[] bundledDefault() throws IOException {
@@ -52,7 +63,7 @@ public final class YsmFolderModel {
                 .orElseThrow(() -> new IOException("未知的内置 YSM 模型: " + id));
         return convert(new Assets((name, maximum) -> {
             try (InputStream input = YsmFolderModel.class.getResourceAsStream(model.resourceRoot() + name)) {
-                if (input == null) throw new IOException("内置 YSM 模型资源缺失: " + id + "/" + name);
+                if (input == null) throw new java.nio.file.NoSuchFileException("内置 YSM 模型资源缺失: " + id + "/" + name);
                 return boundedRead(input, maximum);
             }
         }, model.languages(), directory -> model.sounds().stream()
@@ -69,7 +80,20 @@ public final class YsmFolderModel {
 
     public static Imported readWithProfile(Path folder, String textureId) throws IOException {
         Path root = folder.toAbsolutePath().normalize();
+        if (Files.isRegularFile(root, LinkOption.NOFOLLOW_LINKS)) {
+            checkOrdinaryDirectories(root.getParent());
+            byte[] bytes;
+            try (InputStream input = Files.newInputStream(root, LinkOption.NOFOLLOW_LINKS)) {
+                bytes = boundedRead(input, LocalModelBudget.MAX_BYTES);
+            }
+            return readArchiveWithProfile(bytes, textureId);
+        }
         checkOrdinaryDirectories(root);
+        if (!Files.isRegularFile(root.resolve("ysm.json"), LinkOption.NOFOLLOW_LINKS)) {
+            Map<String, byte[]> files = new LinkedHashMap<>();
+            collectLegacyFiles(root, root, files, new int[]{0}, 0);
+            return readMemoryWithProfile(files, textureId);
+        }
         return convert(new Assets((name, maximum) -> {
             Path file = root.resolve(name).normalize();
             if (!file.startsWith(root) || file.equals(root)) throw new IOException("YSM 资源不能离开模型文件夹");
@@ -81,6 +105,108 @@ public final class YsmFolderModel {
             try (InputStream input = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) { return boundedRead(input, maximum); }
         }, languageFiles(root), directory -> soundFiles(root, directory),
                 resourceFiles(root, "functions", ".molang", 64, 256)), textureId);
+    }
+
+    /** Reads a complete local archive without extracting author paths onto the filesystem. */
+    public static Imported readArchiveWithProfile(byte[] bytes, String textureId) throws IOException {
+        if (!NativeModelBundle.isZip(bytes)) return NativeYsmFile.read(bytes, textureId);
+        return readMemoryWithProfile(NativeModelBundle.localArchiveFiles(bytes), textureId);
+    }
+
+    public static Imported readMemoryWithProfile(Map<String, byte[]> sourceFiles, String textureId) throws IOException {
+        return readMemoryWithProfile(sourceFiles, textureId, 65535);
+    }
+
+    static Imported readMemoryWithProfile(Map<String, byte[]> sourceFiles, String textureId, int nativeFormat) throws IOException {
+        return readMemoryWithProfile(sourceFiles, textureId, nativeFormat, LocalModelBudget.MAX_BYTES);
+    }
+
+    static Imported readNetworkMemoryWithProfile(Map<String, byte[]> sourceFiles, String textureId) throws IOException {
+        return readMemoryWithProfile(sourceFiles, textureId, 65535, AssetTransfer.MAX_RAW);
+    }
+
+    private static Imported readMemoryWithProfile(Map<String, byte[]> sourceFiles, String textureId, int nativeFormat, int maximumBytes) throws IOException {
+        Map<String, byte[]> files = maximumBytes == AssetTransfer.MAX_RAW
+                ? NativeModelBundle.checkedFiles(sourceFiles) : NativeModelBundle.checkedLocalFiles(sourceFiles);
+        if (!files.containsKey("ysm.json")) files.put("ysm.json", legacyManifest(files).toString().getBytes(StandardCharsets.UTF_8));
+        Assets assets = new Assets((path, maximum) -> {
+            byte[] value = files.get(path);
+            if (value == null) throw new java.nio.file.NoSuchFileException("YSM 资源缺失: " + path);
+            if (value.length > maximum) throw new IOException("YSM 资源超过大小限制: " + path);
+            return value.clone();
+        }, files.keySet().stream().filter(path -> path.matches("lang/[a-zA-Z0-9_-]{1,32}\\.json")).sorted().toList(),
+                directory -> files.keySet().stream().filter(path -> path.startsWith(directory + "/") && path.endsWith(".ogg")).sorted().toList(),
+                files.keySet().stream().filter(path -> path.startsWith("functions/") && path.endsWith(".molang")).sorted().toList(), maximumBytes);
+        assets.nativeFormat = nativeFormat;
+        return convert(assets, textureId);
+    }
+
+    private static void collectLegacyFiles(Path root, Path directory, Map<String, byte[]> result, int[] scanned, int depth) throws IOException {
+        if (depth > 8) throw new IOException("旧 YSM 资源目录层级过深");
+        checkOrdinaryDirectories(directory);
+        try (var children = Files.newDirectoryStream(directory)) {
+            for (Path file : children) {
+                if (++scanned[0] > 512) throw new IOException("旧 YSM 资源目录条目过多");
+                var attributes = Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                if (attributes.isSymbolicLink() || attributes.isOther()) throw new IOException("旧 YSM 资源不能包含链接");
+                if (attributes.isDirectory()) collectLegacyFiles(root, file, result, scanned, depth + 1);
+                else if (attributes.isRegularFile() && file.getFileName().toString().matches("(?i).+\\.(json|png|bmp|jpg|jpeg|webp|ogg|molang)")) {
+                    if (result.size() >= 255) throw new IOException("旧 YSM 资源文件数量过多");
+                    try (InputStream input = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) {
+                        result.put(root.relativize(file).toString().replace('\\', '/'), boundedRead(input, LocalModelBudget.MAX_BYTES));
+                    }
+                    NativeModelBundle.checkedLocalFiles(result);
+                }
+            }
+        }
+    }
+
+    /** Mature legacy layout: main.json, arm.json, root PNGs and <family>.animation.json. */
+    private static JsonObject legacyManifest(Map<String, byte[]> files) throws IOException {
+        if (!files.containsKey("main.json") || !files.containsKey("arm.json")) throw new IOException("旧 YSM 模型需要 main.json 和 arm.json");
+        JsonObject manifest = new JsonObject(), metadata = new JsonObject(), properties = new JsonObject(), declarations = new JsonObject();
+        manifest.addProperty("spec", 2); manifest.add("metadata", metadata); manifest.add("properties", properties); manifest.add("files", declarations);
+        JsonObject player = new JsonObject(), model = new JsonObject(), animations = new JsonObject();
+        model.addProperty("main", "main.json"); model.addProperty("arm", "arm.json"); player.add("model", model);
+        JsonArray textures = new JsonArray();
+        for (String path : files.keySet()) if (!path.contains("/") && path.endsWith(".png") && !path.equals("arrow.png")) textures.add(path);
+        if (textures.isEmpty()) throw new IOException("旧 YSM 模型至少需要一个主贴图");
+        player.add("texture", textures);
+        for (String family : List.of("main", "arm", "extra", "tac", "carryon", "slashblade", "tlm")) {
+            String path = family + ".animation.json";
+            if (files.containsKey(path)) animations.addProperty(family, path);
+        }
+        if (!animations.has("main")) {
+            JsonObject empty = new JsonObject(); empty.add("animations", new JsonObject());
+            files.put("main.animation.json", empty.toString().getBytes(StandardCharsets.UTF_8)); animations.addProperty("main", "main.animation.json");
+        }
+        player.add("animation", animations); declarations.add("player", player);
+        JsonObject info = files.containsKey("info.json") ? parseJson(files.get("info.json")) : new JsonObject();
+        JsonObject main = parseJson(files.get("main.json")); JsonArray geometries = array(main.get("minecraft:geometry"));
+        if (!geometries.isEmpty()) {
+            JsonObject description = object(object(geometries.get(0)).get("description"));
+            if (description.has("ysm_extra_info")) {
+                JsonObject inherited = object(description.get("ysm_extra_info")).deepCopy(); info.entrySet().forEach(entry -> inherited.add(entry.getKey(), entry.getValue())); info = inherited;
+            }
+        }
+        for (String key : List.of("name", "tips")) if (info.has(key)) metadata.add(key, info.get(key));
+        if (info.has("license")) { JsonObject license = new JsonObject(); license.add("desc", info.get("license")); metadata.add("license", license); }
+        if (info.has("authors")) {
+            JsonArray authors = new JsonArray(); for (JsonElement author : array(info.get("authors"))) { JsonObject value = new JsonObject(); value.add("name", author); authors.add(value); } metadata.add("authors", authors);
+        }
+        if (info.has("free")) properties.add("free", info.get("free"));
+        JsonObject extra = new JsonObject();
+        if (animations.has("extra")) for (String name : object(parseJson(files.get("extra.animation.json")).get("animations")).keySet()) extra.addProperty(name, name);
+        if (info.has("extra_animation_names")) {
+            extra = new JsonObject(); int index = 0; for (JsonElement label : array(info.get("extra_animation_names"))) extra.add("extra" + index++, label);
+        }
+        properties.add("extra_animation", extra);
+        if (files.containsKey("arrow.json")) {
+            if (!files.containsKey("arrow.png")) throw new IOException("旧 YSM arrow.json 缺少 arrow.png");
+            JsonObject arrow = new JsonObject(); arrow.addProperty("model", "arrow.json"); arrow.addProperty("texture", "arrow.png"); arrow.addProperty("match", "minecraft:arrow");
+            if (files.containsKey("arrow.animation.json")) arrow.addProperty("animation", "arrow.animation.json"); JsonArray arrows = new JsonArray(); arrows.add(arrow); declarations.add("projectiles", arrows);
+        }
+        return manifest;
     }
 
     private static List<String> languageFiles(Path root) throws IOException {
@@ -148,13 +274,19 @@ public final class YsmFolderModel {
         final SoundLister soundLister;
         final Map<String, byte[]> files = new LinkedHashMap<>(), pngFiles = new LinkedHashMap<>();
         final JsonObject functions = new JsonObject(), events = new JsonObject();
+        int nativeFormat = 65535;
+        final int maximumBytes;
         int bytes, outputBytes;
         long pixels;
         Assets(Reader reader, List<String> languageFiles, SoundLister soundLister, List<String> functionFiles) {
+            this(reader, languageFiles, soundLister, functionFiles, LocalModelBudget.MAX_BYTES);
+        }
+        Assets(Reader reader, List<String> languageFiles, SoundLister soundLister, List<String> functionFiles, int maximumBytes) {
             this.reader = reader; this.languageFiles = languageFiles; this.soundLister = soundLister; this.functionFiles = functionFiles;
+            this.maximumBytes = maximumBytes;
         }
         byte[] get(String name, String suffix) throws IOException {
-            return get(name, suffix, AssetTransfer.MAX_RAW);
+            return get(name, suffix, maximumBytes);
         }
         byte[] get(String name, String suffix, int maximum) throws IOException {
             if (!safeRelativePath(name) || !name.toLowerCase(Locale.ROOT).endsWith(suffix))
@@ -164,16 +296,18 @@ public final class YsmFolderModel {
                 if (cached.length > maximum) throw new IOException("YSM 资源超过大小限制");
                 return cached;
             }
-            if (files.size() >= 128) throw new IOException("YSM 资源文件数量超过限制");
+            if (files.size() >= 255) throw new IOException("YSM 资源文件数量超过限制");
             byte[] result = reader.read(name, maximum);
-            if ((result.length == 0 && !suffix.equals(".molang")) || (bytes += result.length) > AssetTransfer.MAX_RAW)
-                throw new IOException("YSM 模型、动画、元数据和贴图总大小不能超过 8 MiB");
+            if ((result.length == 0 && !suffix.equals(".molang")) || (bytes += result.length) > maximumBytes)
+                throw new IOException("YSM 模型、动画、元数据和贴图总大小不能超过 " + maximumBytes / (1024 * 1024) + " MiB");
             files.put(name, result);
             return result;
         }
         JsonObject json(String name) throws IOException { return parseJson(get(name, ".json")); }
         byte[] png(String name) throws IOException {
-            byte[] result = get(name, ".png");
+            if (!NativeYsmImages.supportedPath(name)) throw new IOException("YSM 图像文件类型未接入: " + name);
+            byte[] original = get(name, name.substring(name.lastIndexOf('.')));
+            byte[] result = NativeYsmImages.png(original, 0, 0, 0);
             if (!pngFiles.containsKey(name)) {
                 pixels += BbModel.validatePng(result, 16_777_216 - pixels);
                 pngFiles.put(name, result);
@@ -184,13 +318,14 @@ public final class YsmFolderModel {
             converter.output.add("ysm_animation_controllers", controllers.deepCopy());
             converter.output.addProperty("ysm_controller_family", family);
             // OpenYSM's folder-deserializer internal format version, independent of manifest spec 2.
-            converter.output.addProperty("ysm_format_version", 65535);
+            converter.output.addProperty("ysm_format_version", nativeFormat);
             if (!functions.isEmpty()) converter.output.add("ysm_functions", functions.deepCopy());
             if (!events.isEmpty()) converter.output.add("ysm_events", events.deepCopy());
             byte[] result = converter.output.toString().getBytes(StandardCharsets.UTF_8);
-            if (result.length > AssetTransfer.MAX_RAW || (outputBytes += result.length) > AssetTransfer.MAX_RAW)
-                throw new IOException("YSM 转换后的模型总大小超过 8 MiB");
-            BbModel.parse(result); return result;
+            if (result.length > maximumBytes || (outputBytes += result.length) > maximumBytes)
+                throw new IOException("YSM 转换后的模型总大小超过 " + maximumBytes / (1024 * 1024) + " MiB");
+            if (maximumBytes == AssetTransfer.MAX_RAW) BbModel.parse(result); else BbModel.parseLocal(result);
+            return result;
         }
     }
 
@@ -227,10 +362,30 @@ public final class YsmFolderModel {
     private static Imported convert(Assets assets, String textureOverride) throws IOException {
         try {
             JsonObject manifest = assets.json("ysm.json");
+            if (manifest.has("mpa_native_format")) {
+                JsonElement version = manifest.get("mpa_native_format");
+                if (!version.isJsonPrimitive() || !version.getAsJsonPrimitive().isNumber()) throw invalid("YSM 二进制动画格式无效");
+                double value = version.getAsDouble(); int declaredFormat = (int) value;
+                if (declaredFormat < 1 || declaredFormat > 32 || value != declaredFormat) throw invalid("YSM 二进制动画格式无效");
+                assets.nativeFormat = declaredFormat;
+            }
             if (number(manifest, "spec", 2) != 2) throw new IOException("目前支持 YSM spec 2 主模型文件夹");
             JsonObject player = object(object(manifest.get("files")).get("player"));
             JsonObject modelFiles = object(player.get("model")), animationFiles = object(player.get("animation"));
             JsonObject properties = manifest.has("properties") ? object(manifest.get("properties")) : new JsonObject();
+            if (manifest.has("metadata")) {
+                JsonObject metadata = object(manifest.get("metadata"));
+                if (metadata.has("authors")) for (JsonElement author : array(metadata.get("authors"))) {
+                    JsonObject descriptor = object(author);
+                    if (descriptor.has("avatar")) {
+                        String path = string(descriptor, "avatar", "");
+                        if (!path.isEmpty() && !safeRelativePath(path)) throw invalid("YSM 作者头像资源路径无效");
+                        // Native metadata can reference an optional avatar in an unavailable image codec.
+                        if (!path.isEmpty() && NativeYsmImages.supportedPath(path)) try { assets.png(path); }
+                        catch (java.nio.file.NoSuchFileException optionalAvatar) { /* Mature author UI uses its placeholder when no avatar exists. */ }
+                    }
+                }
+            }
             loadFunctions(assets, properties);
             List<YsmModelProfile.TextureChoice> textures = textureChoices(assets, player.get("texture"));
             YsmModelProfile.TextureChoice defaultTexture = chooseTexture(textures, string(properties, "default_texture", ""), false);
@@ -239,24 +394,22 @@ public final class YsmFolderModel {
             JsonObject geometry = assets.json(string(modelFiles, "main", ""));
             JsonObject controllers = controllers(assets, player.get("animation_controllers"));
             Converter converter = new Converter(geometry, texture.png());
-            converter.animations(assets.json(string(animationFiles, "main", "")));
-            for (String family : List.of("extra", "arm")) if (animationFiles.has(family))
-                converter.animations(assets.json(string(animationFiles, family, "")));
+            converter.animations(bodyAnimations(assets, animationFiles));
             byte[] result = assets.output(converter, controllers, "player");
             List<YsmModelProfile.Component> components = new ArrayList<>();
             if (modelFiles.has("arm")) {
                 Converter arm = new Converter(assets.json(string(modelFiles, "arm", "")), texture.png());
                 if (animationFiles.has("arm")) arm.animations(assets.json(string(animationFiles, "arm", "")));
                 components.add(new YsmModelProfile.Component("arm", "arm", List.of(), textures, texture.id(),
-                        assets.output(arm, new JsonObject(), "arm"), player));
+                        assets.output(arm, new JsonObject(), "arm"), player, assets.maximumBytes));
             }
             if (modelFiles.has("fp_arm") || modelFiles.has("arm")) {
                 String geometryFile = string(modelFiles, modelFiles.has("fp_arm") ? "fp_arm" : "arm", "");
                 Converter arm = new Converter(assets.json(geometryFile), texture.png());
                 if (animationFiles.has("fp_arm")) arm.animations(assets.json(string(animationFiles, "fp_arm", "")));
-                if (animationFiles.has("arm")) arm.animations(assets.json(string(animationFiles, "arm", "")));
+                else if (animationFiles.has("arm")) arm.animations(assets.json(string(animationFiles, "arm", "")));
                 components.add(new YsmModelProfile.Component("fp_arm", "fp_arm", List.of(), textures, texture.id(),
-                        assets.output(arm, controllers, "fp.arm"), player));
+                        assets.output(arm, controllers, "fp.arm"), player, assets.maximumBytes));
             }
             JsonObject files = object(manifest.get("files"));
             subEntities(assets, files.get("projectiles"), "projectile", components);
@@ -271,9 +424,7 @@ public final class YsmFolderModel {
             for (String file : assets.languageFiles) {
                 JsonObject strings = assets.json(file);
                 if (strings.size() > 2048) throw invalid("YSM 语言字符串数量超出限制");
-                for (var entry : strings.entrySet())
-                    if (!entry.getValue().isJsonPrimitive() || !entry.getValue().getAsJsonPrimitive().isString())
-                        throw invalid("YSM 语言值必须是文本");
+                validateLanguage(strings, 0);
                 String locale = stem(file).toLowerCase(Locale.ROOT);
                 if (languages.has(locale)) throw invalid("YSM 语言名称重复");
                 languages.add(locale, strings);
@@ -285,6 +436,9 @@ public final class YsmFolderModel {
             for (var entry : animationFiles.entrySet()) {
                 String path = entry.getValue().getAsString();
                 if (!safeRelativePath(path) || !path.endsWith(".json")) throw invalid("YSM 动作资源路径无效");
+                // Preserve every authored family in the full bundle, including other-mod optional animations.
+                try { assets.get(path, ".json"); }
+                catch (java.nio.file.NoSuchFileException optionalFamily) { /* Other-mod families do not make the vanilla player model unavailable. */ }
                 families.put(entry.getKey(), path);
             }
             Map<String, byte[]> sounds = new LinkedHashMap<>();
@@ -295,17 +449,37 @@ public final class YsmFolderModel {
                 sounds.put(name, assets.get(file, ".ogg"));
             }
             YsmModelProfile profile = new YsmModelProfile(manifest, languages, controllers, families,
-                    textures, components, defaultTexture.id(), texture.id(), assets.pngFiles, sounds, assets.functions, assets.events);
+                    textures, components, defaultTexture.id(), texture.id(), assets.pngFiles, sounds, assets.functions, assets.events, assets.maximumBytes);
             String previewAnimation = string(properties, "preview_animation", "");
             // Missing/obsolete optional UI clips fall back to idle without changing gameplay assets.
             if (!converter.namedClips.containsKey(previewAnimation)) previewAnimation = "";
-            return new Imported(result, previewAnimation, profile);
+            return new Imported(result, previewAnimation, profile, assets.files);
         } catch (RuntimeException error) { throw new IOException("YSM 主模型或动画无法解析: " + error.getMessage(), error); }
     }
 
     private static String stem(String path) {
         String filename = path.substring(path.lastIndexOf('/') + 1);
         int dot = filename.lastIndexOf('.'); return dot < 0 ? filename : filename.substring(0, dot);
+    }
+
+    /** ModelAssemblyFactory keeps fp_arm separate; body families use authored order and Map.putAll semantics. */
+    private static JsonObject bodyAnimations(Assets assets, JsonObject animationFiles) throws IOException {
+        if (!animationFiles.has("main")) throw invalid("YSM 主动画文件缺失");
+        JsonObject result = new JsonObject(), merged = new JsonObject(); result.add("animations", merged);
+        for (var family : animationFiles.entrySet()) {
+            if (!Set.of("main", "arm", "extra").contains(family.getKey())) continue;
+            JsonObject file = assets.json(family.getValue().getAsString());
+            for (var animation : object(file.get("animations")).entrySet())
+                merged.add(animation.getKey(), animation.getValue().deepCopy());
+        }
+        return result;
+    }
+
+    private static void validateLanguage(JsonElement value, int depth) {
+        if (depth > 32) throw invalid("YSM 语言层级过深");
+        if (value.isJsonObject()) for (var entry : value.getAsJsonObject().entrySet()) validateLanguage(entry.getValue(), depth + 1);
+        else if (value.isJsonArray()) for (JsonElement child : value.getAsJsonArray()) validateLanguage(child, depth + 1);
+        else if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) throw invalid("YSM 语言值必须是文本");
     }
 
     private static void loadFunctions(Assets assets, JsonObject properties) throws IOException {
@@ -345,7 +519,7 @@ public final class YsmFolderModel {
     private static void validateScript(String script) {
         if (script.length() > 32_768) throw invalid("YSM 函数脚本超过 32 KiB 字符限制");
         // Compilation enforces token/depth limits, without running scripts or any external operation.
-        Molang.compile(script);
+        Molang.compileNativeYsm(script);
     }
 
     private static void appendEvent(JsonObject events, String name, String script) {
@@ -374,7 +548,7 @@ public final class YsmFolderModel {
             String id = stem(path); if (id.isBlank() || id.length() > 128 || !ids.add(id)) throw invalid("YSM 贴图名称重复或无效");
             byte[] png = assets.png(path);
             for (var entry : material.entrySet()) if (!entry.getKey().equals("uv") && entry.getValue().isJsonPrimitive()
-                    && entry.getValue().getAsJsonPrimitive().isString() && entry.getValue().getAsString().endsWith(".png"))
+                    && entry.getValue().getAsJsonPrimitive().isString() && NativeYsmImages.supportedPath(entry.getValue().getAsString()))
                 assets.png(entry.getValue().getAsString());
             result.add(new YsmModelProfile.TextureChoice(id, path, png, material));
         }
@@ -424,7 +598,7 @@ public final class YsmFolderModel {
             if (descriptor.has("animation")) converter.animations(assets.json(string(descriptor, "animation", "")));
             JsonObject controllers = controllers(assets, descriptor.get("animation_controllers"));
             target.add(new YsmModelProfile.Component(id, kind, matches, textures, texture.id(),
-                    assets.output(converter, controllers, kind), descriptor));
+                    assets.output(converter, controllers, kind), descriptor, assets.maximumBytes));
         }
     }
 
@@ -437,7 +611,7 @@ public final class YsmFolderModel {
         int frames;
         Converter(JsonObject source, byte[] png) {
             JsonArray geometries = array(source.get("minecraft:geometry"));
-            if (geometries.size() != 1) throw invalid("主文件必须包含一个 minecraft:geometry");
+            if (geometries.isEmpty() || geometries.size() > 32) throw invalid("YSM 几何列表无效或过大");
             JsonObject geometry = object(geometries.get(0)), description = object(geometry.get("description"));
             double width = number(description, "texture_width", 16), height = number(description, "texture_height", 16);
             if (width < 1 || width > 8192 || height < 1 || height > 8192) throw invalid("贴图分辨率无效");
@@ -462,6 +636,12 @@ public final class YsmFolderModel {
                 nodes.put(name, node); parents.put(name, string(bone, "parent", ""));
                 JsonArray cubes = bone.has("cubes") ? array(bone.get("cubes")) : new JsonArray();
                 for (JsonElement cube : cubes) cube(object(cube), bone, node);
+                if (bone.has("ysm_baked_faces")) for (JsonElement face : array(bone.get("ysm_baked_faces"))) {
+                    if (elements.size() >= MAX_CUBES * 6) throw invalid("YSM 烘焙面数量超出限制");
+                    JsonObject baked = object(face).deepCopy(); String uuid = id("baked-face:" + elements.size());
+                    baked.addProperty("uuid", uuid); baked.addProperty("type", "ysm_baked_face"); baked.addProperty("texture", 0);
+                    elements.add(baked); node.getAsJsonArray("children").add(uuid);
+                }
             }
             JsonArray roots = new JsonArray();
             for (var entry : nodes.entrySet()) {
@@ -521,19 +701,27 @@ public final class YsmFolderModel {
 
         void animations(JsonObject source) {
             JsonObject animations = object(source.get("animations"));
-            if (namedClips.size() + animations.size() > 128) throw invalid("YSM 动作数量超出限制");
+            if (namedClips.size() + animations.size() > 1024) throw invalid("YSM 动作数量超出限制");
             for (var entry : animations.entrySet()) {
                 String name = entry.getKey(); JsonObject authored = object(entry.getValue());
                 if (name.isBlank() || name.length() > 128 || namedClips.containsKey(name)) throw invalid("YSM 动作名缺失或重复");
-                for (String unsupported : List.of("animation_time_update", "start_delay", "loop_delay"))
-                    if (authored.has(unsupported)) throw invalid("YSM 动作字段暂不支持: " + unsupported);
+                if (authored.has("anim_time_update") && authored.has("animation_time_update"))
+                    throw invalid("YSM 动画时间更新标准字段与兼容别名不能同时定义");
                 JsonObject clip = new JsonObject(); clip.addProperty("name", name); JsonObject animators = new JsonObject(); clip.add("animators", animators);
                 clip.addProperty("ysm_primary", true);
                 clip.addProperty("loop", animationLoop(authored.get("loop")));
+                for (String field : List.of("anim_time_update", "animation_time_update", "start_delay", "loop_delay")) if (authored.has(field)) {
+                    JsonElement value = authored.get(field);
+                    if (!value.isJsonPrimitive() || value.getAsJsonPrimitive().isBoolean()) throw invalid("YSM 动画时序必须是数值或表达式: " + field);
+                    String expression = normalize(value.getAsString());
+                    if (expression.isBlank()) throw invalid("YSM 动画时序表达式为空: " + field);
+                    Molang.compileNativeYsm(expression);
+                    clip.addProperty(field.equals("animation_time_update") ? "anim_time_update" : field, expression);
+                }
                 if (authored.has("blend_weight")) {
                     JsonElement value = authored.get("blend_weight");
                     if (!value.isJsonPrimitive() || value.getAsJsonPrimitive().isBoolean()) throw invalid("YSM 动画权重必须是数值或表达式");
-                    String expression = normalize(value.getAsString()); Molang.compile(expression); clip.addProperty("blend_weight", expression);
+                    String expression = normalize(value.getAsString()); Molang.compileNativeYsm(expression); clip.addProperty("blend_weight", expression);
                 }
                 double length = number(authored, "animation_length", 0);
                 JsonObject bones = authored.has("bones") ? object(authored.get("bones")) : new JsonObject();
@@ -565,7 +753,7 @@ public final class YsmFolderModel {
                         if (++frames > MAX_FRAMES) throw invalid("YSM 关键帧数量超出限制");
                         JsonArray programs = event.getValue().isJsonArray() ? array(event.getValue()) : new JsonArray();
                         if (!event.getValue().isJsonArray()) programs.add(event.getValue());
-                        if (programs.size() > MAX_TIMELINE_PROGRAMS) throw invalid("YSM 时间轴脚本数量超出限制");
+                        if (programs.size() > BbModel.MAX_NATIVE_TIMELINE_PROGRAMS) throw invalid("YSM 时间轴脚本数量超出限制");
                         int programBytes = 0;
                         JsonObject key = new JsonObject(); key.addProperty("channel", "timeline"); key.addProperty("time", event.getKey());
                         JsonArray points = new JsonArray(); key.add("data_points", points);
@@ -574,7 +762,7 @@ public final class YsmFolderModel {
                             String expression = normalize(program.getAsString());
                             if ((programBytes += expression.getBytes(StandardCharsets.UTF_8).length) > MAX_TIMELINE_BYTES)
                                 throw invalid("YSM 单时间轴脚本总大小超过 32 KiB");
-                            Molang.compile(expression);
+                            Molang.compileNativeYsm(expression);
                             JsonObject point = new JsonObject(); point.addProperty("script", expression); points.add(point);
                         }
                         keys.add(key);
@@ -649,7 +837,7 @@ public final class YsmFolderModel {
             for (int i = 0; i < 3; i++) {
                 JsonElement axis = axes.get(i);
                 if (!axis.isJsonPrimitive() || axis.getAsJsonPrimitive().isBoolean()) throw invalid("YSM 动画坐标无效");
-                String expression = normalize(axis.getAsString()); Molang.compile(expression);
+                String expression = normalize(axis.getAsString()); Molang.compileNativeYsm(expression);
                 point.addProperty(List.of("x", "y", "z").get(i), expression);
             }
             return point;

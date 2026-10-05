@@ -16,18 +16,26 @@ import org.slf4j.LoggerFactory;
 
 public final class ClientOptions {
     private static final Logger LOGGER = LoggerFactory.getLogger("MEPlayerActions/Options");
+    /** Local rendering toggle; server action networking and catalogues remain connected. */
     public boolean enabled = true, showSelf = true, followServerTimeline = false;
+    /** Native self body, native equipment and the selected disguise have independent visibility. */
+    public boolean hideVanillaPlayer = true, hideVanillaEquipment = true;
     public int interpolationTicks = 2;
     public boolean showModelIds;
     public boolean defaultHeaddress = true;
     public boolean defaultBlueTexture;
     public boolean localActionLocked;
+    /** Explicit opt-in; old configurations remain local until a server negotiates private uploads. */
+    public boolean privateSyncEnabled;
     public static final int MAX_MODEL_PROFILES = 32, MAX_MODEL_VARIABLES = 128, MAX_RADIO_SELECTIONS = 64;
+    public static final int MAX_ROAMING_VARIABLES = 64, MAX_ROAMING_VARIABLE_NAME_LENGTH = 32;
+    private static final String ROAMING_PREFIX = "variable.roaming.";
     private final Map<String, ModelProfile> modelProfiles = new LinkedHashMap<>();
     private final Set<String> favorites = new LinkedHashSet<>();
     private final Path path;
     private LocalAppearanceSettings localAppearance = LocalAppearanceSettings.defaults();
     private WheelPreferences wheelPreferences = WheelPreferences.defaults();
+    private boolean roamingVariablesDirty;
     public ClientOptions(Path path) {
         this.path = Objects.requireNonNull(path);
         try {
@@ -35,6 +43,10 @@ public final class ClientOptions {
             if (json != null) {
                 if (json.has("enabled")) enabled = json.get("enabled").getAsBoolean();
                 if (json.has("showSelf")) showSelf = json.get("showSelf").getAsBoolean();
+                if (json.has("hideVanillaPlayer")) hideVanillaPlayer = json.get("hideVanillaPlayer").getAsBoolean();
+                if (json.has("hideVanillaEquipment")) hideVanillaEquipment = json.get("hideVanillaEquipment").getAsBoolean();
+                // The old ambiguous "self" toggle hid the disguise; the new GUI names all three layers.
+                if (!json.has("hideVanillaPlayer") && !json.has("hideVanillaEquipment")) showSelf = true;
                 if (json.has("followServerTimeline")) followServerTimeline = json.get("followServerTimeline").getAsBoolean();
                 if (json.has("interpolationTicks")) interpolationTicks = Math.max(0,Math.min(6,json.get("interpolationTicks").getAsInt()));
                 localAppearance = readAppearance(json);
@@ -42,6 +54,9 @@ public final class ClientOptions {
                 if (json.has("defaultHeaddress")) defaultHeaddress = json.get("defaultHeaddress").getAsBoolean();
                 if (json.has("defaultBlueTexture")) defaultBlueTexture = json.get("defaultBlueTexture").getAsBoolean();
                 if (json.has("localActionLocked")) localActionLocked = json.get("localActionLocked").getAsBoolean();
+                JsonElement privateSync = json.get("privateSyncEnabled");
+                privateSyncEnabled = privateSync != null && privateSync.isJsonPrimitive()
+                        && privateSync.getAsJsonPrimitive().isBoolean() && privateSync.getAsBoolean();
                 wheelPreferences = readWheelPreferences(json);
                 readProfiles(json);
                 if (json.has("favorites") && json.get("favorites").isJsonArray()) {
@@ -156,10 +171,14 @@ public final class ClientOptions {
             Map<String, Double> copied = new LinkedHashMap<>();
             variables.forEach((key, value) -> {
                 String normalized = normalizeModelVariable(key);
+                if (normalized.equals("variable.roaming") || normalized.startsWith(ROAMING_PREFIX) && !isRoamingVariable(normalized))
+                    throw new IllegalArgumentException("Roaming variable name");
                 if (value == null || !Double.isFinite(value) || Math.abs(value) > 1_000_000)
                     throw new IllegalArgumentException("Model variable value");
                 if (copied.put(normalized, value) != null) throw new IllegalArgumentException("Duplicate model variable");
             });
+            if (copied.keySet().stream().filter(ClientOptions::isRoamingVariable).count() > MAX_ROAMING_VARIABLES)
+                throw new IllegalArgumentException("Roaming variable count");
             Map<String, Integer> radios = new LinkedHashMap<>();
             radioSelections.forEach((key, value) -> {
                 if (key == null || key.isBlank() || key.length() > 192 || key.chars().anyMatch(Character::isISOControl)
@@ -179,6 +198,46 @@ public final class ClientOptions {
         return normalized;
     }
     public ModelProfile modelProfile(String id) { return modelProfiles.getOrDefault(id, ModelProfile.defaults()); }
+    /** A canonical numeric roaming field, matching the native parser's single identifier syntax. */
+    public static boolean isRoamingVariable(String key) {
+        if (key == null || !key.startsWith(ROAMING_PREFIX)) return false;
+        String name = key.substring(ROAMING_PREFIX.length());
+        if (name.isEmpty() || name.length() > MAX_ROAMING_VARIABLE_NAME_LENGTH
+                || !(Character.isLetter(name.charAt(0)) || name.charAt(0) == '_')) return false;
+        for (int index = 1; index < name.length(); index++)
+            if (!(Character.isLetterOrDigit(name.charAt(index)) || name.charAt(index) == '_')) return false;
+        return true;
+    }
+    /**
+     * Merge a validated author dirty batch in memory. True means values changed; false is a no-op or rejected batch.
+     * Ordinary form variables, skins and radio selections are retained. Rendering never performs disk IO here.
+     */
+    public boolean updateRoamingVariables(String id, Map<String, Double> values) {
+        if (!LocalAppearanceSettings.isValidModelId(id) || values == null || values.isEmpty()
+                || values.size() > MAX_ROAMING_VARIABLES) return false;
+        ModelProfile previous = modelProfiles.get(id);
+        if (previous == null && modelProfiles.size() >= MAX_MODEL_PROFILES) return false;
+        try {
+            Map<String, Double> normalized = new LinkedHashMap<>();
+            for (var entry : values.entrySet()) {
+                String name = normalizeModelVariable(entry.getKey());
+                Double value = entry.getValue();
+                if (!isRoamingVariable(name) || value == null || !Double.isFinite(value) || Math.abs(value) > 1_000_000
+                        || normalized.put(name, value) != null) return false;
+            }
+            ModelProfile base = previous == null ? ModelProfile.defaults() : previous;
+            Map<String, Double> merged = new LinkedHashMap<>(base.variables());
+            merged.putAll(normalized);
+            ModelProfile next = new ModelProfile(base.textureId(), merged, base.radioSelections());
+            if (next.equals(base)) return false;
+            modelProfiles.put(id, next);
+            roamingVariablesDirty = true;
+            return true;
+        } catch (IllegalArgumentException invalid) { return false; }
+    }
+    public boolean hasPendingRoamingVariables() { return roamingVariablesDirty; }
+    /** One atomic options write for all pending models; a failed write retains their memory and dirty flag. */
+    public boolean flushRoamingVariables() { return !roamingVariablesDirty || write(); }
     /** Roll back both memory and disk on validation, budget or IO failure. */
     public boolean updateModelProfile(String id, ModelProfile profile) {
         if (!LocalAppearanceSettings.isValidModelId(id) || profile == null) return false;
@@ -230,12 +289,15 @@ public final class ClientOptions {
     }
     private JsonObject json() {
         JsonObject json = new JsonObject(); json.addProperty("enabled",enabled);
-        json.addProperty("showSelf",showSelf); json.addProperty("interpolationTicks",interpolationTicks);
+        json.addProperty("showSelf",showSelf); json.addProperty("hideVanillaPlayer",hideVanillaPlayer);
+        json.addProperty("hideVanillaEquipment",hideVanillaEquipment);
+        json.addProperty("interpolationTicks",interpolationTicks);
         json.addProperty("followServerTimeline",followServerTimeline);
         json.addProperty("showModelIds", showModelIds);
         json.addProperty("defaultHeaddress", defaultHeaddress);
         json.addProperty("defaultBlueTexture", defaultBlueTexture);
         json.addProperty("localActionLocked", localActionLocked);
+        json.addProperty("privateSyncEnabled", privateSyncEnabled);
         JsonObject wheel = new JsonObject();
         wheel.addProperty("source", wheelPreferences.source().name().toLowerCase(Locale.ROOT));
         wheel.addProperty("clientPage", wheelPreferences.clientPage()); wheel.addProperty("serverPage", wheelPreferences.serverPage());
@@ -266,6 +328,7 @@ public final class ClientOptions {
             temporary = Files.createTempFile(absolute.getParent(), "mpa-options-", ".tmp");
             Files.write(temporary, data);
             Files.move(temporary, absolute, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            roamingVariablesDirty = false;
             return true;
         } catch(IOException | RuntimeException exception) { LOGGER.warn("Could not save client options",exception); return false; }
         finally { if (temporary != null) try { Files.deleteIfExists(temporary); } catch (IOException ignored) {} }

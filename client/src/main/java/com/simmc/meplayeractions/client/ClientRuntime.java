@@ -5,6 +5,8 @@ import com.simmc.meplayeractions.client.model.BbModel;
 import com.simmc.meplayeractions.client.model.BbModel.Layer;
 import com.simmc.meplayeractions.client.model.BuiltinYsmModels;
 import com.simmc.meplayeractions.client.model.YsmModelProfile;
+import com.simmc.meplayeractions.client.model.NativeModelBundle;
+import com.simmc.meplayeractions.client.model.AnimationPlayer;
 import com.simmc.meplayeractions.expression.Molang;
 import com.simmc.meplayeractions.client.ui.ModelConfigSchema;
 import com.simmc.meplayeractions.client.network.*;
@@ -46,6 +48,14 @@ public final class ClientRuntime {
     private final MinecraftClient client;
     private final ServerClock clock=new ServerClock();
     private final Map<UUID,Binding> bindings=new LinkedHashMap<>();
+    private final Map<UUID,Binding> privateBindings=new LinkedHashMap<>();
+    private final Map<UUID,Long> privateExtraSequences=new HashMap<>();
+    private final Map<String,String> privateLogicalSourceIds=new ConcurrentHashMap<>();
+    private record PendingSync(UUID owner,String instance,List<Double> args,long expires) { }
+    private final ArrayDeque<PendingSync> pendingPrivateEvents=new ArrayDeque<>();
+    private PrivateModelSyncClient privateModels;
+    private long localExtraSequence;
+    private long lastRoamingFlush;
     private final Map<String,BbModel> assets=new LinkedHashMap<>(16,0.75f,true);
     private final Set<String> packAssets=new HashSet<>();
     private final Set<String> serverAssets=new HashSet<>();
@@ -56,8 +66,11 @@ public final class ClientRuntime {
             r->{Thread t=new Thread(r,"MPA-model-loader");t.setDaemon(true);return t;});
     private final ThreadPoolExecutor previewDecoder=new ThreadPoolExecutor(1,1,0,TimeUnit.MILLISECONDS,new LinkedBlockingQueue<>(8),
             r->{Thread t=new Thread(r,"MPA-preview-loader");t.setDaemon(true);return t;});
+    private final ThreadPoolExecutor privateDecoder=new ThreadPoolExecutor(1,1,0,TimeUnit.MILLISECONDS,new LinkedBlockingQueue<>(8),
+            r->{Thread t=new Thread(r,"MPA-private-sync-loader");t.setDaemon(true);return t;});
     private final Path cache=FabricLoader.getInstance().getGameDir().resolve("config/meplayeractions/cache");
     private final ServerModelCache serverModelCache=new ServerModelCache(cache);
+    private final ServerModelCache privateModelCache=new ServerModelCache(cache.resolve("private-models"));
     private final LocalModelLibrary localModelLibrary=new LocalModelLibrary(
             FabricLoader.getInstance().getConfigDir().resolve("meplayeractions/models"));
     private final Map<String,LocalModelLibrary.Loaded> localProfiles=new LinkedHashMap<>(16,.75f,true);
@@ -69,6 +82,7 @@ public final class ClientRuntime {
     private boolean pushNegotiated,unsupportedHandshake;
     private String serverAssetMode="";
     private List<String> serverCapabilities=List.of();
+    private final IncrementalStateProtocol stateProtocol=new IncrementalStateProtocol();
     private long pushOffersReceived,pushCacheHits,pushCacheMisses,pushTransfersBegun,pushTransfersCompleted,
             pushGpuPrepared,pushReadySent,pushRenderAcks,pushAssetRequests,pushCancelled,pushRejected;
     private long generation,lastHello,lastHeartbeat,lastReceived;
@@ -92,14 +106,61 @@ public final class ClientRuntime {
     public ClientRuntime(MinecraftClient client) {
         this.client=client;
         options=new ClientOptions(FabricLoader.getInstance().getConfigDir().resolve("meplayeractions-client.json"));
+        privateModels=new PrivateModelSyncClient(new PrivateModelSyncClient.Host() {
+            @Override public boolean channelAvailable(){return connected&&client.getNetworkHandler()!=null&&ClientPlayNetworking.canSend(PrivateModelPayload.ID);}
+            @Override public boolean send(JsonObject packet){return sendPrivate(packet);}
+            @Override public PrivateModelSyncClient.Local local(){return privateLocalSnapshot();}
+            @Override public CompletableFuture<byte[]> bundle(String id){return decodeAsync(()->localModelLibrary.sourceBundle(id));}
+            @Override public CompletableFuture<byte[]> cached(String hash){return decodeAsync(()->privateModelCache.readValidated(hash).orElse(null));}
+            @Override public CompletableFuture<LocalModelLibrary.Loaded> decode(byte[] bytes,String texture){return decodeAsync(()->{
+                LocalModelLibrary.Loaded loaded=NativeModelBundle.decode(bytes,texture);String hash=AssetTransfer.hash(bytes);
+                for(String id:List.of(BuiltinYsmModels.ALEX_ID,BuiltinYsmModels.STEVE_ID))
+                    if(hash.equals(AssetTransfer.hash(localModelLibrary.sourceBundle(id))))privateLogicalSourceIds.put(hash,BuiltinYsmModels.logicalSourceId(id));
+                return loaded;
+            });}
+            @Override public void cache(String hash,byte[] bytes){decodeAsync(()->{privateModelCache.writeValidated(hash,bytes);return null;});}
+            @Override public void dispatch(Runnable task){client.execute(task);}
+            @Override public boolean prepare(PrivateModelSyncClient.Remote remote,LocalModelLibrary.Loaded loaded){
+                if(client.world==null)return false;
+                install(loaded.hash(),loaded.model());if(!assets.containsKey(loaded.hash())||!ModelRenderer.has(loaded.hash()))return false;
+                Binding binding=new Binding(remote.owner,remote.generation.toString(),"private:"+remote.hash,loaded.hash());
+                binding.profile=loaded.profile();binding.motion=localMotionPolicy(loaded.model());binding.hidePlayer=true;
+                privateBindings.put(remote.owner,binding);privateExtraSequences.remove(remote.owner);return true;
+            }
+            @Override public void remove(UUID owner,UUID instance){
+                Binding binding=privateBindings.get(owner);
+                if(binding!=null&&binding.instance.equals(instance.toString())){
+                    privateBindings.remove(owner);privateExtraSequences.remove(owner);
+                    if(client.player==null||!owner.equals(client.player.getUuid()))closeModelEffects(owner);
+                }
+                pendingPrivateEvents.removeIf(event->event.owner().equals(owner)&&event.instance().equals(instance.toString()));
+            }
+            @Override public void state(PrivateModelSyncClient.Remote remote){applyPrivateState(remote);}
+            @Override public void event(UUID owner,UUID instance,List<Double> args){
+                String target=client.player!=null&&owner.equals(client.player.getUuid())&&localSelf!=null?localSelf.instance:instance.toString();
+                if(!ModelRenderer.applyAuthorSync(owner,target,args)){
+                    if(pendingPrivateEvents.size()>=16)pendingPrivateEvents.removeFirst();
+                    pendingPrivateEvents.addLast(new PendingSync(owner,target,args,System.nanoTime()+5*SECOND));
+                }
+            }
+        });
+    }
+    private <T> CompletableFuture<T> decodeAsync(Callable<T> task){
+        CompletableFuture<T> result=new CompletableFuture<>();
+        try{privateDecoder.execute(()->{try{result.complete(task.call());}catch(Exception failure){result.completeExceptionally(failure);}});}
+        catch(RejectedExecutionException busy){result.completeExceptionally(busy);}return result;
     }
     public void joined() { reset(); connected=true; world=client.world; }
     public void reset() {
+        options.flushRoamingVariables();
+        lastRoamingFlush=0;
+        if(privateModels!=null)privateModels.reset();privateBindings.clear();privateExtraSequences.clear();pendingPrivateEvents.clear();
         closeModelEffects();
         VanillaYsmQueries.reset();
         releaseBindings();abortTransfers();connected=false;acknowledged=false;
         loading.clear(); failedAssets.clear(); assets.clear(); packAssets.clear(); serverAssets.clear(); clock.reset();
         pushNegotiated=false;unsupportedHandshake=false;serverAssetMode="";serverCapabilities=List.of();
+        stateProtocol.reset();
         lastHello=0;lastHeartbeat=0;lastReceived=0;previewId="";previewHash="";previewManual="";previewPose="";
         localSelf=null;localAppearanceError="";localAppearanceRetryAfter=0;
         ownAppearanceMissingSince=0;lastAppearanceSnapshotRequest=0;
@@ -110,28 +171,39 @@ public final class ClientRuntime {
     public void tick() {
         localTick++;
         long now=System.nanoTime();
+        if(now-lastRoamingFlush>=SECOND){options.flushRoamingVariables();lastRoamingFlush=now;}
         if (client.world!=world) {
             boolean wasConnected=connected;reset();connected=wasConnected;world=client.world;
         }
         // This private mode is independent of the server handshake and also runs in single player.
         ensureLocalAppearance();
         updateLocalAppearanceMotion();
+        privateModels.tick(now);
+        for(PendingSync event:List.copyOf(pendingPrivateEvents)){
+            if(now>event.expires()||!privateEventCurrent(event)||ModelRenderer.applyAuthorSync(event.owner(),event.instance(),event.args()))pendingPrivateEvents.remove(event);
+        }
         tickModelEffects();
         if (!connected || client.getNetworkHandler()==null) return;
+        if(acknowledged && stateProtocol.requestedTimeline()!=options.followServerTimeline) {
+            // Keep the known server appearance while its new snapshot is pending; only its render leases end.
+            releaseBindings();abortTransfers();acknowledged=false;pushNegotiated=false;stateProtocol.reset();lastHello=0;
+        }
         if (acknowledged && now-lastReceived>leaseTicks*50_000_000L) {
-            releaseBindings();abortTransfers();acknowledged=false;pushNegotiated=false;lastHello=0;lastError="服务器同步已超时，恢复服务器显示";
+            releaseBindings();abortTransfers();acknowledged=false;pushNegotiated=false;stateProtocol.reset();lastHello=0;lastError="服务器同步已超时，恢复服务器显示";
         }
-        if (options.enabled && !acknowledged && !unsupportedHandshake && now-lastHello>3*SECOND && ClientPlayNetworking.canSend(ActionPayload.ID)) {
+        // Rendering is optional; the server action session and its authoritative catalogue are not.
+        if (!acknowledged && !unsupportedHandshake && now-lastHello>3*SECOND && ClientPlayNetworking.canSend(ActionPayload.ID)) {
             JsonObject hello=WireJson.envelope("hello");hello.addProperty("clientVersion",clientVersion());
-            JsonArray caps=new JsonArray();caps.add("local_render");caps.add("server_push_models");hello.add("capabilities",caps);
-            send(hello);lastHello=now;
+            List<String> capabilities=stateProtocol.nextHelloCapabilities(options.followServerTimeline);
+            JsonArray caps=new JsonArray();capabilities.forEach(caps::add);hello.add("capabilities",caps);
+            if(send(hello))stateProtocol.helloSent(capabilities,options.followServerTimeline);lastHello=now;
         }
-        if (acknowledged && options.enabled) {
+        if (acknowledged) {
             for (Binding binding:List.copyOf(bindings.values())) {
                 if (now-binding.lastPacket>leaseTicks*50_000_000L) {
                     failed(binding,"模型状态超时");bindings.remove(binding.owner);continue;
                 }
-                if (!binding.hash.isEmpty() && assets.containsKey(binding.hash) && ModelRenderer.has(binding.hash)
+                if (options.enabled && !binding.hash.isEmpty() && assets.containsKey(binding.hash) && ModelRenderer.has(binding.hash)
                         && !binding.active && !binding.unsupported && now-binding.lastReady>SECOND
                         && now-failedAssets.getOrDefault(binding.hash,0L)>30*SECOND) {
                     JsonObject ready=identity("render_ready",binding);
@@ -143,24 +215,26 @@ public final class ClientRuntime {
             }
             // A lost lease can remove the server binding before an undisguise notice is sent.
             // A bounded full snapshot proves when private rendering can safely resume.
-            boolean missingOwn=localAppearance().enabled() && localAppearanceVisibility.hasServerAppearance()
+            boolean missingOwn=localAppearanceVisibility.hasServerAppearance()
                     && client.player!=null && !bindings.containsKey(client.player.getUuid());
             if(!missingOwn)ownAppearanceMissingSince=0;
             else {
                 if(ownAppearanceMissingSince==0)ownAppearanceMissingSince=now;
-                if(now-ownAppearanceMissingSince>200_000_000L && now-lastAppearanceSnapshotRequest>2*SECOND) {
-                    if(send(WireJson.envelope("snapshot_request")))lastAppearanceSnapshotRequest=now;
-                }
+                if(now-ownAppearanceMissingSince>200_000_000L)requestAppearanceSnapshot(now);
             }
         }
         prunePushOffers(now);
-        if(!options.followServerTimeline && client.world!=null) for(Binding binding:bindings.values()) {
+        if(options.enabled && !options.followServerTimeline && client.world!=null) for(Binding binding:bindings.values()) {
             BbModel model=assets.get(binding.hash);PlayerEntity player=client.world.getPlayerByUuid(binding.owner);
             if(model!=null && player!=null && usable(binding,now)) entityBinding(binding,model,player);
         }
     }
+    private void requestAppearanceSnapshot(long now) {
+        // Share the bound across own-binding recovery and every fragmented heartbeat gap.
+        if(now-lastAppearanceSnapshotRequest>2*SECOND && send(WireJson.envelope("snapshot_request")))
+            lastAppearanceSnapshotRequest=now;
+    }
     public void receive(byte[] bytes) {
-        if(!options.enabled) return;
         try {
             JsonObject json=WireJson.decode(bytes);String type=WireJson.string(json,"type",32);
             long now=System.nanoTime();
@@ -169,7 +243,7 @@ public final class ClientRuntime {
                 List<String> caps=readCapabilities(json);
                 String mode=json.has("assetMode")?WireJson.string(json,"assetMode",32):"";
                 if(!ServerPushAuthorization.acceptsHandshake(mode,caps)) {
-                    releaseBindings();abortTransfers();acknowledged=false;pushNegotiated=false;
+                    releaseBindings();abortTransfers();acknowledged=false;pushNegotiated=false;stateProtocol.reset();
                     unsupportedHandshake=true;
                     serverAssetMode=mode;serverCapabilities=caps;lastHello=now;
                     lastError="服务器未协商模型主动推送，请升级 MEPlayerActions 服务端到 0.4.2；保持服务器显示";
@@ -181,11 +255,15 @@ public final class ClientRuntime {
                 releaseBindings();abortTransfers();
                 clock.observe(WireJson.integer(json,"serverTick",0,0xffff_ffffL),now);
                 serverAssetMode=mode;serverCapabilities=caps;pushNegotiated=true;unsupportedHandshake=false;
+                stateProtocol.acknowledge(caps);
                 acknowledged=true;lastReceived=now;lastError="";return;
             }
             if(!acknowledged) {
                 if(type.equals("error")) {
                     String code=WireJson.string(json,"code",64);
+                    if(lastHello!=0 && stateProtocol.fallbackForError(code)) {
+                        unsupportedHandshake=false;lastHello=0;lastError="";return;
+                    }
                     if(lastHello!=0 && Set.of("unsupported_protocol","invalid_payload","unsupported_capability").contains(code)) {
                         unsupportedHandshake=true;
                         lastError="服务器不支持模型主动推送，请升级 MEPlayerActions 服务端到 0.4.2（"+code+"）；保持服务器显示";
@@ -197,7 +275,7 @@ public final class ClientRuntime {
                 case "state" -> state(json,now);
                 case "render_ack" -> {
                     Binding binding=matching(json);
-                    if(binding!=null && binding.readySent && assets.containsKey(binding.hash) && ModelRenderer.has(binding.hash))
+                    if(options.enabled && binding!=null && binding.readySent && assets.containsKey(binding.hash) && ModelRenderer.has(binding.hash))
                         {binding.active=true;binding.assetState="本地渲染";binding.assetError="";pushRenderAcks++;}
                 }
                 case "unbind" -> {
@@ -209,10 +287,17 @@ public final class ClientRuntime {
                     String reason=WireJson.string(json,"reason",128);
                     if(client.player!=null && owner.equals(client.player.getUuid()))localAppearanceVisibility.serverUnbound(instance,reason);
                     if(Set.of("plugin-close","plugin_stopping","sync_disabled","session_ended").contains(reason)) {
-                        releaseBindings();abortTransfers();acknowledged=false;pushNegotiated=false;lastHello=0;
+                        releaseBindings();abortTransfers();acknowledged=false;pushNegotiated=false;stateProtocol.reset();lastHello=0;
                     }
                 }
-                case "heartbeat" -> clock.observe(WireJson.integer(json,"serverTick",0,0xffff_ffffL),now);
+                case "heartbeat" -> {
+                    long serverTick=WireJson.integer(json,"serverTick",0,0xffff_ffffL);
+                    boolean gap=stateProtocol.renewBindings(json,bindings,
+                            binding->new IncrementalStateProtocol.Identity(binding.owner,binding.instance,binding.hash),
+                            (binding,received)->binding.lastPacket=received,now);
+                    if(gap)requestAppearanceSnapshot(now);
+                    clock.observe(serverTick,now);
+                }
                 case "asset_offer" -> acceptOffer(json,now);
                 case "asset_begin" -> begin(json,now);
                 case "asset_chunk" -> pushChunk(json,now);
@@ -233,7 +318,7 @@ public final class ClientRuntime {
         } catch(Exception exception) {
             lastError="同步包校验失败，恢复服务器显示";
             MEPlayerActionsClient.LOGGER.warn("Rejected MPA packet: {}",exception.toString());
-            releaseBindings();abortTransfers();acknowledged=false;pushNegotiated=false;lastHello=System.nanoTime();
+            releaseBindings();abortTransfers();acknowledged=false;pushNegotiated=false;stateProtocol.reset();lastHello=System.nanoTime();
         }
     }
     private void state(JsonObject json,long now) {
@@ -266,14 +351,10 @@ public final class ClientRuntime {
             layers.add(new Layer(name,animation,started,WireJson.number(layer,"speed",0.01,20),loop,
                     (int)WireJson.integer(layer,"inTicks",0,200),(int)WireJson.integer(layer,"outTicks",0,200)));
         }
-        List<Action> actions=new ArrayList<>();
-        JsonArray labels=json.getAsJsonArray("animations");
-        if(labels!=null) for(JsonElement value:labels) {
-            JsonObject label=value.getAsJsonObject();String id=WireJson.string(label,"id",128);
-            if(!id.matches("[a-zA-Z0-9_.:/-]{1,128}")) throw new IllegalArgumentException("Animation ID");
-            actions.add(new Action(id,WireJson.string(label,"label",256)));
-        }
         Binding binding=bindings.get(owner);
+        boolean sameBinding=binding!=null && binding.instance.equals(instance) && binding.hash.equals(hash) && binding.modelId.equals(modelId);
+        List<Action> actions=stateProtocol.animations(json,sameBinding?binding.actions:List.of(),
+                animation->new Action(animation.id(),animation.label()));
         if(binding==null || !binding.instance.equals(instance) || !binding.hash.equals(hash) || !binding.modelId.equals(modelId)) {
             if(binding!=null) failed(binding,"");
             if(binding==null && bindings.size()>=64) return;
@@ -462,7 +543,72 @@ public final class ClientRuntime {
         if(localSelf!=null && localSelf.modelId.equals(id))return localSelf.profile;
         var loaded=localProfiles.get(id);return loaded==null?YsmModelProfile.empty():loaded.profile();
     }
-    public YsmModelProfile modelProfile(UUID owner){return localAppearanceActive() && owner.equals(client.player.getUuid())?localSelf.profile:YsmModelProfile.empty();}
+    public YsmModelProfile modelProfile(UUID owner){
+        if(localAppearanceActive()&&owner.equals(client.player.getUuid()))return localSelf.profile;
+        Binding remote=privateBindings.get(owner);return privateUsable(owner)?remote.profile:YsmModelProfile.empty();
+    }
+    public String appearanceModelId(UUID owner){
+        if(localAppearanceActive()&&owner.equals(client.player.getUuid()))return localSelf.modelId;
+        Binding remote=privateBindings.get(owner);if(privateUsable(owner))return privateLogicalSourceIds.getOrDefault(privateModels.remote(owner).hash,remote.modelId);
+        Binding server=bindings.get(owner);return server==null?"":server.modelId;
+    }
+    public boolean privateSyncAvailable(){return privateModels.available();}
+    public boolean privateSyncEnabled(){return options.privateSyncEnabled;}
+    public String privateSyncStatus(){return privateModels.status();}
+    public boolean setPrivateSyncEnabled(boolean enabled){
+        if(enabled&&!privateSyncAvailable())return false;
+        options.privateSyncEnabled=enabled;options.save();if(!enabled)privateModels.stopPublishing();return true;
+    }
+    public void receivePrivate(byte[] bytes){privateModels.receive(bytes,System.nanoTime());}
+    private boolean sendPrivate(JsonObject packet){
+        if(!connected||client.getNetworkHandler()==null||!ClientPlayNetworking.canSend(PrivateModelPayload.ID))return false;
+        byte[] bytes=packet.toString().getBytes(StandardCharsets.UTF_8);if(bytes.length>ActionPayload.MAX_BYTES)return false;
+        try{ClientPlayNetworking.send(new PrivateModelPayload(bytes));return true;}catch(RuntimeException unavailable){return false;}
+    }
+    public java.util.function.Consumer<List<Double>> nativeSyncListener(UUID owner){
+        if(client.player==null||!owner.equals(client.player.getUuid())||isServerDisguised(owner)||!localAppearanceActive()||!options.privateSyncEnabled||!privateModels.committed())return null;
+        return values->privateModels.event(values,System.nanoTime());
+    }
+    /** Only the current owner's world BODY may persist authored roaming changes. */
+    public void recordLocalRoaming(UUID owner,String instance,Map<String,Double> changes){
+        if(changes.isEmpty()||client.player==null||!owner.equals(client.player.getUuid())||localSelf==null
+                ||!localSelf.instance.equals(instance)||!localAppearanceActive())return;
+        options.updateRoamingVariables(localSelf.modelId,changes);
+    }
+    private PrivateModelSyncClient.Local privateLocalSnapshot(){
+        var settings=localAppearance();
+        if(!options.privateSyncEnabled||!settings.enabled()||client.player==null||isServerDisguised(client.player.getUuid())
+                ||localSelf==null||!localSelf.modelId.equals(settings.modelId()))return null;
+        JsonObject appearance=new JsonObject();appearance.addProperty("scale",settings.scale());
+        appearance.addProperty("offsetX",settings.offsetX());appearance.addProperty("offsetY",settings.offsetY());appearance.addProperty("offsetZ",settings.offsetZ());
+        appearance.addProperty("textureId",localSelf.profile.selectedTexture());JsonObject variables=new JsonObject(),radios=new JsonObject();
+        var profile=options.modelProfile(settings.modelId());
+        if(settings.modelId().equals("openysm_default"))variables.addProperty("variable.roaming.red_bow_headdress",options.defaultHeaddress?1:0);
+        profile.variables().forEach((key,value)->{if(variables.size()<128&&Double.isFinite(value)&&Math.abs(value)<=1_000_000)variables.addProperty(key,value);});
+        profile.radioSelections().forEach((key,value)->{if(radios.size()<128&&value>=0&&value<=255)radios.addProperty(key.toLowerCase(Locale.ROOT),value);});
+        appearance.add("variables",variables);appearance.add("radioSelections",radios);
+        JsonObject extra=new JsonObject();Layer layer=localSelf.localServerLayers.isEmpty()?null:localSelf.localServerLayers.getFirst();
+        extra.addProperty("id",layer==null?"":layer.animation());extra.addProperty("loop",layer==null?"ONCE":layer.loop());
+        extra.addProperty("locked",options.localActionLocked);extra.addProperty("sequence",localExtraSequence);
+        return new PrivateModelSyncClient.Local(client.player.getUuid(),settings.modelId(),appearance,extra);
+    }
+    private boolean privateUsable(UUID owner){
+        var remote=privateModels.remote(owner);Binding binding=privateBindings.get(owner);
+        return options.enabled&&remote!=null&&remote.active&&binding!=null&&!isServerDisguised(owner)&&client.world!=null
+                &&client.world.getPlayerByUuid(owner)!=null&&ModelRenderer.has(binding.hash);
+    }
+    private boolean privateEventCurrent(PendingSync event){
+        if(client.player!=null&&event.owner().equals(client.player.getUuid()))return localSelf!=null&&localSelf.instance.equals(event.instance())&&!isServerDisguised(event.owner());
+        Binding binding=privateBindings.get(event.owner());return binding!=null&&binding.instance.equals(event.instance())&&privateUsable(event.owner());
+    }
+    private void applyPrivateState(PrivateModelSyncClient.Remote remote){
+        Binding binding=privateBindings.get(remote.owner);if(binding==null||!binding.instance.equals(remote.generation.toString()))return;
+        binding.active=remote.active;binding.scale=remote.appearance.get("scale").getAsFloat();
+        long sequence=remote.extra.get("sequence").getAsLong();
+        if(privateExtraSequences.getOrDefault(remote.owner,-1L)==sequence)return;privateExtraSequences.put(remote.owner,sequence);
+        String animation=remote.extra.get("id").getAsString();BbModel model=assets.get(binding.hash);
+        binding.localServerLayers=animation.isEmpty()||model==null||!model.animations().contains(animation)?List.of():List.of(new Layer("manual",animation,localTick,1,remote.extra.get("loop").getAsString(),2,2));
+    }
     public PlayerEntity nativePlayer(UUID owner){return client.world==null?null:client.world.getPlayerByUuid(owner);}
     public RenderBinding appearanceBinding(UUID owner){return animationBindings().stream().filter(binding->binding.owner().equals(owner)).findFirst().orElse(null);}
     public boolean localActionLocked(){return options.localActionLocked;}
@@ -485,18 +631,36 @@ public final class ClientRuntime {
         if(scripts.stream().anyMatch(Objects::isNull)||scripts.stream().mapToLong(String::length).sum()>32768)return false;
         try{
             var schema=ModelConfigSchema.from(localModelProfile(id),client.options.language);
-            if(schema.variables().isEmpty())return false;
-            var context=new Molang.Context();context.frame(Map.of());localModelVariables(id).forEach(context::set);
-            for(String script:scripts){
-                var program=Molang.compile(script);
-                if(program.references().stream().anyMatch(name->!name.startsWith("variable.")&&!name.startsWith("temp.")&&!name.startsWith("math.")))return false;
-                program.evaluate(context);
-            }
+            AnimationPlayer player=configurationPlayer(id);if(player==null)return false;
+            Map<String,Double> evaluated=player.authorConfiguration(scripts,localModelVariables(id));
             Map<String,Double> values=new LinkedHashMap<>(options.modelProfile(id).variables());
-            for(String key:schema.variables())if(context.has(key))values.put(key,context.get(key));
+            for(String key:schema.variables())if(evaluated.containsKey(key))values.put(key,evaluated.get(key));
+            int roaming=(int)values.keySet().stream().filter(ClientOptions::isRoamingVariable).count();
+            for(var entry:evaluated.entrySet())if(ClientOptions.isRoamingVariable(entry.getKey())
+                    &&Double.isFinite(entry.getValue())&&Math.abs(entry.getValue())<=1_000_000
+                    &&(values.containsKey(entry.getKey())||roaming<ClientOptions.MAX_ROAMING_VARIABLES)){
+                if(!values.containsKey(entry.getKey()))roaming++;
+                values.put(entry.getKey(),entry.getValue());
+            }
             var previous=options.modelProfile(id);
             return options.updateModelProfile(id,new ClientOptions.ModelProfile(previous.textureId(),values,radios));
         }catch(RuntimeException invalid){MEPlayerActionsClient.LOGGER.debug("Private model configuration rejected: {}",invalid.getMessage());return false;}
+    }
+    private AnimationPlayer configurationPlayer(String id){
+        var loaded=localProfiles.get(id);BbModel model=loaded==null?null:loaded.model();
+        if(model==null&&localSelf!=null&&localSelf.modelId.equals(id))model=assets.get(localSelf.hash);
+        if(model==null)return null;AnimationPlayer player=new AnimationPlayer(model);
+        if(localModelProfile(id).isYsm())player.enableNativeYsm();
+        player.configureFrame(context->{
+            if(client.player!=null)configureExpressionContext(client.player.getUuid(),context);
+        });
+        if(client.player!=null&&localSelf!=null&&localSelf.modelId.equals(id))player.syncListener(nativeSyncListener(client.player.getUuid()));
+        return player;
+    }
+    public double readLocalModelExpression(String id,String expression,Map<String,Double> draftValues){
+        AnimationPlayer player=configurationPlayer(id);if(player==null)throw new IllegalArgumentException("模型尚未加载");
+        Map<String,Double> values=new LinkedHashMap<>(localModelVariables(id));values.putAll(draftValues);
+        return player.readConfiguration(expression,values);
     }
     public boolean selectLocalTexture(String id,String texture){
         if(!canEditLocalAppearance())return false;
@@ -510,6 +674,11 @@ public final class ClientRuntime {
     }
     public Path localModelDirectory() {return localModelLibrary.directory();}
     public void refreshLocalAppearance() {if(!canEditLocalAppearance()){suspendLocalAppearanceForServer();return;}invalidateLocalAppearance();ensureLocalAppearance();}
+    public void refreshLocalModelSources() {
+        localModelLibrary.clearSourceBundleCache();
+        privateModels.stopPublishing();
+        if(canEditLocalAppearance()){invalidateLocalAppearance();ensureLocalAppearance();}
+    }
     private void begin(JsonObject json,long now) {
         String hash=WireJson.hash(json,"hash");
         pushAuthorization.begin(offerId(json),hash,WireJson.modelId(json),(int)WireJson.integer(json,"rawBytes",1,AssetTransfer.MAX_RAW),
@@ -576,6 +745,7 @@ public final class ClientRuntime {
     }
     private boolean evictInactive() {
         Set<String> active=new HashSet<>();for(Binding binding:bindings.values())active.add(binding.hash);
+        for(Binding binding:privateBindings.values())active.add(binding.hash);
         if(!previewHash.isEmpty())active.add(previewHash);
         if(localSelf!=null)active.add(localSelf.hash);
         var iterator=assets.entrySet().iterator();
@@ -642,15 +812,22 @@ public final class ClientRuntime {
             else if(action.equals("stop") || action.equals("reset"))previewManual="";
             return;
         }
-        if(!serverBridgeReady())return;
+        if(!canUseServerActions() || own==null)return;
+        if(action.equals("play") && own.actions.stream().noneMatch(item->item.id().equals(argument)))return;
         JsonObject json=WireJson.envelope("request");json.addProperty("action",action);
         if(!argument.isEmpty())json.addProperty("argument",argument);
         if(send(json))requestPacketsSent++;
     }
     public void toggleEnabled() {
-        if(options.enabled) releaseBindings();
-        abortTransfers();
-        options.enabled=!options.enabled;options.save();acknowledged=false;pushNegotiated=false;unsupportedHandshake=false;lastHello=0;
+        // Keep the server-selected instance, action catalogue and authorized model offers.
+        // render_failed releases only GPU leases, so ME resumes displaying the disguise.
+        if(options.enabled) releaseAll();
+        options.enabled=!options.enabled;options.save();
+        if(!options.enabled) {
+            closeModelEffects();
+            previewRequest++;previewPending=false;
+            localAppearanceRequest++;localAppearancePending=false;
+        }
     }
     public Collection<RenderBinding> renderBindings() {
         return animationBindings().stream().filter(binding -> shouldShowModel(binding.owner())).toList();
@@ -675,6 +852,15 @@ public final class ClientRuntime {
                 PlayerEntity player=client.world.getPlayerByUuid(binding.owner);
                 if(player!=null) result.add(entityBinding(binding,model,player));
             }
+        }
+        for(Binding binding:privateBindings.values())if(privateUsable(binding.owner)){
+            PlayerEntity player=client.world.getPlayerByUuid(binding.owner);BbModel model=assets.get(binding.hash);
+            if(player==null||model==null)continue;RenderBinding nativeBinding=entityBinding(binding,model,player);
+            var remote=privateModels.remote(binding.owner);JsonObject appearance=remote.appearance;
+            result.removeIf(value->value.owner().equals(binding.owner));
+            result.add(new RenderBinding(nativeBinding.owner(),nativeBinding.instance(),nativeBinding.assetHash(),model,nativeBinding.layers(),nativeBinding.serverTick(),
+                    nativeBinding.x()+appearance.get("offsetX").getAsDouble(),nativeBinding.y()+appearance.get("offsetY").getAsDouble(),
+                    nativeBinding.z()+appearance.get("offsetZ").getAsDouble(),nativeBinding.bodyYaw(),nativeBinding.headYaw(),nativeBinding.headPitch(),binding.scale,true,"private-tracked"));
         }
         if(localAppearanceActive()) {
             result.removeIf(binding -> binding.owner().equals(client.player.getUuid()));
@@ -717,6 +903,9 @@ public final class ClientRuntime {
         return binding==null?Map.of():binding.accessories;
     }
     public Map<String,Double> localParameters(UUID owner) {
+        if(privateUsable(owner)){
+            var values=new LinkedHashMap<String,Double>();privateModels.remote(owner).appearance.getAsJsonObject("variables").entrySet().forEach(entry->values.put(entry.getKey(),entry.getValue().getAsDouble()));return Map.copyOf(values);
+        }
         if(!localAppearanceActive() || !owner.equals(client.player.getUuid()))return Map.of();
         Map<String,Double> values=new LinkedHashMap<>();
         if(localSelf.modelId.equals("openysm_default"))values.put("variable.roaming.red_bow_headdress",options.defaultHeaddress?1d:0d);
@@ -732,7 +921,7 @@ public final class ClientRuntime {
         YsmModelEffects frameEffects=appearance==null || player==null?null:
                 frameEffects(owner,player,appearance.instance(),appearance.assetHash(),modelProfile(owner));
         installFrameEffects(context,nativeFunctions,frameEffects);
-        Binding motion=localAppearanceActive()&&owner.equals(client.player.getUuid())?localSelf:binding;
+        Binding motion=localAppearanceActive()&&owner.equals(client.player.getUuid())?localSelf:privateUsable(owner)?privateBindings.get(owner):binding;
         if(motion!=null)for(String controller:motion.localMotion.pausedControllers())context.query("ysm.pause."+controller,1d);
     }
     public void configureComponentExpressionContext(UUID owner,Entity entity,String componentHash,Molang.Context context){
@@ -760,7 +949,7 @@ public final class ClientRuntime {
     private static void installFrameEffects(Molang.Context context,Molang.FunctionResolver nativeFunctions,YsmModelEffects effects){
         context.functions((function,arguments)->switch(function) {
             case "ysm.play_sound","ysm.stop_sound","ysm.stop_all_sounds","ysm.particle","ysm.abs_particle" ->
-                    effects!=null && Boolean.TRUE.equals(effects.handle(function,arguments));
+                    effects!=null && Boolean.TRUE.equals(effects.handle(function,arguments,context.nativeYsm(),context.effectScope()));
             default -> nativeFunctions==null?0d:nativeFunctions.call(function,arguments);
         });
     }
@@ -791,19 +980,7 @@ public final class ClientRuntime {
         modelEffects.forEach((key,state)->result.put(key.owner().equals(key.entity())?key.owner().toString():key.owner()+"/"+key.entity(),state.effects().diagnostics()));
         return Map.copyOf(result);
     }
-    public VanillaYsmAnimations.VanillaState vanillaState(UUID owner){
-        PlayerEntity player=nativePlayer(owner);if(player==null)return VanillaYsmAnimations.VanillaState.NONE;
-        var vehicle=player.getVehicle();Set<String> tags=new LinkedHashSet<>();
-        if(vehicle!=null)vehicle.getType().getRegistryEntry().streamTags().limit(128).forEach(tag->tags.add(tag.id().toString()));
-        return new VanillaYsmAnimations.VanillaState(player.isDead(),player.hurtTime,player.isUsingRiptide(),player.isSleeping(),player.isSwimming(),
-                vanillaItem(player.getMainHandStack()),vanillaItem(player.getOffHandStack()),
-                !player.isUsingItem()?VanillaYsmAnimations.Hand.NONE:player.getActiveHand()==Hand.OFF_HAND?VanillaYsmAnimations.Hand.OFF:VanillaYsmAnimations.Hand.MAIN,
-                // Native item components can shorten max use time while its remaining ticks are unchanged.
-                Math.max(0,player.getItemUseTime()),!player.handSwinging?VanillaYsmAnimations.Hand.NONE:player.preferredHand==Hand.OFF_HAND?VanillaYsmAnimations.Hand.OFF:VanillaYsmAnimations.Hand.MAIN,
-                // Vanilla starts a swing at -1 before its first tick; keep the active hand at frame zero.
-                Math.max(0,player.handSwingTicks),player.fishHook!=null,vehicle==null?"":Registries.ENTITY_TYPE.getId(vehicle.getType()).toString(),tags,
-                vehicle!=null&&vehicle.isAlive(),vehicle instanceof LivingEntity living&&!living.getEquippedStack(EquipmentSlot.SADDLE).isEmpty());
-    }
+    public VanillaYsmAnimations.VanillaState vanillaState(UUID owner){return VanillaYsmQueries.vanillaState(client,nativePlayer(owner));}
     public GuiPreviewAppearance guiPreviewAppearance() {
         if(!options.enabled || client.world==null || client.player==null)return null;
         if(localAppearanceActive()) {
@@ -828,7 +1005,7 @@ public final class ClientRuntime {
                 player.getPose()==EntityPose.SWIMMING,player.isTouchingWater(),player.getAbilities().flying,player.isGliding(),
                 player.isSneaking() || player.getPose()==EntityPose.CROUCHING,player.isSprinting(),riding,player.handSwinging,
                 Math.max(0,player.handSwingTicks),player.preferredHand==Hand.OFF_HAND,client.interactionManager!=null && client.interactionManager.isBreakingBlock(),
-                true,player.isClimbing(),vanillaState(player.getUuid()));
+                true,player.isClimbing(),vanillaState(player.getUuid()),VanillaYsmQueries.movementFallback(client,player));
         return new GuiPreviewInput(player.getHeight(),player.getScale(),sample);
     }
     public void configureGuiPreviewExpressionContext(Molang.Context context,String texture) {
@@ -870,6 +1047,11 @@ public final class ClientRuntime {
         float headYaw=MathHelper.lerpAngleDegrees(delta,player.lastHeadYaw,player.headYaw),headPitch=player.getPitch(delta);
         LocalMotionPolicy policy=binding.motion;
         if(binding==localSelf)policy=policy.withActionLock(options.localActionLocked);
+        else if(binding==privateBindings.get(binding.owner)){
+            var remote=privateModels.remote(binding.owner);
+            if(remote!=null&&binding.instance.equals(remote.generation.toString()))
+                policy=policy.withActionLock(remote.extra.get("locked").getAsBoolean());
+        }
         boolean own=player==client.player,bedSleeping=false;
         if(policy.specialPose().isEmpty() && player.isSleeping()) {
             var bed=player.getSleepingPosition().orElse(null);
@@ -896,25 +1078,36 @@ public final class ClientRuntime {
         binding.localMotion.update(localTick,new EntityAnimationController.Sample(current.x,current.y,current.z,player.isOnGround(),
                 bedSleeping,player.getPose()==EntityPose.SWIMMING || policy.forcedPose().equals("crawl"),player.isTouchingWater(),own?player.getAbilities().flying:policy.flying(),
                 player.isGliding(),player.isSneaking() || player.getPose()==EntityPose.CROUCHING || policy.forcedPose().equals("sneak"),player.isSprinting(),riding,player.handSwinging,player.handSwingTicks,
-                player.preferredHand==Hand.OFF_HAND,own && client.interactionManager!=null && client.interactionManager.isBreakingBlock(),own,player.isClimbing(),vanillaState(player.getUuid())),
+                player.preferredHand==Hand.OFF_HAND,own && client.interactionManager!=null && client.interactionManager.isBreakingBlock(),own,player.isClimbing(),vanillaState(player.getUuid()),VanillaYsmQueries.movementFallback(client,player)),
                 policy,binding.localServerLayers,model.animationCatalog());
         return new RenderBinding(binding.owner,binding.instance,binding.hash,model,binding.localMotion.layers(),localTick+delta,
                 pos.x,pos.y,pos.z,bodyYaw,headYaw,headPitch,binding.scale,binding.hidePlayer,own?"local-player":"tracked-player");
     }
     public boolean shouldHidePlayer(UUID owner) {
         if(!options.enabled)return false;
-        if(localAppearanceActive() && owner.equals(client.player.getUuid()))return true;
+        if(privateUsable(owner))return true;
+        if(localAppearanceActive() && owner.equals(client.player.getUuid()))
+            return isServerDisguised(owner) || options.hideVanillaPlayer;
         Binding binding=bindings.get(owner);long now=System.nanoTime();
         if(usable(binding,now))return binding.hidePlayer;
         return binding==null && !previewId.isEmpty() && client.player!=null && owner.equals(client.player.getUuid()) && assets.containsKey(previewHash)
-                && ModelRenderer.has(previewHash);
+                && ModelRenderer.has(previewHash) && options.hideVanillaPlayer;
+    }
+    /** Native gear is separate from author geometry and held items; server disguises always suppress it. */
+    public boolean shouldHideVanillaLayers(UUID owner) {
+        if(!options.enabled)return false;
+        return isServerDisguised(owner) || privateUsable(owner) || localAppearanceActive() && client.player!=null
+                && owner.equals(client.player.getUuid()) && options.hideVanillaEquipment;
     }
     private boolean usable(Binding binding,long now) {
-        return binding!=null && binding.active && !binding.unsupported && now-binding.lastPacket<leaseTicks*50_000_000L
+        return options.enabled && binding!=null && binding.active && !binding.unsupported && now-binding.lastPacket<leaseTicks*50_000_000L
                 && now-lastReceived<leaseTicks*50_000_000L && ModelRenderer.has(binding.hash);
     }
     public boolean shouldHideFirstPersonArm() {return !localAppearanceActive() && client.player!=null && shouldHidePlayer(client.player.getUuid());}
     public void renderFailed(UUID owner,String instance,String hash,String reason) {
+        for(Binding failedPrivate:List.copyOf(privateBindings.values()))if(failedPrivate.hash.equals(hash)
+                &&(owner==null||failedPrivate.owner.equals(owner)&&failedPrivate.instance.equals(instance)))
+            privateModels.rejectRemote(failedPrivate.owner,UUID.fromString(failedPrivate.instance));
         if(localSelf!=null && localSelf.hash.equals(hash)
                 && (owner==null || localSelf.owner.equals(owner) && localSelf.instance.equals(instance))) {
             localSelf=null;localAppearanceRequest++;localAppearancePending=false;
@@ -935,7 +1128,7 @@ public final class ClientRuntime {
     public void releaseAll() {for(Binding binding:bindings.values())failed(binding,"");}
 
     public boolean serverBridgeReady() {
-        return connected && acknowledged && options.enabled && client.getNetworkHandler()!=null
+        return connected && acknowledged && client.getNetworkHandler()!=null
                 && System.nanoTime()-lastReceived<leaseTicks*50_000_000L;
     }
     public boolean serverBridgeConnected() {return serverBridgeReady();}
@@ -975,7 +1168,26 @@ public final class ClientRuntime {
     public boolean canEditLocalAppearance() {return interactionPolicy().canEditLocalAppearance();}
     public boolean canUseLocalAppearance() {return interactionPolicy().canUseLocalAppearance();}
     public boolean canUseLocalActions() {return interactionPolicy().canUseLocalActions();}
-    public boolean canUseServerActions() {return interactionPolicy().canUseServerActions();}
+    public boolean canUseServerActions() {
+        Binding own=client.player==null?null:bindings.get(client.player.getUuid());
+        return interactionPolicy().canUseServerActions() && own!=null
+                && System.nanoTime()-own.lastPacket<leaseTicks*50_000_000L;
+    }
+    /** The existing command remains available without a rendered model or active GPU lease. */
+    public boolean canRequestServerUndisguise() {
+        return connected && client.player!=null && client.getNetworkHandler()!=null && serverOwnModelPresent();
+    }
+    /** The server owns permission checks and removal; retain bindings until its confirmation arrives. */
+    public boolean requestServerUndisguise() {
+        if(!canRequestServerUndisguise())return false;
+        try {
+            client.getNetworkHandler().sendChatCommand("meplayeractions undisguise");
+            return true;
+        } catch(RuntimeException exception) {
+            lastError="解除服务器伪装请求未发送：服务器连接不可用";
+            return false;
+        }
+    }
     public String localAppearanceSuspensionReason() {return interactionPolicy().suspensionReason();}
     public String serverOwnModelId() {
         interactionPolicy();return knownOwnServerModelId;
@@ -1009,6 +1221,7 @@ public final class ClientRuntime {
     public Map<String,Object> serverPushDiagnostics() {
         Map<String,Object> result=new LinkedHashMap<>();
         result.put("assetMode",serverAssetMode);result.put("capabilities",serverCapabilities);
+        result.put("incrementalState",stateProtocol.incremental());result.put("serverTimeline",stateProtocol.serverTimeline());
         result.put("negotiated",pushNegotiated);result.put("generation",generation);
         result.put("unsupportedHandshake",unsupportedHandshake);
         result.put("offersReceived",pushOffersReceived);result.put("cacheHits",pushCacheHits);result.put("cacheMisses",pushCacheMisses);
@@ -1053,6 +1266,7 @@ public final class ClientRuntime {
         options.setLocalAppearance(settings);
         if(settings.enabled())options.enabled=true;
         options.save();
+        if(!settings.enabled())privateModels.stopPublishing();
         if(!previous.modelId().equals(settings.modelId()) || !settings.enabled())invalidateLocalAppearance();
         else {localAppearanceError="";localAppearanceRetryAfter=0;}
         ensureLocalAppearance();
@@ -1078,16 +1292,17 @@ public final class ClientRuntime {
         if(!localAppearanceError.isEmpty())return localAppearanceError;
         if(localAppearancePending)return "正在加载本地模型";
         if(localAppearancePrepared() && !localAppearanceActive())return "等待服务器显示接管；本地设置已保留";
-        return localAppearanceActive()?"本地外观仅自己可见":"等待本地模型";
+        return localAppearanceActive()?(privateModels.committed()?"私人模型已同步给允许观看的模组客户端":"本地外观仅自己可见"):"等待本地模型";
     }
     public boolean playLocal(String animation) {
         if(!canUseLocalActions() || animation==null || !localAppearancePrepared())return false;
         BbModel model=assets.get(localSelf.hash);
         if(!model.animations().contains(animation) || animation.startsWith("parallel") || animation.startsWith("pre_parallel"))return false;
         localSelf.localServerLayers=List.of(new Layer("manual",animation,localTick,1,model.animationLoop(animation),2,2));
+        localExtraSequence++;
         return true;
     }
-    public void stopLocal() {if(localSelf!=null)localSelf.localServerLayers=List.of();}
+    public void stopLocal() {if(localSelf!=null){localSelf.localServerLayers=List.of();localExtraSequence++;}}
 
     private void invalidateLocalAppearance() {
         if(localSelf!=null)closeModelEffects(localSelf.owner);
@@ -1170,10 +1385,15 @@ public final class ClientRuntime {
 
     public List<Action> actions() {
         Binding own=client.player==null?null:bindings.get(client.player.getUuid());
-        if(own!=null)return own.actions;
+        if(own!=null)return serverActions();
         if(serverOwnModelPresent())return List.of();
         BbModel preview=assets.get(previewHash);
         return preview==null?List.of():preview.animations().stream().filter(id->!id.startsWith("parallel")&&!id.startsWith("pre_parallel")).sorted().map(id->new Action(id,previewLabel(id))).toList();
+    }
+    /** Server-supplied actions remain available without a local render lease or loaded model. */
+    public List<Action> serverActions() {
+        Binding own=client.player==null?null:bindings.get(client.player.getUuid());
+        return canUseServerActions() && own!=null?own.actions:List.of();
     }
     private static String previewLabel(String id) {
         return com.simmc.meplayeractions.config.AnimationLabels.DEFAULTS.getOrDefault(id,id);
@@ -1185,8 +1405,25 @@ public final class ClientRuntime {
                 +" · 资产模式 "+(serverAssetMode.isEmpty()?"未协商":serverAssetMode));
         text.add("已接管 "+active+" / "+bindings.size()+" 个模型 · 资产 "+assets.size()+" · 模型加载 "+loading.size());
         text.add((options.followServerTimeline?"服务器拖后轨迹 · 缓冲 "+options.interpolationTicks+" tick":"客户端实体即时跟随 · 无额外位置缓冲")
-                +" · 本人模型 "+(options.showSelf?"显示":"隐藏"));
+                +" · 伪装模型 "+(options.showSelf?"显示":"隐藏")
+                +" · 玩家隐藏设置 "+(serverOwnModelPresent() || options.hideVanillaPlayer?"开启":"关闭")
+                +" · 装备隐藏设置 "+(serverOwnModelPresent() || options.hideVanillaEquipment?"开启":"关闭"));
         if(localAppearance().enabled())text.add("本地外观："+localAppearance().modelId()+" · "+localAppearanceStatus());
+        text.add("私人同步："+privateSyncStatus()+" · 同步选择 "+(options.privateSyncEnabled?"开启":"关闭")+" · 接收模型 "+privateBindings.size());
+        if(client.player!=null && localAppearance().enabled() && localModelProfile().isYsm()) {
+            var fallbacks=ModelRenderer.queryDiagnostics(client.player.getUuid());
+            for(var fallback:fallbacks) {
+                String reason=switch(String.valueOf(fallback.get("reason"))) {
+                    case "missing_query" -> "未接入或未绑定";
+                    case "unavailable_query" -> "当前查询不可用";
+                    default -> String.valueOf(fallback.get("reason"));
+                };
+                String actual=String.valueOf(fallback.get("actualFallback"));
+                if(actual.length()>96)actual=actual.substring(0,96)+"…";
+                text.add("YSM 查询降级："+fallback.get("name")+" · "+reason+" · "+fallback.get("count")
+                        +" 次 · 实际默认 "+actual);
+            }
+        }
         if(!previewId.isEmpty())text.add("本地预览："+previewId);
         Binding own=client.player==null?null:bindings.get(client.player.getUuid());
         if(own!=null){text.add("模型："+own.modelId+" · "+own.assetState+" · hash "+(own.hash.isEmpty()?"无":own.hash.substring(0,12)));

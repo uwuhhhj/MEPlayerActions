@@ -22,10 +22,16 @@ class LocalAppearanceSettingsTest {
         for(String model:List.of("","unknown","local:","local:sample.json","local:../sample.bbmodel",
                 "local:dir/sample.bbmodel","local:dir\\sample.bbmodel","local:/sample.bbmodel",
                 "local:C:\\sample.bbmodel","local:two..dots.bbmodel","local:bad"+(char)0+"name.bbmodel",
-                "ysm_01_jk","ysm_02_jk","wine_fox_04_student","wine_fox/01_taisho_maid","ysm:","ysm:../default","ysm:dir/model","ysm:dir\\model","ysm:C:\\model","ysm:.hidden")) {
+                "ysm_01_jk","ysm_02_jk","wine_fox_04_student","wine_fox/01_taisho_maid","ysm:","ysm:../default","ysm:dir\\model","ysm:C:\\model","ysm:.hidden")) {
             assertFalse(LocalAppearanceSettings.isValidModelId(model),model);
             assertThrows(IllegalArgumentException.class,()->new LocalAppearanceSettings(true,model,1,0,0,0),model);
         }
+    }
+    @Test void nestedYsmPackPathsStayWithinValidatedSegments() {
+        for(String id:List.of("ysm:pack/model","ysm:中文包/子目录/角色.ysm","ysm:pack/model.zip"))assertTrue(LocalAppearanceSettings.isValidModelId(id),id);
+        for(String id:List.of("ysm:/pack/model","ysm:pack/../model","ysm:pack//model","ysm:pack/model/",
+                "ysm:pack/.hidden/model","ysm:pack/model\\other","ysm:pack/C:model",
+                "ysm:a/b/c/d/e/f/g/h/i/j"))assertFalse(LocalAppearanceSettings.isValidModelId(id),id);
     }
 
     @Test void scaleMustBeFiniteAndWithinTheSupportedRenderingRange() {

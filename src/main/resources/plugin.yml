@@ -2,10 +2,9 @@ name: MEPlayerActions
 version: '${version}'
 main: com.simmc.meplayeractions.MEPlayerActionsPlugin
 api-version: '1.21.11'
-description: ModelEngine player disguise actions and optional client state sync
+description: Optional ModelEngine player actions and opt-in private client model sync
 authors: [SIMMC, Loliiiico]
-depend: [ModelEngine]
-softdepend: [GSit]
+softdepend: [ModelEngine, GSit]
 commands:
   meplayeractions:
     description: 玩家模型动作
@@ -27,6 +26,12 @@ permissions:
     default: true
   mact.sync:
     default: true
+  mact.private.upload:
+    description: 显式发布本人私人模型与配置给有权限的跟踪观看者
+    default: false
+  mact.private.view:
+    description: 接收并显示获准发布的私人模型
+    default: false
   mact.flight:
     default: op
   mact.debug:

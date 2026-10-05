@@ -23,10 +23,11 @@ import java.util.zip.CRC32;
  * Immutable, bounded BBModel cube reader and frame sampler. Coordinates retain
  * Blockbench's editor axes; no Minecraft player pose rotation is applied here.
  * Model and animation units are converted to blocks exactly once during baking.
- * This implementation is independent of OpenYSM/GeckoLib.
+ * Ordinary BBModel input remains separate; native YSM inputs retain their mature controller and expression semantics.
  */
 public final class BbModel {
     private static final int MAX_JSON_BYTES = 8 * 1024 * 1024;
+    static final int MAX_NATIVE_TIMELINE_PROGRAMS = 256;
     private static final int MAX_BONES = 2048, MAX_CUBES = 4096, MAX_TEXTURES = 16;
     private static final long MAX_TEXTURE_PIXELS = 16_777_216;
     private static final int MAX_ANIMATIONS = 128, MAX_KEYFRAMES = 200_000, MAX_DEPTH = 64;
@@ -37,6 +38,8 @@ public final class BbModel {
     private final List<BakedFace> faces;
     private final Map<String, Clip> clips;
     private final int cubeCount;
+    private final int nativeFormatVersion;
+    private final boolean legacyAnimationAxes;
     private final int[] headBones;
     private final YsmAnimationController.Definitions controllers;
     private final String controllerFamily;
@@ -49,7 +52,11 @@ public final class BbModel {
         @Override public byte[] png() { return png.clone(); }
     }
     public record Vertex(float x, float y, float z, float u, float v,
-                         float nx, float ny, float nz, int texture) { }
+                         float nx, float ny, float nz, int texture, boolean emissive) {
+        public Vertex(float x, float y, float z, float u, float v, float nx, float ny, float nz, int texture) {
+            this(x, y, z, u, v, nx, ny, nz, texture, false);
+        }
+    }
     public record Layer(String layer, String animation, long startedAtTick,
                         double speed, String loop, int inTicks, int outTicks) {
         public Layer {
@@ -71,10 +78,17 @@ public final class BbModel {
     private record Bone(String id, String name, int parent, Vector3f pivot, Vector3f rotation, boolean visible) { }
     private record BakedFace(int bone, int texture, Vector3f[] corners, float[] uv, Vector3f normal) { }
     private record Point(Molang.Program x, Molang.Program y, Molang.Program z, int channel, boolean legacy, String fingerprint) {
-        Vector3f value(Molang.Context context) {
+        Vector3f value(Molang.Context context) { return value(context, defaultValue(channel)); }
+        Vector3f value(Molang.Context context, Vector3f current) {
             double bound = channel == 2 ? 64 : channel == 1 ? 36_000 : 4096;
-            Vector3f value = new Vector3f((float) bounded(x.evaluate(context), bound),
-                    (float) bounded(y.evaluate(context), bound), (float) bounded(z.evaluate(context), bound));
+            double saved = context.currentValue();
+            Vector3f value;
+            try {
+                context.currentValue(current.x); float xx = (float) bounded(x.evaluate(context), bound);
+                context.currentValue(current.y); float yy = (float) bounded(y.evaluate(context), bound);
+                context.currentValue(current.z); float zz = (float) bounded(z.evaluate(context), bound);
+                value = new Vector3f(xx, yy, zz);
+            } finally { context.currentValue(saved); }
             if (legacy) { if (channel < 2) value.x = -value.x; if (channel == 1) value.y = -value.y; }
             return value;
         }
@@ -84,32 +98,36 @@ public final class BbModel {
     private record Key(double time, Point pre, Point post, String interpolation) { }
     private record Track(Key[] keys) {
         Vector3f sample(double time, boolean looping, Molang.Context context) {
-            if (time <= keys[0].time) return keys[0].pre.value(context);
-            if (time > keys[keys.length - 1].time) return keys[keys.length - 1].post.value(context);
+            return sample(time, looping, context, defaultValue(keys[0].pre.channel));
+        }
+        Vector3f sample(double time, boolean looping, Molang.Context context, Vector3f current) {
+            if (time <= keys[0].time) return keys[0].pre.value(context, current);
+            if (time > keys[keys.length - 1].time) return keys[keys.length - 1].post.value(context, current);
             int lo = 0, hi = keys.length - 1;
             while (lo + 1 < hi) {
                 int mid = (lo + hi) >>> 1;
                 if (keys[mid].time < time) lo = mid; else hi = mid;
             }
             Key a = keys[lo], b = keys[hi];
-            if (time == b.time) return b.pre.value(context);
-            if (a.interpolation.equals("step")) return a.post.value(context);
+            if (time == b.time) return b.pre.value(context, current);
+            if (a.interpolation.equals("step")) return a.post.value(context, current);
             float t = (float) ((time - a.time) / (b.time - a.time));
             if (a.interpolation.equals("catmullrom") || b.interpolation.equals("catmullrom")) {
-                Vector3f previous = (a.pre.same(a.post) && lo > 0 ? keys[lo - 1].post : a.post).value(context);
-                Vector3f next = (b.pre.same(b.post) && hi + 1 < keys.length ? keys[hi + 1].pre : b.pre).value(context);
+                Vector3f previous = (a.pre.same(a.post) && lo > 0 ? keys[lo - 1].post : a.post).value(context, current);
+                Vector3f next = (b.pre.same(b.post) && hi + 1 < keys.length ? keys[hi + 1].pre : b.pre).value(context, current);
                 if (looping && keys.length >= 3) {
-                    if (lo == 0 && a.pre.same(a.post)) previous = keys[keys.length - 2].post.value(context);
-                    if (hi == keys.length - 1 && b.pre.same(b.post)) next = keys[1].pre.value(context);
+                    if (lo == 0 && a.pre.same(a.post)) previous = keys[keys.length - 2].post.value(context, current);
+                    if (hi == keys.length - 1 && b.pre.same(b.post)) next = keys[1].pre.value(context, current);
                 }
-                return catmull(previous, a.post.value(context), b.pre.value(context), next, t);
+                return catmull(previous, a.post.value(context, current), b.pre.value(context, current), next, t);
             }
-            return a.post.value(context).lerp(b.pre.value(context), t);
+            return a.post.value(context, current).lerp(b.pre.value(context, current), t);
         }
     }
-    private record Script(double time, Molang.Program program) { }
+    private record Script(double time, Molang.Program program, boolean instruction) { }
     private record Clip(double length, Map<Integer, Track[]> tracks, List<Script> scripts,
-                        String loop, Molang.Program blendWeight, boolean infinite, boolean fromPrimaryAssembly) { }
+                        String loop, Molang.Program blendWeight, boolean infinite, boolean fromPrimaryAssembly,
+                        Molang.Program timeUpdate, Molang.Program startDelay, Molang.Program loopDelay) { }
     /** Nullable channel values mean this layer does not own that channel. */
     static final class Pose {
         final Vector3f[][] channels;
@@ -127,12 +145,14 @@ public final class BbModel {
 
     private BbModel(List<Texture> textures, List<Bone> bones, List<BakedFace> faces,
                     Map<String, Clip> clips, int cubeCount, YsmAnimationController.Definitions controllers, String family,
-                    Map<String,List<Molang.Program>> events, Map<String,Molang.Program> functions, int formatVersion) {
+                    Map<String,List<Molang.Program>> events, Map<String,Molang.Program> functions, int formatVersion, boolean legacyAnimationAxes) {
         this.textures = List.copyOf(textures);
         this.bones = List.copyOf(bones);
         this.faces = List.copyOf(faces);
         this.clips = Collections.unmodifiableMap(new LinkedHashMap<>(clips));
         this.cubeCount = cubeCount;
+        this.nativeFormatVersion = formatVersion;
+        this.legacyAnimationAxes = legacyAnimationAxes;
         this.controllers = controllers; this.controllerFamily = family; this.controllerEvents = events; this.authorFunctions = functions;
         Map<String,String> authoredLoops = new LinkedHashMap<>(); Set<String> primaryAnimations = new LinkedHashSet<>();
         clips.forEach((name, clip) -> {
@@ -144,8 +164,17 @@ public final class BbModel {
     }
 
     public static BbModel parse(byte[] utf8) {
+        return parse(utf8, MAX_JSON_BYTES);
+    }
+
+    /** Explicit disk-import entry; network and standalone BBModel callers keep their existing 8 MiB bound. */
+    public static BbModel parseLocal(byte[] utf8) {
+        return parse(utf8, LocalModelBudget.MAX_BYTES);
+    }
+
+    private static BbModel parse(byte[] utf8, int maximumBytes) {
         Objects.requireNonNull(utf8, "utf8");
-        if (utf8.length == 0 || utf8.length > MAX_JSON_BYTES) throw invalid("Model byte limit exceeded");
+        if (utf8.length == 0 || utf8.length > maximumBytes) throw invalid("Model byte limit exceeded");
         final String text;
         try {
             text = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
@@ -172,7 +201,9 @@ public final class BbModel {
     public Map<String,Matrix4f> basisBoneTransforms() { return boneTransforms(emptyPose(), false); }
     /** Author defaults are evaluated in an isolated, inert context; world/entry effects never run here. */
     public Map<String,Double> initialVariables() {
-        Molang.Context context = new Molang.Context(); context.frame(Map.of("query.life_time", 0d));
+        Molang.Context context = new Molang.Context();
+        if (nativeFormatVersion > 0) context.enableNativeYsm();
+        context.frame(Map.of("query.life_time", 0d));
         int[] depth = { 0 }, eventDepth = { 0 };
         context.functions((name, args) -> {
             if (name.equals("ysm.sync")) {
@@ -192,7 +223,15 @@ public final class BbModel {
             }
             if (name.equals("ysm.first_order") || name.equals("ysm.second_order"))
                 return args.size() > 1 && args.get(1) instanceof Number number ? number.doubleValue() : 0d;
-            if (name.startsWith("ysm.bone_")) return new Molang.VectorValue(0, 0, name.equals("ysm.bone_scale") ? 1 : 0);
+            if (name.startsWith("ysm.bone_")) {
+                if (args.size() != 1 || !(args.getFirst() instanceof String boneName) || !hasBone(boneName)) return null;
+                double base = name.equals("ysm.bone_scale") ? 1 : 0;
+                return new Molang.StructValue() {
+                    public Object getProperty(String property) { return Set.of("x", "y", "z").contains(property) ? base : null; }
+                    public void putProperty(String property, Object value) { }
+                    public Molang.StructValue copy() { return this; }
+                };
+            }
             return 0d;
         });
         authorEvent("player_init", List.of(), context);
@@ -204,6 +243,24 @@ public final class BbModel {
     public Set<String> boneNames() {
         Set<String> names = new LinkedHashSet<>(); for (Bone bone : bones) if (!bone.name.isEmpty()) names.add(bone.name);
         return Collections.unmodifiableSet(names);
+    }
+    /** OpenYSM YSMClientMapper's inherited arm part masks; child names need not start with Left/Right. */
+    public Set<String> authoredArmBones(boolean left) {
+        int requested = left ? 1 : 2;
+        int[] masks = new int[bones.size()];
+        Set<String> selected = new LinkedHashSet<>();
+        for (int i = 0; i < bones.size(); i++) {
+            Bone bone = bones.get(i);
+            masks[i] = switch (bone.name) {
+                case "LeftArm" -> 1;
+                case "RightArm" -> 2;
+                case "Background" -> 3;
+                default -> bone.parent < 0 ? 0 : masks[bone.parent];
+            };
+            // NativeModelRenderer includes part 3 in either native hand invocation.
+            if (!bone.name.isEmpty() && (masks[i] == requested || masks[i] == 3)) selected.add(bone.name);
+        }
+        return Collections.unmodifiableSet(selected);
     }
     public boolean hasBone(String name) { return bones.stream().anyMatch(bone -> bone.name.equals(name)); }
     public boolean ysmControllers() { return !controllerFamily.isEmpty(); }
@@ -255,6 +312,11 @@ public final class BbModel {
         Clip clip = clips.get(animation);
         if (clip == null) throw invalid("Unknown animation: " + animation);
         return clip.infinite ? Double.POSITIVE_INFINITY : clip.length * 20;
+    }
+    YsmAnimationClock animationClock(String animation, String loop, double speed, double started) {
+        Clip clip = clips.get(animation);
+        return new YsmAnimationClock(loop, animationLengthTicks(animation), speed, started,
+                clip.timeUpdate, clip.startDelay, clip.loopDelay);
     }
 
     public boolean ysmPhysics() { return clips.containsKey("parallel1") && clips.containsKey("parallel2"); }
@@ -436,13 +498,57 @@ public final class BbModel {
     }
 
     Evaluated evaluateClip(String name, double elapsedTicks, String loop, Molang.Context context) {
-        // Shifting the sampled tick preserves fractional transition times without changing the wire Layer clock.
-        Layer layer = new Layer("ysm", name, 0, 1, loop.equals("ONCE") ? "HOLD" : loop, 0, 0);
-        Evaluated result = evaluate(Math.max(0, elapsedTicks), layer, false, context);
-        return new Evaluated(result.pose, animationWeight(name, context));
+        return evaluateClip(name, elapsedTicks, loop, context, emptyPose());
+    }
+    Evaluated evaluateClip(String name, double elapsedTicks, String loop, Molang.Context context, Pose previousControllerPose) {
+        Clip clip = clips.get(name); Pose pose = emptyPose();
+        // The controller already applied OpenYSM's strict LOOP/HOLD boundary. Exact end stays the last frame.
+        double seconds = Math.max(0, elapsedTicks) / 20;
+        context.query("query.anim_time", seconds);
+        List<Map.Entry<Integer, Track[]>> tracks = new ArrayList<>(clip.tracks.entrySet());
+        tracks.sort(Comparator.comparingInt(entry -> bones.get(entry.getKey()).name.toLowerCase(Locale.ROOT).startsWith("molang") ? 0 : 1));
+        for (var entry : tracks) for (int c = 0; c < 3; c++) {
+            Track track = entry.getValue()[c];
+            if (track != null) {
+                Vector3f current = previousControllerPose == null ? null : previousControllerPose.channels[entry.getKey()][c];
+                current = current == null ? defaultValue(c) : new Vector3f(current);
+                // Sparkle supplies prior controller snapshot values: rotation is radians; position X is before render reflection.
+                if (c == 1) current.mul((float) DEG); else if (c == 0 && legacyAnimationAxes) current.x = -current.x;
+                String previousScope = context.physicsScope();
+                try {
+                    if (nativeFormatVersion > 0) context.physicsScope(bones.get(entry.getKey()).id);
+                    pose.channels[entry.getKey()][c] = track.sample(seconds, loop.equals("LOOP"), context, current);
+                } finally { context.physicsScope(previousScope); }
+            }
+        }
+        return new Evaluated(pose, animationWeight(name, context));
     }
     void clipEvents(String name, String loop, double beforeTicks, double afterTicks, Molang.Context context) {
         events(new Layer("ysm", name, 0, 1, loop, 0, 0), beforeTicks, afterTicks, context);
+    }
+    /** OpenYSM uses event cursors and current sampled anim_time, not each key's timestamp.
+     * Large skips complete at most one old cycle and enter the current one, matching Instance.process. */
+    void ysmEvents(String name, YsmAnimationController.Playback playback, double currentTicks,
+                   boolean remaining, boolean clientSide, Molang.Context context) {
+        List<Script> scripts = clips.get(name).scripts;
+        if (!remaining) while (playback.effectIndex < scripts.size()) {
+            Script script = scripts.get(playback.effectIndex);
+            if (script.time * 20 > currentTicks) break;
+            playback.effectIndex++;
+            if (!script.instruction && clientSide) script.program.evaluate(context);
+        }
+        while (playback.instructionIndex < scripts.size()) {
+            Script script = scripts.get(playback.instructionIndex);
+            if (!remaining && script.time * 20 > currentTicks) break;
+            playback.instructionIndex++;
+            if (script.instruction) script.program.evaluate(context);
+        }
+    }
+    void seekYsmEvents(String name, YsmAnimationController.Playback playback, double currentTicks) {
+        List<Script> scripts = clips.get(name).scripts; int index = 0;
+        while (index < scripts.size() && scripts.get(index).time * 20 <= currentTicks) index++;
+        // Seeking changes the event cursor without firing or reversing effects at the destination.
+        playback.instructionIndex = playback.effectIndex = index;
     }
 
     static void overlay(Pose below, Pose above, double weight, boolean additive) {
@@ -492,7 +598,8 @@ public final class BbModel {
                 transform.transformPosition(face.corners[index], point);
                 if (!point.isFinite() || point.lengthSquared() > 1e12f) throw invalid("Sampled model bounds exceeded");
                 result.add(new Vertex(point.x, point.y, point.z, face.uv[index * 2], face.uv[index * 2 + 1],
-                        normal.x, normal.y, normal.z, face.texture));
+                        normal.x, normal.y, normal.z, face.texture,
+                        nativeFormatVersion > 0 && bones.get(face.bone).name.startsWith("ysmGlow")));
             }
         }
         return List.copyOf(result);
@@ -582,10 +689,12 @@ public final class BbModel {
             // runtime keyframes are accepted below, so none are evaluated.
             readTextures();
             JsonArray elements = array(root, "elements", true);
-            if (elements.size() > MAX_CUBES) throw invalid("Cube limit exceeded");
+            if (elements.size() > (animationFormatVersion > 0 ? MAX_CUBES * 6 : MAX_CUBES)) throw invalid("Geometry limit exceeded");
             for (JsonElement element : elements) {
                 JsonObject cube = object(element);
-                if (!string(cube, "type", "cube").equals("cube")) throw invalid("Only cube geometry is supported");
+                String type = string(cube, "type", "cube");
+                if (!type.equals("cube") && !(animationFormatVersion > 0 && type.equals("ysm_baked_face")))
+                    throw invalid("Unsupported geometry type");
                 String uuid = id(cube);
                 if (cubes.put(uuid, cube) != null) throw invalid("Duplicate cube UUID");
                 if (bool(cube, "rescale", false)) throw invalid("Cube rescale is unsupported");
@@ -601,7 +710,7 @@ public final class BbModel {
             if (!family.isEmpty() && !Set.of("player", "fp.arm", "fp_arm", "arm", "vehicle", "projectile").contains(family))
                 throw invalid("Unknown YSM controller family");
             YsmAnimationController.Definitions definitions = YsmAnimationController.parse(
-                    root.has("ysm_animation_controllers") ? object(root.get("ysm_animation_controllers")) : new JsonObject());
+                    root.has("ysm_animation_controllers") ? object(root.get("ysm_animation_controllers")) : new JsonObject(), animationFormatVersion > 0);
             Map<String,List<Molang.Program>> events = new LinkedHashMap<>();
             if (root.has("ysm_events")) {
                 JsonObject entries = object(root.get("ysm_events")); if (entries.size() > 64) throw invalid("YSM event count");
@@ -613,7 +722,7 @@ public final class BbModel {
                     if (values.size() > 32) throw invalid("YSM event script count");
                     for (JsonElement value : values) {
                         if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) throw invalid("YSM event script");
-                        programs.add(Molang.compile(value.getAsString()));
+                        programs.add(compileExpression(value.getAsString()));
                     }
                     events.put(event.getKey().replace("_ctrl_", "."), List.copyOf(programs));
                 }
@@ -629,12 +738,12 @@ public final class BbModel {
                         throw invalid("YSM function script");
                     String script = function.getValue().getAsString();
                     if (script.getBytes(StandardCharsets.UTF_8).length > 32_768) throw invalid("YSM function script byte limit");
-                    functions.put(name, Molang.compile(script));
+                    functions.put(name, compileExpression(script));
                 }
             }
             return new BbModel(textures, bones, faces, clips, cubes.size(), definitions, family,
                     Collections.unmodifiableMap(events), Collections.unmodifiableMap(functions),
-                    animationFormatVersion);
+                    animationFormatVersion, legacyAnimationAxes);
         }
         void readTextures() {
             JsonArray items = array(root, "textures", true);
@@ -688,9 +797,10 @@ public final class BbModel {
             for (JsonElement child : array(node, "children", false)) readNode(child, index, depth + 1);
         }
         void bakeCube(JsonObject cube, int boneIndex) {
+            if (string(cube, "type", "cube").equals("ysm_baked_face")) { bakeNativeFace(cube, boneIndex); return; }
             Vector3f from = vector(cube, "from", null, 4096), to = vector(cube, "to", null, 4096);
             // Native YSM preserves signed cube extents and authored corner/UV order (FolderDeserializer 536-541).
-            boolean signed = animationFormatVersion == 65535 && bool(cube, "ysm_signed_cube", false);
+            boolean signed = animationFormatVersion > 0 && bool(cube, "ysm_signed_cube", false);
             if (!signed && (from.x > to.x || from.y > to.y || from.z > to.z)) throw invalid("Inverted cube bounds");
             Vector3f origin = vector(cube, "origin", new Vector3f(), 4096);
             Vector3f rotation = vector(cube, "rotation", new Vector3f(), 36_000);
@@ -733,6 +843,24 @@ public final class BbModel {
                 faces.add(new BakedFace(boneIndex, texture, positions, rotated, normal));
             }
         }
+        void bakeNativeFace(JsonObject face, int boneIndex) {
+            if (animationFormatVersion <= 0 || faces.size() >= MAX_CUBES * 6) throw invalid("Native face limit");
+            JsonArray corners = array(face, "positions", true), authoredUv = array(face, "uv", true);
+            if (corners.size() != 4 || authoredUv.size() != 8) throw invalid("Native faces require four complete vertices");
+            Vector3f[] positions = new Vector3f[4]; float[] uv = new float[8];
+            Vector3f pivot = new Vector3f(bones.get(boneIndex).pivot).mul(UNIT);
+            for (int i = 0; i < 4; i++) {
+                JsonArray vertex = corners.get(i).getAsJsonArray();
+                if (vertex.size() != 3) throw invalid("Native face position must have three axes");
+                positions[i] = new Vector3f((float) finite(vertex.get(0), -4096, 4096),
+                        (float) finite(vertex.get(1), -4096, 4096), (float) finite(vertex.get(2), -4096, 4096)).mul(UNIT).sub(pivot);
+                uv[i * 2] = (float) finite(authoredUv.get(i * 2), -4096, 4096);
+                uv[i * 2 + 1] = (float) finite(authoredUv.get(i * 2 + 1), -4096, 4096);
+            }
+            Vector3f normal = vector(face, "normal", null, 1);
+            if (normal.lengthSquared() < 1e-12) throw invalid("Native face normal is zero");
+            faces.add(new BakedFace(boneIndex, integer(face, "texture", 0, 0, textures.size() - 1), positions, uv, normal.normalize()));
+        }
         int textureIndex(JsonElement value) {
             if (!value.isJsonPrimitive() || value.getAsJsonPrimitive().isBoolean()) throw invalid("Invalid texture index");
             String number = value.getAsString();
@@ -745,13 +873,19 @@ public final class BbModel {
         }
         void readAnimations() {
             JsonArray animations = array(root, "animations", false);
-            if (animations.size() > MAX_ANIMATIONS) throw invalid("Animation count limit exceeded");
+            if (animations.size() > (animationFormatVersion > 0 ? 1024 : MAX_ANIMATIONS)) throw invalid("Animation count limit exceeded");
             for (JsonElement value : animations) {
                 JsonObject animation = object(value);
                 String name = string(animation, "name", "");
                 if (name.isBlank() || name.length() > 128 || clips.containsKey(name)) throw invalid("Missing/duplicate animation name");
-                rejectScript(animation, "anim_time_update", "animation_time_update", "start_delay", "loop_delay");
-                boolean nativeFolder = animationFormatVersion == 65535;
+                boolean nativeFolder = animationFormatVersion > 0;
+                if (!nativeFolder) rejectScript(animation, "anim_time_update", "animation_time_update", "start_delay", "loop_delay");
+                if (nativeFolder && animation.has("anim_time_update") && animation.has("animation_time_update"))
+                    throw invalid("Ambiguous YSM animation time update aliases");
+                Molang.Program timeUpdate = nativeFolder ? timingExpression(animation,
+                        animation.has("anim_time_update") ? "anim_time_update" : "animation_time_update") : null;
+                Molang.Program startDelay = nativeFolder ? timingExpression(animation, "start_delay") : null;
+                Molang.Program loopDelay = nativeFolder ? timingExpression(animation, "loop_delay") : null;
                 double length = number(animation, "length", 0, 0, nativeFolder ? 10000 : 3600);
                 Map<Integer, Track[]> tracks = new LinkedHashMap<>();
                 List<Script> scripts = new ArrayList<>();
@@ -768,7 +902,7 @@ public final class BbModel {
                             // Native YSM keeps explicit duration independently of later authored keys/events.
                             double time = number(frame, "time", 0, 0, nativeFolder ? 10000 : length + .001);
                             JsonArray points = array(frame, "data_points", true);
-                            int pointLimit = nativeFolder && channel.equals("timeline") ? 64 : 32;
+                            int pointLimit = nativeFolder && channel.equals("timeline") ? MAX_NATIVE_TIMELINE_PROGRAMS : 32;
                             if (points.size() > pointLimit) throw invalid("Effect count limit exceeded");
                             int timelineBytes = 0;
                             for (JsonElement point : points) {
@@ -784,9 +918,11 @@ public final class BbModel {
                                     if (effect.isBlank() || effect.length() > 256 || effect.chars().anyMatch(Character::isISOControl)) throw invalid("Invalid effect identifier");
                                     // The reference sound keyframe uses the effect identifier; custom script/host fields are inert.
                                     String quoted = new Gson().toJson(effect);
-                                    program = (channel.equals("sound") ? "ysm.play_sound(" : "ysm.particle(") + quoted + ")";
+                                    program = (channel.equals("sound")
+                                            ? (animationFormatVersion > 0 ? "ysm.play_sound(0," : "ysm.play_sound(")
+                                            : "ysm.particle(") + quoted + ")";
                                 }
-                                scripts.add(new Script(time, Molang.compile(program)));
+                                scripts.add(new Script(time, compileExpression(program), channel.equals("timeline")));
                             }
                         }
                         continue;
@@ -838,10 +974,13 @@ public final class BbModel {
                 }
                 JsonElement blend = animation.get("blend_weight");
                 if (blend != null && !blend.isJsonPrimitive()) throw invalid("Invalid clip blend weight");
-                Molang.Program blendWeight = Molang.compile(blend == null ? "1" : blend.getAsString());
+                Molang.Program blendWeight = compileExpression(blend == null ? "1" : blend.getAsString());
                 clips.put(name, new Clip(length, Collections.unmodifiableMap(tracks), List.copyOf(scripts), loop, blendWeight,
-                        bool(animation, "ysm_infinite", false), bool(animation, "ysm_primary", true)));
+                        bool(animation, "ysm_infinite", false), bool(animation, "ysm_primary", true), timeUpdate, startDelay, loopDelay));
             }
+        }
+        Molang.Program compileExpression(String expression) {
+            return animationFormatVersion > 0 ? Molang.compileNativeYsm(expression) : Molang.compile(expression);
         }
         Point point(JsonObject point, int channel) {
             if (point.has("script") || point.has("effect") || point.has("file")) throw invalid("Script/external keyframe data is unsupported");
@@ -858,7 +997,7 @@ public final class BbModel {
                     if (!Double.isFinite(number) || Math.abs(number) > bound) throw invalid("Coordinate range exceeded");
                 } catch (NumberFormatException expression) { /* Compile bounded numeric Molang below. */ }
             }
-            return new Point(Molang.compile(axes[0]), Molang.compile(axes[1]), Molang.compile(axes[2]),
+            return new Point(compileExpression(axes[0]), compileExpression(axes[1]), compileExpression(axes[2]),
                     channel, legacyAnimationAxes, String.join("|", axes));
         }
     }
@@ -934,6 +1073,14 @@ public final class BbModel {
     private static void rejectScript(JsonObject object, String... fields) {
         for (String field : fields) if (object.has(field) && !string(object, field, "").isBlank())
             throw invalid("Unsupported script/expression field: " + field);
+    }
+    private static Molang.Program timingExpression(JsonObject object, String field) {
+        JsonElement value = object.get(field);
+        if (value == null) return null;
+        if (!value.isJsonPrimitive() || value.getAsJsonPrimitive().isBoolean()) throw invalid("Invalid YSM timing expression: " + field);
+        String expression = value.getAsString();
+        if (expression.isBlank()) throw invalid("Empty YSM timing expression: " + field);
+        return Molang.compileNativeYsm(expression);
     }
     private static void checkJsonDepth(String text) {
         int depth = 0; boolean string = false, escape = false;

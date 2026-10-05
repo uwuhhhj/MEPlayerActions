@@ -127,14 +127,14 @@ class YsmFunctionsTest {
             }).sum();
         }
         Path sounds = Files.createDirectories(other.resolve("sounds"));
-        Files.write(sounds.resolve("large.ogg"), new byte[Math.toIntExact(AssetTransfer.MAX_RAW - fixtureBytes - 16_384)]);
+        Files.write(sounds.resolve("large.ogg"), new byte[Math.toIntExact(LocalModelBudget.MAX_BYTES - fixtureBytes - 16_384)]);
         assertTrue(YsmFolderModel.readWithProfile(other, null).profile().soundResource("large").isPresent(),
-                "The complete fixture and audio fit the original input budget before adding a function");
+                "The complete fixture and audio fit the bounded local input budget before adding a function");
         Path functions = Files.createDirectories(other.resolve("functions"));
         String script = "return 1;" + " ".repeat(32_759);
         Files.writeString(functions.resolve("f.molang"), script);
         IOException overflow = assertThrows(IOException.class, () -> YsmFolderModel.read(other));
-        assertTrue(overflow.getMessage().contains("元数据和贴图总大小不能超过 8 MiB"),
+        assertTrue(overflow.getMessage().contains("元数据和贴图总大小不能超过 64 MiB"),
                 "A single valid 32 KiB function exceeds only the shared input budget, not the script or output limits");
     }
 

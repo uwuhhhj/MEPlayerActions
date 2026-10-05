@@ -1,5 +1,8 @@
 # Third-party notices
 
+Current artifacts are client **0.4.9** and server **0.4.9**. Version-specific
+adaptation and validation descriptions below retain their historical scope.
+
 ## OpenYSM default player model
 
 The independent client includes the `builtin/default` player model from
@@ -32,17 +35,93 @@ selected base PNG, author configuration metadata, language strings and local
 components. Bedrock coordinates are mapped once; authored typed expressions,
 null defaults, timeline scripts, loops, controller definitions, interpolation
 and per-instance physics remain available to the independent runtime. Local
-skins and authored form variables are saved by model ID and are private to the
-user's client. Asset inclusion does not certify every OpenYSM feature or any
-render/effect path that has not completed validation. Encrypted `.ysm`, the
-OpenYSM network/cache protocol, mesh skinning, PBR materials and third-party mod
-integrations are outside the current implementation.
+skins and authored form variables are saved by model ID. Private appearance is
+local by default; 0.4.7 can share it with authorized mod viewers only after
+explicit client opt-in and server negotiation/permissions on MPA's separate
+`meplayeractions:private` protocol 1. A manual private overlay over a server
+disguise remains self-only. Asset inclusion does not certify every OpenYSM
+feature or any render/effect path that has not completed validation. Public,
+self-contained native `.ysm` versions 1–32, ZIP and spec 2 folders are supported
+within the documented geometry/resource budgets. The OpenYSM network/cache
+protocol, mesh skinning, PBR materials and third-party mod/cloud integrations
+remain outside this scope. See [0.4.7 scope](docs/history/CLIENT_0_4_7_NATIVE_SYNC.md).
 
 The model assets' **CC0** declaration is separate from the reference software's
 **MIT** license. The unmodified software license is bundled as
 [LICENSE.OpenYSM.txt](client/src/main/resources/assets/meplayeractions/builtin/openysm_default/LICENSE.OpenYSM.txt)
 and the corresponding resource notice is
 [NOTICE.md](client/src/main/resources/assets/meplayeractions/builtin/openysm_default/NOTICE.md).
+
+## OpenYSM original Alex and Steve model assets (CC0)
+
+MEPlayerActions 0.4.7 additionally includes the original `misc/1_alex` and
+`misc/2_steve` folders from OpenYSM-Updated revision
+`0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85`. Each original `ysm.json` declares
+`metadata.license.type: "CC 0"` and preserves the credits 哥斯拉 (model),
+端木一动不动 (animation), and 甜粽子 (animation), including supplied contact and
+avatar information.
+
+| Client model ID | Original manifest | Unchanged resources in the client JAR |
+| --- | --- | --- |
+| `openysm_alex` | [misc/1_alex/ysm.json](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/resources/assets/yes_steve_model/builtin/misc/1_alex/ysm.json) | `assets/meplayeractions/builtin/misc/1_alex/`: 11 original files, 338,197 bytes |
+| `openysm_steve` | [misc/2_steve/ysm.json](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/resources/assets/yes_steve_model/builtin/misc/2_steve/ysm.json) | `assets/meplayeractions/builtin/misc/2_steve/`: 11 original files, 341,194 bytes |
+
+The original manifest, main/arm geometry, animation files, selected base
+texture, language files and author avatars are copied without changing their
+bytes. Runtime adaptation is separate from these resources; included external
+mod animation files do not establish external-mod support. These additional
+CC0 choices do not replace `openysm_default` or any saved selection and do not
+change the separate Wine Fox licenses. The dedication is
+[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).
+
+## Sparkle-Morpher source adaptations (MIT)
+
+The 0.4.7 native format, author configuration and vanilla runtime work adapts
+selected portions of
+[sdf123098/Sparkle-Morpher](https://github.com/sdf123098/Sparkle-Morpher/tree/b1230a431900a286d2cca198072df7fb43c490b4)
+at revision `b1230a431900a286d2cca198072df7fb43c490b4`. The pinned repository's
+software license is MIT, copyright 2026 OpenYSM. Its original
+[LICENSE.txt](https://github.com/sdf123098/Sparkle-Morpher/blob/b1230a431900a286d2cca198072df7fb43c490b4/LICENSE.txt)
+is retained without modification as
+[sparkle-morpher-MIT.txt](client/src/main/resources/assets/meplayeractions/licenses/sparkle-morpher-MIT.txt).
+
+| Reference source at the pinned revision | MPA adaptation |
+| --- | --- |
+| [YSMBinaryDeserializer](https://github.com/sdf123098/Sparkle-Morpher/blob/b1230a431900a286d2cca198072df7fb43c490b4/common/src/main/java/com/micaftic/morpher/resource/YSMBinaryDeserializer.java), [YSMFolderDeserializer](https://github.com/sdf123098/Sparkle-Morpher/blob/b1230a431900a286d2cca198072df7fb43c490b4/common/src/main/java/com/micaftic/morpher/resource/YSMFolderDeserializer.java), [YsmGeometryParsing](https://github.com/sdf123098/Sparkle-Morpher/blob/b1230a431900a286d2cca198072df7fb43c490b4/common/src/main/java/com/micaftic/morpher/resource/YsmGeometryParsing.java) | Public self-contained native format loading and bounded geometry/folder interpretation; MPA validates local paths, sizes and resource budgets |
+| [MolangOption](https://github.com/sdf123098/Sparkle-Morpher/blob/b1230a431900a286d2cca198072df7fb43c490b4/common/src/main/java/com/micaftic/morpher/core/gui/molang/MolangOption.java), [ModelSettingsScreen](https://github.com/sdf123098/Sparkle-Morpher/blob/b1230a431900a286d2cca198072df7fb43c490b4/common/src/main/java/com/micaftic/morpher/core/gui/ModelSettingsScreen.java), [RangedSliderWidget](https://github.com/sdf123098/Sparkle-Morpher/blob/b1230a431900a286d2cca198072df7fb43c490b4/common/src/main/java/com/micaftic/morpher/client/gui/button/RangedSliderWidget.java) | Author checkbox/range/radio forms, scripts, types/scopes and step semantics; MPA supplies its own explicit save, atomic profile update and Minecraft 1.21.11 UI adapter |
+| [YSMBinding](https://github.com/sdf123098/Sparkle-Morpher/blob/b1230a431900a286d2cca198072df7fb43c490b4/common/src/main/java/com/micaftic/morpher/client/animation/molang/YSMBinding.java), [MovementQuery](https://github.com/sdf123098/Sparkle-Morpher/blob/b1230a431900a286d2cca198072df7fb43c490b4/common/src/main/java/com/micaftic/morpher/geckolib3/util/MovementQuery.java), [ControllerActionResolver](https://github.com/sdf123098/Sparkle-Morpher/blob/b1230a431900a286d2cca198072df7fb43c490b4/common/src/main/java/com/micaftic/morpher/client/animation/ControllerActionResolver.java) | Mature vanilla entity observations, movement/controller selection and authored expression semantics in MPA's bounded runtime |
+| [RoamingStruct](https://github.com/sdf123098/Sparkle-Morpher/blob/b1230a431900a286d2cca198072df7fb43c490b4/common/src/main/java/com/micaftic/morpher/client/animation/molang/struct/RoamingStruct.java), [LocalModelSettingsStore](https://github.com/sdf123098/Sparkle-Morpher/blob/b1230a431900a286d2cca198072df7fb43c490b4/common/src/main/java/com/micaftic/morpher/util/LocalModelSettingsStore.java) | Numeric roaming author state with 64-variable / 32-character-name bounds and dirty-change persistence; MPA reuses per-model profile variables and its separately authorized private protocol, while instance physics remains local |
+
+These are scoped adaptations. They do not import the reference cloud service,
+optional other-mod compatibility or its network protocol, and do not relicense
+the separately licensed model assets. The detailed implemented boundaries and
+validation scope are recorded in [0.4.7 documentation](docs/history/CLIENT_0_4_7_NATIVE_SYNC.md)
+and [YSM compatibility](docs/YSM_COMPATIBILITY.md).
+
+## Bundled native format and WebP dependencies
+
+The client JAR embeds the unchanged Maven artifacts
+`com.github.luben:zstd-jni:1.5.7-6` and `org.glavo:webp:0.2.0` to decode supported
+native model compression and WebP textures. Required AVIF textures are rejected;
+optional AVIF author avatars use a placeholder without rejecting an otherwise
+valid model. No AVIF decoder is bundled. These library notices are separate
+from the model-asset licenses.
+
+| Included component | Source / license | Retained license or notice |
+| --- | --- | --- |
+| Sparkle-Morpher software adaptation | [Pinned MIT license](https://github.com/sdf123098/Sparkle-Morpher/blob/b1230a431900a286d2cca198072df7fb43c490b4/LICENSE.txt) | [sparkle-morpher-MIT.txt](client/src/main/resources/assets/meplayeractions/licenses/sparkle-morpher-MIT.txt) |
+| JWebP 0.2.0, copyright 2026 Glavo | Apache 2.0 as published in the [fixed Maven sources artifact](https://repo.maven.apache.org/maven2/org/glavo/webp/0.2.0/webp-0.2.0-sources.jar); attribution applies to this release | [jwebp-0.2.0-Apache-2.0.txt](client/src/main/resources/assets/meplayeractions/licenses/jwebp-0.2.0-Apache-2.0.txt), [jwebp-0.2.0-NOTICE.txt](client/src/main/resources/assets/meplayeractions/licenses/jwebp-0.2.0-NOTICE.txt) |
+| Zstd-JNI 1.5.7-6, Luben Karavelov | [Original BSD 2-Clause LICENSE](https://raw.githubusercontent.com/luben/zstd-jni/v1.5.7-6/LICENSE) | [zstd-jni-1.5.7-6-BSD-2-Clause.txt](client/src/main/resources/assets/meplayeractions/licenses/zstd-jni-1.5.7-6-BSD-2-Clause.txt) |
+| Bundled Zstandard native code, Facebook, Inc. | [Original native BSD 3-Clause LICENSE](https://raw.githubusercontent.com/luben/zstd-jni/v1.5.7-6/src/main/native/LICENSE); MPA uses this BSD option | [zstd-1.5.7-6-BSD-3-Clause.txt](client/src/main/resources/assets/meplayeractions/licenses/zstd-1.5.7-6-BSD-3-Clause.txt) |
+| xxHash 0.8.2 upstream, Yann Collet | [Official v0.8.2 BSD 2-Clause LICENSE](https://raw.githubusercontent.com/Cyan4973/xxHash/v0.8.2/LICENSE) | [xxhash-0.8.2-BSD-2-Clause.txt](client/src/main/resources/assets/meplayeractions/licenses/xxhash-0.8.2-BSD-2-Clause.txt) |
+| Zstandard's adapted xxHash 0.8.2, Yann Collet / Meta Platforms, Inc. | [Fixed-tag original xxhash.h notice](https://raw.githubusercontent.com/luben/zstd-jni/v1.5.7-6/src/main/native/common/xxhash.h), which points to the native BSD/GPLv2 options; MPA uses the BSD option | [xxhash-zstd-jni-1.5.7-6-NOTICE.txt](client/src/main/resources/assets/meplayeractions/licenses/xxhash-zstd-jni-1.5.7-6-NOTICE.txt), with the complete native BSD 3-Clause license above |
+
+The Zstd-JNI, Zstandard and upstream xxHash license files retain the original
+downloaded bytes at these fixed tags. The adapted xxHash notice retains its
+complete original leading comment block. JWebP's bundled notice identifies the
+fixed Maven release and its source. All listed files are available under
+`assets/meplayeractions/licenses/` in the client JAR; install/source packages
+also retain the notices and licenses.
 
 ## OpenYSM Wine Fox model assets (CC BY-NC-SA 4.0)
 
@@ -66,13 +145,20 @@ material or external-mod integration is supported or has passed game testing.
 The converted ordinary-folder representation preserves the source's authored
 explicit duration, even where later keys or events exist, and its infinite
 duration semantics when `animation_length` is absent. It keeps separate,
-author-ordered timeline programs. MPA applies bounded input validation: for
-converted internal-format `65535` YSM, each timeline event permits at most 64
-programs and 32 KiB of aggregate UTF-8 script text; finite durations and
-key/event times are bounded to 10,000 seconds. Ordinary BBModel's 32-program /
-3,600-second limits remain in place, as do the 8 MiB input and other resource,
-geometry and execution budgets. These importer adaptations do not modify the
-77 original Wine Fox resource files or imply new runtime acceptance results.
+author-ordered timeline programs. MPA applies bounded input validation: the
+0.4.7 converted internal-format `65535` YSM limit was 64 programs per timeline
+event. Client 0.4.8 permits at most 256 ordered programs per native YSM timeline
+event, including converted `65535` input, while retaining the 32 KiB aggregate
+UTF-8 text budget; it does not truncate or combine authored programs. Finite
+durations and key/event times remain bounded to 10,000 seconds. Ordinary
+BBModel's 32-program / 3,600-second limits and 8 MiB standalone input bound
+remain in place. Local YSM input, expanded source resources and converted
+main/component output use separate 64 MiB stage budgets; private network
+archives and their expanded resources remain bounded to 8 MiB or the lower
+negotiated limit. Resource counts, geometry, image pixels and execution budgets
+continue to apply. These importer adaptations do not modify the 77 original
+Wine Fox resource files or imply game acceptance results; see the
+[0.4.8 import scope](docs/history/CLIENT_0_4_8_GALLERY_IMPORT.md).
 Converted internal-format `65535` cubes explicitly marked `ysm_signed_cube`
 retain signed endpoints, original faces, UVs and winding, following
 [YSMFolderDeserializer's signed bounds and corners](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/resource/YSMFolderDeserializer.java#L536-L645);
@@ -163,9 +249,33 @@ folder compatibility mapping; it does not import or support the reference's
 complete binary YSM deserializer. The original Wine Fox resource bytes and
 asset licenses remain unchanged.
 
+## OpenYSM first-person hand renderer adaptations (MIT)
+
+The 0.4.4 first-person correction follows
+[HandItemRenderer.java](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/client/renderer/HandItemRenderer.java#L39)
+and the native `AvatarRenderer.renderRightHand` / `renderLeftHand` hooks in
+[ItemInHandRendererMixin.java](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/fabric/src/main/java/com/elfmcys/yesstevemodel/fabric/mixin/client/ItemInHandRendererMixin.java#L21)
+at the same MIT revision `0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85`.
+MPA's `YsmComponentRenderer` keeps full authored coordinates and uses
+`T(left +0.25 / right -0.25, 1.8, 0) S(-1, -1, 1)` without shoulder
+normalization or additional BODY/user scaling. `BbModel.authoredArmBones`
+adapts the source masks from
+[YSMClientMapper.java](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/resource/YSMClientMapper.java#L436)
+and [NativeModelRenderer.java](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/geckolib3/geo/NativeModelRenderer.java#L139):
+LeftArm = 1, RightArm = 2, Background = 3, with descendants inheriting their
+parent mask and mask 3 retained for either hand.
+
+MPA's `PlayerArmRendererMixin` replaces only native hand entries reached by
+empty-hand/map rendering. The additional ordinary-held-item arm mixin is
+removed; vanilla item/equip/swing/use transformations remain responsible for
+ordinary held blocks and weapons, without promising an additional authored arm
+in those paths. This is a scoped adaptation, not a complete upstream renderer
+or external-mod integration. The complete MIT notice and bundled
+`LICENSE.OpenYSM.txt` are retained; model asset licenses remain separate.
+
 ## OpenYSM GUI source adaptations and assets (MIT)
 
-MEPlayerActions 0.4.3 adapts portions of the gallery and classic animation
+MEPlayerActions clients 0.4.3 and 0.4.4 adapt portions of the gallery and classic animation
 roulette from [IzumiiKonata/OpenYSM-Updated](https://github.com/IzumiiKonata/OpenYSM-Updated)
 at revision `0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85`, under the repository's
 [MIT software license](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/LICENSE.txt).
@@ -180,6 +290,7 @@ Adapted source portions:
 | [ModelButton.java](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/client/gui/button/ModelButton.java), [IconButton.java](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/client/gui/button/IconButton.java), [PackIconButton.java](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/client/gui/button/PackIconButton.java) | Gallery cards, source-group cards and GUI icon rendering |
 | [AnimationRouletteScreen.java](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/client/gui/AnimationRouletteScreen.java), [RadialSliceRenderState.java](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/client/gui/RadialSliceRenderState.java) | Classic polygon slices, paths, pages and inline author forms in `AnimationWheelScreen` / `RadialSliceRenderState` |
 | [FlatColorButton.java](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/client/gui/button/FlatColorButton.java), [ConfigCheckBox.java](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/client/gui/button/ConfigCheckBox.java), [AnimationSlider.java](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/client/gui/button/AnimationSlider.java) | MPA flat/check/range widgets and author-script callbacks |
+| [BooleanOptionRow.java](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/rip/ysm/gui/components/BooleanOptionRow.java), [ConfigCheckBoxForge.java](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/client/gui/button/ConfigCheckBoxForge.java) | Actual-option selection feedback for independent player / equipment / disguise visibility footer controls; MPA supplies Chinese state labels, immediate save/refresh, a separate rendering toggle in client settings and its own forced server-disguise policy |
 
 The GUI preview camera and scene split also reference
 [PlayerModelScreen.renderModelPreview](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/client/gui/PlayerModelScreen.java#L549),
@@ -192,11 +303,17 @@ at the same MIT revision. MPA's `NativeGuiPreviewCamera`, `PreviewScene` and
 rotation offset 5.5). The gallery OWNER scene displays the currently used appearance, while card
 selection remains a draft until applied. OWNER samples native pose and typed
 queries in third-person inventory mode; CARD submits only the author's preview
-clip to `player.cap`. The source card is 90 pixels high, with its preview
-submitted at nominal height 76 and cropped to height 70. Author background/foreground decorations and fixed-card
-rotation apply to CARD. Each scene has independent animation/controller/physics
+clip to `player.cap`. The 0.4.4 source-sized card is fixed at 52 by 90 pixels,
+with 55/93-pixel slot strides and 45-pixel title wrapping in at most two centered
+lines. Its preview is submitted at nominal height 76 and only model geometry is
+cropped to height 70; author background/foreground decorations cover the complete
+90-pixel card. Fixed-card rotation applies to CARD. Each scene has independent animation/controller/physics
 state while sharing an asset atlas; GUI sampling does not emit world effects.
-Ordinary BBModel retains its earlier fit behavior. This does not port the entire upstream GUI renderer or GUI-held-item
+The gallery and settings drag rules also reference
+[PlayerModelScreen.mouseDragged](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/client/gui/PlayerModelScreen.java#L427)
+and [PlayerTextureScreen.mouseDragged / adjustPitch](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/client/gui/PlayerTextureScreen.java#L282):
+`pitch -= dy`, `yaw += 1.5 * dx`, with the source's -90 to 90 degree pitch clamp.
+Ordinary BBModel retains its earlier bounds-fit camera. This does not port the entire upstream GUI renderer or GUI-held-item
 geometry, and does not alter the 77 original Wine Fox resources or their
 separate asset license.
 
@@ -215,16 +332,20 @@ separate renderer paths and do not receive this BODY transform.
 
 MPA's `ui.NativeGuiRenderBackend` is its Minecraft 1.21.11 / Fabric API adapter
 for `SpecialGuiElementRegistry` and `SpecialGuiElementRenderer`. It submits
-YSM previews to the native offscreen color/depth path (RGBA8 / DEPTH32), using
+YSM, server and ordinary BBModel previews to the native offscreen color/depth path (RGBA8 / DEPTH32), using
 the official `position_tex_color` shader, per-corner depth, LEQUAL depth testing
 and depth writes. Each submitted preview's attachment/render evidence is filled
 by actual renderer execution; preparing a mesh is not a GPU execution result.
-Ordinary BBModel retains its earlier 2D branch. Central 0.4.3 validation has
+In 0.4.4, server and ordinary BBModel previews use this same depth path while
+retaining identity author scaling and their existing bounds-fit camera.
+Historical central 0.4.3 validation has
 confirmed the author INITIAL transform and actual RGBA8 / DEPTH32, LEQUAL and
-depth-write execution. Visual review confirmed the default model's eye whites
+depth-write execution for its YSM path. Its visual review confirmed the default model's eye whites
 and complete head, plus the three Wine Fox model views. This does not guarantee
 arbitrary intersecting translucent-face ordering: translucent fragments still
-blend and write depth in submission order. The original 77 Wine Fox resource
+blend and write depth in submission order. The 0.4.4 fixes have not been run in
+unit tests or Minecraft; their delivery scope is compilation and package
+integrity checks, with user-run game verification pending. The original 77 Wine Fox resource
 bytes, source attribution and CC BY-NC-SA 4.0 declarations remain unchanged.
 
 The unmodified GUI PNG assets `roulette.png`, `icon.png`, `settings.png` and

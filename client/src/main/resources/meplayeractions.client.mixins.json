@@ -7,11 +7,17 @@
     "EntityRendererMixin",
     "EntityRenderManagerMixin",
     "PlayerArmRendererMixin",
-    "HeldItemRendererMixin",
+    "PlayerEquipmentVisibilityMixin",
     "ItemRenderStateAccessor",
     "ItemLayerRenderStateAccessor",
     "SoundLoaderMixin",
-    "PersistentProjectileEntityInvoker"
+    "PersistentProjectileEntityInvoker",
+    "YsmArrowQueryAccessor",
+    "YsmFishingQueryAccessor",
+    "YsmThrownItemQueryInvoker",
+    "YsmArrowOwnerMixin",
+    "YsmMouseInputMixin",
+    "YsmFishingLineRendererInvoker"
   ],
   "injectors": {
     "defaultRequire": 1

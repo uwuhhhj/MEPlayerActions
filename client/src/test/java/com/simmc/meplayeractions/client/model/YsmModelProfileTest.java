@@ -185,8 +185,8 @@ class YsmModelProfileTest {
         for (int i = 0; i < 33; i++) Files.write(sounds.resolve("sound" + i + ".ogg"), new byte[]{1});
         assertThrows(IOException.class, () -> YsmFolderModel.read(folder));
         for (int i = 0; i < 33; i++) Files.delete(sounds.resolve("sound" + i + ".ogg"));
-        Files.write(sounds.resolve("large.ogg"), new byte[AssetTransfer.MAX_RAW]);
-        assertThrows(IOException.class, () -> YsmFolderModel.read(folder), "Audio shares the model's original eight MiB total");
+        Files.write(sounds.resolve("large.ogg"), new byte[LocalModelBudget.MAX_BYTES]);
+        assertThrows(IOException.class, () -> YsmFolderModel.read(folder), "Audio shares the model's bounded local 64 MiB total");
     }
 
     @Test void componentObjectMatchAndTextureMetadataUseOnlyValidatedLocalAssets() throws Exception {
@@ -231,8 +231,17 @@ class YsmModelProfileTest {
 
     @Test void perModelClipLimitAndFormLimitRemainBoundedAcrossExpandedFamilies() throws Exception {
         Path folder = fixture(); JsonObject extra = read(folder.resolve("animations/extra.animation.json"));
-        for (int i = 0; i < 14; i++) extra.getAsJsonObject("animations").add("overflow" + i, new JsonObject());
-        write(folder.resolve("animations/extra.animation.json"), extra); assertThrows(IOException.class, () -> YsmFolderModel.read(folder));
+        int existingClips = BbModel.parse(YsmFolderModel.read(folder)).animations().size();
+        for (int i = existingClips; i < 1024; i++) extra.getAsJsonObject("animations").add("bounded_extra" + i, new JsonObject());
+        write(folder.resolve("animations/extra.animation.json"), extra);
+        assertEquals(1024, BbModel.parse(YsmFolderModel.read(folder)).animations().size(), "Native main and extra families share one 1024-clip inventory");
+        extra.getAsJsonObject("animations").add("overflow", new JsonObject());
+        write(folder.resolve("animations/extra.animation.json"), extra);
+        assertThrows(IOException.class, () -> YsmFolderModel.read(folder), "A 1025th native clip exceeds the combined family budget");
+        List<String> legacyNames = java.util.stream.IntStream.range(0, 128).mapToObj(i -> "clip" + i).toList();
+        assertTrue(new com.simmc.meplayeractions.client.VanillaYsmAnimations.Catalog(legacyNames).contains("clip127"));
+        assertThrows(IllegalArgumentException.class, () -> new com.simmc.meplayeractions.client.VanillaYsmAnimations.Catalog(
+                java.util.stream.IntStream.range(0, 129).mapToObj(i -> "clip" + i).toList()), "Names-only ordinary BB inventories retain their 128-clip budget");
         YsmFolderFixtures.copyDefault(folder); JsonObject manifest = read(folder.resolve("ysm.json"));
         JsonArray forms = new JsonArray(); for (int i = 0; i < 129; i++) forms.add(JsonParser.parseString("{\"type\":\"checkbox\",\"value\":\"v.a\"}"));
         manifest.getAsJsonObject("properties").getAsJsonArray("extra_animation_buttons").get(0).getAsJsonObject().add("config_forms", forms);

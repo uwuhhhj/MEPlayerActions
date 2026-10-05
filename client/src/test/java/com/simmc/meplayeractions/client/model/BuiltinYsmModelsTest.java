@@ -18,9 +18,9 @@ class BuiltinYsmModelsTest {
     @TempDir Path temporary;
     private static final String WINE_ROOT = "/assets/meplayeractions/builtin/wine_fox/";
 
-    @Test void catalogAddsOnlyTheThreeOfficialModelsAndKeepsExistingDefaults() throws Exception {
+    @Test void catalogKeepsOfficialWineFoxDefaultsAndAddsTheTwoOriginalPlayerSkinModels() throws Exception {
         assertEquals(List.of("openysm_default", "wine_fox_01_taisho_maid", "wine_fox_02_new_year",
-                "wine_fox_03_astronaut"), BuiltinYsmModels.ids());
+                "wine_fox_03_astronaut", "openysm_alex", "openysm_steve"), BuiltinYsmModels.ids());
         var library = new LocalModelLibrary(temporary.resolve("models"));
         assertEquals(BuiltinYsmModels.ids(), library.models().stream().map(LocalModelLibrary.Entry::id).toList());
         for (var model : BuiltinYsmModels.models()) {

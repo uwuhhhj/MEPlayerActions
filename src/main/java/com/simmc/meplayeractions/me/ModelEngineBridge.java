@@ -19,6 +19,7 @@ import com.ticxo.modelengine.api.utils.config.ConfigProperty;
 import com.ticxo.modelengine.api.utils.data.io.SavedData;
 import com.ticxo.modelengine.core.animation.handler.StateMachineHandler;
 import com.simmc.meplayeractions.action.DisguiseOptions;
+import com.simmc.meplayeractions.config.PerformanceSettings;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -36,6 +37,10 @@ import java.util.UUID;
 public final class ModelEngineBridge {
     private final Map<UUID, Session> sessions = new HashMap<>();
     private NativeEntityRelay nativeEntities;
+    private PerformanceSettings performance=PerformanceSettings.defaults();
+    public void configurePerformance(PerformanceSettings settings){requireMainThread();performance=Objects.requireNonNull(settings);}
+    /** Invalidate pending network work before a backend/plugin lifecycle ends. */
+    public void closeNativeRendering(){requireMainThread();if(nativeEntities!=null){nativeEntities.close();nativeEntities=null;}}
 
     public record Attachment(UUID playerId, String modelId, ActiveModel activeModel, boolean owned) {
         public Attachment {
@@ -87,7 +92,7 @@ public final class ModelEngineBridge {
             if (model == null) throw new IllegalStateException("ModelEngine 未能创建模型：" + id);
             Attachment attachment = new Attachment(player.getUniqueId(), blueprint.getName(), model, true);
             session = new Session(attachment, player, entity);
-            session.audience = new ModelAudience(options);
+            session.audience = new ModelAudience(options,performance);
             session.audience.update(player, tracked(session));
             // The entity data constructor cached its initial viewers before our filter
             // existed. Reconcile on the main thread before any model can be spawned;
@@ -248,14 +253,24 @@ public final class ModelEngineBridge {
     }
     /** Per-viewer display replacement; never hides a foreign model sharing the entity. */
     public boolean localRendering(Attachment attachment, UUID viewer, boolean enabled) {
-        if (!isAttached(attachment)) return !enabled;
+        if (!isAttached(attachment)) {
+            if(!enabled&&attachment!=null&&nativeEntities!=null)nativeEntities.disable(viewer,attachment.playerId());
+            return !enabled;
+        }
         Session session = requireSession(attachment);
         if (enabled && (!supportsLocalRendering(attachment) || !session.audience.allows(viewer))) return false;
         if (session.audience == null) return !enabled;
         if (enabled && !viewer.equals(attachment.playerId())) {
             try {
-                if (nativeEntities == null) nativeEntities = new NativeEntityRelay();
-                if (!nativeEntities.enable(viewer, attachment.playerId(), session.player.getEntityId(), !session.entity.isBaseEntityVisible())) return false;
+                if (nativeEntities == null) {
+                    JavaPlugin plugin=JavaPlugin.getProvidingPlugin(ModelEngineBridge.class);
+                    nativeEntities = new NativeEntityRelay(task->{
+                        if(!plugin.isEnabled())throw new java.util.concurrent.RejectedExecutionException("Plugin stopped");
+                        Bukkit.getScheduler().runTask(plugin,task);
+                    });
+                }
+                if (!nativeEntities.enable(viewer, attachment.playerId(), session.player.getEntityId(), !session.entity.isBaseEntityVisible(),
+                        attachment,()->localRequestCurrent(session,viewer))) return false;
                 session.nativeRenderers.add(viewer);
                 if (!session.entity.isBaseEntityVisible()) {
                     session.nativeViewers.add(viewer);
@@ -273,6 +288,17 @@ public final class ModelEngineBridge {
         session.audience.update(session.player, tracked(session));
         if (session.entity.getBase().getData() instanceof BukkitEntityData data) data.syncUpdate();
         return true;
+    }
+    /** Pending installation preserves ME and is retried by the sync service with its exact binding lease. */
+    public boolean localRenderingPending(UUID viewer,UUID owner) {
+        requireMainThread();Session session=sessions.get(owner);
+        return session!=null&&nativeEntities!=null&&localRequestCurrent(session,viewer)
+                &&nativeEntities.pending(viewer,owner,session.attachment);
+    }
+    private boolean localRequestCurrent(Session session,UUID viewer) {
+        if(sessions.get(session.attachment.playerId())!=session||session.released||!session.player.isOnline())return false;
+        Player player=Bukkit.getPlayer(viewer);
+        return player!=null&&player.isOnline()&&supportsLocalRendering(session.attachment)&&session.audience.allows(viewer);
     }
     private boolean isHiddenSession(Session session) {
         return sessions.get(session.attachment.playerId()) == session && !session.released

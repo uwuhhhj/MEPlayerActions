@@ -9,19 +9,23 @@ import net.minecraft.client.render.RenderLayers;
 import net.minecraft.client.render.command.OrderedRenderCommandQueue;
 import net.minecraft.client.render.entity.EntityRenderer;
 import net.minecraft.client.render.entity.EntityRendererFactory;
+import net.minecraft.client.render.entity.ParrotEntityRenderer;
 import net.minecraft.client.render.entity.equipment.EquipmentModel;
 import net.minecraft.client.render.entity.equipment.EquipmentRenderer;
 import net.minecraft.client.render.entity.model.EntityModelLayers;
 import net.minecraft.client.render.entity.model.ElytraEntityModel;
 import net.minecraft.client.render.entity.model.PlayerCapeModel;
+import net.minecraft.client.render.entity.model.ParrotEntityModel;
 import net.minecraft.client.render.entity.state.EntityRenderState;
 import net.minecraft.client.render.entity.state.PlayerEntityRenderState;
+import net.minecraft.client.render.entity.state.ParrotEntityRenderState;
 import net.minecraft.client.render.item.ItemRenderState;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.entity.passive.ParrotEntity;
 import net.minecraft.item.ItemDisplayContext;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.equipment.EquipmentAsset;
@@ -36,7 +40,10 @@ public final class YsmEquipmentRenderer {
     private static EntityRendererFactory.Context rendererContext;
     private static long submittedEquipment;
     private YsmEquipmentRenderer() { }
-    public static void rendererContext(EntityRendererFactory.Context context) { rendererContext = context; }
+    public static void rendererContext(EntityRendererFactory.Context context) {
+        rendererContext = context;
+        YsmBodyTransform.rendererContext(context);
+    }
 
     public record Attachment(Matrix4f transform, String slot, String bone, Model<?> model, EntityRenderState state,
                              ItemStack stack, RegistryKey<EquipmentAsset> asset, EquipmentModel.LayerType layer,
@@ -105,7 +112,31 @@ public final class YsmEquipmentRenderer {
                         null, null, state.skinTextures.cape().texturePath(), null));
             }
         }
+        shoulderParrot(result, animation, state, true);
+        shoulderParrot(result, animation, state, false);
         return List.copyOf(result);
+    }
+
+    /** OpenYSM CustomPlayerParrotLayer: native shoulder pose follows only the authored shoulder locator. */
+    private static void shoulderParrot(List<Attachment> result, AnimationPlayer animation,
+                                       PlayerEntityRenderState player, boolean left) {
+        ParrotEntity.Variant variant = left ? player.leftShoulderParrotVariant : player.rightShoulderParrotVariant;
+        String bone = left ? "LeftShoulderLocator" : "RightShoulderLocator";
+        Matrix4f locator = animation.boneTransform(bone).orElse(null);
+        if (variant == null || locator == null || !YsmItemRenderer.usable(locator)) return;
+        ParrotEntityRenderState state = new ParrotEntityRenderState();
+        state.parrotPose = ParrotEntityModel.Pose.ON_SHOULDER;
+        state.variant = variant;
+        state.age = player.age;
+        state.limbSwingAnimationProgress = player.limbSwingAnimationProgress;
+        state.limbSwingAmplitude = player.limbSwingAmplitude;
+        state.relativeHeadYaw = player.relativeHeadYaw;
+        state.pitch = player.pitch;
+        Matrix4f transform = new Matrix4f(locator).rotateZ((float) Math.PI)
+                .translate(0, player.isInSneakingPose ? -1.3f : -1.5f, 0);
+        result.add(new Attachment(transform, left ? "LEFT_PARROT" : "RIGHT_PARROT", bone,
+                new ParrotEntityModel(rendererContext.getPart(EntityModelLayers.PARROT)), state, ItemStack.EMPTY,
+                null, null, ParrotEntityRenderer.getTexture(variant), null));
     }
 
     private static List<String> boneCandidates(String piece) {
@@ -153,6 +184,7 @@ public final class YsmEquipmentRenderer {
     public static long submittedEquipment() { return submittedEquipment; }
     public static List<Map<String, Object>> diagnostics(List<Attachment> attachments) {
         return attachments.stream().map(value -> Map.<String, Object>of("slot", value.slot(), "bone", value.bone(),
-                "item", value.stack().toString(), "kind", value.item() != null ? "head-item" : value.asset() != null ? "equipment" : "cape")).toList();
+                "item", value.stack().toString(), "kind", value.item() != null ? "head-item" : value.asset() != null ? "equipment"
+                        : value.slot().endsWith("PARROT") ? "shoulder-parrot" : "cape")).toList();
     }
 }

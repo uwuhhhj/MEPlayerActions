@@ -16,6 +16,16 @@ disguise:
   # 原生 /meg disguise 的模型须为 state_machine；新 /meplayeractions disguise 自动指定。
   adopt-original: true
 
+# 后台发现与检查；不会改变模型动画、位置跟随或物理的逐 tick 更新。
+# 旧配置缺少这些键时直接采用下列默认值，无需覆盖服务器现有配置。
+performance:
+  # 重选观众的周期，范围 20–100 tick（1–5 秒）；各模型/观看者分批刷新。
+  audience-refresh-ticks: 40
+  # 已建立关系的轻量资格检查，范围 1–20 tick；心跳仍独立每秒发送。
+  validation-ticks: 20
+  # 原生 /meg 伪装的自动接管轮次，范围 20–100 tick；MPA 指令仍立即接管。
+  adoption-scan-ticks: 100
+
 controller:
   # 1 tick = 50 ms（20 TPS）。采样间隔越大，姿态识别延迟越高。
   sample-interval-ticks: 1
@@ -232,3 +242,14 @@ client-sync:
   max-payload-bytes: 16000
   request-cooldown-ticks: 4
   view-distance-blocks: 64
+  private-models:
+    # 私人模型多人同步独立协商；旧配置缺此节时也保持关闭。
+    # 开启后仍须分别授予发布者 mact.private.upload、观看者 mact.private.view，并由发布者在客户端显式开启同步。
+    enabled: false
+    # 完整 ZIP 与全部展开资源各最多 8 MiB，不读取或提供任意服务器模型路径。
+    max-bundle-bytes: 8388608
+    # 内存总预算包含已发布 ZIP、接收中的 ZIP 与验证时预留的展开上限。
+    max-stored-bytes: 33554432
+    # 必须同时满足同世界、真实实体跟踪、canSee、距离和最近观看者名额。
+    view-distance-blocks: 64
+    max-viewers: 10

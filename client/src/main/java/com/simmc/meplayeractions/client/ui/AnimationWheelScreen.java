@@ -21,18 +21,18 @@ import net.minecraft.util.Identifier;
 import org.lwjgl.glfw.GLFW;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.BooleanSupplier;
 
 /**
  * Yarn 1.21.11 port of OpenYSM's classic AnimationRouletteScreen at 0306e1f (MIT).
  * Polygon slices, configuration slices, author forms, scrolling and flat/check/range widgets
  * follow AnimationRouletteScreen, FlatColorButton, ConfigCheckBox and AnimationSlider.
  * Runtime supplies MPA action authorization and atomic private-profile writes.
+ * The mirrored left-side disguise controls are MPA additions, not upstream roulette features.
  * See THIRD_PARTY_NOTICES.md for the original license and source attribution.
  */
 public final class AnimationWheelScreen extends Screen {
     private static final int SLOTS=WheelSelection.PAGE_SIZE;
-    private static final Identifier ROULETTE_TEXTURE=Identifier.of("meplayeractions","textures/gui/roulette.png");
+    private static final Identifier SETTINGS_ICON=Identifier.of("meplayeractions","textures/gui/settings.png");
     private final ClientRuntime runtime;
     private final Screen parent;
     private final AtomicLong emittedVertices=new AtomicLong();
@@ -46,6 +46,7 @@ public final class AnimationWheelScreen extends Screen {
     private final List<NavigationControl> navigationControls=new ArrayList<>();
     private final List<FormRow> formRows=new ArrayList<>();
     private final List<ClickableWidget> formWidgets=new ArrayList<>();
+    private final Map<String,Double> formValues=new HashMap<>();
     private final List<String> categoryPath=new ArrayList<>();
     private final Map<String,Integer> categoryPages=new HashMap<>();
     private String message="",configGroupId="",serverInstance="";
@@ -55,7 +56,7 @@ public final class AnimationWheelScreen extends Screen {
     private ModelConfigSchema configSchema;
     private ModelConfigSchema.Group configGroup;
     private List<ModelActionMenu.Entry> localEntries=List.of();
-    private FlatButton centerButton,scrollUpButton,scrollDownButton;
+    private FlatButton centerButton,scrollUpButton,scrollDownButton,undisguiseButton;
 
     public AnimationWheelScreen(ClientRuntime runtime) {this(runtime,true,null);beginHoldSelection();}
     /** The compatibility source argument never changes Runtime's per-instance action source. */
@@ -104,33 +105,47 @@ public final class AnimationWheelScreen extends Screen {
         clearHover();releaseConsumed=true;clearAndInit();return false;
     }
     @Override protected void init() {
-        syncSource();navigationControls.clear();formRows.clear();formWidgets.clear();scrollUpButton=null;scrollDownButton=null;
-        serverAvailable=ownServerDisguise && runtime.serverBridgeReady();actions=currentActions();
+        syncSource();navigationControls.clear();formRows.clear();formWidgets.clear();formValues.clear();scrollUpButton=null;scrollDownButton=null;
+        serverAvailable=runtime.canUseServerActions();actions=currentActions();
         if(restorePageOnCatalog && !actions.isEmpty()) {page=runtime.wheelPreferences().page(source());restorePageOnCatalog=false;}
         page=WheelSelection.clampPage(page,actions.size(),SLOTS);
         layout=WheelSelection.layout(width,height);centerX=layout.centerX();centerY=layout.centerY();
         inner=layout.scaled(25);outer=layout.scaled(105);
-        centerButton=addControl("center",new FlatButton(centerX-24,centerY-10,48,20,centerLabel(),this::activateCenter));
+        int centerWidth=Math.max(20,layout.scaled(40)),centerHeight=Math.max(12,layout.scaled(20));
+        centerButton=addControl("center",new FlatButton(centerX-centerWidth/2,centerY-centerHeight/2,
+                centerWidth,centerHeight,centerLabel(),this::activateCenter));
         centerButton.active=localMode?runtime.canUseLocalActions():serverAvailable;
         centerButton.setTooltip(Tooltip.of(Text.literal(localMode?"移动时保持本地专用动作":"停止服务器专用动作")));
-        var settings=addControl("settings",new FlatButton(width-30,8,22,20,"⚙",()->{
+        var settings=addControl("settings",new SettingsIconButton(width-28,8,()->{
             releaseConsumed=true;client.setScreen(new PlayerModelScreen(runtime,this));
         }));
         settings.setTooltip(Tooltip.of(Text.literal("玩家模型设置")));
-        int aw=Math.max(20,layout.scaled(30)),ah=Math.max(20,layout.scaled(30));
-        var previous=addControl("previous",new FlatButton(layout.panelX(),layout.y(-102),aw,ah,"<",()->changePage(-1)));
-        var next=addControl("next",new FlatButton(layout.x(270)-aw,layout.y(-102),aw,ah,">",()->changePage(1)));
+        // Match the existing flat navigation style; scope follows this exact screen source/instance.
+        undisguiseButton=addControl(localMode?"undisguise-private":"undisguise-server",
+                new FlatButton(layout.sourcePanelX(),layout.navigationY(),layout.panelWidth(),layout.backHeight(),
+                        localMode?"解除私人伪装":"解除服务器伪装",this::undisguiseCurrentSource));
+        undisguiseButton.active=canUndisguiseCurrentSource();
+        undisguiseButton.setTooltip(Tooltip.of(Text.literal(localMode
+                ?"关闭私人伪装；保留模型、参数和皮肤；不会解除服务器伪装"
+                :"执行 /meplayeractions undisguise 请求解除本人服务器伪装；服务器校验权限；外部原生伪装仅停止 MPA 接管；私人设置保留")));
+        int aw=layout.navigationWidth(),ah=layout.navigationHeight();
+        var previous=addControl("previous",new FlatButton(layout.panelX(),layout.navigationY(),aw,ah,"<",()->changePage(-1)));
+        var next=addControl("next",new FlatButton(layout.panelRight()-aw,layout.navigationY(),aw,ah,">",()->changePage(1)));
         previous.active=page>0;next.active=page+1<WheelSelection.pageCount(actions.size(),SLOTS);
-        addControl("back",new FlatButton(layout.panelX(),layout.y(-70),layout.panelWidth(),Math.max(18,layout.scaled(22)),
+        addControl("back",new FlatButton(layout.panelX(),layout.backY(),layout.panelWidth(),layout.backHeight(),
                 "返回",()->{releaseConsumed=true;close();}));
         if(configGroup!=null && localMode && runtime.canEditLocalAppearance())buildConfigForms();
     }
-    private String centerLabel() {return localMode?"锁定:"+(runtime.localActionLocked()?"开":"关"):"停止";}
+    private String centerLabel() {
+        if(!localMode)return "停止";
+        String prefix=layout!=null && layout.scaled(40)<28?"锁:":"锁定:";
+        return prefix+(runtime.localActionLocked()?"开":"关");
+    }
     private <T extends FlatButton> T addControl(String id,T widget) {
         navigationControls.add(new NavigationControl(id,widget));return addDrawableChild(widget);
     }
     private List<ClientRuntime.Action> currentActions() {
-        if(!localMode)return runtime.hasOwnServerDisguise() && runtime.serverBridgeReady()?runtime.actions():List.of();
+        if(!localMode)return runtime.serverActions();
         if(!runtime.canUseLocalActions())return List.of();
         var profile=runtime.localModelProfile();
         if(profile!=menuProfile) {
@@ -182,7 +197,7 @@ public final class AnimationWheelScreen extends Screen {
         }
         String id=actions.get(selected).id();boolean played;
         if(localMode)played=runtime.canUseLocalActions() && runtime.playLocal(id);
-        else {played=runtime.hasOwnServerDisguise() && runtime.serverBridgeReady();if(played)runtime.request("play",id);}
+        else {played=runtime.canUseServerActions();if(played)runtime.request("play",id);}
         if(!played){message=localMode?"选择并启用本地模型后可播放动作":"等待服务器动作频道";return;}
         rememberPage();releaseConsumed=true;message="已选择："+actions.get(selected).label();
         if(!locked)client.setScreen(parent);
@@ -210,12 +225,33 @@ public final class AnimationWheelScreen extends Screen {
     private void stop() {
         if(!sameSource())return;
         if(localMode)runtime.stopLocal();
-        else if(runtime.hasOwnServerDisguise() && runtime.serverBridgeReady())runtime.request("stop","");
+        else if(runtime.canUseServerActions())runtime.request("stop","");
         else {message="等待服务器动作频道";return;}
         releaseConsumed=true;message="已停止";
     }
+    private boolean canUndisguiseCurrentSource() {
+        return localMode?runtime.canEditLocalAppearance() && runtime.localAppearance().enabled():runtime.canRequestServerUndisguise();
+    }
+    private void undisguiseCurrentSource() {
+        if(!sameSource())return;
+        releaseConsumed=true;clearHover();
+        if(!canUndisguiseCurrentSource()) {
+            message=localMode?"私人伪装未启用":"当前没有可请求解除的服务器伪装";return;
+        }
+        if(localMode) {
+            runtime.disableLocalAppearance();
+            if(runtime.localAppearance().enabled()){message="私人伪装未关闭";return;}
+            if(runtime.serverOwnModelPresent())runtime.selectInteractionSource(false);
+            client.setScreen(parent);
+        } else if(!runtime.requestServerUndisguise()) {
+            message="解除服务器伪装的请求未发送";return;
+        } else {
+            // A server request is complete only after the normal server state/unbind confirmation.
+            message="已请求解除服务器伪装，等待服务器确认";undisguiseButton.active=false;
+        }
+    }
     @Override public void tick() {
-        boolean present=runtime.hasOwnServerDisguise(),available=present && runtime.serverBridgeReady();
+        boolean present=runtime.hasOwnServerDisguise(),available=runtime.canUseServerActions();
         YsmModelProfile previousProfile=menuProfile;List<ClientRuntime.Action> current=currentActions();
         if(localMode!=runtime.interactionLocalMode() || !serverInstance.equals(runtime.serverOwnModelInstance()) ||
                 present!=ownServerDisguise || available!=serverAvailable || previousProfile!=menuProfile || !current.equals(actions)) {
@@ -223,6 +259,7 @@ public final class AnimationWheelScreen extends Screen {
         }
         locked=runtime.wheelPreferences().keepOpen();
         if(centerButton!=null)centerButton.setMessage(Text.literal(centerLabel()));
+        if(undisguiseButton!=null)undisguiseButton.active=canUndisguiseCurrentSource();
     }
     private void hover(double mouseX,double mouseY) {
         double x=(mouseX-centerX)/layout.scale(),y=(mouseY-centerY)/layout.scale();
@@ -250,7 +287,7 @@ public final class AnimationWheelScreen extends Screen {
     }
     @Override public boolean mouseScrolled(double mouseX,double mouseY,double horizontal,double vertical) {
         if(vertical==0)return super.mouseScrolled(mouseX,mouseY,horizontal,vertical);
-        if(mouseX>=layout.x(110) && configGroup!=null){scrollConfig(vertical>0?-20:20);return true;}
+        if(mouseX>=layout.panelX() && configGroup!=null){scrollConfig(vertical>0?-20:20);return true;}
         changePage(vertical>0?-1:1);return true;
     }
     @Override public boolean keyPressed(KeyInput input) {
@@ -295,10 +332,16 @@ public final class AnimationWheelScreen extends Screen {
             context.drawWrappedTextWithShadow(textRenderer,Text.literal(detail),layout.panelX()+2,
                     layout.viewportY()+3,Math.max(1,layout.panelWidth()-4),0xffb8bec8);
         }
+        context.drawCenteredTextWithShadow(textRenderer,textRenderer.trimToWidth(scrollHint(),Math.max(1,width-24)),
+                width/2,height-28,0xffb8bec8);
         if(!message.isEmpty())context.drawCenteredTextWithShadow(textRenderer,textRenderer.trimToWidth(message,Math.max(1,width-24)),
                 width/2,height-15,0xfff3f0e0);
         int selected=index(hovered);
-        if(selected>=0)context.drawTooltip(textRenderer,Text.literal((hoveredConfig?"配置 · ":"")+actions.get(selected).label()),mouseX,mouseY);
+        if(selected>=0) {
+            String description=localMode && menu!=null?localEntries.get(selected).description():"";
+            context.drawTooltip(textRenderer,Text.literal((hoveredConfig?"配置 · ":"")+actions.get(selected).label()
+                    +(description.isEmpty()?"":"\n"+description)),mouseX,mouseY);
+        }
     }
     private void drawRadialSegment(DrawContext context,List<Map<String,Object>> polygons,int slot,double innerRadius,
                                    double outerRadius,int color,String kind) {
@@ -338,60 +381,69 @@ public final class AnimationWheelScreen extends Screen {
         String root=localMode?"本地":"服务器";
         return categoryPath.isEmpty()?root:root+" > "+String.join(" > ",categoryPath);
     }
+    private String scrollHint() {
+        boolean paged=WheelSelection.pageCount(actions.size(),SLOTS)>1;
+        if(configGroup!=null)return paged?"滚轮快捷调整轮盘：切页；右侧滚动配置":"当前仅一页；右侧滚轮滚动配置";
+        return paged?"滚轮快捷调整轮盘：切换动作页":"当前仅一页；悬停选择或点击动作";
+    }
     private void renderPathAndPage(DrawContext context) {
-        int left=layout.x(157),right=layout.x(238);
+        int left=layout.panelX()+layout.navigationWidth()+2,right=layout.panelRight()-layout.navigationWidth()-2;
         context.drawCenteredTextWithShadow(textRenderer,textRenderer.trimToWidth("路径："+pathText(),Math.max(1,right-left)),
-                (left+right)/2,layout.y(-100),0xfff3f0e0);
-        context.fill(left,layout.y(-87),right,layout.y(-72),0xcf000000);
+                (left+right)/2,layout.navigationY()+2,0xfff3f0e0);
+        int pageTop=layout.navigationY()+Math.max(12,layout.scaled(15)),pageBottom=layout.navigationY()+layout.navigationHeight();
+        context.fill(left,pageTop,right,pageBottom,0xcf000000);
         context.drawCenteredTextWithShadow(textRenderer,(page+1)+"/"+WheelSelection.pageCount(actions.size(),SLOTS),
-                (left+right)/2,layout.y(-83),0xff55ffff);
+                (left+right)/2,pageTop+(pageBottom-pageTop-textRenderer.fontHeight)/2,0xff55ffff);
     }
 
     private void buildConfigForms() {
         String modelId=runtime.localAppearance().modelId();
-        int contentWidth=Math.max(20,layout.scaled(115)),offset=0,savedScroll=configScroll;
+        int contentWidth=layout.formWidth(),offset=0,savedScroll=configScroll;
         configScroll=0;
         Map<String,Double> variables=runtime.localModelVariables(modelId);
         for(var form:configGroup.forms()) {
             int top=offset;List<ClickableWidget> widgets=new ArrayList<>();
             if(form.kind()==ModelConfigSchema.Kind.CHECKBOX) {
-                var widget=new AuthorCheckbox(layout.panelX(),layout.viewportY()+offset,contentWidth,form.title(),
-                        ()->readForm(form)!=0,()->applyForm(modelId,form.checkboxScript(readForm(form)==0),null,-1));
+                var widget=new AuthorFormWidgets.Check(textRenderer,layout.panelX(),layout.viewportY()+offset,contentWidth,12,form.title(),
+                        ()->readForm(form)>0,()->applyForm(modelId,form.checkboxScript(readForm(form)<=0),null,-1),this::insideFormViewport);
                 widget.setTooltip(Tooltip.of(Text.literal(form.description())));
                 widgets.add(widget);registerFormWidget(widget);offset+=14;
             } else if(form.kind()==ModelConfigSchema.Kind.RANGE) {
-                var widget=new AuthorRange(layout.panelX(),layout.viewportY()+offset,contentWidth,form,modelId,form.snap(readForm(form,variables)));
+                var widget=new AuthorFormWidgets.Range(textRenderer,layout.panelX(),layout.viewportY()+offset,contentWidth,15,form,
+                        readForm(form,variables),requested->applyForm(modelId,form.rangeScript(requested),null,-1),this::insideFormViewport);
                 widget.setTooltip(Tooltip.of(Text.literal(form.description())));
                 widgets.add(widget);registerFormWidget(widget);offset+=17;
             } else {
-                int maxLabel=16;
-                for(var choice:form.choices())maxLabel=Math.max(maxLabel,textRenderer.getWidth(choice.label())+16);
-                int columns=Math.max(1,contentWidth/maxLabel),cellWidth=Math.max(1,contentWidth/columns);offset+=14;
+                int maxLabel=0;
+                for(var choice:form.choices())maxLabel=Math.max(maxLabel,textRenderer.getWidth(choice.label()));
+                int columns=AuthorFormLayout.radioColumns(contentWidth,maxLabel,form.choices().size()),cellWidth=Math.max(1,contentWidth/columns);offset+=14;
                 for(int choice=0;choice<form.choices().size();choice++) {
                     int choiceIndex=choice;
-                    var widget=new AuthorCheckbox(layout.panelX()+choice%columns*cellWidth,
-                            layout.viewportY()+offset+choice/columns*14,cellWidth,form.choices().get(choice).label(),
-                            ()->runtime.options.modelProfile(modelId).radioSelections().getOrDefault(form.key(),
-                                    Math.max(0,Math.min(form.choices().size()-1,(int)Math.round(readForm(form)))))==choiceIndex,
-                            ()->applyForm(modelId,form.radioScript(choiceIndex),form.key(),choiceIndex));
+                    var widget=new AuthorFormWidgets.Check(textRenderer,layout.panelX()+choice%columns*cellWidth,
+                            layout.viewportY()+offset+choice/columns*14,cellWidth,12,form.choices().get(choice).label(),
+                            ()->form.selectedIndex(readForm(form))==choiceIndex,
+                            ()->applyForm(modelId,form.radioScript(choiceIndex),form.key(),choiceIndex),this::insideFormViewport);
                     widget.setTooltip(Tooltip.of(Text.literal(form.description())));
                     widgets.add(widget);registerFormWidget(widget);
                 }
-                offset+=(form.choices().size()+columns-1)/columns*14+3;
+                offset+=AuthorFormLayout.radioRows(form.choices().size(),columns)*14+3;
             }
             formRows.add(new FormRow(form,top,List.copyOf(widgets)));
         }
         configContentHeight=offset;
-        int sw=Math.max(18,layout.scaled(28)),sh=Math.max(22,layout.scaled(60));
-        scrollUpButton=addControl("config-up",new FlatButton(layout.x(270)-sw,layout.viewportY(),sw,sh,"↑",()->scrollConfig(-50)));
-        scrollDownButton=addControl("config-down",new FlatButton(layout.x(270)-sw,
+        int sw=layout.scrollbarWidth(),sh=Math.max(22,layout.scaled(60));
+        scrollUpButton=addControl("config-up",new FlatButton(layout.panelRight()-sw,layout.viewportY(),sw,sh,"↑",()->scrollConfig(-50)));
+        scrollDownButton=addControl("config-down",new FlatButton(layout.panelRight()-sw,
                 layout.viewportY()+layout.viewportHeight()-sh,sw,sh,"↓",()->scrollConfig(50)));
         scrollConfig(savedScroll);
     }
     private void registerFormWidget(ClickableWidget widget) {formWidgets.add(widget);addSelectableChild(widget);}
     private double readForm(ModelConfigSchema.Form form) {return readForm(form,runtime.localModelVariables(runtime.localAppearance().modelId()));}
     private double readForm(ModelConfigSchema.Form form,Map<String,Double> values) {
-        try {double value=form.read(values);if(Double.isFinite(value))return value;}catch(RuntimeException invalid){ }
+        if(formValues.containsKey(form.key()))return formValues.get(form.key());
+        try {double value=runtime.readLocalModelExpression(runtime.localAppearance().modelId(),form.expression(),values);
+            if(Double.isFinite(value)){formValues.put(form.key(),value);return value;}}catch(RuntimeException invalid){ }
+        formValues.put(form.key(),0d);
         message="模型配置值无法读取："+form.title();return 0;
     }
     private boolean applyForm(String modelId,String script,String radioKey,int radioIndex) {
@@ -401,10 +453,11 @@ public final class AnimationWheelScreen extends Screen {
         Map<String,Integer> radios=new LinkedHashMap<>(runtime.options.modelProfile(modelId).radioSelections());
         if(radioKey!=null)radios.put(radioKey,radioIndex);
         boolean accepted=runtime.runLocalScripts(modelId,List.of(script),radios);
+        if(accepted)formValues.clear();
         message=accepted?"已更新模型组件":"模型组件设置未保存";return accepted;
     }
     private boolean insideFormViewport(double x,double y) {
-        return configGroup!=null && x>=layout.panelX() && x<layout.x(240) &&
+        return configGroup!=null && x>=layout.panelX() && x<layout.formRight() &&
                 y>=layout.viewportY() && y<layout.viewportY()+layout.viewportHeight();
     }
     private void scrollConfig(int amount) {
@@ -414,7 +467,7 @@ public final class AnimationWheelScreen extends Screen {
             widget.setY(widget.getY()+shift);
             widget.visible=widget.getBottom()>layout.viewportY() && widget.getY()<layout.viewportY()+layout.viewportHeight();
             widget.active=widget.visible && runtime.canEditLocalAppearance() &&
-                    (!(widget instanceof AuthorRange range) || range.form.maximum()>range.form.minimum());
+                    (!(widget instanceof AuthorFormWidgets.Range range) || range.form.maximum()!=range.form.minimum());
             if(!widget.visible && getFocused()==widget){setFocused(null);setDragging(false);}
         }
         if(scrollUpButton!=null)scrollUpButton.active=configScroll>0;
@@ -422,10 +475,10 @@ public final class AnimationWheelScreen extends Screen {
     }
     private void renderConfigForms(DrawContext context,int mouseX,int mouseY,float delta) {
         if(configGroup==null)return;
-        context.enableScissor(layout.panelX(),layout.viewportY(),layout.x(240),layout.viewportY()+layout.viewportHeight());
+        context.enableScissor(layout.panelX(),layout.viewportY(),layout.formRight(),layout.viewportY()+layout.viewportHeight());
         int clippedMouseY=insideFormViewport(mouseX,mouseY)?mouseY:-1000;
         for(var row:formRows)if(row.form.kind()==ModelConfigSchema.Kind.RADIO)
-            context.drawTextWithShadow(textRenderer,textRenderer.trimToWidth(row.form.title(),Math.max(1,layout.scaled(115))),
+            context.drawTextWithShadow(textRenderer,textRenderer.trimToWidth(row.form.title(),layout.formWidth()),
                     layout.panelX(),layout.viewportY()+row.top-configScroll+2,0xfff3f0e0);
         for(var widget:formWidgets)widget.render(context,mouseX,clippedMouseY,delta);
         context.disableScissor();
@@ -445,57 +498,15 @@ public final class AnimationWheelScreen extends Screen {
                     getX()+getWidth()/2,getY()+(getHeight()-textRenderer.fontHeight)/2,active?0xfff3f0e0:0xffa0a0a0);
         }
     }
-    /** OpenYSM ConfigCheckBox's original checked/hovered atlas regions. */
-    private final class AuthorCheckbox extends FlatButton {
-        private final BooleanSupplier selected;
-        AuthorCheckbox(int x,int y,int width,String label,BooleanSupplier selected,Runnable action) {
-            super(x,y,width,12,label,action);this.selected=selected;
-        }
+    /** Same source settings texture and flat icon treatment as the existing gallery settings entry. */
+    private final class SettingsIconButton extends FlatButton {
+        SettingsIconButton(int x,int y,Runnable action) {super(x,y,20,20,"玩家模型设置",action);}
         @Override protected void drawIcon(DrawContext context,int mouseX,int mouseY,float delta) {
-            context.drawTexture(RenderPipelines.GUI_TEXTURED,ROULETTE_TEXTURE,getX(),getY(),
-                    selected.getAsBoolean()?128:0,isHovered()?12:0,getWidth(),12,256,256);
-            context.drawTextWithShadow(textRenderer,textRenderer.trimToWidth(getMessage().getString(),Math.max(1,getWidth()-14)),
-                    getX()+14,getY()+2,0xffffffff);
-        }
-        @Override public boolean mouseClicked(Click click,boolean doubled) {
-            return insideFormViewport(click.x(),click.y()) && super.mouseClicked(click,doubled);
+            context.fill(getX(),getY(),getRight(),getBottom(),-12369342);
+            if(isHovered() || isFocused())context.drawStrokedRectangle(getX(),getY(),getWidth(),getHeight(),-790560);
+            context.drawTexture(RenderPipelines.GUI_TEXTURED,SETTINGS_ICON,getX()+2,getY()+2,0f,0f,16,16,32,32,32,32);
         }
     }
-    /** OpenYSM AnimationSlider's atlas and step/range semantics, with the native drag handler. */
-    private final class AuthorRange extends SliderWidget {
-        final ModelConfigSchema.Form form;
-        private final String modelId;
-        private double applied;
-        AuthorRange(int x,int y,int width,ModelConfigSchema.Form form,String modelId,double current) {
-            super(x,y,width,15,Text.empty(),fraction(form,current));this.form=form;this.modelId=modelId;applied=current;updateMessage();
-        }
-        private static double fraction(ModelConfigSchema.Form form,double value) {
-            return form.maximum()==form.minimum()?0:(value-form.minimum())/(form.maximum()-form.minimum());
-        }
-        @Override protected void updateMessage() {
-            setMessage(Text.literal(form.title()+": "+number(form.snap(form.minimum()+value*(form.maximum()-form.minimum())))));
-        }
-        @Override protected void applyValue() {
-            double requested=form.snap(form.minimum()+value*(form.maximum()-form.minimum()));
-            if(requested!=applied && !applyForm(modelId,form.rangeScript(requested),null,-1))value=fraction(form,applied);
-            else {applied=requested;value=fraction(form,requested);}
-            updateMessage();
-        }
-        @Override public void renderWidget(DrawContext context,int mouseX,int mouseY,float delta) {
-            context.drawTexture(RenderPipelines.GUI_TEXTURED,ROULETTE_TEXTURE,getX(),getY(),0,24,getWidth()-4,15,256,256);
-            context.drawTexture(RenderPipelines.GUI_TEXTURED,ROULETTE_TEXTURE,getRight()-4,getY(),196,24,4,15,256,256);
-            int handle=getX()+(int)(value*(getWidth()-8)),v=isHovered()?84:64;
-            context.drawTexture(RenderPipelines.GUI_TEXTURED,ROULETTE_TEXTURE,handle,getY(),0,v,4,15,256,256);
-            context.drawTexture(RenderPipelines.GUI_TEXTURED,ROULETTE_TEXTURE,handle+4,getY(),196,v,4,15,256,256);
-            context.drawCenteredTextWithShadow(textRenderer,textRenderer.trimToWidth(getMessage().getString(),Math.max(1,getWidth()-4)),
-                    getX()+getWidth()/2,getY()+3,0xffffffff);
-        }
-        @Override public boolean mouseClicked(Click click,boolean doubled) {
-            return insideFormViewport(click.x(),click.y()) && super.mouseClicked(click,doubled);
-        }
-    }
-    private static String number(double value) {return java.math.BigDecimal.valueOf(value).stripTrailingZeros().toPlainString();}
-
     public Map<String,Object> diagnostics() {
         List<Map<String,Object>> labels=new ArrayList<>(),configSlots=new ArrayList<>(),visibleActions=new ArrayList<>();
         if(layout!=null)for(int slot=0;slot<visibleSlots();slot++) {
@@ -518,6 +529,7 @@ public final class AnimationWheelScreen extends Screen {
         }
         var result=new LinkedHashMap<String,Object>();
         result.put("centerX",centerX);result.put("centerY",centerY);result.put("innerRadius",inner);result.put("outerRadius",outer);
+        result.put("scrollHint",scrollHint());result.put("settingsIcon",SETTINGS_ICON.toString());
         result.put("page",page);result.put("localMode",localMode);result.put("source",source().name());
         result.put("locked",locked);result.put("keepOpen",locked);result.put("hovered",hovered);result.put("hoveredCenter",hoveredCenter);
         result.put("labels",labels);result.put("visibleActionIds",actions.stream().skip((long)page*SLOTS).limit(SLOTS).map(ClientRuntime.Action::id).toList());
@@ -547,8 +559,8 @@ public final class AnimationWheelScreen extends Screen {
                 var widget=row.controls.get(i);
                 String id=row.form.kind()==ModelConfigSchema.Kind.RADIO?"radio:"+i:row.form.kind()==ModelConfigSchema.Kind.RANGE?"range":"checkbox";
                 var data=new LinkedHashMap<>(widgetRectangle(id,widget));data.put("visible",widget.visible);
-                if(widget instanceof AuthorCheckbox checkbox)data.put("selected",checkbox.selected.getAsBoolean());
-                if(widget instanceof AuthorRange range)data.put("value",range.applied);
+                if(widget instanceof AuthorFormWidgets.Check checkbox)data.put("selected",checkbox.selected());
+                if(widget instanceof AuthorFormWidgets.Range range)data.put("value",range.currentValue());
                 if(row.form.kind()==ModelConfigSchema.Kind.RADIO)data.put("choice",i);
                 controls.add(data);
             }
@@ -558,7 +570,7 @@ public final class AnimationWheelScreen extends Screen {
             form.put("min",row.form.minimum());form.put("max",row.form.maximum());form.put("step",row.form.step());forms.add(form);
         }
         return Map.of("visible",configGroup!=null,"group",configGroupId,"x",layout==null?0:layout.panelX(),
-                "y",layout==null?0:layout.viewportY(),"width",layout==null?0:layout.scaled(115),
+                "y",layout==null?0:layout.viewportY(),"width",layout==null?0:layout.formWidth(),
                 "height",layout==null?0:layout.viewportHeight(),"scroll",configScroll,"contentHeight",configContentHeight,
                 "maxScroll",layout==null?0:Math.max(0,configContentHeight-layout.viewportHeight()),"forms",forms);
     }

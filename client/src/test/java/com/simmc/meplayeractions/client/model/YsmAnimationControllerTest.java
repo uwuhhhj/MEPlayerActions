@@ -74,7 +74,8 @@ class YsmAnimationControllerTest {
                  "b":{"animations":["b"]}}}}
                 """);
         AnimationPlayer player = new AnimationPlayer(parse(raw)); player.sample(0, List.of()); player.sample(20, List.of());
-        assertEquals(2, x(player.sample(21, List.of())), 1e-5);
+        player.sample(21, List.of());
+        assertEquals(2, x(player.sample(22, List.of())), 1e-5);
         assertEquals("b", player.controllerStates().get("player.post_main"));
     }
     @Test void contextVariablesAreIsolatedButEntityVariablesAreSharedAndResetWithClock() {
@@ -100,7 +101,8 @@ class YsmAnimationControllerTest {
         player.sample(0, layers); player.sample(0, layers); assertEquals(1d, player.expressionVariables().get("variable.events"), 1e-5);
         assertEquals(1, x(player.sample(10, layers, 0, 0, Map.of("ysm.pause.player.hold_mainhand", 1d))), 1e-5);
         assertEquals(1.75, x(player.sample(15, layers)), 1e-5);
-        player.sample(20, layers); assertEquals(2d, player.expressionVariables().get("variable.events"), 1e-5);
+        player.sample(20, layers); assertEquals(1d, player.expressionVariables().get("variable.events"), 1e-5);
+        player.sample(21, layers); assertEquals(2d, player.expressionVariables().get("variable.events"), 1e-5);
     }
     @Test void physicsNameIdentityAndModelInstancesRemainIndependent() {
         JsonObject raw = fixture(); clip(raw, "parallel0", 0, "LOOP", "position", "ysm.second_order('same', q.target, 1, 0.5, 0)");
@@ -147,8 +149,11 @@ class YsmAnimationControllerTest {
         AnimationPlayer player=new AnimationPlayer(parse(raw));
         List<BbModel.Layer> layers=List.of(new BbModel.Layer("manual","a",0,1,"ONCE",0,4));
         assertEquals(2,x(player.sample(0,layers)),1e-5);
-        player.sample(21,layers);assertEquals(1.5,x(player.sample(23,layers)),1e-5);
-        assertEquals(1,x(player.sample(25,layers)),1e-5);
+        // OpenYSM Instance ends ONCE at >=length and uses its fixed three-tick ending transition.
+        assertEquals(2,x(player.sample(20,layers)),1e-5);
+        assertEquals(1+2d/3,x(player.sample(21,layers)),1e-5);
+        assertEquals(1+1d/3,x(player.sample(22,layers)),1e-5);
+        assertEquals(1,x(player.sample(23,layers)),1e-5);
     }
     @Test void unspecifiedConstantLengthRemainsUnfinishedUntilExplicitStop() {
         JsonObject raw=fixture();clip(raw,"constant",0,"ONCE","position","16");
@@ -199,14 +204,15 @@ class YsmAnimationControllerTest {
         JsonObject stop=fixture();clip(stop,"a",0,"LOOP","position","16");event(stop,"player_ctrl_post_main","return q.stop ? 3 : 5;");
         AnimationPlayer stopped=new AnimationPlayer(parse(stop));List<BbModel.Layer> nativeLayers=List.of(new BbModel.Layer("player.post_main","a",0,1,"LOOP",0,4));
         stopped.sample(0,nativeLayers);stopped.sample(1,nativeLayers,0,0,Map.of("query.stop",1d));
-        assertEquals(1.5,x(stopped.sample(3,nativeLayers,0,0,Map.of("query.stop",1d))),1e-5);
-        assertEquals(1,x(stopped.sample(5,nativeLayers,0,0,Map.of("query.stop",1d))),1e-5);
+        assertEquals(1+1d/3,x(stopped.sample(3,nativeLayers,0,0,Map.of("query.stop",1d))),1e-5);
+        assertEquals(1,x(stopped.sample(4,nativeLayers,0,0,Map.of("query.stop",1d))),1e-5);
         JsonObject reset=fixture();clip(reset,"a",2,"HOLD","position","q.anim_time*16");
         controllers(reset,"{\"player.post_main\":{\"initial_state\":\"ysm-builtin\",\"states\":{\"ysm-builtin\":{\"on_entry\":[\"v.entries+=1;\"]}}}}");
         event(reset,"player_ctrl_post_main","c.saved+=1;v.saved=c.saved;q.mode==0 ? ctrl.set_animation('a',12) : ctrl.reset();return 2;");
         AnimationPlayer player=new AnimationPlayer(parse(reset));player.sample(0,List.of());assertEquals(1.5,x(player.sample(10,List.of())),1e-5);
         assertEquals(1,x(player.sample(11,List.of(),0,0,Map.of("query.mode",1d))),1e-5);
-        assertEquals(3d,player.expressionVariables().get("variable.saved"),1e-5);
+        // First IDLE activation flushes and clears instance c storage before the new animation runs.
+        assertEquals(2d,player.expressionVariables().get("variable.saved"),1e-5);
         assertEquals(1d,player.expressionVariables().get("variable.entries"),1e-5);
         assertEquals("ysm-builtin",player.controllerStates().get("player.post_main"));
     }
@@ -355,6 +361,153 @@ class YsmAnimationControllerTest {
         player.configureFrame(context->context.functions((name,args)->{delegated.add(name);return 0d;}));
         assertEquals(1,x(player.sample(0,List.of())),1e-5);
         assertEquals(2,x(player.sample(1,List.of(),0,0,Map.of("query.select",1d))),1e-5);assertTrue(delegated.isEmpty());
+    }
+    @Test void deferWaitsForStrictLoopBoundaryUsesLifoAndCurrentTimeAndClearsSlotContext() {
+        JsonObject raw=fixture();clip(raw,"a",1,"LOOP","position","q.anim_time*16");
+        timeline(raw,"a",0,"c.n=7;ysm.defer('one',1,q.anim_time,c.n);ysm.defer('two',2);ysm.defer('',9);");
+        event(raw,"player_update","ysm.defer('outside',8);");
+        event(raw,"defer","v.order=v.order*10+args[0];v.callbackTime=q.anim_time;v.c=c.n;args[0]==1 ? v.captured=args[2] : 0;",
+                "c.n+=1;v.calls+=1;ysm.defer('recursive',9);");
+        controllers(raw,"{\"player.post_main\":{\"states\":{\"default\":{\"animations\":[\"a\"]}}}}");
+        AnimationPlayer player=new AnimationPlayer(parse(raw));player.sample(0,List.of());player.sample(10,List.of());
+        assertFalse(player.expressionVariables().containsKey("variable.calls"));
+        assertEquals(2,x(player.sample(20,List.of())),1e-5);
+        player.sample(21,List.of());
+        assertEquals(21d,player.expressionVariables().get("variable.order"));
+        assertEquals(2d,player.expressionVariables().get("variable.calls"));
+        assertEquals(1d,player.expressionVariables().get("variable.callbacktime"));
+        assertEquals(8d,player.expressionVariables().get("variable.c"));
+        assertEquals(7d,player.expressionVariables().get("variable.captured"));
+        player.sample(21,List.of());assertEquals(2d,player.expressionVariables().get("variable.calls"));
+    }
+    @Test void onceRemainingEventsUseEndTimeAndFlushAtExactEndWhileHoldKeepsPendingUntilStateChange() {
+        JsonObject raw=fixture();clip(raw,"a",1,"ONCE","position","0");
+        timeline(raw,"a",.5,"ysm.defer('all',q.anim_time);");event(raw,"defer","v.n+=1;v.captured=args[0];v.callback=q.anim_time;");
+        controllers(raw,"{\"player.post_main\":{\"states\":{\"default\":{\"animations\":[\"a\"]}}}}");
+        AnimationPlayer player=new AnimationPlayer(parse(raw));player.sample(0,List.of());player.sample(20,List.of());
+        assertEquals(1d,player.expressionVariables().get("variable.n"));
+        assertEquals(1d,player.expressionVariables().get("variable.captured"));
+        assertEquals(1d,player.expressionVariables().get("variable.callback"));
+        player.sample(20,List.of());assertEquals(1d,player.expressionVariables().get("variable.n"));
+        JsonObject hold=fixture();clip(hold,"a",1,"HOLD","position","q.anim_time*16");clip(hold,"b",1,"HOLD","position","0");
+        timeline(hold,"a",0,"c.tag=11;ysm.defer('same',1);");timeline(hold,"b",0,"c.tag=22;ysm.defer('same',2);");
+        event(hold,"defer","v.a=args[0]==1 ? c.tag : v.a;v.b=args[0]==2 ? c.tag : v.b;v.n+=1;");
+        controllers(hold,"{\"player.post_main\":{\"states\":{\"default\":{\"animations\":[\"a\",\"b\"],\"transitions\":[{\"next\":\"q.change\"}]},\"next\":{}}}}");
+        AnimationPlayer held=new AnimationPlayer(parse(hold));held.sample(0,List.of());held.sample(30,List.of());
+        assertFalse(held.expressionVariables().containsKey("variable.n"));
+        held.sample(31,List.of(),0,0,Map.of("query.change",1d));
+        assertEquals(11d,held.expressionVariables().get("variable.a"));assertEquals(22d,held.expressionVariables().get("variable.b"));
+        assertEquals(2d,held.expressionVariables().get("variable.n"));
+    }
+    @Test void ysmTimelineKeysObserveCurrentSampleTimeAndBeginningBlendDefersZeroKey() {
+        JsonObject raw=fixture();clip(raw,"a",2,"HOLD","position","0");timeline(raw,"a",.1,"v.time=q.anim_time;");
+        controllers(raw,"{\"player.post_main\":{\"states\":{\"default\":{\"animations\":[\"a\"],\"blend_transition\":0.5}}}}");
+        AnimationPlayer player=new AnimationPlayer(parse(raw));player.sample(0,List.of());player.sample(9,List.of());
+        assertFalse(player.expressionVariables().containsKey("variable.time"));
+        player.sample(20,List.of());assertEquals(.5,player.expressionVariables().get("variable.time"),1e-8);
+    }
+    @Test void deferCapturesAreBoundedAndResetDropsPendingReferences() {
+        JsonObject raw=fixture();clip(raw,"a",1,"LOOP","position","0");
+        timeline(raw,"a",0,"loop(300,ysm.defer('all',1));");event(raw,"defer","v.n+=1;");
+        controllers(raw,"{\"player.post_main\":{\"states\":{\"default\":{\"animations\":[\"a\"]}}}}");
+        AnimationPlayer player=new AnimationPlayer(parse(raw));player.sample(0,List.of());player.sample(21,List.of());
+        assertEquals(256d,player.expressionVariables().get("variable.n"));
+        player.reset();player.sample(0,List.of());assertFalse(player.expressionVariables().containsKey("variable.n"));
+    }
+    @Test void boneSamplingCannotCaptureDeferOutsideTheClientEventPhase() {
+        JsonObject raw=fixture();clip(raw,"a",1,"LOOP","position","ysm.defer('bone',9);return 0;");
+        timeline(raw,"a",0,"ysm.defer('timeline',1);");event(raw,"defer","v.n+=1;v.argument=args[0];");
+        controllers(raw,"{\"player.post_main\":{\"states\":{\"default\":{\"animations\":[\"a\"]}}}}");
+        AnimationPlayer player=new AnimationPlayer(parse(raw));player.sample(0,List.of());player.sample(10,List.of());player.sample(21,List.of());
+        assertEquals(1d,player.expressionVariables().get("variable.n"));assertEquals(1d,player.expressionVariables().get("variable.argument"));
+    }
+    @Test void nativeTimingIsAbsoluteAliasesAreExclusiveAndRawBbKeepsRejectingFields() {
+        JsonObject raw=fixture();raw.addProperty("ysm_format_version",65535);clip(raw,"a",2,"HOLD","position","q.anim_time*16");
+        JsonObject clip=raw.getAsJsonArray("animations").get(0).getAsJsonObject();clip.addProperty("anim_time_update",".75");
+        controllers(raw,"{\"player.post_main\":{\"states\":{\"default\":{\"animations\":[\"a\"]}}}}");
+        AnimationPlayer player=new AnimationPlayer(parse(raw));assertEquals(1.75,x(player.sample(0,List.of())),1e-5);
+        assertEquals(1.75,x(player.sample(20,List.of())),1e-5);
+        clip.addProperty("animation_time_update",".75");assertThrows(IllegalArgumentException.class,()->parse(raw));
+        clip.remove("anim_time_update");assertDoesNotThrow(()->parse(raw));raw.remove("ysm_format_version");
+        assertThrows(IllegalArgumentException.class,()->parse(raw));
+    }
+    @Test void authoredSeekMovesEventCursorWithoutReverseReplayAndSameTickCannotReevaluate() {
+        JsonObject raw=fixture();raw.addProperty("ysm_format_version",65535);clip(raw,"a",2,"HOLD","position","q.anim_time*16");
+        raw.getAsJsonArray("animations").get(0).getAsJsonObject().addProperty("anim_time_update","v.updates+=1;return q.target;");
+        timeline(raw,"a",.5,"v.events+=1;v.eventTime=q.anim_time;");
+        controllers(raw,"{\"player.post_main\":{\"states\":{\"default\":{\"animations\":[\"a\"]}}}}");
+        AnimationPlayer player=new AnimationPlayer(parse(raw));player.sample(0,List.of(),0,0,Map.of("query.target",.75));
+        assertEquals(1d,player.expressionVariables().get("variable.events"));
+        assertEquals(1.25,x(player.sample(1,List.of(),0,0,Map.of("query.target",.25))),1e-5);
+        assertEquals(1d,player.expressionVariables().get("variable.events"));
+        assertEquals(1.6,x(player.sample(2,List.of(),0,0,Map.of("query.target",.6))),1e-5);
+        assertEquals(2d,player.expressionVariables().get("variable.events"));assertEquals(.6,player.expressionVariables().get("variable.eventtime"),1e-8);
+        player.sample(2,List.of(),0,0,Map.of("query.target",1d));assertEquals(3d,player.expressionVariables().get("variable.updates"));
+    }
+    @Test void startDelayIsOncePerActivationAndLoopDelayWaitsWithoutReplayingZeroKey() {
+        JsonObject raw=fixture();raw.addProperty("ysm_format_version",65535);clip(raw,"a",.5,"LOOP","position","q.anim_time*16");
+        JsonObject clip=raw.getAsJsonArray("animations").get(0).getAsJsonObject();
+        clip.addProperty("start_delay","v.starts+=1;return .5;");clip.addProperty("loop_delay","v.loops+=1;return .5;");
+        timeline(raw,"a",0,"v.events+=1;");
+        AnimationPlayer player=new AnimationPlayer(parse(raw));List<BbModel.Layer> layers=List.of(layer("player.hold_mainhand","a",0));
+        player.sample(0,layers);player.sample(9,layers);assertEquals(1d,player.expressionVariables().get("variable.starts"));
+        assertFalse(player.expressionVariables().containsKey("variable.events"));
+        player.sample(10,layers);assertEquals(1d,player.expressionVariables().get("variable.events"));
+        player.sample(20,layers);assertFalse(player.expressionVariables().containsKey("variable.loops"));
+        player.sample(21,layers);player.sample(30,layers);assertEquals(1d,player.expressionVariables().get("variable.loops"));
+        assertEquals(1d,player.expressionVariables().get("variable.events"));
+        player.sample(31,layers);player.sample(31,layers);assertEquals(2d,player.expressionVariables().get("variable.events"));
+        assertEquals(1d,player.expressionVariables().get("variable.starts"));
+        player.sample(32,List.of(layer("player.hold_mainhand","a",32)));assertEquals(2d,player.expressionVariables().get("variable.starts"));
+    }
+    @Test void explicitStopKeepsPausedCapturesThroughEndingThenIdleFlushesLifoAndClearsOnlyControllerScope() {
+        JsonObject raw=fixture();clip(raw,"a",1,"HOLD","position","16");
+        timeline(raw,"a",0,"c.tag=7;v.kept=42;ysm.defer('all',1);ysm.defer('all',2);");
+        event(raw,"player_ctrl_post_main","v.before=c.tag;return q.mode==1 ? 3 : q.mode==2 ? 4 : 5;");
+        event(raw,"defer","v.order=v.order*10+args[0];v.c=c.tag;c.tag+=1;v.callbackTime=q.anim_time;v.kept+=1;ysm.play_sound('safe:defer');");
+        List<String> effects=new ArrayList<>();AnimationPlayer player=new AnimationPlayer(parse(raw));
+        player.configureFrame(context->context.functions((name,args)->{effects.add(name);return 0d;}));
+        List<BbModel.Layer> layers=List.of(new BbModel.Layer("player.post_main","a",0,1,"HOLD",0,7));
+        player.sample(0,layers);player.sample(1,layers,0,0,Map.of("query.mode",2d));
+        player.sample(2,layers,0,0,Map.of("query.mode",1d));
+        player.sample(3,layers,0,0,Map.of("query.mode",1d));player.sample(4,layers,0,0,Map.of("query.mode",1d));
+        assertTrue(effects.isEmpty());assertFalse(player.expressionVariables().containsKey("variable.order"));
+        player.sample(5,layers,0,0,Map.of("query.mode",1d));
+        assertEquals(21d,player.expressionVariables().get("variable.order"));assertEquals(8d,player.expressionVariables().get("variable.c"));
+        assertEquals(.1,player.expressionVariables().get("variable.callbacktime"),1e-8);
+        assertEquals(44d,player.expressionVariables().get("variable.kept"));assertEquals(List.of("ysm.play_sound","ysm.play_sound"),effects);
+        player.sample(5,layers,0,0,Map.of("query.mode",1d));assertEquals(2,effects.size());
+        assertEquals(0d,player.expressionVariables().get("variable.before"));
+    }
+    @Test void authorResetInIdleStopPreservesContextUntilContinueWhileDisposalDropsWorldEffects() {
+        JsonObject raw=fixture();clip(raw,"a",1,"HOLD","position","16");
+        timeline(raw,"a",0,"c.tag=7;v.kept=42;ysm.defer('all',1);");
+        event(raw,"player_ctrl_post_main","q.reset ? ctrl.reset() : 0;return q.continue ? 2 : q.stop ? 3 : 5;");
+        event(raw,"defer","v.n+=1;v.c=c.tag;ysm.play_sound('safe:defer');");
+        List<String> effects=new ArrayList<>();AnimationPlayer player=new AnimationPlayer(parse(raw));
+        player.configureFrame(context->context.functions((name,args)->{effects.add(name);return 0d;}));
+        List<BbModel.Layer> layers=List.of(new BbModel.Layer("player.post_main","a",0,1,"HOLD",0,0));
+        player.sample(0,layers);
+        assertEquals(1,x(player.sample(1,layers,0,0,Map.of("query.reset",1d,"query.stop",1d))),1e-5);
+        player.sample(2,layers,0,0,Map.of("query.stop",1d));assertTrue(effects.isEmpty());
+        player.sample(3,layers,0,0,Map.of("query.continue",1d));
+        assertEquals(1d,player.expressionVariables().get("variable.n"));assertEquals(7d,player.expressionVariables().get("variable.c"));
+        assertEquals(42d,player.expressionVariables().get("variable.kept"));assertEquals(List.of("ysm.play_sound"),effects);
+        player.sample(3,layers,0,0,Map.of("query.continue",1d));assertEquals(1,effects.size());
+        AnimationPlayer disposed=new AnimationPlayer(parse(raw));
+        disposed.configureFrame(context->context.functions((name,args)->{effects.add(name);return 0d;}));
+        disposed.sample(0,layers);disposed.dispose();
+        disposed.sample(5,List.of(),0,0,Map.of("query.continue",1d));
+        assertEquals(1,effects.size());assertFalse(disposed.expressionVariables().containsKey("variable.n"));
+    }
+    @Test void stopWhileIdlePreservesPendingAnimationAndInvalidLookupDoesNotEraseIt() {
+        JsonObject raw=fixture();clip(raw,"a",2,"HOLD","position","q.anim_time*16");timeline(raw,"a",0,"v.started+=1;");
+        event(raw,"player_ctrl_post_main","q.phase==0 ? ctrl.set_animation('a',12) : 0;q.phase==0 ? ctrl.set_animation('missing') : 0;return q.phase==0 ? 3 : 2;");
+        AnimationPlayer player=new AnimationPlayer(parse(raw));assertEquals(1,x(player.sample(0,List.of())),1e-5);
+        assertFalse(player.expressionVariables().containsKey("variable.started"));
+        assertEquals(1,x(player.sample(10,List.of(),0,0,Map.of("query.phase",1d))),1e-5);
+        assertEquals(1d,player.expressionVariables().get("variable.started"));
+        assertEquals(1.5,x(player.sample(20,List.of(),0,0,Map.of("query.phase",1d))),1e-5);
     }
     private static void event(JsonObject raw,String name,String... scripts) {
         JsonArray values=new JsonArray();for(String script:scripts)values.add(script);

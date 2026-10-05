@@ -12,22 +12,25 @@ import java.util.*;
 public final class WireJson {
     private WireJson() {}
     public static JsonObject decode(byte[] bytes) throws IOException {
+        return decode(bytes, 3);
+    }
+    public static JsonObject decode(byte[] bytes, int protocol) throws IOException {
         if (bytes.length == 0 || bytes.length > 32_766) throw new IOException("Payload size");
         String text = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
                 .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
         try (JsonReader reader = new JsonReader(new StringReader(text))) {
             reader.setStrictness(Strictness.STRICT);
-            JsonElement root = read(reader, 0);
+            JsonElement root = read(reader, 0, protocol == 1 ? 128 : 64, protocol == 1 ? 128 : 64);
             if (!root.isJsonObject() || reader.peek() != JsonToken.END_DOCUMENT) throw new IOException("Envelope");
             JsonObject object = root.getAsJsonObject();
-            if (integer(object, "protocol", 3, 3) != 3) throw new IOException("Protocol");
+            if (integer(object, "protocol", protocol, protocol) != protocol) throw new IOException("Protocol");
             string(object, "type", 32);
             return object;
         } catch (IllegalStateException | NumberFormatException exception) {
             throw new IOException("Invalid JSON", exception);
         }
     }
-    private static JsonElement read(JsonReader reader, int depth) throws IOException {
+    private static JsonElement read(JsonReader reader, int depth, int fields, int keyLength) throws IOException {
         if (depth > 8) throw new IOException("JSON nesting");
         return switch (reader.peek()) {
             case BEGIN_OBJECT -> {
@@ -35,8 +38,8 @@ public final class WireJson {
                 reader.beginObject();
                 while (reader.hasNext()) {
                     String key = reader.nextName();
-                    if (key.length() > 64 || result.has(key) || result.size() >= 64) throw new IOException("Object fields");
-                    result.add(key, read(reader, depth + 1));
+                    if (key.length() > keyLength || result.has(key) || result.size() >= fields) throw new IOException("Object fields");
+                    result.add(key, read(reader, depth + 1, fields, keyLength));
                 }
                 reader.endObject(); yield result;
             }
@@ -44,7 +47,7 @@ public final class WireJson {
                 JsonArray result = new JsonArray(); reader.beginArray();
                 while (reader.hasNext()) {
                     if (result.size() >= 512) throw new IOException("Array length");
-                    result.add(read(reader, depth + 1));
+                    result.add(read(reader, depth + 1, fields, keyLength));
                 }
                 reader.endArray(); yield result;
             }

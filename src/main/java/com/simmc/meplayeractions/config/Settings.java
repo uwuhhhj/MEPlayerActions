@@ -2,6 +2,7 @@ package com.simmc.meplayeractions.config;
 
 import com.simmc.meplayeractions.action.ActionState;
 import com.simmc.meplayeractions.action.SyncFeature;
+import com.simmc.meplayeractions.client.PrivateModelSyncService;
 import com.ticxo.modelengine.api.animation.BlueprintAnimation.LoopMode;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
@@ -28,6 +29,8 @@ public final class Settings {
     public final boolean showSelf;
     public final double modelViewDistance;
     public final int maxViewers;
+    public final PerformanceSettings performance;
+    public final PrivateModelSyncService.Policy privateModels;
     public final Map<String, CustomAction> customActions;
     public final Map<String, String> animationLabels;
     private final EnumMap<SyncFeature, Boolean> synchronization;
@@ -39,6 +42,7 @@ public final class Settings {
                                double speed, String permission, int maxTicks) {}
 
     private Settings(FileConfiguration c) {
+        performance = PerformanceSettings.fromConfiguration(c);
         defaultModel = id(c.getString("models.default", "ysm_01_jk"));
         Set<String> models = new LinkedHashSet<>();
         for (String name : c.getStringList("models.allowed")) models.add(id(name));
@@ -87,6 +91,13 @@ public final class Settings {
         clientMaxPayload = integer(c, "client-sync.max-payload-bytes", 16000, 1024, 30000);
         clientCooldownTicks = integer(c, "client-sync.request-cooldown-ticks", 4, 1, 1200);
         clientViewDistance = number(c, "client-sync.view-distance-blocks", 64, 1, 256);
+        ConfigurationSection privateSection = c.getConfigurationSection("client-sync.private-models");
+        if (privateSection != null) validateFields(privateSection, Set.of("enabled", "max-bundle-bytes", "max-stored-bytes", "view-distance-blocks", "max-viewers"));
+        int privateBundleBytes = integer(c, "client-sync.private-models.max-bundle-bytes", 8 * 1024 * 1024, 1024, 8 * 1024 * 1024);
+        privateModels = new PrivateModelSyncService.Policy(clientEnabled && c.getBoolean("client-sync.private-models.enabled", false), clientMaxPayload,
+                privateBundleBytes, integer(c, "client-sync.private-models.max-stored-bytes", 32 * 1024 * 1024, privateBundleBytes + 8 * 1024 * 1024, 256 * 1024 * 1024),
+                number(c, "client-sync.private-models.view-distance-blocks", 64, 1, 256),
+                integer(c, "client-sync.private-models.max-viewers", 10, 0, 1000), "mact.private.upload", "mact.private.view");
         animationMaps = new HashMap<>();
         animationMaps.put("defaults", parseAnimations(c.getConfigurationSection("animations.defaults")));
         // New mappings also work when an administrator retains a 0.1.0 configuration.
