@@ -1,8 +1,8 @@
-"""Package server/client 0.4.9 after saved targeted checks and final builds.
+"""Package server/client 0.5.0 after saved targeted checks and final builds.
 
 This helper does not run a build, a test, Minecraft, or the old runtime release gate.
 Both sides must be freshly built. No previous release proof or private model input is reused.
-Existing dist artifacts are never replaced. This tracked tool preserves the 0.4.9
+Existing dist artifacts are never replaced. This tracked tool preserves the 0.5.0
 release workflow; updating its version contract requires a separate release change.
 """
 from __future__ import annotations
@@ -24,7 +24,7 @@ import zipfile
 
 PROJECT = Path(__file__).resolve().parents[1]
 CLIENT = PROJECT / "client"
-VERSION = "0.4.9"
+VERSION = "0.5.0"
 SERVER_VERSION = VERSION
 VALIDATION = PROJECT / "build" / f"validation-{VERSION}"
 REFERENCE_REVISION = "0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85"
@@ -38,7 +38,7 @@ INCLUDES = {"zstd-jni-1.5.7-6.jar": ("com.github.luben", "zstd-jni", "1.5.7-6"),
             "webp-0.2.0.jar": ("org.glavo", "webp", "0.2.0")}
 EXCLUDED_PARTS = {"build", "target", ".gradle", ".git", "run", "logs", "cache", "caches",
                   "__pycache__", ".idea", ".vscode", "node_modules", "dist", "secrets", "private-incoming",
-                  "private-fixture", "private-fixtures", "privatefixtures", "user-models", "local-models", "model-probe", "private-source-data"}
+                  "private-fixture", "private-fixtures", "privatefixtures", "private-models", "user-models", "local-models", "model-probe", "private-source-data"}
 EXCLUDED_SUFFIXES = {".pyc", ".log", ".lock", ".db", ".sqlite", ".sqlite3", ".jks", ".p12", ".pem", ".key", ".ysm", ".zip", ".7z", ".rar", ".tar", ".gz"}
 
 
@@ -241,8 +241,9 @@ def validate_cc0(archive: zipfile.ZipFile, reference: Path) -> dict:
 
 
 def test_evidence(stage_order: list[str] | None) -> tuple[dict, dict[str, bytes]]:
+    require(VALIDATION.is_dir(), f"Current validation directory missing: {VALIDATION}")
     directories = [path for path in VALIDATION.iterdir() if path.is_dir() and list(path.rglob("TEST-*.xml"))]
-    require(bool(directories), "No saved 0.4.9 targeted test stages")
+    require(bool(directories), f"No saved {VERSION} targeted test stages")
     def stamp(path: Path) -> int:
         metadata = path / "stage.json"
         return metadata.stat().st_mtime_ns if metadata.is_file() else max(xml.stat().st_mtime_ns for xml in path.rglob("TEST-*.xml"))
@@ -255,9 +256,20 @@ def test_evidence(stage_order: list[str] | None) -> tuple[dict, dict[str, bytes]
     evidence = {}
     for directory in directories:
         side = "server" if directory.name.startswith("server") else "client" if directory.name.startswith("client") else ""
-        require(bool(side), f"Stage name needs client/server prefix: {directory.name}")
+        require(bool(side) or directory.name.startswith("integration"), f"Stage name needs client/server/integration prefix: {directory.name}")
+        metadata = directory / "stage.json"
+        require(metadata.is_file(), f"Current stage command proof missing: {directory.name}/stage.json")
+        stage_proof = json.loads(metadata.read_text(encoding="utf-8-sig"))
+        require(isinstance(stage_proof, dict) and stage_proof.get("version") == VERSION,
+                f"Stage proof is not for current {VERSION}: {directory.name}")
+        commands = successful_commands(stage_proof, f"Stage {directory.name}")
         suites = []
         for path in sorted(directory.rglob("TEST-*.xml")):
+            report_side = side
+            if not report_side:
+                prefix = path.relative_to(directory).parts[0]
+                report_side = "server" if prefix.startswith("server") else "client" if prefix.startswith("client") else ""
+            require(bool(report_side), f"Integration report must be under server/ or client/: {path.relative_to(VALIDATION)}")
             root = ET.parse(path).getroot()
             roots = [root] if root.tag == "testsuite" else root.findall("testsuite")
             require(bool(roots), f"Unknown test report structure: {path}")
@@ -268,18 +280,16 @@ def test_evidence(stage_order: list[str] | None) -> tuple[dict, dict[str, bytes]
                 require(counts["failures"] == sum(case.find("failure") is not None for case in cases)
                         and counts["errors"] == sum(case.find("error") is not None for case in cases)
                         and counts["skipped"] == sum(case.find("skipped") is not None for case in cases), f"Test outcomes/counts disagree: {path}")
-                suites.append({"suite": suite.attrib["name"], **counts, "sha256": RELEASE.digest(path)})
+                suites.append({"side": report_side, "suite": suite.attrib["name"], **counts, "sha256": RELEASE.digest(path)})
                 for case in cases:
                     passed = all(case.find(name) is None for name in ["failure", "error", "skipped"])
                     original_name = case.attrib["name"]
-                    original_key = (side, suite.attrib["name"], original_name)
+                    original_key = (report_side, suite.attrib["name"], original_name)
                     record = {"stage": directory.name, "passed": passed, "original_test_name": original_name}
                     latest[original_key] = record
             evidence[path.relative_to(VALIDATION).as_posix()] = path.read_bytes()
-        metadata = directory / "stage.json"
-        if metadata.is_file():
-            evidence[metadata.relative_to(VALIDATION).as_posix()] = metadata.read_bytes()
-        stages.append({"stage": directory.name, "side": side, "suites": suites})
+        evidence[metadata.relative_to(VALIDATION).as_posix()] = metadata.read_bytes()
+        stages.append({"stage": directory.name, "side": side or "integration", "commands": commands, "suites": suites})
     require({key[0] for key in latest} == {"client", "server"}, "Both current client/server targeted stages are required")
     failed = [dict(side=key[0], suite=key[1], name=key[2], **value) for key, value in latest.items() if not value["passed"]]
     require(not failed, f"Latest targeted outcomes must all pass: {failed}")
@@ -293,9 +303,9 @@ def test_evidence(stage_order: list[str] | None) -> tuple[dict, dict[str, bytes]
     evidence["summary.json"] = (json.dumps(summary, ensure_ascii=False, indent=2) + "\n").encode()
     evidence["fixtures/tools/package_current.py"] = Path(__file__).read_bytes()
     evidence["fixtures/tools/package_release.py"] = (PROJECT / "tools/package_release.py").read_bytes()
-    evidence["README.md"] = ("本包保存 0.4.9 两端本轮新增与受影响的定向单元检查与打包证据。"
+    evidence["README.md"] = (f"本包保存 {VERSION} 两端本轮新增与受影响的定向单元检查与打包证据。"
                              "summary.json 按 side/suite/name 取最后结果，早期报告原样保留；"
-                             "不复用 0.4.7、0.4.8 的检查数字或真实私人模型输入。"
+                             "不复用之前版本的检查数字或真实私人模型输入。"
                              "未复跑完整旧矩阵，未运行 Minecraft 或服务器实机复验；"
                              "没有 TPS、帧率或网络场景性能实测证明。"
                              "JAR、资源、许可和 ZIP 完整性检查不能代替实机验证。\n").encode()
@@ -307,7 +317,7 @@ def source_entries() -> dict[str, bytes]:
     for directory in ["src", "examples", "tools", "docs", "client"]:
         for path in files(PROJECT / directory):
             relative = path.relative_to(PROJECT)
-            if any(part.lower() in EXCLUDED_PARTS for part in relative.parts) or path.suffix.lower() in EXCLUDED_SUFFIXES:
+            if any(part.lower() in EXCLUDED_PARTS or part.lower().startswith("private-fixture") for part in relative.parts) or path.suffix.lower() in EXCLUDED_SUFFIXES:
                 continue
             if tuple(part.lower() for part in relative.parts[:2]) in {
                     ("client", "config"), ("client", "saves"), ("client", "resourcepacks"), ("client", "shaderpacks")}:
@@ -356,15 +366,27 @@ def installer_links(entries: dict[str, bytes]) -> None:
         entries[name] = link.sub(replace, data.decode("utf-8")).encode("utf-8")
 
 
+def successful_commands(proof: dict, context: str) -> list[dict]:
+    records = proof.get("commands", [])
+    require(isinstance(records, list) and bool(records), f"{context}: successful command proof required")
+    for record in records:
+        require(isinstance(record, dict) and record.get("exit_code") == 0, f"{context}: command failed or outcome absent")
+        command = record.get("command", "")
+        require((isinstance(command, str) and bool(command.strip()))
+                or (isinstance(command, list) and bool(command) and all(isinstance(value, str) and value for value in command)),
+                f"{context}: actual command missing")
+    return records
+
+
 def build_commands() -> dict:
     path = VALIDATION / "build-commands.json"
-    require(path.is_file(), "Root must save final Gradle/Maven command outcomes in validation-0.4.9/build-commands.json")
+    require(path.is_file(), f"Root must save final Gradle/Maven command outcomes in validation-{VERSION}/build-commands.json")
     proof = json.loads(path.read_text(encoding="utf-8-sig"))
-    records = proof.get("commands", []) if isinstance(proof, dict) else proof
-    require(isinstance(records, list) and len(records) >= 2, "Build command proof needs both sides")
+    require(isinstance(proof, dict) and proof.get("version") == VERSION, "Build command proof must identify the current release")
+    records = successful_commands(proof, "Final build")
+    require(len(records) >= 2, "Build command proof needs both sides")
     found = set()
     for record in records:
-        require(record.get("exit_code") == 0, "Compile/package command failed")
         command = record.get("command", "")
         if isinstance(command, list):
             command = " ".join(command)
@@ -384,7 +406,7 @@ def main() -> None:
     args = parser.parse_args()
     server_version = ET.parse(PROJECT / "pom.xml").findtext("m:version", namespaces=RELEASE.NAMESPACE)
     client_version = re.search(r"(?m)^version = '([^']+)'", (CLIENT / "build.gradle").read_text(encoding="utf-8")).group(1)
-    require(server_version == client_version == VERSION, "Current two-sided versions must be 0.4.9")
+    require(server_version == client_version == VERSION, f"Current two-sided versions must be {VERSION}")
     server = PROJECT / "target" / f"MEPlayerActions-{VERSION}.jar"
     client = CLIENT / "build/libs" / f"MEPlayerActions-Client-{VERSION}.jar"
     outputs = {"server_jar": DIST / server.name, "client_jar": DIST / client.name,
@@ -418,11 +440,11 @@ def main() -> None:
         if path.suffix == ".txt" or path.name == "NOTICE.md" or path.name.startswith("LICENSE"):
             client_install[path.relative_to(PROJECT).as_posix()] = path.read_bytes()
     delivery_note = (f"# MEPlayerActions {VERSION} 安装\n\n"
-                     "服务器插件与客户端 MOD 均为 0.4.9。服务器 JAR 放入 plugins/，客户端 JAR 放入 mods/；替换各自旧 JAR，保留其他插件、模组和已有配置。"
+                     f"服务器插件与客户端 MOD 均为 {VERSION}。服务器 JAR 放入 plugins/，客户端 JAR 放入 mods/；替换各自旧 JAR，保留其他插件、模组和已有配置。"
                      "首次安装可使用包内默认 config.yml；升级保留自己的配置，新 performance 字段缺失时自动采用默认值，勿直接覆盖整份配置。"
                      "客户端需 Minecraft 1.21.11 / Fabric / Java 21；服务器 ModelEngine 与 GSit 为可选接入。"
                      "仅私人分享无需 ModelEngine 或服务器资源包。使用服务器伪装时，示例蓝图由 ModelEngine 导入并生成原版资源，CraftEngine 继续负责原有资源包合并与下发。\n\n"
-                     "私人模型默认仅自己可见，多人共享需玩家明确开启及服务器协商、上传/观看权限；服务器伪装期间私人覆盖仍只本人可见。\n\n"
+                     "三条路径分别为本地私人外观、服务器中继的私人模型分享、服务器模型伪装。私人模型默认仅自己可见，多人共享需玩家明确开启及服务器协商、上传/观看权限；分享不创建 ME 伪装，未安装模组的玩家仍看见原版角色。服务器伪装期间私人覆盖仍只本人可见。服务器 private-models/ 属于私人运行时数据，不随源码或安装包分发。\n\n"
                      f"两端分阶段定向单元检查最后结果共 {tests['distinct_targeted_cases']} 项通过；编译与包内容校验通过。"
                      "本轮未运行完整旧矩阵或游戏/服务器实机复验；未实测 TPS、帧率或网络性能，画面与多人行为由用户测试。交付包不包含私人模型、源数据或用户配置。"
                      f"完整当前源码见 MEPlayerActions-{VERSION}-source.zip，证据见同版本 tests.zip/build.json。\n").encode("utf-8")
