@@ -11,6 +11,7 @@ public interface ServerBackend extends AutoCloseable {
     void start();
     String diagnosis();
     void status(CommandSender sender);
+    default void playerStatus(CommandSender sender, Player player) { status(sender); }
     void handleAction(Player player, String[] args);
     List<String> tabComplete(CommandSender sender, Command command, String alias, String[] args);
     void forget(Player player);

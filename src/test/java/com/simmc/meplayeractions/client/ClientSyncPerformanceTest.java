@@ -61,6 +61,23 @@ class ClientSyncPerformanceTest {
         assertEquals(1, queue.size()); assertEquals(0, sent.get());
         queue.drain(payload -> DeferredClientPackets.Result.SENT, 2, 4); assertEquals(1, sent.get());
     }
+    @Test void controlByteReservationIsReclaimedOnReplacementSuccessInvalidationCancellationAndClear() {
+        AtomicInteger reserved = new AtomicInteger(), failed = new AtomicInteger();
+        var queue = new DeferredClientPackets(bytes -> {
+            if (bytes > 5 - reserved.get()) return false;
+            reserved.addAndGet(bytes); return true;
+        }, bytes -> reserved.addAndGet(-bytes));
+        assertTrue(queue.add("first", new byte[3], 0, () -> true, () -> {}, failed::incrementAndGet));
+        assertFalse(queue.add("full", new byte[3], 0, () -> true, () -> {}, failed::incrementAndGet));
+        assertEquals(3, reserved.get()); assertEquals(1, failed.get());
+        assertTrue(queue.add("first", new byte[4], 0, () -> true, () -> {}, failed::incrementAndGet)); assertEquals(4, reserved.get());
+        queue.drain(bytes -> DeferredClientPackets.Result.DEFERRED, 1, 2); assertEquals(4, reserved.get());
+        queue.drain(bytes -> DeferredClientPackets.Result.SENT, 2, 2); assertEquals(0, reserved.get());
+        queue.add("invalid", new byte[2], 2, () -> false, () -> fail(), failed::incrementAndGet);
+        queue.drain(bytes -> { fail(); return DeferredClientPackets.Result.SENT; }, 3, 2); assertEquals(0, reserved.get());
+        queue.add("cancel", new byte[5], 3, () -> true, () -> {}, failed::incrementAndGet); queue.cancel("cancel"); queue.cancel("cancel"); assertEquals(0, reserved.get());
+        queue.add("clear", new byte[5], 3, () -> true, () -> {}, failed::incrementAndGet); queue.clear(); assertEquals(0, reserved.get());
+    }
     @Test void identityHeartbeatFragmentsKeepEveryBindingUnderBothSizeAndCountBudgets() {
         List<RenderLeases.Binding> bindings = new ArrayList<>();
         for (int id = 0; id < 150; id++) bindings.add(new RenderLeases.Binding(new UUID(0, id), new UUID(1, id), id % 2 == 0 ? "a".repeat(64) : ""));

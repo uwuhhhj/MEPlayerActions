@@ -37,13 +37,16 @@ final class YsmModelTemplates {
         return loaded;
     }
 
-    private static Model read(JsonObject raw) {
+    static Model read(JsonObject raw) {
+        canceled();
         YsmRuntime.Template runtime = YsmRuntime.Template.compile(raw);
         List<Clip> clips = new ArrayList<>();
         for (JsonElement element : raw.getAsJsonArray("animations")) {
+            canceled();
             JsonObject animation = element.getAsJsonObject();
             List<Bone> bones = new ArrayList<>();
             for (var entry : animation.getAsJsonObject("animators").entrySet()) {
+                canceled();
                 JsonObject animator = entry.getValue().getAsJsonObject();
                 if (!animator.get("type").getAsString().equals("bone")) continue;
                 List<Frame> frames = new ArrayList<>();
@@ -63,6 +66,29 @@ final class YsmModelTemplates {
         }
         return new Model(runtime, clips);
     }
+
+    /** Conservative retained syntax/descriptors allowance; source JSON and textures are discarded. */
+    static long retainedBytes(JsonObject raw) {
+        long bytes=4096;
+        for(JsonElement element:raw.getAsJsonArray("animations")) {
+            canceled();JsonObject animation=element.getAsJsonObject();bytes+=256+animation.get("name").getAsString().length()*2L;
+            for(var entry:animation.getAsJsonObject("animators").entrySet()) {
+                JsonObject animator=entry.getValue().getAsJsonObject();bytes+=256;
+                for(JsonElement key:animator.getAsJsonArray("keyframes")) {
+                    JsonObject frame=key.getAsJsonObject();bytes+=256;
+                    for(JsonElement data:frame.getAsJsonArray("data_points")) {
+                        JsonObject point=data.getAsJsonObject();
+                        for(String name:List.of("x","y","z","script"))if(point.has(name)) {
+                            String text=point.get(name).getAsString();bytes+=text.length()*2L;
+                            try{Double.parseDouble(text);}catch(NumberFormatException expression){bytes+=text.length()*64L;}
+                        }
+                    }
+                }
+            }
+        }
+        return bytes;
+    }
+    private static void canceled(){if(Thread.currentThread().isInterrupted())throw new java.util.concurrent.CancellationException("Template preparation canceled");}
 
     private static Point point(JsonObject point, String channel) {
         String fallback = channel.equals("scale") ? "1" : "0";

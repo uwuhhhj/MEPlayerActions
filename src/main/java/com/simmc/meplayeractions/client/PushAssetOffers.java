@@ -1,5 +1,6 @@
 package com.simmc.meplayeractions.client;
 
+import com.simmc.meplayeractions.protection.ResourceSettings;
 import java.util.*;
 import java.util.function.Predicate;
 
@@ -16,9 +17,17 @@ final class PushAssetOffers {
         Entry(Offer offer, long tick) { this.offer = offer; created = at = tick; }
     }
     private final Map<String, Entry> entries = new LinkedHashMap<>();
+    private int maxPending = MAX_PENDING, statusTicks = STATUS_TICKS, queueTicks = IDLE_TICKS,
+            idleTicks = IDLE_TICKS, totalTicks = ABSOLUTE_TICKS, renderTicks = RENDER_TICKS;
+
+    void configure(ResourceSettings.Network policy) {
+        maxPending = policy.transfersPerPlayer(); statusTicks = Math.min(STATUS_TICKS, policy.transferQueueTicks());
+        queueTicks = policy.transferQueueTicks(); idleTicks = policy.transferIdleTicks();
+        totalTicks = policy.transferTotalTicks(); renderTicks = policy.readyTicks();
+    }
 
     int pending() { return (int) entries.values().stream().filter(e -> e.phase != Phase.READY).count(); }
-    boolean canIssue(String hash) { return !entries.containsKey(hash) && entries.size() < MAX_RECORDS && pending() < MAX_PENDING; }
+    boolean canIssue(String hash) { return !entries.containsKey(hash) && entries.size() < MAX_RECORDS && pending() < maxPending; }
     Offer issue(UUID owner, UUID instance, String modelId, String hash, long tick) {
         if (!canIssue(hash)) return null;
         Offer offer = new Offer(UUID.randomUUID(), owner, instance, modelId, hash);
@@ -27,7 +36,7 @@ final class PushAssetOffers {
     Feedback feedback(UUID id, String hash, String status, long tick) {
         Entry entry = entries.get(hash);
         if (entry == null || !entry.offer.id().equals(id) || entry.phase != Phase.OFFERED
-                || distance(tick, entry.at) >= STATUS_TICKS) return Feedback.INVALID;
+                || distance(tick, entry.at) >= statusTicks) return Feedback.INVALID;
         Feedback result = switch (status) {
             case "cached" -> Feedback.CACHED;
             case "missing" -> Feedback.MISSING;
@@ -66,12 +75,12 @@ final class PushAssetOffers {
         while (iterator.hasNext()) {
             Entry entry = iterator.next(); String reason = null;
             if (!authorized.test(entry.offer)) reason = "asset_not_authorized";
-            else if (entry.phase != Phase.READY && distance(tick, entry.created) >= ABSOLUTE_TICKS) reason = "asset_offer_expired";
-            else if (entry.phase == Phase.OFFERED && distance(tick, entry.at) >= STATUS_TICKS) reason = "asset_offer_expired";
-            else if ((entry.phase == Phase.MISSING || entry.phase == Phase.TRANSFERRING)
-                    && distance(tick, entry.at) >= IDLE_TICKS) reason = "asset_transfer_timeout";
+            else if (entry.phase != Phase.READY && distance(tick, entry.created) >= totalTicks) reason = "asset_offer_expired";
+            else if (entry.phase == Phase.OFFERED && distance(tick, entry.at) >= statusTicks) reason = "asset_offer_expired";
+            else if (entry.phase == Phase.MISSING && distance(tick, entry.at) >= queueTicks) reason = "asset_queue_timeout";
+            else if (entry.phase == Phase.TRANSFERRING && distance(tick, entry.at) >= idleTicks) reason = "asset_transfer_timeout";
             else if ((entry.phase == Phase.DELIVERED || entry.phase == Phase.CACHED)
-                    && distance(tick, entry.at) >= RENDER_TICKS) reason = "asset_render_timeout";
+                    && distance(tick, entry.at) >= renderTicks) reason = "asset_render_timeout";
             if (reason != null) { iterator.remove(); cancelled.add(new Cancelled(entry.offer, reason)); }
         }
         return List.copyOf(cancelled);

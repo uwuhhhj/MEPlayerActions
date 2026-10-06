@@ -8,6 +8,15 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class CommandLayoutTest {
+    @Test void statusDefaultsToGlobalAndPersonalDiagnosticsRequireExplicitPlayer() {
+        assertArrayEquals(new String[]{"status"}, CommandLayout.normalize(new String[]{"status"}));
+        for (String section : CommandLayout.STATUS_SECTIONS)
+            assertArrayEquals(new String[]{"status", section}, CommandLayout.normalize(new String[]{"STATUS", section.toUpperCase()}));
+        assertArrayEquals(new String[]{"status", "player", "SomePlayer"}, CommandLayout.normalize(new String[]{"status", "PLAYER", "SomePlayer"}));
+        for (String[] args : List.of(new String[]{"status", "SomePlayer"}, new String[]{"status", "player"},
+                new String[]{"status", "tasks", "extra"}, new String[]{"status", "player", ""}, new String[]{"status", "player", "p", "extra"}))
+            assertThrows(IllegalArgumentException.class, () -> CommandLayout.normalize(args));
+    }
     @Test void descriptorRegistersOnlyTheNewRootWithoutLegacyAliases() {
         var descriptor = YamlConfiguration.loadConfiguration(new InputStreamReader(
                 getClass().getResourceAsStream("/plugin.yml"), StandardCharsets.UTF_8));

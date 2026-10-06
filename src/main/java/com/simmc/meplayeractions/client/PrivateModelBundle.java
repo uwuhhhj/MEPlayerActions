@@ -3,6 +3,7 @@ package com.simmc.meplayeractions.client;
 import com.google.gson.*;
 import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonToken;
+import com.simmc.meplayeractions.config.ModelComplexityLimits;
 import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.charset.*;
@@ -18,24 +19,34 @@ public final class PrivateModelBundle {
     private static final Set<String> EXTENSIONS = Set.of("json", "bbmodel", "png", "bmp", "jpg", "jpeg", "webp", "ogg", "molang");
     private PrivateModelBundle() {}
     public record Validated(String kind, String entry, int expandedBytes) {}
+    /** Strict pure preparation entry for server-native templates; callers retain no Bukkit objects. */
+    public static JsonObject validateModelJson(byte[] raw, ModelComplexityLimits limits) throws IOException {
+        JsonObject document=object(parseJson(raw,Math.min(MAX_BYTES,limits.maxExpandedBytes())));
+        new ModelComplexity(limits).document(document);return document;
+    }
 
     public static Validated validate(byte[] raw, String expectedKind) throws IOException {
+        return validate(raw, expectedKind, ModelComplexityLimits.defaults());
+    }
+    public static Validated validate(byte[] raw, String expectedKind, ModelComplexityLimits limits) throws IOException {
+        Objects.requireNonNull(limits);
         if (raw == null || raw.length < 22 || raw.length > MAX_BYTES) throw new IOException("bundle_size");
-        validateDirectory(raw);
+        validateDirectory(raw, limits);
         Map<String,byte[]> files = new LinkedHashMap<>(); Set<String> names = new HashSet<>();
         int expanded = 0, scanned = 0;
         try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(raw), StandardCharsets.UTF_8)) {
             ZipEntry entry;
             while ((entry = zip.getNextEntry()) != null) {
-                if (++scanned > MAX_ENTRIES) throw new IOException("bundle_entries");
+                interrupted();
+                if (++scanned > limits.maxArchiveEntries()) throw new IOException("bundle_entries");
                 String name = safePath(entry.getName(), entry.isDirectory());
                 if (!names.add(name.toLowerCase(Locale.ROOT))) throw new IOException("bundle_duplicate");
                 if (entry.isDirectory()) { readBounded(zip, 0); zip.closeEntry(); continue; }
                 String extension = name.substring(name.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
                 if (!EXTENSIONS.contains(extension)) throw new IOException("bundle_file_type");
-                int limit = name.equals("manifest.json") ? 4096 : MAX_BYTES - expanded;
+                int limit = name.equals("manifest.json") ? Math.min(4096, limits.maxExpandedBytes() - expanded) : limits.maxExpandedBytes() - expanded;
                 byte[] bytes = readBounded(zip, limit); expanded += bytes.length;
-                if (expanded > MAX_BYTES) throw new IOException("bundle_expanded_size");
+                if (expanded > limits.maxExpandedBytes()) throw new IOException("bundle_expanded_size");
                 files.put(name, bytes); zip.closeEntry();
             }
         } catch (IllegalArgumentException malformed) { throw new IOException("bundle_zip", malformed); }
@@ -49,22 +60,26 @@ public final class PrivateModelBundle {
         if (kind.equals("bbmodel") && !path.equals("model.bbmodel")
                 || kind.equals("ysm") && !path.equals("ysm.json")) throw new IOException("bundle_entry");
         long texturePixels=0;
+        ModelComplexity complexity = new ModelComplexity(limits);
+        Map<String, JsonElement> documents = new HashMap<>();
         for (var file : files.entrySet()) {
+            interrupted();
             String name = file.getKey().toLowerCase(Locale.ROOT); byte[] bytes = file.getValue();
             if (name.endsWith(".json") || name.endsWith(".bbmodel")) {
                 JsonElement document = parseJson(bytes, MAX_BYTES);
                 if (!document.isJsonObject() && !document.isJsonArray()) throw new IOException("bundle_json_root");
+                complexity.document(document); documents.put(file.getKey(), document);
                 rejectExternalReferences(document);
             } else if (List.of(".png",".bmp",".jpg",".jpeg",".webp").stream().anyMatch(name::endsWith)) {
                 texturePixels+=PrivateTextureHeaders.pixels(name,bytes);
-                if(texturePixels>16_777_216)throw new IOException("bundle_texture_budget");
+                if(texturePixels>limits.maxTexturePixels())throw new IOException("bundle_texture_budget");
             }
-            else if (name.endsWith(".molang")) utf8(bytes);
+            else if (name.endsWith(".molang")) complexity.script(utf8(bytes));
             else if (name.endsWith(".ogg") && (bytes.length < 4 || bytes[0] != 'O' || bytes[1] != 'g' || bytes[2] != 'g' || bytes[3] != 'S'))
                 throw new IOException("bundle_audio");
         }
         if (kind.equals("bbmodel")) {
-            JsonObject model = object(parseJson(files.get(path), MAX_BYTES));
+            JsonObject model = object(documents.get(path));
             if (!model.has("elements") || !model.get("elements").isJsonArray() || model.getAsJsonArray("elements").size() > 4096
                     || !model.has("textures") || !model.get("textures").isJsonArray() || model.getAsJsonArray("textures").isEmpty()
                     || model.getAsJsonArray("textures").size() > 16 || !model.has("outliner") || !model.get("outliner").isJsonArray())
@@ -81,7 +96,7 @@ public final class PrivateModelBundle {
                     if(!source.startsWith(prefix))throw new IOException("bundle_bbmodel_texture");
                     try{texturePixels+=PrivateTextureHeaders.pixels("texture.png",Base64.getDecoder().decode(source.substring(prefix.length())));}
                     catch(IllegalArgumentException malformed){throw new IOException("bundle_bbmodel_texture",malformed);}
-                    if(texturePixels>16_777_216)throw new IOException("bundle_texture_budget");
+                    if(texturePixels>limits.maxTexturePixels())throw new IOException("bundle_texture_budget");
                 } else if(!source.isEmpty()) {
                     // Never treat a file/source string as a server filesystem or network lookup.
                     safePath(source.replace('\\','/'),false);
@@ -89,7 +104,7 @@ public final class PrivateModelBundle {
                 String companion=pickBbmodelCompanion(texture,companions);
                 if(companion==null&&!embedded)throw new IOException("bundle_bbmodel_texture");
             }
-        } else object(parseJson(files.get(path), MAX_BYTES));
+        } else object(documents.get(path));
         return new Validated(kind, path, expanded);
     }
 
@@ -141,23 +156,24 @@ public final class PrivateModelBundle {
     private static byte[] readBounded(InputStream in, int limit) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream(); byte[] buffer = new byte[8192]; int count;
         while ((count = in.read(buffer)) != -1) {
+            interrupted();
             if (count > limit - out.size()) throw new IOException("bundle_expanded_size");
             out.write(buffer, 0, count);
         }
         return out.toByteArray();
     }
     /** Central directory flags also reject symlinks, encryption, split archives and ZIP64. */
-    private static void validateDirectory(byte[] data) throws IOException {
+    private static void validateDirectory(byte[] data, ModelComplexityLimits limits) throws IOException {
         int end = -1;
         for (int at = data.length - 22; at >= Math.max(0, data.length - 65557); at--)
             if (u32(data, at) == 0x06054b50L && at + 22 + u16(data, at + 20) == data.length) { end = at; break; }
         if (end < 0 || u16(data,end+4) != 0 || u16(data,end+6) != 0 || u16(data,end+8) != u16(data,end+10)) throw new IOException("bundle_zip");
         int count = u16(data,end+10); long size = u32(data,end+12), start = u32(data,end+16);
-        if (count < 1 || count > MAX_ENTRIES || start + size != end || start > data.length) throw new IOException("bundle_zip");
+        if (count < 1 || count > limits.maxArchiveEntries() || start + size != end || start > data.length) throw new IOException("bundle_zip");
         int at = (int)start;
         for (int i=0;i<count;i++) {
             if (at + 46 > end || u32(data,at) != 0x02014b50L || (u16(data,at+8)&1) != 0
-                    || u16(data,at+34) != 0 || u32(data,at+20) == 0xffffffffL || u32(data,at+24) > MAX_BYTES
+                    || u16(data,at+34) != 0 || u32(data,at+20) == 0xffffffffL || u32(data,at+24) > limits.maxExpandedBytes()
                     || ((u32(data,at+38) >>> 16) & 0xf000) == 0xa000) throw new IOException("bundle_zip");
             at += 46 + u16(data,at+28) + u16(data,at+30) + u16(data,at+32);
             if (at > end) throw new IOException("bundle_zip");
@@ -181,6 +197,7 @@ public final class PrivateModelBundle {
         } catch (IllegalStateException | NumberFormatException malformed) { throw new IOException("invalid_json",malformed); }
     }
     private static JsonElement readJson(JsonReader reader,int depth,int[] nodes) throws IOException {
+        if ((nodes[0] & 1023) == 0) interrupted();
         if (depth > 64 || ++nodes[0] > 200_000) throw new IOException("json_structure_limit");
         return switch (reader.peek()) {
             case BEGIN_OBJECT -> {
@@ -224,4 +241,5 @@ public final class PrivateModelBundle {
             rejectExternalReferences(field.getValue());
         } else if(value.isJsonArray()) for(JsonElement child:value.getAsJsonArray())rejectExternalReferences(child);
     }
+    private static void interrupted() throws IOException { if (Thread.currentThread().isInterrupted()) throw new IOException("task_cancelled"); }
 }

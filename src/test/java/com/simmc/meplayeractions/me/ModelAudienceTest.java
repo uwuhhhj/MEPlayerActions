@@ -73,6 +73,22 @@ class ModelAudienceTest {
             return new ModelAudience(new DisguiseOptions("ysm_02_jk", 1, true, 2, self, distance, cap, List.of()),
                     id -> { lookups++; return people.get(id); }, () -> tick, PerformanceSettings.defaults());
         }
+        ModelAudience guarded(ModelAudience.Guard guard) {
+            people.put(owner.id, owner.player);
+            return new ModelAudience(new DisguiseOptions("ysm_02_jk", 1, true, 2, false, 8, 10, List.of()),
+                    id -> { lookups++; return people.get(id); }, () -> tick, PerformanceSettings.defaults(), guard);
+        }
+    }
+    private static final class Budget implements ModelAudience.Guard {
+        boolean discovery = true;
+        int maximum = 1, released;
+        Set<UUID> granted = Set.of();
+        public boolean discover() { return discovery; }
+        public Set<UUID> admit(UUID owner, Collection<UUID> requested) {
+            granted = requested.stream().limit(maximum).collect(java.util.stream.Collectors.toSet());
+            return granted;
+        }
+        public void release(UUID owner) { released++; granted = Set.of(); }
     }
     @Test void strictThreeDimensionalBoundaryAndNearestCapApplyToActualTracker() {
         var s = new Scene(); var near = s.viewer(1, 0, 0); var second = s.viewer(0, 2, 0);
@@ -229,5 +245,39 @@ class ModelAudienceTest {
                 .map(AudienceSelector.Candidate::id).distinct().limit(10).collect(java.util.stream.Collectors.toSet());
         assertEquals(expected, AudienceSelector.select(owner, false, 8, 10, candidates));
         assertEquals(Set.of(owner), AudienceSelector.select(owner, true, 8, 0, candidates));
+    }
+
+    @Test void sharedBudgetFiltersActualMePairingsBeforeModelPublicationAndReleasesOnClose() {
+        var s = new Scene(); var near = s.viewer(1, 0, 0); var far = s.viewer(2, 0, 0);
+        s.tracker.addForcedPairing(far.id);
+        var budget = new Budget(); var audience = s.guarded(budget);
+        audience.update(s.owner.player, s.tracker);
+        assertEquals(Set.of(near.id), s.tracker.getTrackedPlayer());
+        assertEquals(1, audience.viewers()); assertEquals(Set.of(near.id), budget.granted);
+        audience.close(s.tracker, s.owner.id);
+        assertTrue(budget.granted.isEmpty()); assertEquals(1, budget.released);
+        assertTrue(s.tracker.paired.contains(far.id), "Only our filtering is restored during cleanup");
+    }
+
+    @Test void protectedDiscoveryStillRevokesOfflineOrVanishedViewersAtTheSafetyDeadline() {
+        var s = new Scene(new UUID(0, 40)); var near = s.viewer(1, 0, 0);
+        var budget = new Budget(); var audience = s.guarded(budget);
+        audience.update(s.owner.player, s.tracker); budget.discovery = false;
+        var entering = s.viewer(.5, 0, 0); near.visible = false; s.tick = 40;
+        audience.update(s.owner.player, s.tracker);
+        assertFalse(audience.allows(near.id)); assertFalse(audience.allows(entering.id));
+        assertTrue(budget.granted.isEmpty());
+        budget.discovery = true; s.tick = 41; audience.update(s.owner.player, s.tracker);
+        assertEquals(Set.of(entering.id), s.tracker.getTrackedPlayer());
+    }
+
+    @Test void localTakeoverRetainsItsGlobalRelationshipWhileMeDisplayIsSuppressed() {
+        var s = new Scene(new UUID(0, 40)); var viewer = s.viewer(1, 0, 0);
+        var budget = new Budget(); var audience = s.guarded(budget);
+        audience.update(s.owner.player, s.tracker); audience.localRendering(viewer.id, true); s.tick = 1;
+        audience.update(s.owner.player, s.tracker);
+        assertTrue(s.tracker.getTrackedPlayer().isEmpty());
+        assertEquals(Set.of(viewer.id), budget.granted); assertTrue(audience.allows(viewer.id));
+        audience.close(s.tracker, s.owner.id); assertTrue(budget.granted.isEmpty());
     }
 }

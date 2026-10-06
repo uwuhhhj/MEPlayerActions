@@ -14,10 +14,13 @@ final class PrivateAudienceCache {
         if(this.refreshTicks!=refreshTicks){this.refreshTicks=refreshTicks;clear();}
     }
     boolean refreshIfDue(UUID owner,UUID generation,long tick,Supplier<Set<UUID>> discover) {
-        Entry entry=entries.get(owner);
-        if(entry!=null && entry.generation.equals(generation) && distance(tick,entry.refreshed)<entry.delay)return false;
+        if(!due(owner,generation,tick))return false;
         Set<UUID> viewers=Collections.unmodifiableSet(new LinkedHashSet<>(discover.get()));
         replace(owner,new Entry(generation,viewers,tick,nextDelay(owner,tick)));return true;
+    }
+    boolean due(UUID owner,UUID generation,long tick) {
+        Entry entry=entries.get(owner);
+        return entry==null||!entry.generation.equals(generation)||distance(tick,entry.refreshed)>=entry.delay;
     }
     Set<UUID> viewers(UUID owner,UUID generation) {
         Entry entry=entries.get(owner);return entry!=null && entry.generation.equals(generation)?entry.viewers:Set.of();
@@ -25,6 +28,11 @@ final class PrivateAudienceCache {
     boolean contains(UUID owner,UUID generation,UUID viewer){return viewers(owner,generation).contains(viewer);}
     void invalidate(UUID owner,UUID generation,long tick){replace(owner,new Entry(generation,Set.of(),tick,nextDelay(owner,tick)));}
     void remove(UUID owner){Entry old=entries.remove(owner);if(old!=null)unlink(owner,old.viewers);}
+    void remove(UUID owner,UUID generation,UUID viewer) {
+        Entry entry=entries.get(owner);if(entry==null||!entry.generation.equals(generation)||!entry.viewers.contains(viewer))return;
+        Set<UUID> retained=new LinkedHashSet<>(entry.viewers);retained.remove(viewer);
+        replace(owner,new Entry(generation,Collections.unmodifiableSet(retained),entry.refreshed,entry.delay));
+    }
     void removeViewer(UUID viewer) {
         Set<UUID> owners=ownersByViewer.remove(viewer);if(owners==null)return;
         for(UUID owner:owners) {

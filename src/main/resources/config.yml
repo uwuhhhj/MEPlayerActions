@@ -1,4 +1,4 @@
-config-version: 3
+config-version: 4
 
 models:
   default: ysm_01_jk
@@ -25,6 +25,78 @@ performance:
   validation-ticks: 20
   # 原生 /meg 伪装的自动接管轮次，范围 20–100 tick；MPA 指令仍立即接管。
   adoption-scan-ticks: 100
+
+# 化妆资源可排队或拒绝，避免与正常游戏争抢资源。所有数值都有硬上限校验。
+# 省略新键时使用以下默认值；升级时保留现有配置，按需添加此节。
+resource-protection:
+  enabled: true
+  tasks:
+    worker-threads: 2
+    queue-capacity: 32
+    jobs-per-player: 4
+    max-reserved-bytes: 134217728
+    per-player-reserved-bytes: 67108864
+    pending-completions: 64
+    max-pending-completion-bytes: 134217728
+    callbacks-per-tick: 8
+    queue-timeout-ticks: 600
+    task-idle-ticks: 600
+    task-timeout-ticks: 2400
+  network:
+    global-upload-bytes-per-second: 4194304
+    global-download-bytes-per-second: 8388608
+    upload-bytes-per-second: 262144
+    download-bytes-per-second: 2097152
+    asset-download-bytes-per-second: 524288
+    global-packets-per-second: 4096
+    packets-per-second: 48
+    burst-bytes: 8388608
+    bytes-per-tick: 524288
+    asset-bytes-per-tick: 262144
+    global-transfers: 32
+    transfers-per-player: 2
+    waiting-transfers: 128
+    max-queued-outgoing-bytes: 16777216
+    transfer-queue-ticks: 600
+    transfer-idle-ticks: 300
+    transfer-total-ticks: 2400
+    ready-ticks: 300
+  protection:
+    throttled-tps: 18.0
+    protected-tps: 15.0
+    emergency-tps: 10.0
+    throttled-mspt: 55.0
+    protected-mspt: 75.0
+    emergency-mspt: 150.0
+    recovery-tps: 19.0
+    recovery-mspt: 45.0
+    recovery-ticks: 600
+    main-budget-millis: 3.0
+    main-work-per-tick: 64
+  models:
+    max-disguises: 256
+    max-publications: 256
+    max-relations: 4096
+    max-models-per-viewer: 64
+    new-disguises-per-second: 20
+    disguise-cooldown-ticks: 20
+    # EMERGENCY 每 tick 最多清理本插件创建的实例；0 表示不自动清理。
+    emergency-removals-per-tick: 2
+    max-asset-cache-bytes: 134217728
+    max-asset-cache-models: 512
+  disk:
+    max-temporary-bytes: 268435456
+    min-free-bytes: 536870912
+  complexity:
+    max-bones: 4096
+    max-animations: 1024
+    max-keyframes: 65536
+    max-expressions: 32768
+    max-expression-chars: 2097152
+    max-json-nodes: 200000
+    max-archive-entries: 256
+    max-expanded-bytes: 8388608
+    max-texture-pixels: 16777216
 
 controller:
   # 1 tick = 50 ms（20 TPS）。采样间隔越大，姿态识别延迟越高。

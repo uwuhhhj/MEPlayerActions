@@ -22,6 +22,7 @@ class PrivateModelProtocolTest {
     @Test void handshakeRequiresTheExactIndependentCapabilityAndNeverAllowsAssetSelection() throws IOException {
         assertEquals("hello",decode("{\"protocol\":1,\"type\":\"hello\",\"capabilities\":[\"private_models_v1\"]}").get("type").getAsString());
         assertEquals(2,decode("{\"protocol\":1,\"type\":\"hello\",\"capabilities\":[\"private_models_v1\",\"private_upload_catalog_v1\"]}").getAsJsonArray("capabilities").size());
+        assertEquals(3,decode("{\"protocol\":1,\"type\":\"hello\",\"capabilities\":[\"private_models_v1\",\"private_upload_catalog_v1\",\"private_upload_credit_v1\"]}").getAsJsonArray("capabilities").size());
         for(String invalid:List.of("{\"protocol\":1,\"type\":\"hello\",\"capabilities\":[]}",
                 "{\"protocol\":1,\"type\":\"hello\",\"capabilities\":[\"private_models_v1\",\"private_models_v1\"]}",
                 "{\"protocol\":1,\"type\":\"hello\",\"capabilities\":[\"private_upload_catalog_v1\"]}",

@@ -3,6 +3,8 @@ package com.simmc.meplayeractions;
 import com.simmc.meplayeractions.command.CommandLayout;
 import com.simmc.meplayeractions.server.PrivateOnlyBackend;
 import com.simmc.meplayeractions.server.ServerBackend;
+import com.simmc.meplayeractions.protection.ResourceProtection;
+import com.simmc.meplayeractions.protection.ResourceSettings;
 import org.bukkit.Bukkit;
 import org.bukkit.command.*;
 import org.bukkit.configuration.file.FileConfiguration;
@@ -20,6 +22,11 @@ import java.util.Objects;
 /** Pure Bukkit entry point: optional ModelEngine signatures never participate in listener scanning. */
 public final class MEPlayerActionsPlugin extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
     private ServerBackend backend;
+    private ResourceProtection resources;
+
+    public ResourceProtection resources() {
+        return Objects.requireNonNull(resources, "资源保护运行时未启动");
+    }
 
     @Override public void onEnable() {
         if (!Bukkit.getBukkitVersion().startsWith("1.21.11-")) {
@@ -27,7 +34,11 @@ public final class MEPlayerActionsPlugin extends JavaPlugin implements Listener,
             Bukkit.getPluginManager().disablePlugin(this); return;
         }
         saveDefaultConfig();
-        try { startBackend(prepareBackend()); }
+        try {
+            resources = new ResourceProtection(this, ResourceSettings.fromConfiguration(getConfig()));
+            resources.start();
+            startBackend(prepareBackend());
+        }
         catch (RuntimeException | LinkageError failure) {
             shutdown();
             getLogger().severe("启动失败：" + failure);
@@ -85,6 +96,8 @@ public final class MEPlayerActionsPlugin extends JavaPlugin implements Listener,
             try { old.close(); }
             catch (RuntimeException | LinkageError failure) { getLogger().warning("后端清理失败：" + failure); }
         }
+        ResourceProtection protection = resources; resources = null;
+        if (protection != null) protection.close();
     }
     @Override public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         String[] normalized;
@@ -94,24 +107,48 @@ public final class MEPlayerActionsPlugin extends JavaPlugin implements Listener,
             if (!sender.hasPermission("mact.admin")) { message(sender, "缺少权限：mact.admin"); return true; }
             try {
                 reloadConfig();
+                ResourceSettings resourceSettings = ResourceSettings.fromConfiguration(getConfig());
                 ServerBackend next = prepareBackend(); // Validate before releasing the active mode.
-                shutdown(); startBackend(next);
+                shutdown();
+                resources = new ResourceProtection(this, resourceSettings); resources.start();
+                startBackend(next);
                 message(sender, "配置已重载，旧伪装和私人共享会话已清理；" + backend.diagnosis() + "。客户端将重新协商共享。");
             } catch (RuntimeException | LinkageError failure) { message(sender, "重载失败：" + failure.getMessage()); }
             return true;
         }
-        if (sender instanceof Player player) { handleAction(player, args); return true; }
         if (normalized[0].equals("status")) {
-            if (!sender.hasPermission("mact.debug")) message(sender, "缺少权限：mact.debug");
-            else if (backend != null) backend.status(sender);
-        } else message(sender, "玩家使用 " + CommandLayout.PREFIX + "；控制台可用 status 查看后端与私人同步状态，reload 重载配置。");
+            try { status(sender, normalized); }
+            catch (IllegalArgumentException | IllegalStateException failure) { message(sender, failure.getMessage()); }
+            return true;
+        }
+        if (sender instanceof Player player) { handleAction(player, args); return true; }
+        else {
+            message(sender, "玩家使用 " + CommandLayout.PREFIX + "；控制台可用 status 查看全局资源与保护状态，reload 重载配置。");
+        }
         return true;
+    }
+    public void status(CommandSender sender, String[] args) {
+        permission(sender, "mact.debug");
+        String[] normalized = CommandLayout.normalize(args);
+        if (backend == null || resources == null) throw new IllegalStateException("插件后端未启动");
+        if (normalized.length == 3) {
+            Player target = Bukkit.getPlayerExact(normalized[2]);
+            if (target == null) throw new IllegalArgumentException("玩家不在线：" + normalized[2]);
+            backend.playerStatus(sender, target); return;
+        }
+        String section = normalized.length == 1 ? "global" : normalized[1];
+        if (section.equals("global")) {
+            message(sender, "MEPlayerActions " + getDescription().getVersion() + " 全局诊断");
+            backend.status(sender);
+        }
+        resources.statusLines(section).forEach(line -> message(sender, line));
     }
     /** Kept as the stable callback for ActionMenu and the authorized client-action bridge. */
     public void handleAction(Player player, String[] args) {
         try {
             permission(player, "mact.use");
             if (backend == null) throw new IllegalStateException("插件后端未启动");
+            if (args.length > 0 && args[0].equalsIgnoreCase("status")) { status(player, args); return; }
             backend.handleAction(player, args);
         } catch (IllegalArgumentException | IllegalStateException failure) { message(player, Objects.toString(failure.getMessage(), "动作失败")); }
         catch (RuntimeException failure) {
@@ -137,7 +174,19 @@ public final class MEPlayerActionsPlugin extends JavaPlugin implements Listener,
     }
     public static void message(CommandSender sender, String text) { sender.sendMessage("§b[动作] §f" + text); }
     @Override public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
+        if (args.length >= 2 && args[0].equalsIgnoreCase("status")) {
+            if (!sender.hasPermission("mact.debug")) return List.of();
+            String prefix = args[args.length - 1].toLowerCase(Locale.ROOT);
+            if (args.length == 2) return java.util.stream.Stream.concat(CommandLayout.STATUS_SECTIONS.stream(), java.util.stream.Stream.of("player"))
+                    .filter(value -> value.startsWith(prefix)).toList();
+            if (args.length == 3 && args[1].equalsIgnoreCase("player")) return Bukkit.getOnlinePlayers().stream()
+                    .map(Player::getName).filter(value -> value.toLowerCase(Locale.ROOT).startsWith(prefix)).sorted().toList();
+            return List.of();
+        }
         return backend == null ? List.of() : backend.tabComplete(sender, command, alias, args);
     }
-    @EventHandler public void quit(PlayerQuitEvent event) { if (backend != null) backend.forget(event.getPlayer()); }
+    @EventHandler public void quit(PlayerQuitEvent event) {
+        try { if (backend != null) backend.forget(event.getPlayer()); }
+        finally { if (resources != null) resources.cancelOwner(event.getPlayer().getUniqueId()); }
+    }
 }

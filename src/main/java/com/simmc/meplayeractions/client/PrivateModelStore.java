@@ -1,6 +1,8 @@
 package com.simmc.meplayeractions.client;
 
 import org.bukkit.configuration.ConfigurationSection;
+import com.simmc.meplayeractions.protection.ResourceProtection;
+import com.simmc.meplayeractions.protection.ResourceError;
 import com.google.gson.Strictness;
 import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonToken;
@@ -27,9 +29,13 @@ public final class PrivateModelStore {
     private static final long MAX_VALIDATION_BYTES_PER_REFRESH=16L*1024*1024;
     private final Path directory;
     private final Settings settings;
+    private final ResourceProtection resources;
     private final Map<Path,VerifiedMetadata> verified=new HashMap<>();
     private final Map<Path,ValidatedLoad> validatedLoads=new HashMap<>();
     private volatile CatalogSnapshot catalog=new CatalogSnapshot(0,Map.of());
+    private long cacheHits,cacheMisses;
+    private volatile Statistics statistics=new Statistics(0,0,0,0);
+    public record Statistics(long bytes,int models,long hits,long misses) {}
 
     /** Receipt metadata is not a publication and never grants another owner access to this bundle. */
     public record UploadedModel(String sourceId,String hash,String kind,int bytes) {}
@@ -57,10 +63,16 @@ public final class PrivateModelStore {
         }
     }
     public PrivateModelStore(Path directory,Settings settings) {
+        this(directory,settings,null);
+    }
+    public PrivateModelStore(Path directory,Settings settings,ResourceProtection resources) {
         this.directory=Objects.requireNonNull(directory).toAbsolutePath().normalize();this.settings=Objects.requireNonNull(settings);
+        this.resources=resources;
     }
     public boolean enabled(){return settings.enabled();}
     public CatalogSnapshot snapshot(){return catalog;}
+    /** Cached counters only; status never scans or waits for the storage worker monitor. */
+    public Statistics statistics(){return statistics;}
     public List<UploadedModel> listUploaded(UUID owner){return catalog.models(owner);}
 
     /** Matches the current local model identifier contract without treating an identifier as a disk path. */
@@ -84,25 +96,23 @@ public final class PrivateModelStore {
     /** An owner can only reuse bytes that were previously stored under that owner's UUID. */
     synchronized byte[] load(UUID owner,String hash,String kind,int expectedBytes) throws IOException {
         Path path=path(owner,hash);
+        cacheMisses++;statistics=new Statistics(statistics.bytes,statistics.models,cacheHits,cacheMisses);
         if(!enabled() || !Files.exists(directory,LinkOption.NOFOLLOW_LINKS))return null;
         requireDirectory();
         List<Entry> entries=entries();trimToLimits(entries);publishVerified(entries);
         if(!Files.isRegularFile(path,LinkOption.NOFOLLOW_LINKS) || Files.size(path)!=expectedBytes || expectedBytes>PrivateModelBundle.MAX_BYTES)return null;
-        byte[] bytes=new byte[expectedBytes];
-        try(var input=Files.newInputStream(path,StandardOpenOption.READ,LinkOption.NOFOLLOW_LINKS)) {
-            if(input.readNBytes(bytes,0,bytes.length)!=bytes.length || input.read()!=-1)return null;
-        }
+        ResourceProtection.checkCancelled();byte[] bytes=readBundle(path,expectedBytes);
         try {
             if(!PrivateModelBundle.hash(bytes).equals(hash))throw new IOException("cache_hash");
-            PrivateModelBundle.validate(bytes,kind);
-        }catch(IOException | RuntimeException invalid){deleteEntry(path);publishVerified(entries());return null;}
+            validateBundle(bytes,kind);
+        }catch(IOException | RuntimeException invalid){ResourceProtection.checkCancelled();deleteEntry(path);publishVerified(entries());return null;}
         Files.setAttribute(path,"basic:lastModifiedTime",FileTime.fromMillis(System.currentTimeMillis()),LinkOption.NOFOLLOW_LINKS);
         Fingerprint identity=fingerprint(path);
         validatedLoads.put(path,new ValidatedLoad(hash,kind,expectedBytes,identity));
         VerifiedMetadata metadata=verified.get(path);
         if(metadata!=null && metadata.model.hash().equals(hash) && metadata.model.kind().equals(kind))
             verified.put(path,new VerifiedMetadata(metadata.model,identity,metadata.sidecar));
-        publishVerified(entries());
+        cacheMisses--;cacheHits++;publishVerified(entries());
         return bytes;
     }
     /** Only the relay's successful whole-bundle validator may call this method. */
@@ -251,16 +261,16 @@ public final class PrivateModelStore {
             if(previous!=null && previous.bundle.equals(bundleIdentity) && previous.sidecar.equals(metadataIdentity))continue;
             verified.remove(path);
             UploadedModel model;
-            try{model=readMetadata(entry,sidecar);}catch(IOException | RuntimeException invalid){deleteMetadata(path);continue;}
+            try{model=readMetadata(entry,sidecar);}catch(IOException | RuntimeException invalid){ResourceProtection.checkCancelled();deleteMetadata(path);continue;}
             if(validations>=MAX_VALIDATIONS_PER_REFRESH || validationBytes+entry.bytes>MAX_VALIDATION_BYTES_PER_REFRESH)continue;
             validations++;validationBytes+=entry.bytes;
             try {
                 byte[] bytes=readBundle(path,model.bytes());
                 if(!PrivateModelBundle.hash(bytes).equals(model.hash()))throw new IOException("cache_hash");
-                PrivateModelBundle.validate(bytes,model.kind());
+                ResourceProtection.checkCancelled();validateBundle(bytes,model.kind());
                 if(!bundleIdentity.equals(fingerprint(path)) || !metadataIdentity.equals(fingerprint(sidecar)))continue;
                 verified.put(path,new VerifiedMetadata(model,bundleIdentity,metadataIdentity));
-            }catch(IOException | RuntimeException invalid){deleteEntry(path);}
+            }catch(IOException | RuntimeException invalid){ResourceProtection.checkCancelled();deleteEntry(path);}
         }
         verified.keySet().retainAll(present);validatedLoads.keySet().retainAll(present);publishVerified(entries);
     }
@@ -316,20 +326,35 @@ public final class PrivateModelStore {
         if(bytes.length>MAX_METADATA_BYTES)throw new IOException("cache_metadata_size");return bytes;
     }
     private static byte[] readBundle(Path path,int expectedBytes) throws IOException {
+        ResourceProtection.checkCancelled();
         byte[] bytes=new byte[expectedBytes];
         try(var input=Files.newInputStream(path,StandardOpenOption.READ,LinkOption.NOFOLLOW_LINKS)) {
-            if(input.readNBytes(bytes,0,bytes.length)!=bytes.length || input.read()!=-1)throw new IOException("cache_size");
+            int offset=0;while(offset<bytes.length) {
+                ResourceProtection.checkCancelled();int count=input.read(bytes,offset,Math.min(64*1024,bytes.length-offset));
+                if(count<0)throw new IOException("cache_size");offset+=count;ResourceProtection.progress();
+            }
+            if(input.read()!=-1)throw new IOException("cache_size");
         }
         return bytes;
     }
+    private void validateBundle(byte[] bytes,String kind) throws IOException {
+        if(resources==null)PrivateModelBundle.validate(bytes,kind);else PrivateModelBundle.validate(bytes,kind,resources.complexityLimits());
+    }
     private void atomicWrite(Path target,byte[] bytes,String prefix) throws IOException {
         if(Files.exists(target,LinkOption.NOFOLLOW_LINKS) && !Files.isRegularFile(target,LinkOption.NOFOLLOW_LINKS))throw new IOException("cache_file");
-        Path temporary=Files.createTempFile(directory,prefix,".tmp");
+        ResourceProtection.checkCancelled();
+        ResourceError rejection=resources==null?null:resources.reserveTemporary(null,bytes.length,directory);
+        if(rejection!=null)throw new IOException(rejection.code());
+        Path temporary=null;
         try {
-            Files.write(temporary,bytes,StandardOpenOption.TRUNCATE_EXISTING);
+            temporary=Files.createTempFile(directory,prefix,".tmp");
+            try(var output=Files.newOutputStream(temporary,StandardOpenOption.TRUNCATE_EXISTING)) {
+                for(int offset=0;offset<bytes.length;offset+=64*1024){ResourceProtection.checkCancelled();output.write(bytes,offset,Math.min(64*1024,bytes.length-offset));ResourceProtection.progress();}
+            }
+            ResourceProtection.checkCancelled();
             try{Files.move(temporary,target,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);}
             catch(AtomicMoveNotSupportedException unsupported){Files.move(temporary,target,StandardCopyOption.REPLACE_EXISTING);}
-        }finally{Files.deleteIfExists(temporary);}
+        }finally{try{if(temporary!=null)Files.deleteIfExists(temporary);}finally{if(resources!=null)resources.releaseTemporary(null,bytes.length);}}
     }
     private Path metadataPath(Path bundle){return directory.resolve(bundle.getFileName().toString().replace(".zip",".meta.json"));}
     private void deleteMetadata(Path bundle) throws IOException {
@@ -356,6 +381,7 @@ public final class PrivateModelStore {
         try(DirectoryStream<Path> stream=Files.newDirectoryStream(directory)) {
             int scanned=0;
             for(Path path:stream) {
+                ResourceProtection.checkCancelled();
                 // A manually polluted directory must not turn a client upload into unbounded I/O.
                 if(++scanned>MAX_SCANNED_FILES)throw new IOException("cache_directory_limit");
                 String name=path.getFileName().toString();
@@ -369,7 +395,8 @@ public final class PrivateModelStore {
                 entries.add(new Entry(path,UUID.fromString(name.substring(0,36)),identity.bytes,identity.modified.toMillis(),identity));
             }
         }
-        entries.sort(Comparator.comparingLong(Entry::accessed).thenComparing(entry->entry.path.toString()));return entries;
+        entries.sort(Comparator.comparingLong(Entry::accessed).thenComparing(entry->entry.path.toString()));
+        statistics=new Statistics(entries.stream().mapToLong(Entry::bytes).sum(),entries.size(),cacheHits,cacheMisses);return entries;
     }
     private void trimToLimits(List<Entry> entries) throws IOException {
         Map<UUID,Integer> owned=new HashMap<>();for(Entry entry:entries)owned.merge(entry.owner,1,Integer::sum);

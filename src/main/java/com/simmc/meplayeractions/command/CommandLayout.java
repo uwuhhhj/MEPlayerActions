@@ -9,12 +9,21 @@ public final class CommandLayout {
     public static final List<String> ROOTS = List.of("help", "disguise", "undisguise", "models", "attach",
             "menu", "animations", "play", "stop", "reset", "pose", "sync", "status", "reload");
     public static final List<String> POSES = List.of("sit", "crawl", "fly");
+    public static final List<String> STATUS_SECTIONS = List.of("network", "tasks", "models", "protection");
     private CommandLayout() {}
 
     public static String[] normalize(String[] input) {
         if (input.length == 0) return new String[]{"help"};
         String root = input[0].toLowerCase(Locale.ROOT);
         if (!ROOTS.contains(root)) throw new IllegalArgumentException("未知子命令；使用 " + PREFIX + " help，动作使用 play <动作名>");
+        if (root.equals("status")) {
+            boolean valid = input.length == 1 || input.length == 2 && STATUS_SECTIONS.contains(input[1].toLowerCase(Locale.ROOT))
+                    || input.length == 3 && input[1].equalsIgnoreCase("player") && !input[2].isBlank();
+            if (!valid) throw new IllegalArgumentException("用法：" + PREFIX + " status [network|tasks|models|protection]；status player <在线玩家>");
+            String[] normalized = input.clone(); normalized[0] = root;
+            if (input.length > 1) normalized[1] = input[1].toLowerCase(Locale.ROOT);
+            return normalized;
+        }
         if (root.equals("pose")) {
             if (input.length < 2 || !POSES.contains(input[1].toLowerCase(Locale.ROOT)))
                 throw new IllegalArgumentException("用法：" + PREFIX + " pose <sit|crawl|fly> [on|off]");

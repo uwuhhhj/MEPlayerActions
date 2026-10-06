@@ -1,5 +1,6 @@
 package com.simmc.meplayeractions.client;
 
+import com.simmc.meplayeractions.protection.ResourceSettings;
 import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
@@ -7,10 +8,90 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class ConnectionLimitsTest {
     private static final UUID VIEWER = new UUID(0, 1);
     private static final long SECOND = 1_000_000_000L;
+
+    private static ResourceSettings.Network smallPolicy() {
+        return new ResourceSettings.Network(16384, 32768, 16384, 16384, 16384, 16, 4, 16384,
+                16384, 16384, 2, 1, 2, 100, 40, 200, 100, 16384);
+    }
+    @Test void configuredGlobalUploadAndPacketLimitsApplyAcrossDifferentPlayersAndSurviveSessionCleanup() {
+        var limits = new ConnectionLimits(); limits.configure(smallPolicy());
+        for (int i = 0; i < 16; i++) assertTrue(limits.allowInbound(new UUID(1, i), 1024, 0));
+        UUID waiting = new UUID(1, 30); assertFalse(limits.allowInbound(waiting, 1, 0));
+        limits.releaseTransfers(VIEWER); limits.forget(new UUID(1, 0));
+        assertFalse(limits.allowInbound(waiting, 1, SECOND / 100));
+        assertTrue(limits.allowOutbound(waiting, 1024, false, SECOND / 100, 1));
+        assertTrue(limits.allowInbound(waiting, 1024, SECOND));
+    }
+    @Test void creditedWirePacketRemainsUsableAfterOrdinaryGlobalBudgetExhaustionAndCannotBeReplayed() {
+        var limits = new ConnectionLimits(); limits.configure(smallPolicy());
+        assertTrue(limits.grantUploadCredit(VIEWER, 14000, 0));
+        assertTrue(limits.allowInbound(new UUID(2, 1), 2048, 0));
+        assertFalse(limits.allowInbound(new UUID(2, 2), 1024, 0));
+        assertFalse(limits.allowInboundCredited(VIEWER, 14001, 0));
+        assertTrue(limits.allowInboundCredited(VIEWER, 14000, 0));
+        assertFalse(limits.allowInboundCredited(VIEWER, 14000, 0));
+        assertEquals(16048, limits.metric("uploadBytes"));
+        assertTrue(limits.grantUploadCredit(VIEWER, 1024, SECOND)); limits.clearUploadCredits(VIEWER);
+        assertFalse(limits.allowInboundCredited(VIEWER, 1024, SECOND));
+    }
+    @Test void decodeAdmissionCannotBeBypassedByOutstandingUploadCreditOrMalformedFrames() {
+        var limits = new ConnectionLimits(); limits.configure(smallPolicy());
+        assertTrue(limits.grantUploadCredit(VIEWER, 1024, 0));
+        for (int i = 0; i < 4; i++) assertTrue(limits.allowInboundDecode(VIEWER, 1024, 0));
+        assertFalse(limits.allowInboundDecode(VIEWER, 1, 0));
+        assertTrue(limits.allowInboundCredited(VIEWER, 1024, 0));
+        assertFalse(limits.allowInboundDecode(VIEWER, 1, 0));
+        assertTrue(limits.allowInboundDecode(VIEWER, 1024, SECOND));
+    }
+    @Test void waitingSlotsAndRetainedOutgoingBytesAreSharedAndReleasedExactlyOnce() {
+        var limits = new ConnectionLimits(); limits.configure(smallPolicy()); UUID other = new UUID(2, 2);
+        assertTrue(limits.reserveWaiting(VIEWER)); assertFalse(limits.reserveWaiting(VIEWER));
+        assertTrue(limits.reserveWaiting(other)); assertFalse(limits.reserveWaiting(new UUID(2, 3)));
+        assertTrue(limits.queueOutgoing(VIEWER, 10000)); assertFalse(limits.queueOutgoing(other, 7000));
+        assertTrue(limits.queueOutgoing(other, 6384)); assertEquals(16384, limits.metric("queuedBytes"));
+        limits.releaseOutgoing(VIEWER, 10000); limits.releaseOutgoing(VIEWER, 10000);
+        assertEquals(6384, limits.metric("queuedBytes"));
+        limits.forget(other); assertEquals(0, limits.metric("queuedBytes")); assertEquals(1, limits.metric("waiting"));
+        limits.releaseWaiting(VIEWER); limits.releaseWaiting(VIEWER); assertEquals(0, limits.metric("waiting"));
+    }
+    @Test void UnwritableTransportDefersAssetsButPreservesControlAndDoesNotConsumeBudget() {
+        var limits = new ConnectionLimits(); limits.configure(smallPolicy()); limits.writability(ignored -> false);
+        assertFalse(limits.canOutbound(VIEWER, 1000, true, 0, 0)); assertFalse(limits.allowOutbound(VIEWER, 1000, true, 0, 0));
+        assertEquals(0, limits.metric("downloadBytes"));
+        assertTrue(limits.allowOutbound(VIEWER, 1000, false, 0, 0));
+        limits.writability(ignored -> true); assertTrue(limits.allowOutbound(VIEWER, 1000, true, 0, 0));
+    }
+    @Test void protectedAssetFactorPausesOnlyResourcePacketsAndHalfFactorReducesPerTickBudget() {
+        var limits = new ConnectionLimits(); limits.configure(smallPolicy()); limits.assetFactor(() -> 0);
+        assertFalse(limits.allowOutbound(VIEWER, 100, true, 0, 0)); assertTrue(limits.allowOutbound(VIEWER, 100, false, 0, 0));
+        limits.assetFactor(() -> .5); assertTrue(limits.allowOutbound(VIEWER, 8192, true, 0, 0));
+        assertFalse(limits.allowOutbound(VIEWER, 1, true, 0, 0));
+    }
+    @Test void foreignThreadDispatchHasBoundedBytesAndReleasesReservationsAfterFailure() {
+        var limits = new ConnectionLimits(); limits.configure(smallPolicy());
+        for (int i = 0; i < 16; i++) assertTrue(limits.reserveInboundDispatch(16384));
+        assertFalse(limits.reserveInboundDispatch(1));
+        limits.releaseInboundDispatch(16384); assertTrue(limits.reserveInboundDispatch(16384));
+        for (int i = 0; i < 16; i++) limits.releaseInboundDispatch(16384);
+        assertEquals(0, limits.metric("ingressCallbacks")); assertEquals(0, limits.metric("ingressBytes"));
+    }
+    @Test void assetPacketsCannotConsumeReservedPerPlayerOrGlobalControlPacketCapacity() {
+        var limits = new ConnectionLimits(); limits.configure(smallPolicy());
+        for (int player = 0; player < 4; player++) {
+            UUID viewer = new UUID(9, player);
+            for (int packet = 0; packet < 3; packet++) assertTrue(limits.allowOutbound(viewer, 1, true, 0, 0));
+            assertFalse(limits.allowOutbound(viewer, 1, true, 0, 0));
+        }
+        assertFalse(limits.allowOutbound(new UUID(9, 99), 1, true, 0, 0));
+        for (int player = 0; player < 4; player++) assertTrue(limits.allowOutbound(new UUID(9, player), 1, false, 0, 0));
+        assertFalse(limits.allowOutbound(new UUID(9, 99), 1, false, 0, 0));
+        assertEquals(16, limits.metric("downloadBytes")); assertEquals(12, limits.metric("assetPacketsPerSecond.limit"));
+    }
 
     @Test void pushOffersArePacedAndRehelloCannotResetThreeFailureAttempts() {
         var limits = new ConnectionLimits(); var instances = Set.of(new UUID(0, 20));

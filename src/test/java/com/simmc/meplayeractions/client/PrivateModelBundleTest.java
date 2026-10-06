@@ -1,6 +1,7 @@
 package com.simmc.meplayeractions.client;
 
 import org.junit.jupiter.api.Test;
+import com.simmc.meplayeractions.config.ModelComplexityLimits;
 import com.google.gson.*;
 import java.nio.ByteBuffer;
 import java.io.*;
@@ -144,5 +145,17 @@ class PrivateModelBundleTest {
         }
         assertThrows(IOException.class,()->PrivateModelBundle.validate(symlink,"bbmodel"));
         assertThrows(IOException.class,()->PrivateModelBundle.validate(Arrays.copyOf(raw,raw.length-1),"bbmodel"));
+    }
+    @Test void configuredBundleLimitsApplyAcrossFilesAndKeepExistingFormatValidation() throws IOException {
+        Map<String,byte[]> files=bb();files.put("first.molang",bytes("v.a=1;"));files.put("second.molang",bytes("v.b=1;"));
+        byte[] expressionBundle=zip(files);
+        var expressionLimits=new ModelComplexityLimits(4096,1024,65536,32768,9,200000,256,8388608,16777216);
+        assertEquals("model_complexity:expression_chars",assertThrows(IOException.class,()->PrivateModelBundle.validate(expressionBundle,"bbmodel",expressionLimits)).getMessage());
+        files=bb();files.put("side.png",pngHeader(2,1));byte[] pixelBundle=zip(files);
+        var pixelLimits=new ModelComplexityLimits(4096,1024,65536,32768,2097152,200000,256,8388608,1);
+        assertEquals("bundle_texture_budget",assertThrows(IOException.class,()->PrivateModelBundle.validate(pixelBundle,"bbmodel",pixelLimits)).getMessage());
+        var entries=new ModelComplexityLimits(4096,1024,65536,32768,2097152,200000,1,8388608,16777216);
+        byte[] normal=zip(bb());assertThrows(IOException.class,()->PrivateModelBundle.validate(normal,"bbmodel",entries));
+        assertEquals("bbmodel",PrivateModelBundle.validate(normal,"bbmodel",ModelComplexityLimits.defaults()).kind());
     }
 }

@@ -48,8 +48,11 @@ public final class PrivateOnlyBackend implements ServerBackend, Listener {
     @Override public void status(CommandSender sender) {
         message(sender, "模式：" + diagnosis());
         message(sender, "开关：client-sync.enabled 与 client-sync.private-models.enabled；发布权限 mact.private.upload，观看权限 mact.private.view。");
-        if (sender instanceof Player player) message(sender, relay.status(player));
-        else message(sender, "发布与观看各自需要显式许可；观看距离 " + policy.viewDistance() + " 格，最多 " + policy.maxViewers() + " 名其他玩家。");
+        message(sender, "发布与观看各自需要显式许可；观看距离 " + policy.viewDistance() + " 格，最多 " + policy.maxViewers() + " 名其他玩家。");
+    }
+    @Override public void playerStatus(CommandSender sender, Player player) {
+        message(sender, "玩家：" + player.getName());
+        message(sender, relay.status(player));
     }
     @Override public void handleAction(Player player, String[] args) {
         String[] normalized = CommandLayout.normalize(args);
@@ -60,7 +63,7 @@ public final class PrivateOnlyBackend implements ServerBackend, Listener {
                 message(player, "私人外观在客户端选取并显式开启多人同步；服务器同时开启两项开关并授予发布/观看权限后才能共享。");
                 message(player, CommandLayout.PREFIX + " status 查看诊断；reload 重载配置。服务器伪装与动作需要 ModelEngine R4.1.1。");
             }
-            case "status" -> status(player);
+            case "status" -> plugin.status(player, normalized);
             default -> message(player, "服务器伪装与动作后端不可用：" + reason + "。私人模型多人同步使用客户端的显式共享开关。");
         }
     }

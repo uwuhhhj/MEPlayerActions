@@ -27,7 +27,11 @@ final class YsmAnimations {
     private final String diagnosis;
     private static final class Cache { YsmRuntime.Snapshot snapshot; double time; String animation; Molang.Context context; }
     YsmAnimations(ModelBlueprint blueprint) {
-        YsmModelTemplates.Model model = TEMPLATES.get(blueprint.getName()).orElse(null);
+        this(blueprint,TEMPLATES.get(blueprint.getName()));
+    }
+    /** Production receives a background-prepared immutable template, so this path never reads or compiles a source. */
+    YsmAnimations(ModelBlueprint blueprint,Optional<YsmModelTemplates.Model> prepared) {
+        YsmModelTemplates.Model model = Objects.requireNonNull(prepared).orElse(null);
         if(model==null) {template=null;runtime=null;diagnosis="使用模型自带数值动画";return;}
         template=model.runtime();
         runtime=new YsmRuntime(template,0);runtime.update(0,Map.of("ysm.food_level",20d),Map.of("idle",0d));snapshot=runtime.snapshot();

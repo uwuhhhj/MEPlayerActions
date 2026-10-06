@@ -106,7 +106,7 @@ class PrivateModelLifecycleTest {
             });
             bukkitServer.setAccessible(true);previousServer=bukkitServer.get(null);bukkitServer.set(null,server);
             try {
-                service=new PrivateModelSyncService(plugin,Set::of,limits);
+                service=new PrivateModelSyncService(plugin,Set::of,limits,()->10_000_000_000L+tick*50_000_000L);
                 service.configure(new PrivateModelSyncService.Policy(true,16000,8*1024*1024,32L*1024*1024,64,10,"mact.private.upload","mact.private.view"));
                 setField(service,"running",true);owner.tracking.add(viewer.player);
                 hello(owner);hello(viewer);publication(owner,generation);maintenance();assertNotNull(offer());

@@ -1,5 +1,6 @@
 package com.simmc.meplayeractions.action;
 
+import com.simmc.meplayeractions.MEPlayerActionsPlugin;
 import com.simmc.meplayeractions.client.ClientSyncService;
 import com.simmc.meplayeractions.client.ClientSyncService.LayerState;
 import com.simmc.meplayeractions.client.ClientSyncService.StateSnapshot;
@@ -14,6 +15,10 @@ import com.simmc.meplayeractions.me.ModelEngineBridge;
 import com.simmc.meplayeractions.me.ModelEngineBridge.Attachment;
 import com.simmc.meplayeractions.me.ModelEngineBridge.OwnedAnimation;
 import com.simmc.meplayeractions.me.VisualOffset;
+import com.simmc.meplayeractions.me.ModelAudience;
+import com.simmc.meplayeractions.protection.ResourceError;
+import com.simmc.meplayeractions.protection.ResourceProtection;
+import com.simmc.meplayeractions.protection.ResourceRejectedException;
 import com.ticxo.modelengine.api.events.BoneTransformReadEvent;
 import com.ticxo.modelengine.api.model.ActiveModel;
 import com.ticxo.modelengine.api.animation.BlueprintAnimation.LoopMode;
@@ -37,6 +42,8 @@ public final class ActionController {
     private final Settings settings;
     private final ModelEngineBridge bridge;
     private final GameplayBackend gameplay;
+    private final ResourceProtection resources;
+    private final DisguiseAdmission admission;
     private final Map<UUID, Session> sessions = new LinkedHashMap<>();
     private Set<UUID> ownerIds = Set.of();
     private final Map<ActiveModel, VisualOffset> visualOffsets = new ConcurrentHashMap<>();
@@ -48,6 +55,12 @@ public final class ActionController {
     private ClientSyncService clients;
     private long clock;
     private final RollingScan<Player> adoption;
+    private ResourceProtection.State previousProtection;
+    private final Deque<Session> emergencyCleanup = new ArrayDeque<>();
+    private int ownedSessions, adoptedSessions, relationships, cleanupSessions;
+    public record Statistics(int active, int owned, int adopted, int relationships, int cleanupPending) { }
+    /** Cached counters; status never scans players, models or disk. */
+    public Statistics statistics() { return new Statistics(ownedSessions + adoptedSessions, ownedSessions, adoptedSessions, relationships, cleanupSessions); }
 
     private static final class Session {
         final Player player;
@@ -75,7 +88,10 @@ public final class ActionController {
         Location lastVisualLocation;
         final Set<ActionState> missingMappings = EnumSet.noneOf(ActionState.class);
         String failure = "";
+        String cleanupReason = "";
+        long nextCleanup;
         String manualPosture = "standing";
+        int audienceRelationships;
         Session(Player player, Attachment attachment, List<String> animations, Settings settings, DisguiseOptions options) {
             this.player = player; this.attachment = attachment; this.animations = List.copyOf(animations);
             actionDirectory = ActionDirectory.build(settings, this.animations);
@@ -89,6 +105,24 @@ public final class ActionController {
     public ActionController(JavaPlugin plugin, Settings settings, ModelEngineBridge bridge,
                             GameplayBackend gameplay) {
         this.plugin = plugin; this.settings = settings; this.bridge = bridge; this.gameplay = gameplay;
+        resources = plugin instanceof MEPlayerActionsPlugin main ? main.resources() : null;
+        admission = new DisguiseAdmission(resources == null ? 256 : resources.settings().maxServerDisguises(),
+                resources == null ? 20 : 0);
+        if (resources != null) {
+            resources.gauge("models.serverActive", () -> ownedSessions + adoptedSessions);
+            resources.gauge("models.serverOwned", () -> ownedSessions);
+            resources.gauge("models.serverAdopted", () -> adoptedSessions);
+            resources.gauge("models.serverRelations", () -> relationships);
+            resources.gauge("models.serverCleanupPending", () -> cleanupSessions);
+            bridge.configureAudienceGuard(new ModelAudience.Guard() {
+            public boolean discover() { return resources.acceptingNewWork() && resources.tryWork(); }
+            public Set<UUID> admit(UUID owner, Collection<UUID> requested) {
+                return resources.reserveRelationships("server", owner, requested);
+            }
+            public void release(UUID owner) { resources.releaseRelationships("server", owner); }
+            public void worked(long nanos) { resources.recordWork(nanos); }
+            });
+        }
         adoption = new RollingScan<>(settings.performance.adoptionScanTicks());
         clock = Integer.toUnsignedLong(Bukkit.getCurrentTick());
         preferenceFile = new File(plugin.getDataFolder(), "players.yml");
@@ -114,29 +148,58 @@ public final class ActionController {
         options.requireEffects(PaperEffectPort::supported);
         if (!bridge.modelIds().contains(options.modelId())) throw new IllegalArgumentException("模型未加载：" + options.modelId());
         Session existing = sessions.get(player.getUniqueId());
+        if (existing != null && !existing.cleanupReason.isEmpty()) throw new IllegalStateException("伪装正在解除，请稍后重试");
         if (existing != null && !existing.attachment.owned())
             throw new IllegalStateException("先用 /meg undisguise 解除原生伪装，再使用 /meplayeractions disguise");
         if (existing != null && existing.options.equals(options) && options.effects().isEmpty()) return;
+        bridge.prepareRuntime(options.modelId());
+        admit(player, existing != null);
         if (existing != null) remove(player, "model-change");
         Attachment attached = bridge.disguise(player, options);
         register(player, attached, options);
     }
     public void attach(Player player, String modelId) {
+        clock = Integer.toUnsignedLong(Bukkit.getCurrentTick());
         settings.requireAllowedModel(modelId);
         if (controlled(player)) throw new IllegalStateException("已有动作会话；先 /meplayeractions undisguise 释放");
+        bridge.prepareRuntime(modelId);
+        admit(player, false);
         register(player, bridge.attachExisting(player, modelId));
+    }
+    private void admit(Player player, boolean replacing) {
+        var refused = admission.admit(player.getUniqueId(), replacing, sessions.size(), clock);
+        if (refused != null) {
+            if (resources != null) resources.reject(refused.code());
+            throw new ResourceRejectedException(new ResourceError(refused.code(), "disguise", true, refused.retryTicks()));
+        }
+        if (resources != null) {
+            ResourceError error = resources.tryDisguise(player.getUniqueId());
+            if (error != null) throw new ResourceRejectedException(error);
+        }
     }
     private void register(Player player, Attachment attachment) {
         register(player, attachment, DisguiseOptions.defaults(attachment.modelId(), settings));
     }
     private void register(Player player, Attachment attachment, DisguiseOptions options) {
-        Session session = new Session(player, attachment, bridge.animations(attachment), settings, options);
-        String jumpClip = settings.animation(attachment.modelId(), ActionState.JUMP, session.animations);
-        double length = jumpClip == null ? 0.6 : bridge.animationLength(attachment, jumpClip);
-        var jumpPlayback = settings.playback(ActionState.JUMP);
-        session.jumpDuration = settings.jumpMinTicks > 0 ? settings.jumpMinTicks
-                : (int) Math.max(1, Math.min(100, Math.ceil(length * 20 / jumpPlayback.speed()) + jumpPlayback.inTicks()));
+        Session session;
+        try {
+            session = new Session(player, attachment, bridge.animations(attachment), settings, options);
+            String jumpClip = settings.animation(attachment.modelId(), ActionState.JUMP, session.animations);
+            double length = jumpClip == null ? 0.6 : bridge.animationLength(attachment, jumpClip);
+            var jumpPlayback = settings.playback(ActionState.JUMP);
+            session.jumpDuration = settings.jumpMinTicks > 0 ? settings.jumpMinTicks
+                    : (int) Math.max(1, Math.min(100, Math.ceil(length * 20 / jumpPlayback.speed()) + jumpPlayback.inTicks()));
+            session.audienceRelationships = bridge.relationshipCount(attachment);
+        } catch (RuntimeException failure) {
+            // The bridge has already reserved an audience and attached the model;
+            // initialization can fail before this controller can track its cleanup.
+            try { bridge.release(attachment); }
+            catch (RuntimeException cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
+        }
         sessions.put(player.getUniqueId(), session);
+        if (attachment.owned()) ownedSessions++; else adoptedSessions++;
+        relationships += session.audienceRelationships;
         ownerIds = Set.copyOf(sessions.keySet());
         adoptWarning.remove(player.getUniqueId());
         adoptPaused.remove(player.getUniqueId());
@@ -157,6 +220,7 @@ public final class ActionController {
     public boolean remove(Player player, String reason) {
         if (reason.equals("quit") || reason.equals("offline")) {
             adoptPaused.remove(player.getUniqueId()); adoptWarning.remove(player.getUniqueId());
+            admission.forget(player.getUniqueId());
         }
         Session s = sessions.get(player.getUniqueId());
         if (s == null) return false;
@@ -166,8 +230,15 @@ public final class ActionController {
         failure = attempt(failure, () -> gameplay.cleanup(player));
         failure = attempt(failure, () -> { if (clients != null) clients.unbind(player.getUniqueId(), s.instance, reason); });
         failure = attempt(failure, () -> bridge.release(s.attachment));
-        if (failure != null) throw new IllegalStateException("会话清理尚未完成，将继续尝试", failure);
+        if (failure != null) {
+            if (s.cleanupReason.isEmpty()) cleanupSessions++;
+            s.cleanupReason = reason; s.nextCleanup = clock + settings.performance.validationTicks();
+            throw new IllegalStateException("会话清理尚未完成，将继续尝试", failure);
+        }
         sessions.remove(player.getUniqueId(), s); adoptWarning.remove(player.getUniqueId());
+        if (owned) ownedSessions--; else adoptedSessions--;
+        if (!s.cleanupReason.isEmpty()) cleanupSessions--;
+        relationships -= s.audienceRelationships;
         ownerIds = Set.copyOf(sessions.keySet());
         visualOffsets.remove(s.attachment.activeModel());
         if (!owned && reason.equals("command")) adoptPaused.add(player.getUniqueId());
@@ -341,17 +412,17 @@ public final class ActionController {
         lines.add("原生陆地趴下/爬行无需 GSit；GSit 后端状态仅影响 GSit API 姿态及 /meplayeractions pose sit、pose crawl。");
         return lines;
     }
-    public List<StateSnapshot> snapshots() { return sessions.values().stream().map(this::snapshot).toList(); }
+    public List<StateSnapshot> snapshots() { return sessions.values().stream().filter(session -> session.cleanupReason.isEmpty()).map(this::snapshot).toList(); }
     /** Immutable owner membership, rebuilt only when a session is added or removed. */
     public Set<UUID> ownerIds() { return ownerIds; }
     /** Build only the requested owner's current state; absent sessions have no snapshot. */
     public StateSnapshot snapshot(UUID owner) {
         Session session = sessions.get(owner);
-        return session == null ? null : snapshot(session);
+        return session == null || !session.cleanupReason.isEmpty() ? null : snapshot(session);
     }
     public boolean canView(Player viewer, UUID owner) {
         Session session = sessions.get(owner);
-        return session != null && bridge.isAttached(session.attachment) && bridge.canView(session.attachment, viewer.getUniqueId());
+        return session != null && session.cleanupReason.isEmpty() && bridge.isAttached(session.attachment) && bridge.canView(session.attachment, viewer.getUniqueId());
     }
     public boolean localRendering(UUID viewer, UUID owner, UUID instance, boolean enabled) {
         Session session = sessions.get(owner);
@@ -361,34 +432,75 @@ public final class ActionController {
 
     private void tick() {
         clock = Integer.toUnsignedLong(Bukkit.getCurrentTick());
+        int cleanupRemaining = (resources == null ? 2 : Math.max(1, resources.settings().emergencyRemovalsPerTick())) - emergencyCleanup();
         for (Session s : List.copyOf(sessions.values())) {
             Player player = Bukkit.getPlayer(s.attachment.playerId());
             try {
+                if (!s.cleanupReason.isEmpty()) {
+                    if (clock >= s.nextCleanup && cleanupRemaining-- > 0) remove(s.player, s.cleanupReason);
+                    continue;
+                }
                 if (player == null || !player.isOnline()) { remove(s.player, "offline"); continue; }
                 if (!bridge.isAttached(s.attachment)) { remove(player, "external-undisguise"); continue; }
-                if (bridge.updateAudience(s.attachment)) changed(s);
-                s.effects.tick(clock);
-                update(player, s, false);
-                bridge.updateExpressions(s.attachment,clock,settings.posturePriority,settings.manualPriority);
+                if (bridge.updateAudience(s.attachment)) {
+                    int count = bridge.relationshipCount(s.attachment);
+                    relationships += count - s.audienceRelationships; s.audienceRelationships = count;
+                    changed(s);
+                }
+                long started = System.nanoTime();
+                try {
+                    s.effects.tick(clock);
+                    update(player, s, false);
+                    bridge.updateExpressions(s.attachment,clock,settings.posturePriority,settings.manualPriority);
+                } finally { if (resources != null) resources.recordWork(System.nanoTime() - started); }
             }
             catch (RuntimeException ex) {
                 if (!Objects.equals(ex.getMessage(), s.failure)) plugin.getLogger().warning("动作更新失败 " + s.player.getName() + ": " + ex.getMessage());
                 s.failure = Objects.toString(ex.getMessage(), ex.getClass().getSimpleName());
             }
         }
-        if (settings.adoptOriginal) {
+        if (settings.adoptOriginal && (resources == null || resources.acceptingNewWork())) {
             for (Player player : adoption.next(clock, Bukkit::getOnlinePlayers)) {
+                if (resources != null && !resources.tryWork()) break;
                 if (!player.isOnline() || controlled(player) || adoptPaused.contains(player.getUniqueId()) || !player.hasPermission("mact.use")) continue;
-                for (String model : settings.allowedModels) {
+                List<String> nativeModels = bridge.existingModels(player).stream().filter(settings.allowedModels::contains).toList();
+                if (nativeModels.isEmpty()) continue;
+                try { bridge.prepareRuntime(nativeModels.getFirst()); admit(player, false); }
+                catch (ResourceRejectedException refused) { continue; }
+                long started = System.nanoTime();
+                try { for (String model : nativeModels) {
                     try { register(player, bridge.attachExisting(player, model)); break; }
                     catch (IllegalArgumentException ignored) { /* This model is not attached. */ }
                     catch (IllegalStateException ex) {
                         if (Objects.toString(ex.getMessage(), "").contains("state_machine") && adoptWarning.add(player.getUniqueId()))
                             player.sendMessage("§e[动作] 原生伪装不是状态机。请重新用 /meplayeractions disguise，或启用 ME 的 Use-State-Machine 后重新伪装。");
                     }
-                }
+                } } finally { if (resources != null) resources.recordWork(System.nanoTime() - started); }
             }
         }
+    }
+    private int emergencyCleanup() {
+        if (resources == null) return 0;
+        ResourceProtection.State state = resources.state();
+        if (state != previousProtection) {
+            emergencyCleanup.clear();
+            if (state == ResourceProtection.State.EMERGENCY && resources.settings().emergencyRemovalsPerTick() > 0)
+                sessions.values().stream().filter(session -> session.attachment.owned())
+                        .sorted(Comparator.comparingInt((Session session) -> session.attachment.activeModel().getBones().size()
+                                + session.audienceRelationships).reversed()).forEach(emergencyCleanup::add);
+            previousProtection = state;
+        }
+        if (state != ResourceProtection.State.EMERGENCY) return 0;
+        int attempts = 0;
+        for (int remaining = resources.settings().emergencyRemovalsPerTick(); remaining > 0 && !emergencyCleanup.isEmpty(); remaining--) {
+            Session session = emergencyCleanup.removeFirst();
+            if (sessions.get(session.player.getUniqueId()) != session) continue;
+            if (!session.cleanupReason.isEmpty() && clock < session.nextCleanup) { emergencyCleanup.addLast(session); continue; }
+            attempts++;
+            try { remove(session.player, "resource-emergency"); }
+            catch (RuntimeException failure) { emergencyCleanup.addLast(session); }
+        }
+        return attempts;
     }
     private void update(Player player, Session s) {
         clock = Integer.toUnsignedLong(Bukkit.getCurrentTick());
@@ -515,6 +627,7 @@ public final class ActionController {
     private Session requireSession(Player player) {
         Session s = sessions.get(player.getUniqueId());
         if (s == null) throw new IllegalStateException("先使用 /meplayeractions disguise，或 /meplayeractions attach <模型名>");
+        if (!s.cleanupReason.isEmpty()) throw new IllegalStateException("伪装正在解除，请稍后重试");
         if (!bridge.isAttached(s.attachment)) throw new IllegalStateException("伪装已被解除，请重新伪装");
         return s;
     }
@@ -591,5 +704,6 @@ public final class ActionController {
             } catch (RuntimeException ex) { plugin.getLogger().warning("会话清理失败：" + ex.getMessage()); }
         }
         sessions.clear(); ownerIds = Set.of(); adoption.clear(); visualOffsets.clear(); adoptPaused.clear(); adoptWarning.clear();
+        admission.clear(); emergencyCleanup.clear(); ownedSessions = adoptedSessions = relationships = cleanupSessions = 0;
     }
 }

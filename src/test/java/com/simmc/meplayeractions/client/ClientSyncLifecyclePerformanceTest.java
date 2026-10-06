@@ -2,6 +2,7 @@ package com.simmc.meplayeractions.client;
 
 import com.google.gson.*;
 import com.simmc.meplayeractions.action.DisguiseOptions;
+import com.simmc.meplayeractions.protection.ResourceError;
 import org.bukkit.*;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
@@ -65,7 +66,39 @@ class ClientSyncLifecyclePerformanceTest {
             JsonObject result = owner.last("disguise_result"); assertFalse(result.get("success").getAsBoolean());
             assertEquals("permission_denied", result.get("code").getAsString()); assertEquals(nonce.toString(), result.get("requestId").getAsString());
             assertFalse(result.has("instance")); assertFalse(result.has("options"));
+            assertEquals("disguise", result.get("stage").getAsString()); assertFalse(result.get("retryable").getAsBoolean());
             String text = result.get("message").getAsString(); assertTrue(text.codePointCount(0, text.length()) <= 64); assertFalse(text.contains("\n"));
+        }
+    }
+    @Test void protectionFailureIncludesStableStageRetryDelayAndOriginalRequestIdentity() throws Exception {
+        try (Scene scene = new Scene(temporary)) {
+            Person owner = scene.person(true); scene.hello(owner, true, false, true); UUID nonce = UUID.randomUUID();
+            var request = scene.service.beginDisguiseRequest(owner.player, nonce, "fixture", "options", 100);
+            scene.service.disguiseFailure(owner.player, request, new ResourceError("tps_protection", "disguise", true, 600), "服务器负载保护，请稍后再试");
+            JsonObject result = owner.last("disguise_result");
+            assertFalse(result.get("success").getAsBoolean()); assertEquals(nonce.toString(), result.get("requestId").getAsString());
+            assertEquals("tps_protection", result.get("code").getAsString()); assertEquals("disguise", result.get("stage").getAsString());
+            assertTrue(result.get("retryable").getAsBoolean()); assertEquals(30, result.get("retryAfter").getAsInt()); assertFalse(result.has("instance"));
+        }
+    }
+    @Test void snapshotEndWaitsForDeferredStateAndReleasesEveryQueuedByte() throws Exception {
+        try (Scene scene = new Scene(temporary)) {
+            Person owner = scene.person(true); scene.hello(owner, true, false); owner.messages.clear(); scene.tick++;
+            ConnectionLimits limits = (ConnectionLimits) field(scene.service, "limits"); UUID filler = new UUID(5, 6);
+            assertTrue(limits.canOutbound(filler, 1, false, System.nanoTime(), scene.tick));
+            assertTrue(limits.allowOutbound(filler, ConnectionLimits.GLOBAL_BYTES_PER_TICK - 128, false, System.nanoTime(), scene.tick));
+            scene.service.sendSnapshot(owner.player);
+            assertEquals(1, owner.count("snapshot_begin")); assertEquals(0, owner.count("state")); assertEquals(0, owner.count("snapshot_end"));
+            assertTrue(limits.metric("queuedBytes") > 0);
+            scene.tick++; scene.maintain();
+            assertEquals(1, owner.count("state")); assertEquals(1, owner.count("snapshot_end"));
+            assertEquals(0, limits.metric("queuedBytes"));
+            int stateIndex = -1, endIndex = -1;
+            for (int i = 0; i < owner.messages.size(); i++) {
+                String type = owner.messages.get(i).get("type").getAsString();
+                if (type.equals("state")) stateIndex = i; if (type.equals("snapshot_end")) endIndex = i;
+            }
+            assertTrue(stateIndex >= 0 && endIndex > stateIndex);
         }
     }
     @Test void repeatedNonceReplaysOriginalResultAndCannotReapplyEffectsOrDifferentArguments() throws Exception {

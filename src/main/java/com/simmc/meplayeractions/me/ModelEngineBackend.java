@@ -14,6 +14,7 @@ import com.simmc.meplayeractions.ui.ActionMenu;
 import com.simmc.meplayeractions.command.CommandLayout;
 import com.simmc.meplayeractions.command.DisguiseRequestId;
 import com.ticxo.modelengine.api.animation.BlueprintAnimation.LoopMode;
+import com.ticxo.modelengine.api.ModelEngineAPI;
 import org.bukkit.Bukkit;
 import org.bukkit.command.*;
 import org.bukkit.entity.Player;
@@ -54,11 +55,15 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
         gameplay = new GameplayBackend(plugin);
         bridge = new ModelEngineBridge();
         bridge.configurePerformance(settings.performance);
+        bridge.configureResources(plugin, plugin.resources(), settings.allowedModels);
         controller = new ActionController(plugin, settings, bridge, gameplay);
         clients = new ClientSyncService(plugin, controller::snapshots,
                 request -> plugin.handleAction(request.player(), CommandLayout.clientAction(request.action(), request.argument())));
         clients.configure(settings.clientEnabled, settings.clientMaxPayload,
                 settings.clientCooldownTicks, settings.clientViewDistance);
+        clients.configureResources(plugin.resources());
+        clients.writability(viewer -> ModelEngineAPI.getNetworkHandler().getPipeline(viewer)
+                .map(pipeline -> pipeline.getChannel().isWritable()).orElse(false));
         clients.snapshotSources(controller::ownerIds, controller::snapshot);
         clients.modelCatalog(controller::models);
         clients.configurePerformance(settings.performance);
@@ -81,8 +86,11 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
     @Override public String diagnosis() { return "ModelEngine R4.1.1 动作后端；" + gameplay.diagnosis(); }
     @Override public void status(CommandSender sender) {
         message(sender, "模式：" + diagnosis());
-        if (sender instanceof Player player) controller.debug(player).forEach(line -> message(sender, line));
-        else message(sender, "私人多人同步 " + (settings.privateModels.enabled() ? "已开启；发布和观看各自需要许可。" : "关闭。"));
+        message(sender, "私人多人同步 " + (settings.privateModels.enabled() ? "已开启；发布和观看各自需要许可。" : "关闭。"));
+    }
+    @Override public void playerStatus(CommandSender sender, Player player) {
+        message(sender, "玩家：" + player.getName());
+        controller.debug(player).forEach(line -> message(sender, line));
     }
     @Override public void close() {
         running = false;
@@ -174,7 +182,7 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
                     }
                 }
                 case "status" -> {
-                    ActionController.permission(player, "mact.debug"); status(player);
+                    plugin.status(player, args);
                 }
                 default -> throw new IllegalArgumentException("未知子命令；使用 " + CommandLayout.PREFIX + " help");
             }
@@ -183,7 +191,11 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
             message(player, "速度请输入有效数字。");
         }
         catch (IllegalArgumentException | IllegalStateException ex) {
-            if (clients != null) clients.disguiseFailure(player, resultRequest, disguiseFailureCode(ex), ex.getMessage());
+            if (clients != null) {
+                if (ex instanceof com.simmc.meplayeractions.protection.ResourceRejectedException rejected)
+                    clients.disguiseFailure(player, resultRequest, rejected.error(), ex.getMessage());
+                else clients.disguiseFailure(player, resultRequest, disguiseFailureCode(ex), ex.getMessage());
+            }
             message(player, Objects.toString(ex.getMessage(), "动作失败"));
         }
         catch (RuntimeException ex) {
@@ -193,6 +205,7 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
         }
     }
     static String disguiseFailureCode(RuntimeException failure) {
+        if (failure instanceof com.simmc.meplayeractions.protection.ResourceRejectedException rejected) return rejected.error().code();
         if (Objects.toString(failure.getMessage(), "").startsWith("缺少权限：")) return "permission_denied";
         return failure instanceof IllegalArgumentException ? "invalid_options" : "action_unavailable";
     }
@@ -207,7 +220,7 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
                 "§e停止／重置：" + prefix + " stop 停止手动动作；reset 重置动作、姿态和受管药水。",
                 "§e同步：" + prefix + " sync <类型> <on|off|default>，省略全部参数查看设置；类型："
                         + String.join("、", Arrays.stream(SyncFeature.values()).map(SyncFeature::key).toList()) + "。",
-                "§e管理：" + prefix + " status 查看诊断；reload 重载配置。")) message(player, line);
+                "§e管理：" + prefix + " status 查看全局保护与资源预算；status player <玩家> 查看个人诊断；reload 重载配置。")) message(player, line);
     }
     private static boolean bool(String value) {
         return switch (value.toLowerCase(Locale.ROOT)) {

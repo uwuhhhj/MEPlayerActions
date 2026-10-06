@@ -38,9 +38,47 @@ public final class ModelEngineBridge {
     private final Map<UUID, Session> sessions = new HashMap<>();
     private NativeEntityRelay nativeEntities;
     private PerformanceSettings performance=PerformanceSettings.defaults();
+    private ModelAudience.Guard audienceGuard;
+    private ServerTemplatePreparation runtimeTemplates;
+    private com.simmc.meplayeractions.protection.ResourceProtection resources;
+    public void configureResources(JavaPlugin plugin, com.simmc.meplayeractions.protection.ResourceProtection resources,
+                                   java.util.Collection<String> allowed) {
+        requireMainThread();
+        this.resources = Objects.requireNonNull(resources);
+        runtimeTemplates = new ServerTemplatePreparation(plugin, resources);
+        runtimeTemplates.preload(allowed);
+    }
+    /** The pure template must be ready before an existing appearance is replaced. */
+    public void prepareRuntime(String id) {
+        requireMainThread();
+        ModelBlueprint blueprint = ModelEngineAPI.getBlueprint(id);
+        if (blueprint != null) {
+            validateComplexity(blueprint);
+            if (runtimeTemplates != null) runtimeTemplates.ensure(blueprint.getName());
+        }
+    }
+    private Optional<YsmModelTemplates.Model> runtimeModel(ModelBlueprint blueprint) {
+        validateComplexity(blueprint);
+        return runtimeTemplates == null ? null : runtimeTemplates.ensure(blueprint.getName());
+    }
+    private void validateComplexity(ModelBlueprint blueprint) {
+        if (resources == null) return;
+        var limits = resources.complexityLimits();
+        int bones = Math.max(blueprint.getBones().size(), blueprint.getFlatMap().size());
+        if (bones > limits.maxBones() || blueprint.getAnimations().size() > limits.maxAnimations()) {
+            resources.reject("model_complexity");
+            throw new com.simmc.meplayeractions.protection.ResourceRejectedException(
+                    new com.simmc.meplayeractions.protection.ResourceError("model_complexity", "disguise", false, 0));
+        }
+    }
     public void configurePerformance(PerformanceSettings settings){requireMainThread();performance=Objects.requireNonNull(settings);}
+    public void configureAudienceGuard(ModelAudience.Guard guard) { requireMainThread(); audienceGuard = Objects.requireNonNull(guard); }
     /** Invalidate pending network work before a backend/plugin lifecycle ends. */
-    public void closeNativeRendering(){requireMainThread();if(nativeEntities!=null){nativeEntities.close();nativeEntities=null;}}
+    public void closeNativeRendering(){
+        requireMainThread();
+        try { if(nativeEntities!=null){nativeEntities.close();nativeEntities=null;} }
+        finally { if(runtimeTemplates!=null){runtimeTemplates.close();runtimeTemplates=null;} }
+    }
 
     public record Attachment(UUID playerId, String modelId, ActiveModel activeModel, boolean owned) {
         public Attachment {
@@ -65,6 +103,7 @@ public final class ModelEngineBridge {
         String id = requireId(options.modelId(), "模型");
         ModelBlueprint blueprint = ModelEngineAPI.getBlueprint(id);
         if (blueprint == null) throw new IllegalArgumentException("模型未加载：" + id);
+        Optional<YsmModelTemplates.Model> prepared = runtimeModel(blueprint);
 
         ModeledEntity entity = ModelEngineAPI.getModeledEntity(player.getUniqueId());
         if (entity != null && !entity.getModels().isEmpty()) {
@@ -91,8 +130,9 @@ public final class ModelEngineBridge {
             });
             if (model == null) throw new IllegalStateException("ModelEngine 未能创建模型：" + id);
             Attachment attachment = new Attachment(player.getUniqueId(), blueprint.getName(), model, true);
-            session = new Session(attachment, player, entity);
-            session.audience = new ModelAudience(options,performance);
+            session = new Session(attachment, player, entity, prepared);
+            session.audience = audienceGuard == null ? new ModelAudience(options, performance)
+                    : new ModelAudience(options, performance, audienceGuard);
             session.audience.update(player, tracked(session));
             // The entity data constructor cached its initial viewers before our filter
             // existed. Reconcile on the main thread before any model can be spawned;
@@ -179,8 +219,15 @@ public final class ModelEngineBridge {
         requireStateMachine(model);
         if (model.isDestroyed() || model.isRemoved()) throw new IllegalStateException("该模型已经解除或正在销毁");
         Attachment attachment = new Attachment(player.getUniqueId(), id, model, false);
-        sessions.put(player.getUniqueId(), new Session(attachment, player, entity));
+        sessions.put(player.getUniqueId(), new Session(attachment, player, entity, runtimeModel(model.getBlueprint())));
         return attachment;
+    }
+
+    /** Existing native model IDs only; avoids attempting every allowed model for each online player. */
+    public List<String> existingModels(Player player) {
+        requireMainThread();
+        ModeledEntity entity = ModelEngineAPI.getModeledEntity(player.getUniqueId());
+        return entity == null || entity.isDestroyed() ? List.of() : List.copyOf(entity.getModels().keySet());
     }
 
     public boolean isAttached(Attachment attachment) {
@@ -212,6 +259,10 @@ public final class ModelEngineBridge {
     public int viewerCount(Attachment attachment) {
         Session session = requireSession(attachment);
         return session.audience == null ? -1 : session.audience.otherViewers(attachment.playerId());
+    }
+    public int relationshipCount(Attachment attachment) {
+        Session session = requireSession(attachment);
+        return session.audience == null ? 0 : session.audience.viewers();
     }
     public record Rotation(float bodyYaw, float headYaw, float headPitch) { }
     /** Read the base's live rotation rather than our delayed model's locked values. */
@@ -564,11 +615,12 @@ public final class ModelEngineBridge {
         ModelAudience audience;
         ActiveModel displaced;
 
-        Session(Attachment attachment, Player player, ModeledEntity entity) {
+        Session(Attachment attachment, Player player, ModeledEntity entity, Optional<YsmModelTemplates.Model> prepared) {
             this.attachment = attachment;
             this.player = player;
             this.entity = entity;
-            compatibility = new YsmAnimations(attachment.activeModel().getBlueprint());
+            compatibility = prepared == null ? new YsmAnimations(attachment.activeModel().getBlueprint())
+                    : new YsmAnimations(attachment.activeModel().getBlueprint(), prepared);
             previousBaseVisible = entity.isBaseEntityVisible();
             previousPlayerMode = entity.getBase().getBodyRotationController().isPlayerMode();
             previousForcedInvisible = ModelEngineAPI.getEntityHandler().isForcedInvisible(player);

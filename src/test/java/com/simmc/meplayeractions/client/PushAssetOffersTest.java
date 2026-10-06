@@ -1,5 +1,6 @@
 package com.simmc.meplayeractions.client;
 
+import com.simmc.meplayeractions.protection.ResourceSettings;
 import org.junit.jupiter.api.Test;
 import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
@@ -62,7 +63,7 @@ class PushAssetOffersTest {
         offers.feedback(offer.id(), HASH, "missing", 10);
         assertEquals(PushAssetOffers.Feedback.INVALID, offers.feedback(offer.id(), HASH, "missing", 300));
         assertTrue(offers.expire(309, authorization -> true).isEmpty());
-        assertEquals("asset_transfer_timeout", offers.expire(310, authorization -> true).getFirst().reason());
+        assertEquals("asset_queue_timeout", offers.expire(310, authorization -> true).getFirst().reason());
         offer = issue(offers, HASH, 400); offers.feedback(offer.id(), HASH, "missing", 401); offers.start(offer);
         offers.progress(offer, 450); assertTrue(offers.expire(749, authorization -> true).isEmpty());
         assertEquals("asset_transfer_timeout", offers.expire(750, authorization -> true).getFirst().reason());
@@ -90,5 +91,20 @@ class PushAssetOffersTest {
         assertTrue(offers.expire(0x53, authorization -> true).isEmpty());
         assertEquals("asset_offer_expired", offers.expire(0x54, authorization -> true).getFirst().reason());
         assertFalse(offers.start(offer));
+    }
+    @Test void configuredQueueStreamingTotalAndReadyDeadlinesAreIndependent() {
+        var d = ResourceSettings.defaults().network();
+        var policy = new ResourceSettings.Network(d.globalUploadBytesPerSecond(), d.globalDownloadBytesPerSecond(), d.uploadBytesPerSecond(),
+                d.downloadBytesPerSecond(), d.assetDownloadBytesPerSecond(), d.globalPacketsPerSecond(), d.packetsPerSecond(), d.burstBytes(),
+                d.bytesPerTick(), d.assetBytesPerTick(), d.globalTransfers(), d.transfersPerPlayer(), d.waitingTransfers(), 40, 20, 100, 30, d.maxQueuedOutgoingBytes());
+        var offers = new PushAssetOffers(); offers.configure(policy); var queued = issue(offers, HASH, 0);
+        assertEquals(PushAssetOffers.Feedback.MISSING, offers.feedback(queued.id(), HASH, "missing", 1));
+        assertTrue(offers.expire(40, ignored -> true).isEmpty());
+        assertEquals("asset_queue_timeout", offers.expire(41, ignored -> true).getFirst().reason());
+        var streaming = issue(offers, HASH, 50); offers.feedback(streaming.id(), HASH, "missing", 51); assertTrue(offers.start(streaming));
+        offers.progress(streaming, 55); assertTrue(offers.expire(74, ignored -> true).isEmpty());
+        assertEquals("asset_transfer_timeout", offers.expire(75, ignored -> true).getFirst().reason());
+        var cached = issue(offers, HASH, 80); offers.feedback(cached.id(), HASH, "cached", 81);
+        assertTrue(offers.expire(110, ignored -> true).isEmpty()); assertEquals("asset_render_timeout", offers.expire(111, ignored -> true).getFirst().reason());
     }
 }

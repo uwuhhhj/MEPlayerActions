@@ -21,6 +21,30 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** Targeted cadence/authorization checks using the actual relay, without a running server. */
 class PrivateModelPerformanceTest {
+    @Test void grantedUploadChunksSurviveOrdinaryBudgetExhaustionAndCreditWindowsStayBounded() throws Exception {
+        try(var scene=new Scene(true,10)) {
+            JsonObject hello=packet("hello");JsonArray caps=new JsonArray();caps.add(PrivateModelSyncService.CAPABILITY);caps.add(PrivateModelSyncService.UPLOAD_CREDIT);hello.add("capabilities",caps);scene.send(scene.owner,hello);
+            scene.uploadOffer(scene.owner,scene.hash);
+            String id=scene.owner.last("upload_accept").get("uploadId").getAsString();int chunk=scene.owner.last("upload_accept").get("chunkBytes").getAsInt();
+            assertEquals(2,scene.owner.last("upload_credit").get("nextIndex").getAsInt());
+            while(scene.limits.allowInbound(scene.owner.id,1,scene.now())){}
+            for(int index=0;index<2;index++) {
+                JsonObject part=packet("upload_chunk");part.addProperty("uploadId",id);part.addProperty("index",index);
+                part.addProperty("data",Base64.getEncoder().encodeToString(Arrays.copyOfRange(scene.bundle,index*chunk,(index+1)*chunk)));scene.send(scene.owner,part);
+            }
+            Object upload=field(scene.session(scene.owner),"upload");assertEquals(2,field(upload,"index"));assertEquals(2*chunk,field(upload,"offset"));
+            assertEquals(2,field(upload,"creditLimit"));assertEquals(0,scene.owner.count("error"));
+            scene.send(scene.owner,packet("clear"));assertFalse(scene.limits.allowInboundCredited(scene.owner.id,128,scene.now()));
+        }
+    }
+    @Test void congestedPrivateChunksReuseTheSameEncodedPacketAndReleaseItsReservationOnRevocation() throws Exception {
+        try(var scene=new Scene(true,10)) {
+            scene.start();scene.feedback("missing");scene.viewer.onChunk=scene::saturate;
+            scene.tick=1;scene.maintain();Object offer=scene.offer();byte[] packet=(byte[])field(offer,"pendingPacket");assertNotNull(packet);
+            scene.maintain();assertSame(packet,field(offer,"pendingPacket"));
+            scene.viewer.allowed=false;scene.maintain();assertNull(scene.offer());assertNull(field(offer,"pendingPacket"));
+        }
+    }
     @Test void nearestAudienceIsCachedAndRefreshesInFortyDistinctPublisherPhases() {
         PrivateAudienceCache cache=new PrivateAudienceCache();UUID generation=new UUID(1,1),viewer=new UUID(2,2);
         AtomicInteger discoveries=new AtomicInteger();
@@ -296,7 +320,7 @@ class PrivateModelPerformanceTest {
             });
             bukkitServer.setAccessible(true);previousServer=bukkitServer.get(null);bukkitServer.set(null,server);
             try {
-                service=new PrivateModelSyncService(plugin,()->{snapshotReads++;return Set.copyOf(disguised);},limits);
+                service=new PrivateModelSyncService(plugin,()->{snapshotReads++;return Set.copyOf(disguised);},limits,this::now);
                 service.configure(new PrivateModelSyncService.Policy(enabled,16000,8*1024*1024,32L*1024*1024,64,maxViewers,"mact.private.upload","mact.private.view"));
                 service.configurePerformance(PerformanceSettings.defaults());setField(service,"running",true);owner.tracked.add(viewer.player);
             }catch(Exception|Error failure){bukkitServer.set(null,previousServer);throw failure;}
@@ -333,8 +357,16 @@ class PrivateModelPerformanceTest {
             JsonObject offer=packet("upload_offer");offer.addProperty("generation",field(upload,"generation").toString());offer.addProperty("hash",hash);
             offer.addProperty("bytes",bundle.length);offer.addProperty("kind","ysm");offer.add("appearance",new JsonObject());return offer;
         }
-        void runWorker(){workers.removeFirst().run();callbacks.removeFirst().run();}
-        void saturate() {while(limits.allowOutbound(viewer.id,1024,false,System.nanoTime(),tick)){}while(limits.allowOutbound(viewer.id,1,false,System.nanoTime(),tick)){};}
+        void runWorker(){assertFalse(workers.isEmpty());while(!workers.isEmpty()){workers.removeFirst().run();while(!callbacks.isEmpty())callbacks.removeFirst().run();}}
+        long now(){return 10_000_000_000L+tick*50_000_000L;}
+        void saturate() {
+            UUID pressure=new UUID(99,99);limits.canOutbound(pressure,1,false,now(),tick);
+            try {
+                int remaining=ConnectionLimits.GLOBAL_BYTES_PER_TICK-((Number)field(limits,"globalBytes")).intValue();
+                if(remaining>0)assertTrue(limits.allowOutbound(pressure,remaining,false,now(),tick));
+                assertFalse(limits.canOutbound(viewer.id,1,false,now(),tick),"Only the shared per-tick budget is exhausted");
+            }catch(Exception invalid){throw new IllegalStateException(invalid);}
+        }
         @SuppressWarnings("unchecked") Map<UUID,Object> publications() throws Exception{return (Map<UUID,Object>)field(service,"publications");}
         @SuppressWarnings("unchecked") Map<UUID,Object> offers(Person person) throws Exception {Object session=((Map<?,?>)field(service,"sessions")).get(person.id);return (Map<UUID,Object>)field(session,"offers");}
         Object offer() throws Exception{return offers(viewer).get(owner.id);}

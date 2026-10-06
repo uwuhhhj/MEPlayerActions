@@ -14,10 +14,23 @@ import java.util.function.Predicate;
 
 /** Owns a model tracking filter. Publish immutable snapshots on Paper's main thread. */
 public final class ModelAudience {
+    /** Shared admission is independent of ME rendering and applies before publication. */
+    public interface Guard {
+        boolean discover();
+        Set<UUID> admit(UUID owner, Collection<UUID> requested);
+        void release(UUID owner);
+        default void worked(long nanos) { }
+    }
+    private static final Guard UNLIMITED = new Guard() {
+        public boolean discover() { return true; }
+        public Set<UUID> admit(UUID owner, Collection<UUID> requested) { return Set.copyOf(requested); }
+        public void release(UUID owner) { }
+    };
     private final DisguiseOptions options;
     private final Function<UUID, Player> lookup;
     private final LongSupplier clock;
     private final PerformanceSettings performance;
+    private final Guard guard;
     private volatile Set<UUID> allowed = Set.of();
     private volatile Set<UUID> localRenderers = Set.of();
     private final Set<UUID> suppressedPairings = new HashSet<>();
@@ -32,12 +45,20 @@ public final class ModelAudience {
     public ModelAudience(DisguiseOptions options, PerformanceSettings performance) {
         this(options, Bukkit::getPlayer, () -> Integer.toUnsignedLong(Bukkit.getCurrentTick()), performance);
     }
+    public ModelAudience(DisguiseOptions options, PerformanceSettings performance, Guard guard) {
+        this(options, Bukkit::getPlayer, () -> Integer.toUnsignedLong(Bukkit.getCurrentTick()), performance, guard);
+    }
     ModelAudience(DisguiseOptions options, Function<UUID, Player> lookup) {
         this(options, lookup, () -> Integer.toUnsignedLong(Bukkit.getCurrentTick()), PerformanceSettings.defaults());
     }
     ModelAudience(DisguiseOptions options, Function<UUID, Player> lookup, LongSupplier clock,
                   PerformanceSettings performance) {
+        this(options, lookup, clock, performance, UNLIMITED);
+    }
+    ModelAudience(DisguiseOptions options, Function<UUID, Player> lookup, LongSupplier clock,
+                  PerformanceSettings performance, Guard guard) {
         this.options = options; this.lookup = lookup; this.clock = clock; this.performance = performance;
+        this.guard = Objects.requireNonNull(guard);
     }
 
     public boolean allows(UUID viewer) { return allowed.contains(viewer); }
@@ -54,8 +75,15 @@ public final class ModelAudience {
         return changed;
     }
     public int otherViewers(UUID owner) { return allowed.size() - (allowed.contains(owner) ? 1 : 0); }
+    public int viewers() { return allowed.size(); }
 
     public boolean update(Player owner, TrackedEntity next) {
+        long started = System.nanoTime();
+        try { return updateTracked(owner, next); }
+        finally { guard.worked(System.nanoTime() - started); }
+    }
+
+    private boolean updateTracked(Player owner, TrackedEntity next) {
         Objects.requireNonNull(next, "ME 玩家跟踪接口不可用");
         // ME copies our predicate and forced pairings when TempTrackedEntity is replaced.
         if (tracked == null) {
@@ -72,7 +100,7 @@ public final class ModelAudience {
         if (now < lastUpdate) nextRefresh = nextValidation = Long.MIN_VALUE;
         lastUpdate = now;
         Set<UUID> previous = allowed;
-        if (now >= nextRefresh) {
+        if (now >= nextRefresh && guard.discover()) {
             discover(owner, next);
             nextRefresh = nextDeadline(now, owner.getUniqueId(), performance.audienceRefreshTicks());
             nextValidation = now + performance.validationTicks();
@@ -104,11 +132,21 @@ public final class ModelAudience {
             if (viewer == null || viewer.getUniqueId().equals(owner.getUniqueId()) || !eligible(owner, viewer)) continue;
             eligible.add(new AudienceSelector.Candidate(viewer.getUniqueId(), origin.distanceSquared(viewer.getLocation())));
         }
-        allowed = AudienceSelector.select(owner.getUniqueId(), options.showSelf(), options.viewDistance(), options.maxViewers(), eligible);
+        Set<UUID> selected = AudienceSelector.select(owner.getUniqueId(), options.showSelf(), options.viewDistance(), options.maxViewers(), eligible);
+        // Retain existing eligible slots first; admit new viewers nearest-first so
+        // another model reaching a global cap cannot evict healthy relationships.
+        List<UUID> requested = new ArrayList<>();
+        for (UUID id : allowed) if (selected.contains(id)) requested.add(id);
+        if (selected.contains(owner.getUniqueId()) && !requested.contains(owner.getUniqueId())) requested.add(owner.getUniqueId());
+        Set<UUID> requestedIds = new HashSet<>(requested);
+        eligible.stream().filter(candidate -> selected.contains(candidate.id())).sorted(Comparator.comparingDouble(AudienceSelector.Candidate::distanceSquared)
+                .thenComparing(AudienceSelector.Candidate::id)).map(AudienceSelector.Candidate::id)
+                .filter(requestedIds::add).forEach(requested::add);
+        allowed = Set.copyOf(guard.admit(owner.getUniqueId(), requested));
     }
 
     private void validate(Player owner, TrackedEntity next) {
-        if (allowed.isEmpty()) return;
+        if (allowed.isEmpty()) { guard.admit(owner.getUniqueId(), List.of()); return; }
         // ME's UUID tracking snapshot is still read, but player lookup, vanish,
         // world and distance checks are bounded by already admitted viewers.
         Set<UUID> current = originalTracking(next);
@@ -121,7 +159,7 @@ public final class ModelAudience {
             if (viewer != null && (current.contains(id) || suppressedPairings.contains(id)) && eligible(owner, viewer)
                     && origin.distanceSquared(viewer.getLocation()) < distance) retained.add(id);
         }
-        allowed = Set.copyOf(retained);
+        allowed = Set.copyOf(guard.admit(owner.getUniqueId(), retained));
     }
 
     private boolean eligible(Player owner, Player viewer) {
@@ -168,12 +206,13 @@ public final class ModelAudience {
     /** Use the current data wrapper, which may differ from the initial temporary one. */
     public void close(TrackedEntity current, UUID owner) {
         if (current == null) current = tracked;
-        if (current == null) return;
+        if (current == null) { guard.release(owner); return; }
         if (current.getPlayerPredicate() == filter) current.setPlayerPredicate(original);
         if (addedSelf) current.removeForcedPairing(owner);
         for (UUID id : suppressedPairings) current.addForcedPairing(id);
         current.markViewersDirty();
         suppressedPairings.clear(); addedSelf = false;
         localRenderers = Set.of(); allowed = Set.of(); pairingsDirty = false;
+        guard.release(owner);
     }
 }

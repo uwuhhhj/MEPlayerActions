@@ -1,6 +1,7 @@
 package com.simmc.meplayeractions.client;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import com.simmc.meplayeractions.config.ModelComplexityLimits;
 import java.io.*;
 import java.nio.file.*;
 import java.security.MessageDigest;
@@ -127,6 +128,48 @@ class ModelAssetsTest {
                 task->{throw new RejectedExecutionException(privateMessage);},warnings::add);
         rejected.get("demo");assertTrue(rejected.status("demo").reason().contains("RejectedExecutionException"));
         assertFalse(rejected.status("demo").reason().contains("private"));assertFalse(warnings.getFirst().contains("private"));
+    }
+
+    @Test void encodedChunksAreImmutableAndHashSharingDoesNotMergeModelIdentity() throws Exception {
+        var work=new ArrayDeque<Runnable>();byte[] raw=raw("source","same immutable asset");
+        var assets=new ModelAssets(temporary.resolve("absent"),null,name->new ByteArrayInputStream(raw),work::add,ignored->{},
+                ModelComplexityLimits.defaults(),4,1_000_000);
+        assets.get("first");work.remove().run();var first=assets.get("first").orElseThrow();
+        assets.get("second");work.remove().run();var second=assets.get("second").orElseThrow();
+        assertEquals("first",first.modelId());assertEquals("second",second.modelId());assertEquals(first.hash(),second.hash());
+        assertEquals(1,assets.metrics().uniqueHashes());long retained=assets.metrics().bytes();assertTrue(retained>first.compressedBytes());
+        assertTrue(assets.retain(first));assertTrue(assets.retain(second));
+        byte[] copied=first.compressed();Arrays.fill(copied,(byte)0);
+        ByteArrayOutputStream packed=new ByteArrayOutputStream();
+        for(int i=0;i<first.chunks(9000);i++)packed.write(Base64.getDecoder().decode(first.base64Chunk(i,9000)));
+        try(var gzip=new GZIPInputStream(new ByteArrayInputStream(packed.toByteArray()))){assertArrayEquals(raw,gzip.readAllBytes());}
+        assets.invalidate();assertEquals(retained,assets.metrics().bytes());assertEquals(1,assets.metrics().uniqueHashes());
+        assets.release(first);assertEquals(retained,assets.metrics().bytes());assets.release(second);
+        assertEquals(0,assets.metrics().bytes());assertEquals(0,assets.metrics().uniqueHashes());
+        assertThrows(IllegalArgumentException.class,()->first.base64Chunk(-1,9000));
+    }
+
+    @Test void pendingWorkAndPreparedAssetsRespectCacheCountAndMemoryBudgets() throws Exception {
+        var work=new ArrayDeque<Runnable>();var warnings=new ArrayList<String>();
+        var assets=new ModelAssets(temporary.resolve("absent"),null,name->new ByteArrayInputStream(raw("source",name)),work::add,warnings::add,
+                ModelComplexityLimits.defaults(),2,1_000_000);
+        assets.get("first");assets.get("second");assertTrue(assets.get("third").isEmpty());
+        assertEquals(2,work.size());assertEquals("asset_queue_full",assets.status("third").state());
+        work.remove().run();work.remove().run();assertEquals(2,assets.metrics().models());
+        assets.get("third");assertEquals(1,work.size());work.remove().run();assertEquals(2,assets.metrics().models());
+        var tiny=new ModelAssets(temporary.resolve("tiny"),null,name->new ByteArrayInputStream(raw("source",name)),work::add,warnings::add,
+                ModelComplexityLimits.defaults(),2,1);
+        tiny.get("demo");work.remove().run();assertEquals("asset_too_large",tiny.status("demo").state());
+        assertEquals(0,tiny.metrics().bytes());assertTrue(tiny.get("demo").isEmpty());assertTrue(work.isEmpty());
+    }
+
+    @Test void tightenedComplexityBudgetRejectsBeforeAdvertisingAssetHash() throws Exception {
+        var work=new ArrayDeque<Runnable>();
+        byte[] excessive="{\"elements\":[],\"outliner\":[{\"name\":\"root\",\"children\":[{\"name\":\"child\",\"children\":[]}]}],\"textures\":[],\"animations\":[]}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        var limits=new ModelComplexityLimits(1,1024,65536,32768,2097152,200000,256,8388608,16777216);
+        var assets=new ModelAssets(temporary.resolve("absent"),null,name->new ByteArrayInputStream(excessive),work::add,ignored->{},limits,2,1_000_000);
+        assets.get("demo");work.remove().run();assertEquals("model_complexity",assets.status("demo").state());
+        assertTrue(assets.get("demo").isEmpty());assertEquals(0,assets.metrics().bytes());
     }
 
     private static byte[] raw(String identifier,String marker) {

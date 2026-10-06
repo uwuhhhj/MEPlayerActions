@@ -39,7 +39,7 @@ class PrivateUploadCatalogServiceTest {
             scene.maintain();assertEquals(1,scene.workers.size());assertEquals(0,scene.callbacks.size());
             for(int tick=1;tick<100;tick++){scene.tick=tick;scene.maintain();}
             assertEquals(1,scene.workers.size(),"One pending worker serves all owners");
-            scene.workers.removeFirst().run();scene.tick=100;scene.maintain();assertEquals(1,scene.workers.size());
+            scene.workers.removeFirst().run();assertEquals(1,scene.callbacks.size());scene.callbacks.removeFirst().run();scene.tick=100;scene.maintain();assertEquals(1,scene.workers.size());
             assertTrue(scene.publications().isEmpty());assertEquals(1,scene.owner.count("upload_catalog"));
         }
     }
@@ -63,7 +63,7 @@ class PrivateUploadCatalogServiceTest {
             set(scene.store,"catalog",new PrivateModelStore.CatalogSnapshot(1,Map.of(scene.owner.id,models)));
             scene.hello(scene.owner,true);assertEquals(1,scene.owner.count("upload_catalog"));scene.pump();
             assertEquals(1,scene.owner.count("upload_catalog"));
-            scene.tick=1;assertTrue(scene.limits.allowOutbound(new UUID(90,90),ConnectionLimits.GLOBAL_BYTES_PER_TICK,false,System.nanoTime(),scene.tick));
+            scene.tick=1;assertTrue(scene.limits.allowOutbound(new UUID(90,90),ConnectionLimits.GLOBAL_BYTES_PER_TICK,false,scene.now(),scene.tick));
             scene.pump();assertEquals(1,scene.owner.count("upload_catalog"));assertEquals(1,((Number)field(scene.session(scene.owner),"catalogIndex")).intValue());
             scene.tick=2;scene.pump();scene.pump();assertEquals(2,scene.owner.count("upload_catalog"));
             scene.saturateOwnerWindow();int deferred=((Number)field(scene.session(scene.owner),"catalogIndex")).intValue();
@@ -134,6 +134,24 @@ class PrivateUploadCatalogServiceTest {
             assertEquals(secondHash,scene.store.listUploaded(scene.owner.id).getFirst().hash());
         }
     }
+    @Test void completedOrFailedDeleteAfterOwnerQuitReleasesSlotsWithoutRevivingAnOldSessionReply() throws Exception {
+        for(boolean failed:List.of(false,true))try(var scene=new Scene(temporary.resolve("late-delete-"+failed))) {
+            byte[] bytes=bundle(1);String hash=PrivateModelBundle.hash(bytes),source="ysm:saved.ysm";
+            scene.store.saveValidated(scene.owner.id,source,hash,"ysm",bytes);scene.hello(scene.owner,true);
+            scene.send(scene.owner,scene.delete(scene.owner,UUID.randomUUID(),source,hash,bytes.length));
+            assertEquals(1,((Set<?>)field(scene.service,"deleting")).size());
+            try {
+                if(failed)Thread.currentThread().interrupt();
+                scene.workers.removeFirst().run();
+            }finally{Thread.interrupted();}
+            assertEquals(1,scene.callbacks.size());scene.service.forget(scene.owner.player);
+            assertNull(scene.session(scene.owner));scene.callbacks.removeFirst().run();
+            assertTrue(((Set<?>)field(scene.service,"deleting")).isEmpty());assertTrue(((Set<?>)field(scene.service,"deletingSources")).isEmpty());
+            assertTrue(((Set<?>)field(scene.service,"pendingDeleteReplies")).isEmpty());
+            assertEquals(0,scene.owner.count("upload_deleted"));assertEquals(0,scene.owner.count("upload_delete_failed"));
+            assertEquals(failed,Files.exists(scene.archive(scene.owner,hash)));
+        }
+    }
     @Test void anOwnerHashCannotBeUploadedWhileDeletingOrDeletedWhileItsCancelledValidatorStillRuns() throws Exception {
         byte[] bytes=bundle(1);String hash=PrivateModelBundle.hash(bytes),source="ysm:saved.ysm";
         try(var scene=new Scene(temporary)) {
@@ -191,7 +209,7 @@ class PrivateUploadCatalogServiceTest {
             assertEquals("private_delete_stale",scene.owner.last("upload_delete_failed").get("code").getAsString());
             assertTrue(scene.workers.isEmpty());assertTrue(Files.exists(scene.archive(scene.owner,hash)));
             Object rates=((Map<?,?>)field(scene.service,"rates")).get(scene.owner.id);
-            set(field(rates,"hello"),"last",System.nanoTime()-1_000_000_001L);scene.tick++;scene.hello(scene.owner,true);
+            set(field(rates,"hello"),"last",scene.now()-1_000_000_001L);scene.tick++;scene.hello(scene.owner,true);
             assertNotEquals(original.get("catalogToken").getAsString(),scene.owner.last("hello_ack").get("uploadCatalogToken").getAsString());
             scene.send(scene.owner,original);
             assertEquals("private_delete_stale",scene.owner.last("upload_delete_failed").get("code").getAsString());
@@ -227,7 +245,7 @@ class PrivateUploadCatalogServiceTest {
             });
             bukkit.setAccessible(true);previous=bukkit.get(null);bukkit.set(null,server);
             try {
-                service=new PrivateModelSyncService(plugin,Set::of,limits);
+                service=new PrivateModelSyncService(plugin,Set::of,limits,this::now);
                 service.configure(new PrivateModelSyncService.Policy(true,1024,PrivateModelBundle.MAX_BYTES,32L*1024*1024,64,10,"mact.private.upload","mact.private.view"));
                 service.configurePerformance(PerformanceSettings.defaults());set(service,"running",true);set(service,"store",store);
             }catch(Exception|Error failure){bukkit.set(null,previous);throw failure;}
@@ -266,13 +284,14 @@ class PrivateUploadCatalogServiceTest {
             ((Map<UUID,Object>)field(session(viewer),"offers")).put(owner.id,offer);
             ((Set<UUID>)field(publication,"offeredViewers")).add(viewer.id);
         }
+        long now(){return 10_000_000_000L+tick*50_000_000L;}
         private Object ownerWindow() throws Exception{return field(((Map<?,?>)field(limits,"connections")).get(owner.id),"outbound");}
         void saturateOwnerWindow() throws Exception {
-            Object window=ownerWindow();set(window,"startedAt",System.nanoTime()+60_000_000_000L);
+            Object window=ownerWindow();set(window,"startedAt",now()+60_000_000_000L);
             int remaining=ConnectionLimits.OUTBOUND_BYTES_PER_SECOND-((Number)field(window,"bytes")).intValue();
-            while(remaining>0){tick++;int charge=Math.min(ConnectionLimits.GLOBAL_BYTES_PER_TICK,remaining);assertTrue(limits.allowOutbound(owner.id,charge,false,System.nanoTime(),tick));remaining-=charge;}
+            while(remaining>0){tick++;int charge=Math.min(ConnectionLimits.GLOBAL_BYTES_PER_TICK,remaining);assertTrue(limits.allowOutbound(owner.id,charge,false,now(),tick));remaining-=charge;}
         }
-        void resetOwnerWindow() throws Exception{set(ownerWindow(),"startedAt",System.nanoTime()-1_000_000_001L);}
+        void resetOwnerWindow() throws Exception{set(ownerWindow(),"startedAt",now()-1_000_000_001L);}
         @Override public void close() throws Exception{bukkit.set(null,previous);}
     }
     private static final class Person {
