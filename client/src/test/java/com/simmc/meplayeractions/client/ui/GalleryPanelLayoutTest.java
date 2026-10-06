@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class GalleryPanelLayoutTest {
     @Test void largeWindowKeepsTheSourceFiveByTwoDeckInsideACompactCenteredPanel() {
-        var panel = GalleryPanelLayout.create(1200, 660, 73, 58);
+        var panel = home(1200,660);
         assertEquals(420, panel.panelWidth());
         assertEquals(135, panel.previewWidth());
         assertEquals(282, panel.rightWidth());
@@ -18,8 +18,8 @@ class GalleryPanelLayoutTest {
     }
 
     @Test void enlargingTheGameWindowMovesTheWholePanelWithoutExpandingOnlyItsEmptyBackground() {
-        var before = GalleryPanelLayout.create(640, 360, 73, 58);
-        var after = GalleryPanelLayout.create(1920, 1080, 73, 58);
+        var before = home(640,360);
+        var after = home(1920,1080);
         assertEquals(before.panelWidth(), after.panelWidth());
         assertEquals(before.frameBottom() - before.frameTop(), after.frameBottom() - after.frameTop());
         assertEquals(before.columns() * before.rows(), after.columns() * after.rows());
@@ -28,18 +28,21 @@ class GalleryPanelLayoutTest {
         assertEquals(after.titleY() - before.titleY(), after.footerY() - before.footerY());
     }
 
-    @Test void smallGuiWindowFitsSourceAndShareHeadersCardsAndFooterWithoutOverlap() {
-        var panel = GalleryPanelLayout.create(320, 240, 73, 58);
+    @Test void smallGuiWindowFitsSourceHeaderCardsAndFooterWithoutOverlap() {
+        var panel = home(320,240);
         assertTrue(panel.compact());
         assertEquals(3, panel.columns()); assertEquals(1, panel.rows());
         assertTrue(panel.left() >= 4 && panel.left() + panel.panelWidth() <= 316);
         assertTrue(panel.frameTop() >= 4 && panel.frameBottom() <= 236);
-        int sourceY = panel.top() - 41, shareY = panel.top() - 20;
+        int sourceY = panel.top() - 20;
         assertTrue(panel.titleY() + 9 <= sourceY);
-        assertTrue(sourceY + 18 <= shareY);
-        assertTrue(shareY + 16 < panel.top());
+        assertTrue(sourceY + 18 < panel.top());
         assertEquals(panel.frameBottom(), panel.footerY() + 20);
         assertCardsFit(panel);
+    }
+
+    private static GalleryPanelLayout.Bounds home(int width,int height) {
+        return GalleryPanelLayout.create(width,height,GalleryPanelLayout.HOME_HEADER_HEIGHT,GalleryPanelLayout.HOME_COMPACT_HEADER_HEIGHT);
     }
 
     @Test void standaloneGalleryAndServerViewUseTheirOwnHeaderSpaceInsideThePanel() {

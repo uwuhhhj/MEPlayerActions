@@ -2,6 +2,7 @@ package com.simmc.meplayeractions.client.ui;
 
 import com.simmc.meplayeractions.client.ClientRuntime;
 import com.simmc.meplayeractions.client.LocalAppearanceSettings;
+import com.simmc.meplayeractions.client.LocalModelLibrary;
 import com.simmc.meplayeractions.client.model.YsmModelProfile;
 import net.minecraft.client.gl.RenderPipelines;
 import net.minecraft.client.gui.DrawContext;
@@ -11,20 +12,27 @@ import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 import java.util.IdentityHashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Direct gallery home adapted from OpenYSM-Updated PlayerModelScreen/ModelButton/IconButton,
  * revision 0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85 (MIT; see THIRD_PARTY_NOTICES).
- * The two source tabs choose the viewer's private or current server-bound appearance.
+ * Client and server tabs share the same source gallery; only an explicit use button applies an appearance.
  */
 public final class PlayerModelScreen extends LocalAppearanceScreen {
     private static final Identifier SETTINGS_ICON=Identifier.of("meplayeractions","textures/gui/settings.png");
     private final Map<ButtonWidget,String> roles=new IdentityHashMap<>();
+    private final Set<String> serverFavorites=new HashSet<>();
     private boolean clientTab,advanced,initializedLocalMode;
     private String initializedInstance="";
-    private ButtonWidget selfOnly,sharedModel;
+    private long initializedCatalogRevision=Long.MIN_VALUE;
+    private Map<String,String> initializedServerPreviews=Map.of();
+    private Map<String,String> serverLabels=Map.of();
 
     public PlayerModelScreen(ClientRuntime runtime) {this(runtime,null);}
     public PlayerModelScreen(ClientRuntime runtime,Screen parent) {
@@ -35,40 +43,72 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
         // Returning from a child screen must compare the previous snapshot before recording the new one.
         boolean localMode=runtime.interactionLocalMode();String instance=runtime.serverOwnModelInstance();
         if(initializedLocalMode!=localMode || !initializedInstance.equals(instance)) {
-            clientTab=localMode;advanced=false;clearGalleryPreviews();
+            clientTab=localMode;advanced=false;resetGallery();
         }
         initializedLocalMode=localMode;initializedInstance=instance;roles.clear();
         super.init();
+        initializedCatalogRevision=runtime.serverCatalogRevision();
+        initializedServerPreviews=serverPreviewAssets();
     }
     @Override protected int galleryHeaderHeight(boolean compact) {
-        return clientTab ? (compact ? 58 : 73) : (compact ? 37 : 49);
+        return compact ? GalleryPanelLayout.HOME_COMPACT_HEADER_HEIGHT : GalleryPanelLayout.HOME_HEADER_HEIGHT;
     }
-    @Override protected boolean clientGalleryVisible() {return clientTab && !advanced;}
+    @Override protected boolean clientGalleryVisible() {return !advanced;}
+    @Override protected boolean localGallery() {return clientTab;}
+    @Override protected List<ClientRuntime.Action> galleryModels() {
+        if(clientTab)return super.galleryModels();
+        var models=runtime.serverCatalog();var labels=new LinkedHashMap<String,String>();
+        models.forEach(model->labels.put(model.id(),model.label()));serverLabels=Map.copyOf(labels);return models;
+    }
+    @Override protected CompletableFuture<LocalModelLibrary.Loaded> loadGalleryPreview(String id) {
+        return clientTab?super.loadGalleryPreview(id):CompletableFuture.completedFuture(runtime.serverModelForPreview(id));
+    }
+    @Override protected YsmModelProfile galleryProfile(String id) {
+        if(clientTab)return super.galleryProfile(id);
+        var loaded=runtime.serverModelForPreview(id);return loaded==null?YsmModelProfile.empty():loaded.profile();
+    }
+    @Override protected String gallerySourceLabel(String id) {return clientTab?super.gallerySourceLabel(id):"服务器模型";}
+    @Override protected String galleryStatus() {return clientTab?super.galleryStatus():runtime.serverCatalogStatus();}
+    @Override protected String galleryPreviewUnavailableText(String id) {
+        return clientTab?super.galleryPreviewUnavailableText(id):"使用模型后由服务器下发资源";
+    }
+    @Override protected boolean canUseGalleryModel(String id,LocalModelLibrary.Loaded loaded) {
+        return clientTab?super.canUseGalleryModel(id,loaded):runtime.canRequestServerDisguise(id);
+    }
+    @Override protected String galleryUseTooltip() {
+        return clientTab?super.galleryUseTooltip():"使用当前服务器模型；资源由服务器下发，其他玩家看到服务器伪装";
+    }
+    @Override protected String galleryBrowsingMessage() {
+        return clientTab?super.galleryBrowsingMessage():"浏览服务器模型；点击使用模型才伪装";
+    }
+    @Override protected boolean isFavoriteModel(String id) {return clientTab?super.isFavoriteModel(id):serverFavorites.contains(id);}
+    @Override protected void toggleModelFavorite(String id) {
+        if(clientTab)super.toggleModelFavorite(id);else if(!serverFavorites.remove(id))serverFavorites.add(id);
+    }
+    @Override protected void buildSelectionControls() {
+        if(clientTab){super.buildSelectionControls();return;}
+        settings=favorite=null;
+        use=button("使用模型",left+5,bottom-44,previewWidth-10,this::useSelectedModel,galleryUseTooltip());
+        roles.put(use,"useServerModel");
+    }
+    @Override public void useSelectedModel() {
+        if(clientTab){super.useSelectedModel();return;}
+        String id=selectedModelId();
+        if(!runtime.canRequestServerDisguise(id)){setGalleryMessage(runtime.serverCatalogStatus());return;}
+        setGalleryMessage(runtime.requestServerDisguise(id)?"已发送伪装请求，等待服务器确认":"无法发送伪装请求，请稍后重试");
+    }
     @Override protected boolean requiresLocalSource() {return false;}
     @Override protected boolean showRotationHint() {return false;}
     @Override protected String settingsButtonLabel(int buttonWidth) {return "外观设置…";}
 
     @Override protected void buildHeaderControls() {
-        int sourceOffset=clientTab?(compactLayout?41:53):(compactLayout?20:29);
+        int sourceOffset=compactLayout?20:29;
         int half=(panelWidth-6)/2,y=top-sourceOffset;
         int sourceHeight=compactLayout?18:24;
         roles.put(flatButton(clientTab?"客户端 ✓":"客户端",left,y,half,sourceHeight,()->switchSource(true),
-                "本地图库与私人设置；选择仅自己可见或授权分享。手动覆盖服务器伪装仍只在本机显示",clientTab),"clientSource");
-        roles.put(flatButton(clientTab?"服务器下发":"服务器下发 ✓",left+half+6,y,panelWidth-half-6,sourceHeight,()->switchSource(false),
-                "仅展示当前服务器绑定的模型；模型选择与分发由服务器决定",!clientTab),"serverSource");
-        selfOnly=sharedModel=null;
-        if(clientTab) {
-            boolean sharing=runtime.privateSyncEnabled()&&!runtime.serverOwnModelPresent();
-            int sharingY=top-(compactLayout?20:26),sharingHeight=compactLayout?16:20;
-            selfOnly=flatButton(sharing?"仅自己可见":"仅自己可见 ✓",left,sharingY,half,sharingHeight,()->{
-                runtime.setPrivateSyncEnabled(false);clearAndInit();
-            },"只在自己的客户端显示，不上传模型，也不改变服务器伪装",!sharing);
-            sharedModel=flatButton(sharing?"分享给模组玩家 ✓":"分享给模组玩家",left+half+6,sharingY,panelWidth-half-6,sharingHeight,()->{
-                runtime.setPrivateSyncEnabled(true);clearAndInit();
-            },sharingTooltip(),sharing);
-            sharedModel.active=runtime.canShareLocalModel();
-            roles.put(selfOnly,"selfOnly");roles.put(sharedModel,"sharePrivateModel");
-        }
+                "本地模型图库与私人设置；使用模型仅本机可见，云朵按钮可主动上传分享",clientTab),"clientSource");
+        roles.put(flatButton(clientTab?"服务端":"服务端 ✓",left+half+6,y,panelWidth-half-6,sourceHeight,()->switchSource(false),
+                "浏览服务器允许使用的模型；点击使用后由服务器确认伪装并下发资源",!clientTab),"serverSource");
     }
 
     @Override protected void buildFooterControls() {
@@ -135,24 +175,41 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
         }
         roles.put(button("返回图库",x,Math.max(y+25,bottom-22),w,()->{advanced=false;clearAndInit();},"关闭轮盘选项并回到当前来源"),"gallery");
     }
-    private String sharingTooltip() {
-        return "主动将已使用的 .ysm 或 .bbmodel 上传给服务器，供获准观看的模组玩家下载并本地渲染；原版玩家仍看见原版人物。\n"
-                +runtime.privateSyncStatus();
-    }
-
     private void switchSource(boolean local) {
         if(local || runtime.serverOwnModelPresent()) {
             runtime.selectInteractionSource(local);clientTab=runtime.interactionLocalMode();
         } else clientTab=false; // Browsing an empty server tab does not change private or network state.
-        advanced=false;clearGalleryPreviews();clearAndInit();
+        advanced=false;resetGallery();clearAndInit();
     }
 
     @Override public void tick() {
         if(initializedLocalMode!=runtime.interactionLocalMode() || !initializedInstance.equals(runtime.serverOwnModelInstance())) {
-            clientTab=runtime.interactionLocalMode();advanced=false;clearGalleryPreviews();clearAndInit();
+            clientTab=runtime.interactionLocalMode();advanced=false;resetGallery();clearAndInit();
         }
-        if(sharedModel!=null){sharedModel.active=runtime.canShareLocalModel();sharedModel.setTooltip(Tooltip.of(Text.literal(sharingTooltip())));}
+        if(!clientTab && initializedCatalogRevision!=runtime.serverCatalogRevision()) {
+            resetGallery();clearAndInit();
+        }
+        if(!clientTab && !advanced) {
+            Map<String,String> currentPreviews=serverPreviewAssets();
+            if(!initializedServerPreviews.equals(currentPreviews)) {
+                clearGalleryPreviews();clearAndInit();
+            }
+            if(use!=null)use.active=!selectedModelId().isEmpty()&&runtime.canRequestServerDisguise(selectedModelId());
+        }
         super.tick();
+    }
+
+    /** Poll only the visible page and selection for already authorized resources; never requests a model. */
+    private Map<String,String> serverPreviewAssets() {
+        if(clientTab || advanced)return Map.of();
+        var ids=new HashSet<>(visibleModelIds());
+        if(!selectedModelId().isEmpty())ids.add(selectedModelId());
+        var result=new LinkedHashMap<String,String>();
+        for(String id:ids) {
+            var loaded=runtime.serverModelForPreview(id);
+            if(loaded!=null)result.put(id,loaded.hash());
+        }
+        return Map.copyOf(result);
     }
 
     @Override protected void renderHeader(DrawContext context) {
@@ -160,21 +217,33 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
     }
     @Override protected void renderAlternateContent(DrawContext context,float delta) {
         if(clientTab)renderSelectedPreview(context,delta);else renderServerPreview(context,delta);
-        if(advanced) {
-            clipped(context,"客户端设置",right+8,top+8,rightWidth-16,0xfff3f0e0);
-            clipped(context,runtime.privateSyncStatus(),right+8,top+19,rightWidth-16,0xff92b9df);
+        clipped(context,"客户端设置",right+8,top+8,rightWidth-16,0xfff3f0e0);
+        clipped(context,runtime.privateSyncStatus(),right+8,top+19,rightWidth-16,0xff92b9df);
+    }
+
+    @Override protected void renderSelectedPreview(DrawContext context,float delta) {
+        if(clientTab){super.renderSelectedPreview(context,delta);return;}
+        String id=selectedModelId();
+        if(id.isEmpty()) {
+            clipped(context,"服务器模型",left+6,top+6,previewWidth-12,0xfff3f0e0);
+            clipped(context,"请选择服务器模型",previewX+3,previewY+previewH/2,previewW-6,0xffc6d5e7);
             return;
         }
-        String model=runtime.serverOwnModelPresent()?runtime.serverOwnModelId():"暂无服务器模型";
-        clipped(context,model,right+8,top+9,rightWidth-16,0xfff3f0e0);
-        String status=!runtime.serverBridgeReady()?"当前服务器未连接模型功能":!runtime.serverOwnModelPresent()
-                ?"使用服务器伪装后，模型会显示在这里":runtime.serverOwnModelReady()?"已接管服务器模型":"模型尚未就绪，暂由服务器显示";
-        Object error=runtime.ownServerAppearanceDiagnostics().get("assetError");
-        String assetError=error instanceof String detail && !detail.isEmpty()?"\n"+detail:"";
-        var lines=textRenderer.wrapLines(Text.literal(status+assetError+"\n\n服务器决定模型、动画与同步；此页只显示当前绑定，不申请其它模型。\n\n动作使用 J 轮盘。"),Math.max(1,rightWidth-16));
-        context.enableScissor(right+6,top+28,right+rightWidth-6,bottom-6);
-        int y=top+30;for(var line:lines) {context.drawTextWithShadow(textRenderer,line,right+8,y,0xffb9c9da);y+=11;}
-        context.disableScissor();
+        var loaded=runtime.serverModelForPreview(id);
+        String name=serverLabels.getOrDefault(id,id);
+        leftPreviewId=id;leftPreviewSource="server-catalog-preview";
+        clipped(context,name,left+6,top+6,previewWidth-12,0xfff3f0e0);
+        clipped(context,"预览 · 点击使用模型伪装",left+6,top+17,previewWidth-12,0xff92b9df);
+        clipped(context,"由服务器确认并下发",left+6,bottom-15,previewWidth-12,0xff92b9df);
+        if(loaded==null) {
+            clipped(context,galleryPreviewUnavailableText(id),previewX+3,previewY+previewH/2,previewW-6,0xffffc685);
+            return;
+        }
+        leftPreviewKey="server-catalog:"+id+":"+loaded.hash();leftPreviewHash=loaded.hash();
+        leftPreviewDrawn=preview.render(context,loaded.model(),leftPreviewKey,previewX,previewY,previewW,previewH,
+                yaw,pitch,ticks+delta,Map.of(),loaded.previewAnimation(),loaded.profile(),ModelPreview.Context.SELECTED);
+        if(leftPreviewDrawn)drawnPreviewCount++;
+        else clipped(context,"服务器模型预览暂不可用",previewX+3,previewY+previewH/2,previewW-6,0xffffc685);
     }
 
     private void renderServerPreview(DrawContext context,float delta) {
@@ -184,6 +253,7 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
         ClientRuntime.RenderBinding binding=client.player==null?null:runtime.appearanceBinding(client.player.getUuid());
         if(runtime.serverOwnModelPresent() && binding!=null && instance.equals(binding.instance()) && !binding.motionSource().equals("local-self")) {
             leftPreviewId=id;leftPreviewKey="server:"+instance+":"+binding.assetHash();
+            leftPreviewSource="server-bound";leftPreviewInstance=instance;leftPreviewHash=binding.assetHash();
             leftPreviewDrawn=preview.render(context,binding.model(),leftPreviewKey,previewX,previewY,previewW,previewH,yaw,pitch,ticks+delta,Map.of(),"",YsmModelProfile.empty());
             if(leftPreviewDrawn)drawnPreviewCount++;
         }
@@ -200,6 +270,7 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
         result.put("contentTop",top);result.put("contentBottom",bottom);result.put("scroll",0);result.put("maximumScroll",0);
         result.put("leftPreview",gallery.get("leftPreview"));result.put("cards",gallery.get("cards"));result.put("gallery",gallery);
         result.put("serverAppearance",runtime.ownServerAppearanceDiagnostics());
+        result.put("serverCatalogRevision",runtime.serverCatalogRevision());result.put("serverCatalogStatus",runtime.serverCatalogStatus());
         result.put("privateSyncEnabled",runtime.privateSyncEnabled());result.put("privateSyncAvailable",runtime.privateSyncAvailable());
         result.put("privateSyncStatus",runtime.privateSyncStatus());
         result.put("privateSharing",runtime.privateSharingDiagnostics());

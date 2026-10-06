@@ -2,11 +2,12 @@ package com.simmc.meplayeractions.client.ui;
 
 /**
  * OpenYSM-Updated 0306e1f PlayerModelScreen's centered 420x235 panel and 5x2 slots.
- * MPA's search/pagination spacing needs three extra content pixels; source/share
+ * MPA's search/pagination spacing needs three extra content pixels; source
  * headers and the three visibility controls are attached to that same panel.
  */
 final class GalleryPanelLayout {
     static final int CARD_WIDTH = 52, CARD_HEIGHT = 90, CARD_GAP = 3;
+    static final int HOME_HEADER_HEIGHT = 49, HOME_COMPACT_HEADER_HEIGHT = 37;
     private static final int PANEL_WIDTH = 420, PREVIEW_WIDTH = 135, PANEL_GAP = 3;
     private static final int GRID_TOP = 29, GRID_BOTTOM = 26, FOOTER_HEIGHT = 24;
     private static final int CONTENT_HEIGHT = GRID_TOP + 2 * CARD_HEIGHT + CARD_GAP + GRID_BOTTOM;

@@ -18,7 +18,7 @@ v3 是玩家模型资产、动画状态及观众渲染接管协议。客户端�
 ```json
 {"protocol":3,"type":"hello","clientVersion":"0.5.0","capabilities":["local_render","server_push_models","incremental_state"]}
 ```
-`capabilities` 必须含 `local_render`，还可声明 `server_push_models`、旧 `resource_pack_models`，以及 0.4.9 的 `incremental_state`／`server_timeline`；不允许重复，其他 capability 拒绝。客户端默认声明增量能力，显式启用 `followServerTimeline` 时另声明 `server_timeline`。`clientVersion` 可省略（最多 64 字符）。hello 两次接受之间至少相隔一个单调时钟秒；这一时间戳属于玩家连接，未知协议结束会话或重新 hello 都不能重置。新 hello 清理旧绑定并恢复旧 ME 可见性，不授予渲染权限。
+`capabilities` 必须含 `local_render`，还可声明 `server_push_models`、旧 `resource_pack_models`，以及 `incremental_state`／`server_timeline` 和可选 `server_model_catalog`；不允许重复，其他 capability 拒绝。客户端默认声明增量能力，显式启用 `followServerTimeline` 时另声明 `server_timeline`。`clientVersion` 可省略（最多 64 字符）。hello 两次接受之间至少相隔一个单调时钟秒；这一时间戳属于玩家连接，未知协议结束会话或重新 hello 都不能重置。新 hello 清理旧绑定并恢复旧 ME 可见性，不授予渲染权限。
 
 返回 `hello_ack`：`mode:"local-render"`、`serverTick`、`heartbeatTicks:20`、`leaseTicks:100`、`maxPayload`、`requestCooldownTicks`。服务端优先选择 `server_push_models`，得到 `assetMode:"server-push"` 和对应能力；否则声明 `resource_pack_models` 的旧连接得到 `assetMode:"resource-pack"`，仅声明 `local_render` 的旧客户端得到 `assetMode:"legacy-download"`。ACK 只确认客户端已声明的增量／轨迹能力；`incremental_state` 必须双方同时确认才生效。当前客户端仍要求 ACK 确认 `server-push`、`local_render` 和 `server_push_models`；旧服务器以硬能力白名单拒绝扩展 hello 时，最多重试一次旧两项能力，不自动改用旧下载或资源包模式。模式在本次会话内固定，客户端不能在请求中传入 `assetMode` 改写模式。随后发送 `snapshot_begin {snapshotId,serverTick}`、可见状态、`snapshot_end {snapshotId}`；手动 `snapshot_request` 也会生成此快照边界。未协商增量时每 20 tick 发送完整 state；增量模式发送受管状态变化，静态 `animations` 可省略复用，精确绑定 heartbeat 续期。协商 `server_timeline` 保留每 2 tick 的轨迹 state。动作变化仍可即时发送；相同 sequence 的 transform 仍可能变化，客户端不能按 sequence 丢弃同序号位置包。
 
@@ -47,6 +47,16 @@ state 必须额外包含 `motion` 对象：`features` 为服务器及玩家允�
 `state.accessories` 是原模型持久附件状态，仅可包含有限的 `a`、`b` 数字，范围 0–1，对应 `variable.roaming.a/b`。服务器按当前伪装实例同步，模型切换或解除后重置。客户端在时间脚本执行后、几何采样前应用它，避免新观众或离开可视范围后回来时重放动作造成重复切换。物理变量仍由各观看者按本地实体运动计算。该字段缺省为空对象，本地预览自行执行附件脚本。
 
 ## 服务器主动推送与资产身份
+
+### 可选服务端模型目录
+
+hello／hello_ack 双方确认 `server_model_catalog` 后，服务器主动发送 `server_model_catalog {revision,index,count,canDisguise,truncated,models:[{id,label}]}`。`revision` 为本会话递增正整数，`index` 从 0 开始，`count` 最多 4096；一片最多 512 条，总目录最多 4096 条。全部分片完成后才发布新目录；更高版本开始接收时暂停旧选择权限，重复片必须内容一致。无权限时发送单片空目录、`canDisguise:false`；`truncated` 表示目录达到上限。目录 ID 与下文模型 ID 规范相同，label 最多 256 字符。
+
+本适配器从已加载且符合 `models.allowed` 的模型生成共享目录，每 100 tick 刷新源缓存；会话沿既有分散发现周期检查更新和权限，默认在 20 TPS 下最坏约 7 秒。每会话每 tick 最多成功发送一片，受原字节预算限制；延后保留原片，不挤入关键控制队列。正在发送时先检查权限撤回，丢弃旧待发片。旧客户端未声明能力就不发送目录。
+
+目录仅授权选择固定命令 `/meplayeractions disguise <ID>`，客户端共享 500 ms 发送间隔，服务器仍检查真实命令权限。它不包含资源 token/hash，也不授权 `asset_request`；浏览仅复用已收到的本次会话资产。服务器确认新伪装后沿下文 offer／ready／ACK 分发。目录接收、断线、重新握手与超时均不能继承旧会话的选择权限。
+
+### 资产授权
 
 所有模式保持相同的 `state.modelId`、`state.assetHash` 和 ready/ack/heartbeat 语义。hash 是**原始完整 .bbmodel JSON 字节** SHA-256 小写 64 位十六进制，不是 ZIP、PNG 或 GZIP hash。协议模型 ID 为 1–64 位小写英文、数字、`_`、`-`。
 

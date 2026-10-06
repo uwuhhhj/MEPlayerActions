@@ -46,7 +46,7 @@ MPA 不生成或重打包 ME／CE 资源包。完整原模型含内嵌贴图，�
 
 `delay` 默认 2 tick，只影响 ME 视觉轨迹，客户端默认即时跟随；`effect` 默认无，只允许缓慢效果并需 `mact.disguise.effects`。手动动作使用 `play <动作> [速度] [ONCE|LOOP|HOLD]`，`stop` 停动作，`undisguise` 解除本插件伪装；`pose sit`／`pose crawl` 需要 GSit，`reset` 清理本插件姿态与效果。`animations`／`menu` 查看动作，`sync` 调整同步项目，`status` 查看诊断。完整帮助用 `/meplayeractions help`。
 
-私人分享另需授予发布者 `mact.private.upload`、观看者 `mact.private.view`，两个权限默认均为 `false`；发布者在客户端 CLIENT 页主动选择“分享给模组玩家”。观看者无需开启自己的分享开关。本人已有服务器伪装时，手动 CLIENT 私人覆盖只供本人，不分享该覆盖。
+私人分享另需授予发布者 `mact.private.upload`、观看者 `mact.private.view`，两个权限默认均为 `false`；发布者在客户端图库明确点击云朵“上传分享”，使用所选模型并上传；“使用模型”仅在本机显示。观看者无需开启自己的分享开关。本人已有服务器伪装时，手动 CLIENT 私人覆盖只供本人，不分享该覆盖。
 
 后台发现与动画更新使用独立频率，配置、默认值与边界集中在[性能配置](PERFORMANCE.md)。两端均升级后协商增量同步，旧客户端继续收到完整状态。
 

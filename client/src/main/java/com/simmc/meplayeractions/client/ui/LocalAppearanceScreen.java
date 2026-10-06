@@ -23,6 +23,9 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 /**
  * Gallery layout/filtering/card navigation adapted from OpenYSM-Updated PlayerModelScreen,
@@ -51,7 +54,8 @@ public class LocalAppearanceScreen extends Screen {
     private String groupDirectory="";
     private final GalleryPreviewSelection selection;
     private String query = "", message = "";
-    private boolean favoritesOnly, activeView, rotating;
+    private boolean favoritesOnly, uploadedOnly, activeView, rotating;
+    private Set<String> confirmedUploads=Set.of();
     private int sourceFilter, page, columns, rows, pageSize, inFlight;
     protected int drawnPreviewCount;
     protected int left, top, bottom, panelWidth, previewWidth, right, rightWidth, gridTop, gridBottom;
@@ -60,12 +64,13 @@ public class LocalAppearanceScreen extends Screen {
     protected int previewX, previewY, previewW, previewH;
     protected boolean leftPreviewDrawn;
     protected String leftPreviewId="",leftPreviewKey="";
-    private String leftPreviewSource="native-player",leftPreviewInstance="",leftPreviewHash="";
+    protected String leftPreviewSource="native-player",leftPreviewInstance="",leftPreviewHash="";
     private final Set<String> drawnCards=new HashSet<>();
     private long generation;
     protected float yaw = 0, pitch = -8, ticks;
     private TextFieldWidget search;
-    private ButtonWidget use, settings, favorite;
+    protected ButtonWidget use, settings, favorite;
+    private ButtonWidget upload;
 
     public LocalAppearanceScreen(ClientRuntime runtime) { this(runtime, null); }
     public LocalAppearanceScreen(ClientRuntime runtime, Screen parent) {
@@ -91,7 +96,7 @@ public class LocalAppearanceScreen extends Screen {
         gridTop = top + 29; gridBottom = bottom - 26;
         columns = layout.columns(); rows = layout.rows();
         pageSize = columns * rows;
-        use=null;settings=null;favorite=null;
+        use=null;settings=null;favorite=null;upload=null;
         buildHeaderControls();
         if(clientGalleryVisible())buildGalleryControls();
         else {search=null;visible=List.of();filtered=List.of();visibleGroups=List.of();filteredGroups=List.of();gridWidgets.clear();buildAlternateControls();}
@@ -103,6 +108,24 @@ public class LocalAppearanceScreen extends Screen {
     protected boolean requiresLocalSource() {return true;}
     protected boolean showRotationHint() {return true;}
     protected String settingsButtonLabel(int buttonWidth) {return buttonWidth<65?"设置":"详情 / 设置";}
+    protected boolean localGallery() {return true;}
+    protected List<ClientRuntime.Action> galleryModels() {return runtime.localModels();}
+    protected CompletableFuture<LocalModelLibrary.Loaded> loadGalleryPreview(String id) {return runtime.loadLocalPreview(id);}
+    protected YsmModelProfile galleryProfile(String id) {return runtime.localModelProfile(id);}
+    protected String gallerySourceLabel(String id) {return sourceLabel(id);}
+    protected String galleryStatus() {return runtime.localAppearanceStatus();}
+    protected String galleryPreviewUnavailableText(String id) {return "正在加载所选模型…";}
+    protected boolean canUseGalleryModel(String id,LocalModelLibrary.Loaded loaded) {return loaded!=null;}
+    protected String galleryUseTooltip() {return "使用当前浏览模型，只在本机显示；云朵按钮才上传并分享";}
+    protected String galleryBrowsingMessage() {return "预览中，点击使用模型才应用";}
+    protected boolean isFavoriteModel(String id) {return runtime.options.isFavorite(id);}
+    protected void toggleModelFavorite(String id) {runtime.options.toggleFavorite(id);}
+    protected void setGalleryMessage(String value) {message=value;}
+    protected void resetGallery() {
+        clearGalleryPreviews();models=List.of();filtered=List.of();visible=List.of();
+        groupSource=sourceFilter=page=0;groupDirectory=query=message="";
+        favoritesOnly=uploadedOnly=false;groupPages.clear();selection.restore("");
+    }
     protected void buildHeaderControls() { }
     protected void buildAlternateControls() { }
 
@@ -110,18 +133,24 @@ public class LocalAppearanceScreen extends Screen {
         if (models.isEmpty()) refreshModels(false);
 
         boolean searchFocused=search!=null && search.isFocused();
-        search = new TextFieldWidget(textRenderer, right + 5, top + 5, Math.max(35, rightWidth - 145), 20, Text.literal("搜索模型"));
+        int toolsWidth=localGallery()?167:57;
+        search = new TextFieldWidget(textRenderer, right + 5, top + 5, Math.max(35, rightWidth - toolsWidth), 20, Text.literal("搜索模型"));
         search.setMaxLength(80); search.setPlaceholder(Text.literal("搜索名称 / ID")); search.setText(query);
         search.setChangedListener(value -> { query = value; page = 0; rebuildGrid(); });
         addDrawableChild(search);
         if(searchFocused)setInitialFocus(search);
-        iconButton(favoritesOnly ? "★ 收藏" : "☆ 收藏", right + rightWidth - 135, top + 5, 20, 0,0,() -> {
+        int favoritesX=right+rightWidth-(localGallery()?157:47);
+        iconButton(favoritesOnly ? "★ 收藏" : "☆ 收藏", favoritesX, top + 5, 20, 0,0,() -> {
             favoritesOnly = !favoritesOnly; page = 0; clearAndInit();
         }, "仅显示已收藏的模型；每张卡片右上角可收藏");
-        button(runtime.options.showModelIds ? "ID ✓" : "ID", right + rightWidth - 113, top + 5, 20, () -> {
+        button(runtime.options.showModelIds ? "ID ✓" : "ID", favoritesX+22, top + 5, 20, () -> {
             runtime.options.showModelIds = !runtime.options.showModelIds; runtime.options.save(); clearAndInit();
         }, "优先在卡片上显示模型 ID");
 
+        if(localGallery()) {
+        cloudButton("已上传",right+rightWidth-113,top+5,20,()->{
+            uploadedOnly=!uploadedOnly;page=0;clearAndInit();
+        },()->uploadedOnly,()->true,()->"已上传筛选：只列出本次连接中服务器已确认的私人模型；不表示永久保存");
         iconButton(groupSource>0?"↑ 全部模型":new String[]{"全部来源", "内置", "本地 YSM", "本地 BB"}[sourceFilter], right + rightWidth - 91, top + 5, 20,groupSource>0?0:32,groupSource>0?32:0,
                 () -> {if(groupSource>0)navigateUp();else {sourceFilter=(sourceFilter+1)%4;page=0;clearAndInit();}},
                 groupSource>0?"返回上一级模型分组":"点击切换模型来源筛选；分组卡片可进入对应模型目录");
@@ -134,14 +163,19 @@ public class LocalAppearanceScreen extends Screen {
         }, "重新扫描文件和模型预览；不会改变已使用的外观");
         iconButton("导入说明", right + rightWidth - 25, top + 5, 20,80,16,
                 () -> client.setScreen(new ImportHelpScreen(this)), "查看 YSM 原始模型、模型包与 BBModel 导入方式");
-
+        }
+        buildSelectionControls();
+        rebuildGrid();
+    }
+    protected void buildSelectionControls() {
         use = button("使用模型", left + 5, bottom - 44, previewWidth - 10, this::useSelectedModel,
-                "将当前浏览的模型用于自己；默认仅本机，分享给模组玩家需在玩家模型主页主动开启");
+                galleryUseTooltip());
         int half = (previewWidth - 13) / 2;
         settings = button(settingsButtonLabel(half), left + 5, bottom - 21, half,
                 () -> client.setScreen(new ModelSettingsScreen(runtime, selection.modelId(), this)), "查看模型信息，设置缩放、XYZ 位置与有效模型参数");
-        favorite = button("☆ 收藏", left + 8 + half, bottom - 21, half, this::toggleSelectedFavorite, "收藏或取消收藏当前浏览模型");
-        rebuildGrid();
+        upload = cloudButton("上传分享",left+8+half,bottom-21,half,this::uploadSelectedModel,
+                ()->!selection.modelId().isEmpty()&&runtime.privateModelUploadState(selection.modelId()).uploaded(),
+                ()->canUploadModel(selection.modelId()),()->uploadTooltip(selection.modelId()));
     }
     protected void buildFooterControls() {
         button("返回", left, footerY, 52, this::close, "返回上一页");
@@ -177,10 +211,43 @@ public class LocalAppearanceScreen extends Screen {
         };
         button.setTooltip(Tooltip.of(Text.literal(tooltip)));return addDrawableChild(button);
     }
+    private ButtonWidget cloudButton(String label,int x,int y,int w,Runnable action,BooleanSupplier selected,
+                                     BooleanSupplier enabled,Supplier<String> tooltip) {
+        var button=new ButtonWidget(x,y,Math.max(20,w),20,Text.literal(label),b->action.run(),narration->narration.get()) {
+            @Override protected void drawIcon(DrawContext context,int mouseX,int mouseY,float delta) {
+                active=enabled.getAsBoolean();setTooltip(Tooltip.of(net.minecraft.text.Text.literal(tooltip.get())));
+                setMessage(net.minecraft.text.Text.literal(selected.getAsBoolean()?"已上传":label));
+                context.fill(getX(),getY(),getRight(),getBottom(),selected.getAsBoolean()?-14774017:-12369342);
+                if(hovered || isFocused())context.drawStrokedRectangle(getX(),getY(),getWidth(),getHeight(),-790560);
+                CloudUploadIcon.draw(context,getX()+2,getY()+2,active?0xfff3f0e0:0xff8a929c,selected.getAsBoolean());
+                if(getWidth()>24)clipped(context,getMessage().getString(),getX()+20,getY()+6,getWidth()-22,active?0xfff3f0e0:0xff8a929c);
+            }
+        };
+        button.active=enabled.getAsBoolean();button.setTooltip(Tooltip.of(Text.literal(tooltip.get())));
+        return addDrawableChild(button);
+    }
+    private boolean canUploadModel(String id) {
+        var entry=previews.get(id);
+        return localGallery()&&!id.isEmpty()&&runtime.canShareLocalModel()&&entry!=null&&entry.loaded!=null
+                &&!runtime.privateModelUploadState(id).inProgress();
+    }
+    private String uploadTooltip(String id) {
+        if(!runtime.canShareLocalModel())return "当前服务器未允许私人上传，或本人正在使用服务器伪装\n"+runtime.privateSyncStatus();
+        if(id.isEmpty())return "先选择私人模型";
+        var state=runtime.privateModelUploadState(id);
+        return "云朵：使用此私人模型并上传分享给获准的模组玩家；原版玩家仍看见原版人物\n"
+                +state.message()+"\n已上传只表示本次连接收到服务器确认；点击可重新分享。";
+    }
+    private void uploadSelectedModel() {
+        String id=selection.modelId();
+        if(!canUploadModel(id)){message=uploadTooltip(id);return;}
+        message=runtime.uploadAndShareLocalModel(id)?"正在使用并上传私人模型；等待服务器确认":"当前无法上传私人模型";
+        updateSelectionButtons();
+    }
 
     private void refreshModels(boolean clear) {
         if (clear) { generation++; previews.clear(); inFlight = 0; preview.clear(); }
-        models = List.copyOf(runtime.localModels());
+        models = List.copyOf(galleryModels());
         selection.retain(models.stream().map(ClientRuntime.Action::id).toList());
     }
 
@@ -189,19 +256,20 @@ public class LocalAppearanceScreen extends Screen {
         for (var widget : gridWidgets) remove(widget);
         gridWidgets.clear();
         String needle = query.strip().toLowerCase(Locale.ROOT);
-        filtered = models.stream().filter(model -> (!favoritesOnly || runtime.options.isFavorite(model.id()))
-                && (sourceFilter == 0 || source(model.id()) == sourceFilter)
-                && (groupSource == 0 || source(model.id()) == groupSource)
-                && (groupSource == 0 || ModelGalleryIndex.contains(groupPath(),model.id()))
+        filtered = models.stream().filter(model -> (!favoritesOnly || isFavoriteModel(model.id()))
+                && (!uploadedOnly || runtime.privateModelUploadState(model.id()).uploaded())
+                && (!localGallery() || sourceFilter == 0 || source(model.id()) == sourceFilter)
+                && (!localGallery() || groupSource == 0 || source(model.id()) == groupSource)
+                && (!localGallery() || groupSource == 0 || ModelGalleryIndex.contains(groupPath(),model.id()))
                 && (model.id().toLowerCase(Locale.ROOT).contains(needle) || label(model.id()).toLowerCase(Locale.ROOT).contains(needle)
                 || model.label().toLowerCase(Locale.ROOT).contains(needle))).toList();
         var groups=new ArrayList<ModelGroup>();
-        if(groupSource==0 && sourceFilter==0 && !favoritesOnly && needle.isEmpty())for(int kind=1;kind<=3;kind++) {
+        if(localGallery()&&groupSource==0 && sourceFilter==0 && !favoritesOnly && !uploadedOnly && needle.isEmpty())for(int kind=1;kind<=3;kind++) {
             int type=kind,count=(int)models.stream().filter(model->source(model.id())==type).count();
             if(count>0)groups.add(new ModelGroup(type,new String[]{"","builtin/","ysm/","bbmodel/"}[type],
                     new String[]{"","内置模型","YSM 模型","BBModel 文件"}[type],count));
         }
-        if(groupSource>0 && !favoritesOnly && needle.isEmpty()) {
+        if(localGallery()&&groupSource>0 && !favoritesOnly && !uploadedOnly && needle.isEmpty()) {
             for(var folder:ModelGalleryIndex.folders(filtered.stream().map(ClientRuntime.Action::id).toList(),groupPath()))
                 groups.add(new ModelGroup(groupSource,folder.path(),folder.label(),folder.count()));
             filtered=filtered.stream().filter(model->ModelGalleryIndex.direct(groupPath(),model.id())).toList();
@@ -230,7 +298,7 @@ public class LocalAppearanceScreen extends Screen {
         next.active = page + 1 < pageCount(); gridWidgets.add(next);
 
         Set<String> retained = new HashSet<>();
-        if (runtime.localAppearance().enabled()) retained.add(runtime.localAppearance().modelId());
+        if (localGallery()&&runtime.localAppearance().enabled()) retained.add(runtime.localAppearance().modelId());
         if (!selection.modelId().isEmpty()) retained.add(selection.modelId());
         visible.forEach(model -> retained.add(model.id()));
         previews.entrySet().removeIf(entry -> {
@@ -239,7 +307,7 @@ public class LocalAppearanceScreen extends Screen {
             return true;
         });
         if (!selection.modelId().isEmpty()) previews.computeIfAbsent(selection.modelId(), ignored -> new PreviewEntry());
-        if (runtime.localAppearance().enabled()) previews.computeIfAbsent(runtime.localAppearance().modelId(), ignored -> new PreviewEntry());
+        if (localGallery()&&runtime.localAppearance().enabled()) previews.computeIfAbsent(runtime.localAppearance().modelId(), ignored -> new PreviewEntry());
         visible.forEach(model -> previews.computeIfAbsent(model.id(), ignored -> new PreviewEntry()));
         updateSelectionButtons();
         pumpLoads();
@@ -273,7 +341,7 @@ public class LocalAppearanceScreen extends Screen {
     }
     public void toggleSelectedFavorite() {
         if (selection.modelId().isEmpty()) return;
-        runtime.options.toggleFavorite(selection.modelId()); rebuildGrid();
+        toggleModelFavorite(selection.modelId()); rebuildGrid();
     }
     public int loadedPreviewCount() { return (int) previews.values().stream().filter(entry -> entry.loaded != null).count(); }
     public int drawnPreviewCount() { return drawnPreviewCount; }
@@ -288,7 +356,7 @@ public class LocalAppearanceScreen extends Screen {
         result.put("layout","left-preview/right-search-model-cards");result.put("groupPath",groupPath());
         result.put("panel",Map.of("x",left,"y",frameTop,"width",panelWidth,"height",frameBottom-frameTop,
                 "columns",columns,"rows",rows,"compact",compactLayout));
-        result.put("search",query);result.put("favoritesOnly",favoritesOnly);result.put("sourceFilter",sourceFilter);
+        result.put("search",query);result.put("favoritesOnly",favoritesOnly);result.put("uploadedOnly",uploadedOnly);result.put("sourceFilter",sourceFilter);
         result.put("page",page);result.put("pageCount",pageCount());result.put("selectedModelId",selection.modelId());
         result.put("leftPreview",Map.of("x",previewX,"y",previewY,"width",previewW,"height",previewH,
                 "modelId",leftPreviewId,"key",leftPreviewKey,"drawn",leftPreviewDrawn,
@@ -297,7 +365,8 @@ public class LocalAppearanceScreen extends Screen {
             var card=(ModelCard)widget;var entry=previews.get(card.model.id());var info=new LinkedHashMap<String,Object>();
             info.put("modelId",card.model.id());info.put("label",card.model.label());info.put("x",card.getX());info.put("y",card.getY());
             info.put("width",card.getWidth());info.put("height",card.getHeight());info.put("selected",selection.modelId().equals(card.model.id()));
-            info.put("favorite",runtime.options.isFavorite(card.model.id()));info.put("loaded",entry!=null&&entry.loaded!=null);
+            info.put("favorite",isFavoriteModel(card.model.id()));info.put("loaded",entry!=null&&entry.loaded!=null);
+            if(localGallery())info.put("upload",runtime.privateModelUploadState(card.model.id()).phase().name());
             info.put("error",entry==null?"":entry.error);info.put("drawn",drawnCards.contains(card.model.id()));return Map.copyOf(info);
         }).toList());
         result.put("groups",gridWidgets.stream().filter(widget->widget instanceof GroupCard).map(widget->{
@@ -308,7 +377,7 @@ public class LocalAppearanceScreen extends Screen {
     }
     public boolean browseModel(String id) {
         if (models.stream().noneMatch(model -> model.id().equals(id))) return false;
-        selection.browse(id); message = "预览中，点击使用模型才应用"; yaw = 0; pitch = -8;
+        selection.browse(id); message = galleryBrowsingMessage(); yaw = 0; pitch = -8;
         var entry = previews.get(id);
         if (entry != null && entry.loaded != null) preview.restart(key(id, entry.loaded), ModelPreview.Context.SELECTED);
         rebuildGrid(); return true;
@@ -317,6 +386,7 @@ public class LocalAppearanceScreen extends Screen {
         if (selection.modelId().isEmpty()) return;
         var entry = previews.get(selection.modelId());
         if (entry == null || entry.loaded == null) { message = "请等待模型预览加载完成"; return; }
+        if(!runtime.serverOwnModelPresent())runtime.setPrivateSyncEnabled(false);
         runtime.selectLocalModel(selection.modelId());
         runtime.options.showSelf = true; runtime.options.save();
         message = client.world == null ? "已保存，进入世界后显示" : "已使用私人模型（第三人称查看）";
@@ -326,23 +396,25 @@ public class LocalAppearanceScreen extends Screen {
     private void updateSelectionButtons() {
         if (use == null) return;
         var entry = previews.get(selection.modelId());
-        use.active = entry != null && entry.loaded != null;
-        settings.active = !selection.modelId().isEmpty(); favorite.active = !selection.modelId().isEmpty();
-        use.setTooltip(Tooltip.of(Text.literal("将当前浏览的模型用于自己；默认仅本机，多人同步需在客户端设置中显式开启")));
-        settings.setTooltip(Tooltip.of(Text.literal("查看模型信息，设置缩放、XYZ 位置与作者配置")));
-        String favoriteText = runtime.options.isFavorite(selection.modelId()) ? "★ 已收藏" : "☆ 收藏";
-        if (favorite.getWidth() < 50) favoriteText = runtime.options.isFavorite(selection.modelId()) ? "★" : "☆";
-        favorite.setMessage(Text.literal(textRenderer.trimToWidth(favoriteText, favorite.getWidth() - 8)));
+        use.active = !selection.modelId().isEmpty()&&canUseGalleryModel(selection.modelId(),entry==null?null:entry.loaded);
+        use.setTooltip(Tooltip.of(Text.literal(galleryUseTooltip())));
+        if(settings!=null){settings.active=!selection.modelId().isEmpty();settings.setTooltip(Tooltip.of(Text.literal("查看模型信息，设置缩放、XYZ 位置与作者配置")));}
+        if(favorite!=null) {
+            favorite.active=!selection.modelId().isEmpty();
+            String favoriteText=isFavoriteModel(selection.modelId())?"★ 已收藏":"☆ 收藏";
+            if(favorite.getWidth()<50)favoriteText=isFavoriteModel(selection.modelId())?"★":"☆";
+            favorite.setMessage(Text.literal(textRenderer.trimToWidth(favoriteText,favorite.getWidth()-8)));
+        }
     }
 
     private void pumpLoads() {
-        if (!activeView || !runtime.canEditLocalAppearance() || inFlight >= MAX_LOADS) return;
+        if (!activeView || (localGallery()&&!runtime.canEditLocalAppearance()) || inFlight >= MAX_LOADS) return;
         List<String> order = new ArrayList<>();
         if (clientGalleryVisible() && !selection.modelId().isEmpty()) {
             previews.computeIfAbsent(selection.modelId(), ignored -> new PreviewEntry());
             order.add(selection.modelId());
         }
-        if (runtime.localAppearance().enabled()) {
+        if (localGallery()&&runtime.localAppearance().enabled()) {
             String currentId = runtime.localAppearance().modelId();
             previews.computeIfAbsent(currentId, ignored -> new PreviewEntry());
             if (!order.contains(currentId)) order.add(currentId);
@@ -355,7 +427,7 @@ public class LocalAppearanceScreen extends Screen {
             if (entry == null || entry.requested) continue;
             entry.requested = true; inFlight++; long requestGeneration = generation;
             var selectionRequest = selection.request(id);
-            runtime.loadLocalPreview(id).whenComplete((loaded, error) -> client.execute(() -> {
+            loadGalleryPreview(id).whenComplete((loaded, error) -> client.execute(() -> {
                 if (!activeView || generation != requestGeneration) return;
                 inFlight--;
                 if (previews.get(id) == entry) {
@@ -378,7 +450,7 @@ public class LocalAppearanceScreen extends Screen {
     private static String key(String id, LocalModelLibrary.Loaded loaded) { return id + ":" + loaded.hash(); }
     private YsmModelProfile profile(String id) {
         var entry=previews.get(id);
-        return entry!=null && entry.loaded!=null?entry.loaded.profile():runtime.localModelProfile(id);
+        return entry!=null && entry.loaded!=null?entry.loaded.profile():galleryProfile(id);
     }
     private String label(String id) {
         String fallback=models.stream().filter(model -> model.id().equals(id)).map(ClientRuntime.Action::label).findFirst().orElse(id);
@@ -390,6 +462,11 @@ public class LocalAppearanceScreen extends Screen {
 
     @Override public void tick() {
         if (requiresLocalSource() && !runtime.canEditLocalAppearance()) { client.setScreen(new PlayerModelScreen(runtime)); return; }
+        if(localGallery()) {
+            Set<String> uploads=runtime.uploadedPrivateModelIds();
+            if(!uploads.equals(confirmedUploads)){confirmedUploads=Set.copyOf(uploads);if(uploadedOnly)rebuildGrid();}
+        }
+        updateSelectionButtons();
         ticks++; pumpLoads();
     }
     @Override public void render(DrawContext context, int mouseX, int mouseY, float delta) {
@@ -411,9 +488,9 @@ public class LocalAppearanceScreen extends Screen {
     protected void renderAlternateContent(DrawContext context,float delta) { }
     private void renderGallery(DrawContext context,float delta) {
         renderSelectedPreview(context,delta);
-        if (visible.isEmpty() && visibleGroups.isEmpty()) clipped(context, favoritesOnly ? "暂无符合条件的收藏" : "没有符合条件的模型", right + 8, gridTop + 20, rightWidth - 16, 0xffbccce0);
+        if (visible.isEmpty() && visibleGroups.isEmpty()) clipped(context, uploadedOnly?"本次连接暂无已确认上传":favoritesOnly ? "暂无符合条件的收藏" : "没有符合条件的模型", right + 8, gridTop + 20, rightWidth - 16, 0xffbccce0);
         context.drawCenteredTextWithShadow(textRenderer, (page + 1) + " / " + pageCount(), right + rightWidth / 2, bottom - 15, 0xffe6ecf4);
-        String status = message.isEmpty() ? runtime.localAppearanceStatus() : message;
+        String status = message.isEmpty() ? galleryStatus() : message;
         clipped(context, status, left + footerStatusInset(), footerY + 6, panelWidth - footerStatusInset(), 0xffffd589);
     }
     protected void renderSelectedPreview(DrawContext context,float delta) {
@@ -456,7 +533,7 @@ public class LocalAppearanceScreen extends Screen {
         clipped(context, label(id), left + 6, top + 6, previewWidth - 12, 0xfff3f6ff);
         clipped(context, "预览 · 点击使用模型应用", left + 6, top + 17, previewWidth - 12, 0xff92b9df);
         if (entry == null || entry.loaded == null) {
-            String status = entry != null && !entry.error.isEmpty() ? "预览加载失败：" + entry.error : "正在加载所选模型…";
+            String status = entry != null && !entry.error.isEmpty() ? "预览加载失败：" + entry.error : galleryPreviewUnavailableText(id);
             clipped(context, status, previewX + 3, previewY + previewH / 2, previewW - 6, 0xffffc685);
             return;
         }
@@ -541,13 +618,16 @@ public class LocalAppearanceScreen extends Screen {
             String label=label(model.id());
             setMessage(net.minecraft.text.Text.literal(label));
             String description=profile(model.id()).localized(client==null?"zh_cn":client.getLanguageManager().getLanguage(),"metadata.description","");
-            String tooltip=label+"\n"+sourceLabel(model.id())+" · "+model.id()+(description.isBlank()?"":"\n"+description)+"\n点击浏览；右上角 ☆ 收藏";
+            String tooltip=label+"\n"+gallerySourceLabel(model.id())+" · "+model.id()+(description.isBlank()?"":"\n"+description)
+                    +"\n点击浏览；右上角 ☆ 收藏"+(localGallery()?"；左上角云朵上传分享\n"+uploadTooltip(model.id()):"");
             if(!tooltip.equals(tooltipText)){tooltipText=tooltip;setTooltip(Tooltip.of(net.minecraft.text.Text.literal(tooltip)));}
         }
         @Override public void onClick(Click click, boolean doubled) {
-            if (click.x() >= getRight() - 17 && click.y() < getY() + 17) {
-                runtime.options.toggleFavorite(model.id()); rebuildGrid();
-            } else super.onClick(click, doubled);
+            switch(ModelCardActionRegions.target(click.x()-getX(),click.y()-getY(),getWidth(),localGallery())) {
+                case FAVORITE -> {toggleModelFavorite(model.id());rebuildGrid();}
+                case UPLOAD -> {if(canUploadModel(model.id())){browseModel(model.id());uploadSelectedModel();}else setGalleryMessage(uploadTooltip(model.id()));}
+                case BROWSE -> super.onClick(click,doubled);
+            }
         }
         // PressableWidget.renderWidget is final: drawIcon owns the entire card, without drawButton's background.
         @Override protected void drawIcon(DrawContext context, int mouseX, int mouseY, float delta) {
@@ -568,11 +648,16 @@ public class LocalAppearanceScreen extends Screen {
                         getWidth() - 4, imageHeight - 2, 0, -8, ticks + delta, parameters(model.id()), entry.loaded.previewAnimation(), entry.loaded.profile(), ModelPreview.Context.CARD);
                 if (rendered) {drawnPreviewCount++;drawnCards.add(model.id());}
                 else clipped(context, "预览不可用", getX() + 5, getY() + imageHeight / 2, getWidth() - 10, 0xffffc685);
-            } else clipped(context, entry != null && !entry.error.isEmpty() ? "加载失败" : "加载中…", getX() + 5, getY() + imageHeight / 2, getWidth() - 10, 0xffc1cedc);
+            } else clipped(context, entry != null && !entry.error.isEmpty() ? "加载失败" : localGallery()?"加载中…":"服务端模型", getX() + 5, getY() + imageHeight / 2, getWidth() - 10, 0xffc1cedc);
             drawCardLabel(context, net.minecraft.text.Text.literal(runtime.options.showModelIds ? model.id() : getMessage().getString()),
                     getX(), getBottom(), 0xfff3f0e0, true);
             if(selection.modelId().equals(model.id()) || hovered || isFocused())context.drawStrokedRectangle(getX(), getY(), getWidth(), getHeight(), -790560);
-            context.drawTexture(RenderPipelines.GUI_TEXTURED,GUI_ICONS,getRight()-16,getY(),runtime.options.isFavorite(model.id())?16f:0f,0f,16,16,256,256);
+            context.drawTexture(RenderPipelines.GUI_TEXTURED,GUI_ICONS,getRight()-16,getY(),isFavoriteModel(model.id())?16f:0f,0f,16,16,256,256);
+            if(localGallery()) {
+                var state=runtime.privateModelUploadState(model.id());
+                int tint=state.uploaded()?0xff8df2b5:state.inProgress()?0xffffd589:canUploadModel(model.id())?0xfff3f0e0:0xff8a929c;
+                CloudUploadIcon.draw(context,getX()+1,getY()+1,tint,state.uploaded());
+            }
         }
     }
 
@@ -600,7 +685,7 @@ public class LocalAppearanceScreen extends Screen {
             context.fill(0, 0, width, height, 0xED171F2A);
             context.drawCenteredTextWithShadow(textRenderer, title, width / 2, 18, 0xfff3f6ff);
             int textWidth = Math.min(520, width - 30), x = (width - textWidth) / 2;
-            String help = "仅导入你有权使用的模型。\n\nYSM：放入原始模型文件夹、.ysm 或 ZIP 模型包；文件夹保留 ysm.json、models、animations、textures 和模型提供的其它资源。可用子文件夹分类，图库按真实目录显示。\n\nBBModel：放入独立 .bbmodel 文件，纹理需嵌入。\n\n文件需位于此目录内；不跟随链接，不访问目录外资源。作者配置使用模型提供的 Molang 脚本。\n\n返回图库后点击“刷新”。默认仅本机可见；在齿轮客户端设置中开启多人同步，服务端允许后才分发。滚动可查看全部说明。";
+            String help = "仅导入你有权使用的模型。\n\nYSM：放入原始模型文件夹、.ysm 或 ZIP 模型包；文件夹保留 ysm.json、models、animations、textures 和模型提供的其它资源。可用子文件夹分类，图库按真实目录显示。\n\nBBModel：放入独立 .bbmodel 文件，纹理需嵌入。\n\n文件需位于此目录内；不跟随链接，不访问目录外资源。作者配置使用模型提供的 Molang 脚本。\n\n返回图库后点击“刷新”。“使用模型”仅本机显示；明确点击云朵“上传分享”才使用并上传，服务端允许后才分发。滚动可查看全部说明。";
             var lines = textRenderer.wrapLines(Text.literal(help), textWidth);
             maxScroll = Math.max(0, lines.size() * 11 - (height - 100));
             scroll = Math.min(scroll, maxScroll);
