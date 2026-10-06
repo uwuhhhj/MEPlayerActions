@@ -39,8 +39,8 @@ and per-instance physics remain available to the independent runtime. Local
 skins and authored form variables are saved by model ID. Private appearance is
 local by default; it can be shared with authorized mod viewers only after
 explicit client opt-in and server negotiation/permissions on MPA's separate
-`meplayeractions:private` protocol 1. A manual private overlay over a server
-disguise remains self-only. Asset inclusion does not certify every OpenYSM
+`meplayeractions:private` protocol 1. Server disguises and private appearances
+are mutually exclusive. Asset inclusion does not certify every OpenYSM
 feature or any render/effect path that has not completed validation. Public,
 self-contained native `.ysm` versions 1–32, ZIP and spec 2 folders are supported
 within the documented geometry/resource budgets. The OpenYSM network/cache

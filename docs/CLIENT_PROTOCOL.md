@@ -10,19 +10,19 @@ v3 是玩家模型资产、动画状态及观众渲染接管协议。客户端�
 
 其他引擎要使用现有客户端，应实现同频道、版本、字段范围及以下语义：主动推送当次授权的完整 `.bbmodel` 与对应 hash（兼容旧客户端时另提供下述资源包或 legacy 路径）；提供已解析的动画层和 `motion` 状态映射；为观众保留可追踪的原版玩家实体；匹配 ready/ack 后才切换该观众的后端显示；失败、解绑和租约超时恢复正常显示。服务器的姿态后端可将已支持的 sit/sleep/crawl 与接触面偏移映射到 `specialPose` 和 anchor 字段，无需安装 GSit 才能发送这些字段。实现兼容适配器后，更换服务器引擎本身不要求更新客户端；这不表示客户端会自动识别未知引擎、新状态枚举或不支持的模型格式。
 
-纯本地外观不建立 v3 绑定，不发送该模型的动作请求、ready 或渲染心跳。本人已有服务器伪装时，其绑定与租约独立维护；私人覆盖必须等待完整快照和当前服务器 ready/ACK，避免与 ME 回退叠加。完整快照或精确解绑确认没有本人服务器伪装后才能恢复独立显示。用户默认值、来源切换及显隐开关见 [客户端配置](CLIENT_CONFIG.md)。
+纯本地外观不建立 v3 绑定，不发送该模型的动作请求、ready 或渲染心跳。本人已有服务器伪装时，其绑定与租约独立维护，同时暂停私人外观与分享。暂停标记在本机保存；完整快照或精确解绑确认服务器伪装结束后，仍须用户显式重新使用私人模型。浏览和编辑草稿不解除暂停。用户默认值、来源切换及显隐开关见 [客户端配置](CLIENT_CONFIG.md)。
 
 ## 握手与状态
 
 客户端发送：
 ```json
-{"protocol":3,"type":"hello","clientVersion":"0.5.1","capabilities":["local_render","server_push_models","incremental_state","server_model_catalog"]}
+{"protocol":3,"type":"hello","clientVersion":"0.5.1","capabilities":["local_render","server_push_models","incremental_state","server_model_catalog","disguise_results"]}
 ```
-`capabilities` 必须含 `local_render`，还可声明 `server_push_models`、`resource_pack_models`、`incremental_state`／`server_timeline` 和 `server_model_catalog`；不允许重复，其他 capability 拒绝。客户端默认声明增量能力与模型目录能力，显式启用 `followServerTimeline` 时另声明 `server_timeline`。`clientVersion` 可省略（最多 64 字符）。hello 两次接受之间至少相隔一个单调时钟秒；这一时间戳属于玩家连接，未知协议结束会话或重新 hello 都不能重置。新 hello 清理已有绑定并恢复其 ME 可见性，不授予渲染权限。
+`capabilities` 必须含 `local_render`，还可声明 `server_push_models`、`resource_pack_models`、`incremental_state`／`server_timeline`、`server_model_catalog` 和 `disguise_results`；不允许重复，其他 capability 拒绝。客户端默认声明增量、模型目录与伪装结果能力，显式启用 `followServerTimeline` 时另声明 `server_timeline`。`clientVersion` 可省略（最多 64 字符）。hello 两次接受之间至少相隔一个单调时钟秒；这一时间戳属于玩家连接，未知协议结束会话或重新 hello 都不能重置。新 hello 清理已有绑定并恢复其 ME 可见性，不授予渲染权限。
 
 返回 `hello_ack`：`mode:"local-render"`、`serverTick`、`heartbeatTicks:20`、`leaseTicks:100`、`maxPayload`、`requestCooldownTicks`。服务端优先选择 `server_push_models`，得到 `assetMode:"server-push"` 和对应能力；否则声明 `resource_pack_models` 的旧连接得到 `assetMode:"resource-pack"`，仅声明 `local_render` 的旧客户端得到 `assetMode:"legacy-download"`。ACK 只确认客户端已声明的增量／轨迹能力；`incremental_state` 必须双方同时确认才生效。当前客户端仍要求 ACK 确认 `server-push`、`local_render` 和 `server_push_models`；旧服务器以硬能力白名单拒绝扩展 hello 时，最多重试一次旧两项能力，不自动改用旧下载或资源包模式。模式在本次会话内固定，客户端不能在请求中传入 `assetMode` 改写模式。随后发送 `snapshot_begin {snapshotId,serverTick}`、可见状态、`snapshot_end {snapshotId}`；手动 `snapshot_request` 也会生成此快照边界。未协商增量时每 20 tick 发送完整 state；增量模式发送受管状态变化，静态 `animations` 可省略复用，精确绑定 heartbeat 续期。协商 `server_timeline` 保留每 2 tick 的轨迹 state。动作变化仍可即时发送；相同 sequence 的 transform 仍可能变化，客户端不能按 sequence 丢弃同序号位置包。
 
-切换 `followServerTimeline` 会释放已有显示租约并重新 hello，保留已知本人服务器伪装直到新快照确认，避免重新握手期间错误恢复私人覆盖。
+切换 `followServerTimeline` 会释放已有显示租约并重新 hello，保留已知本人服务器伪装直到新快照确认，私人外观继续暂停。
 
 完整快照流程（含 `snapshot_request` 恢复）强制重发全部当前授权 state 和完整 `animations`，无需 sequence／目录变化，并保留既有 binding／lease；预算延后的完整目录与后续最新状态合并，直到成功发送都不会被 delta 省略。
 
@@ -54,7 +54,17 @@ hello／hello_ack 双方确认 `server_model_catalog` 后，服务器主动发�
 
 本适配器从已加载且符合 `models.allowed` 的模型生成共享目录，每 100 tick 刷新源缓存；会话沿既有分散发现周期检查更新和权限，默认在 20 TPS 下最坏约 7 秒。每会话每 tick 最多成功发送一片，受原字节预算限制；延后保留原片，不挤入关键控制队列。正在发送时先检查权限撤回，丢弃旧待发片。旧客户端未声明能力就不发送目录。
 
-目录仅授权选择固定命令 `/meplayeractions disguise <ID>`，客户端共享 500 ms 发送间隔，服务器仍检查真实命令权限。它不包含资源 token/hash，也不授权 `asset_request`；浏览仅复用已收到的本次会话资产。服务器确认新伪装后沿下文 offer／ready／ACK 分发。目录接收、断线、重新握手与超时均不能继承旧会话的选择权限。
+目录仅授权选择固定命令 `/meplayeractions disguise <ID> [已验证的可选参数]`，参数来自本机按 ID 保存的 `scale`、`hide-self`、`show-self`、`view-distance`、`max-viewers`、`delay`、`effect`，不接受任意命令文本。客户端共享 500 ms 发送间隔，服务器仍检查真实命令权限与参数范围。目录不包含资源 token/hash，也不授权 `asset_request`；浏览仅复用已收到的本次会话资产。服务器确认伪装后沿下文 offer／ready／ACK 分发。目录接收、断线、重新握手与超时均不能继承旧会话的选择权限。
+
+### 可选伪装命令结果
+
+双方确认 `disguise_results` 后，客户端在伪装命令末尾添加 `request-id=<标准小写 UUID>`，命令总长度最多 256 字符。服务器剥离该关联字段后仍按原命令权限、参数校验与幂等规则执行；关联 ID 不是权限。未协商时客户端不添加它。
+
+服务端 `disguise_result {requestId,modelId,success,instance,options}` 的成功结果包含当前真实伪装实例和解析后的七项参数；`options` 使用 `scale`、`hideSelf`、`showSelf`、`viewDistance`、`maxViewers`、`delay`、`effect`，无药水效果为空字符串。失败结果提供简短 `code`／`message`。相同参数可复用既有实例，不能为等待确认而强制重建模型。
+
+客户端只接受当次请求 ID／模型匹配的结果，并与本人真实绑定实例核对；结果先于 state 时继续等待该实例，不凭本机发出命令或旧实例更新认定成功。显式参数也与服务器解析结果比对。本人 `showSelf:false` 仍接收自有伪装状态与动作目录用于确认、互斥和轮盘，但不能因此取得本人绘制租约。断线、重新握手、失败和 10 秒超时清理等待状态，超时提示允许重试。未协商时沿用新实例确认，不能保证识别旧服务器的同参数幂等请求。
+
+结果绑定当次连接，出站预算延后时保留重试。服务器保留最近 32 条请求结果记录；记录内同请求 ID 重发不重复执行药水等副作用。Bukkit 在进入插件前拒绝 `mact.use` 的请求仍使用原版命令拒绝提示，客户端等待有界超时；该入口不保证产生 `disguise_result`。
 
 ### 资产授权
 
@@ -175,11 +185,11 @@ bindings 最多 64 项，owner 唯一。只续租已有且 instance/hash 完全�
 
 服务器须开启 `client-sync.enabled` 和 `client-sync.private-models.enabled`，并授予发布者 `mact.private.upload`、观看者 `mact.private.view`；私人开关与两个权限默认关闭，OP 也须显式授权。客户端须显式选择分享，选择模型本身不上传；关闭分享发送 `clear`，本机外观继续独立使用。
 
-服务器伪装拥有显示优先级。发布者存在服务器伪装时拒绝新上传，已接收发布可以继续本人心跳续期，但取消观看者 offer/租约并停止分发资产、配置和同步事件。服务器伪装解除后，可为同一仍有效私人代次重新签发 offer。私人远端渲染只对应观看者已跟踪的真实 PlayerEntity；本人手动私人 overlay 不改变服务器伪装、位置或后端可见性，也不为私人模型调用 v3 `render_ready`。
+服务器伪装拥有显示优先级。发布者存在服务器伪装时拒绝新上传，并取消私人观看者 offer／租约、停止分发资产、配置和同步事件。当前客户端同时暂停私人外观、发送清理并停止发布；服务器伪装解除后不会自动重启分享，须用户显式重新使用／上传。服务端仍为旧客户端保留独立租约机制，缓存目录可在服务器伪装期间同步或管理，但不授予发布权限。私人远端渲染只对应观看者已跟踪的真实 PlayerEntity，不为私人模型调用 v3 `render_ready`。
 
 ### 独立协商与上传
 
-客户端发送 `hello {capabilities:["private_models_v1"]}`；服务端 `hello_ack` 返回 `capabilities`、`allowedUpload`、`allowedView`、`maxPayload`、`maxBundleBytes`、`heartbeatTicks:20`、`leaseTicks:100`。maxBundleBytes 是 `min(config.max-bundle-bytes,chunkBytes×1100)` 的当次有效容量，以每 tick 一片计算最多 55 秒，保留固定 60 秒总时限；默认 8192 字节分片仍允许完整 8 MiB，maxPayload=1024 时有效容量为 422400 字节。客户端必须按 ACK 容量预检，超过容量继续仅在本机使用。能力握手成功不等于取得发布/观看权限，须检查两个 allowed 字段。未知字段、重复 JSON 键、类型强制转换、非有限数、深度超过 64、尾随内容和非规范 UUID/hash 均拒绝。
+客户端发送 `hello {capabilities:["private_models_v1","private_upload_catalog_v1"]}`；服务端 `hello_ack` 返回 `capabilities`、`allowedUpload`、`allowedView`、`maxPayload`、`maxBundleBytes`、`heartbeatTicks:20`、`leaseTicks:100`。只有双方声明才确认目录扩展；不支持扩展的旧服务器最多重试一次基础能力。maxBundleBytes 是 `min(config.max-bundle-bytes,chunkBytes×1100)` 的当次有效容量，以每 tick 一片计算最多 55 秒，保留固定 60 秒总时限；默认 8192 字节分片仍允许完整 8 MiB，maxPayload=1024 时有效容量为 422400 字节。客户端必须按 ACK 容量预检，超过容量继续仅在本机使用。能力握手成功不等于取得发布/观看权限，须检查两个 allowed 字段。未知字段、重复 JSON 键、类型强制转换、非有限数、深度超过 64、尾随内容和非规范 UUID/hash 均拒绝。
 
 客户端明确选择同步后发送：
 
@@ -194,6 +204,20 @@ publisher 未收到 accept／committed 时按一秒间隔重试同一 upload_off
 服务端要求实际长度与声明完全一致，验证 SHA-256，并异步进行 ZIP/资源有界检查；成功返回 `upload_committed {generation,hash}`。收到 accept、发完分片或本地缓存命中均不等于发布成功。缓存查验与上传共用全服务器最多两个作业、单连接最多一份和内存预留；同连接新上传至少相隔 200 tick，冷却不因重新 hello 重置。接收/验证总时限 1200 tick，空闲时限 300 tick。校验中的作业即使被新握手取消，也继续占用全局内存预留直至该作业返回，不能通过换代次绕过预算。连接断开、owner clear、发布者失去权限或租约到期撤销当前发布，已验证磁盘缓存按独立预算保留。
 
 `upload_committed` 的出站预算不足时保留待发确认；重发当前已发布的同 generation/hash/bytes/kind offer 可重新确认，不重复发布或重置代次。同 generation 改写资源身份返回 `private_generation_reused`。任何确认仍须当前连接、发布身份及上传权限合法。
+
+### 本人上传存档目录与删除
+
+双方确认 `private_upload_catalog_v1` 后，`upload_offer` 增加本机来源 `modelId`，用于存档关联；它不是服务器模型 ID 或文件路径。服务端验证完整资源后写入同 owner/hash 的资源和有界元数据，离线不恢复 publication。`upload_committed` 表示当次分享成功；“已上传”还须服务器存档目录确认，不能从本机发送成功或历史会话状态推断。
+
+S2C `upload_catalog {revision,index,count,available,models:[{modelId,hash,kind,bytes}]}` 主动同步本人存档。目录最多 64 个来源、按当前 owner 预算裁剪，同来源只展示最新有效版本；`count` 为分片数。整份一致分片接收完成后才替换目录，更高版本接收中暂停旧目录管理权限。`available` 需要当前上传权限和启用磁盘缓存，撤权时同步不可用的空目录。服务端共用后台目录扫描和每会话有界分片发送；不为每个玩家反复读 ZIP。
+
+客户端保留目录中的全部条目，包括本机源文件缺失或变化的条目。使用／再次分享还需本机完整 bundle 的 hash、kind、长度与记录一致；校验在既有有界后台工作线程执行，不能因完成的 future 而在 UI 线程解包。原文件缺失仍可查看和删除，目录本身不授予下载或渲染权。
+
+ACK 在协商目录扩展时还提供本次握手 UUID `uploadCatalogToken`。C2S `upload_delete {requestId,catalogToken,requestSequence,modelId,hash,kind,bytes}` 仅能删除本人当前精确目录身份；`requestSequence` 为本握手内递增整数 `1–9007199254740991`，重试保留全部字段。服务端检查当次 token、权限、存储开关、当前条目和在途作业，异步删除该来源的已验证存档及旧版本，保留其他模型、其他 owner 和本机文件。相同来源上传与删除互斥，防止后台回写复活已删条目。
+
+成功 S2C `upload_deleted {requestId,modelId,hash}`，失败 `upload_delete_failed {requestId,code}`。确认弹窗捕获打开时的完整目录条目，点击确认前身份变化须重新确认。客户端等待精确结果，不能在请求发送时显示成功；成功更新目录并结束该来源的相关私人分享。`private_delete_busy` 可表示该来源仍在上传、删除或后台存档校验中，完成后可重试。
+
+首次发送前撤权取消未发出的删除；已发送请求最多等待 90 秒，超时显示“未确认”并释放按钮，保留最多 16 条晚结果关联。晚 ACK 只处理原请求与原发布代次，不能关闭后来重新分享的实例或删除较新目录记录。服务端结果使用有界幂等历史及预算重试；历史被逐出的旧序号仍不能再次删除重建条目，重新握手换 token 拒绝旧连接重放。删除不转换为任意服务器资产请求，也不执行服务器伪装命令。
 
 ### 完整原生资源 bundle
 
