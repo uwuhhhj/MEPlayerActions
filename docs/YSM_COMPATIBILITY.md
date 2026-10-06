@@ -70,7 +70,7 @@
 | P2 · ysm.entity_type 名称 | [VanillaYsmQueries.java:94](../client/src/main/java/com/simmc/meplayeractions/client/VanillaYsmQueries.java#L94)、[VanillaYsmQueries.java:235](../client/src/main/java/com/simmc/meplayeractions/client/VanillaYsmQueries.java#L235) | [OpenYSM 类型名称规则](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/client/animation/molang/YSMBinding.java#L315-L328) | MPA 普遍 getPath 丢失 namespace；上游 player／maid 有特例，其余返回完整 identifier。组件条件使用 minecraft:zombie 等名称时可能不匹配，不能把所有实体简化为裸路径。 | 否，按来源补齐 |
 | P2 · 无效 axis 的空值回退 | [VanillaYsmQueries.java:594](../client/src/main/java/com/simmc/meplayeractions/client/VanillaYsmQueries.java#L594)、[VanillaYsmQueries.java:613](../client/src/main/java/com/simmc/meplayeractions/client/VanillaYsmQueries.java#L613) | [OpenYSM position](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/geckolib3/core/molang/builtin/query/Position.java#L23)、[OpenYSM position_delta](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/geckolib3/core/molang/builtin/query/PositionDelta.java#L22)、[OpenYSM rotation_to_camera](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/geckolib3/core/molang/builtin/query/RotationToCamera.java#L14) | MPA 越界轴抛 IllegalArgumentException；上游返回 null。原生表达式使用空值合并或默认表达式时，应得到作者回退值，不能由异常改变整条执行。 | 否，按来源补齐 |
 | P2 · hand_render／armor 槽位边界 | [VanillaYsmQueries.java:541](../client/src/main/java/com/simmc/meplayeractions/client/VanillaYsmQueries.java#L541)、[VanillaYsmQueries.java:575](../client/src/main/java/com/simmc/meplayeractions/client/VanillaYsmQueries.java#L575) | [OpenYSM 手条件](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/client/animation/molang/functions/ctrl/HandRenderFunction.java#L58-L67)、[OpenYSM 盔甲条件](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/client/animation/molang/functions/ctrl/Armor.java#L30-L38) | 上游手条件遇到无效／盔甲槽返回 0，armor 遇到无效／手槽返回 null；MPA 共用槽位解析和 boolean 条件，未保留这一区别。须核对非法槽位及上下文回退，不能将 false 和 null 统一处理。 | 否，按来源补齐 |
-| P2 · 私人观看者的额外原版状态 | [ClientRuntime.java:902](../client/src/main/java/com/simmc/meplayeractions/client/ClientRuntime.java#L902)、[VanillaYsmQueries.java:218](../client/src/main/java/com/simmc/meplayeractions/client/VanillaYsmQueries.java#L218)、[VanillaYsmQueries.java:252](../client/src/main/java/com/simmc/meplayeractions/client/VanillaYsmQueries.java#L252)、[PrivateModelSyncClient.java:41](../client/src/main/java/com/simmc/meplayeractions/client/network/PrivateModelSyncClient.java#L41) | [OpenYSM 状态字段](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/network/message/S2CSyncPlayerStatePacket.java#L29-L45)、[OpenYSM 状态读取](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/network/message/S2CSyncPlayerStatePacket.java#L245-L270)、[OpenYSM 远端 food 缓存](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/client/animation/molang/YSMBinding.java#L330) | 私人远端 food 当前回退 20；等级和 xxa／yya／zza 读取远端原版实体，没有上游对应的状态缓存。health、max_health、effects 已有实体读取入口，是否足够必须逐字段核对其对远端的原版同步保障，不能称这些字段全部失真。只补显示所需状态，不广播另一套 XYZ。 | 是，决策 A |
+| P2 · 私人观看者的额外原版状态 | [ClientRuntime.java:930](../client/src/main/java/com/simmc/meplayeractions/client/ClientRuntime.java#L930)、[VanillaYsmQueries.java:218](../client/src/main/java/com/simmc/meplayeractions/client/VanillaYsmQueries.java#L218)、[VanillaYsmQueries.java:252](../client/src/main/java/com/simmc/meplayeractions/client/VanillaYsmQueries.java#L252)、[PrivateModelSyncClient.java:41](../client/src/main/java/com/simmc/meplayeractions/client/network/PrivateModelSyncClient.java#L41) | [OpenYSM 状态字段](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/network/message/S2CSyncPlayerStatePacket.java#L29-L45)、[OpenYSM 状态读取](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/network/message/S2CSyncPlayerStatePacket.java#L245-L270)、[OpenYSM 远端 food 缓存](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/client/animation/molang/YSMBinding.java#L330) | 私人远端 food 当前回退 20；等级和 xxa／yya／zza 读取远端原版实体，没有上游对应的状态缓存。血量／最大血量已有原版 metadata／属性同步，应复用；食物、经验与完整效果等级按此前迁移目标补齐。需选择的是展示输入意图的同步范围，不广播另一套 XYZ。 | 输入范围，决策 A |
 | P2 · 独立 BBModel 扩展导入 | [BbModel.java:684](../client/src/main/java/com/simmc/meplayeractions/client/model/BbModel.java#L684)、[BbModel.java:696](../client/src/main/java/com/simmc/meplayeractions/client/model/BbModel.java#L696)、[BbModel.java:713](../client/src/main/java/com/simmc/meplayeractions/client/model/BbModel.java#L713)、[BbModel.java:945](../client/src/main/java/com/simmc/meplayeractions/client/model/BbModel.java#L945) | [Sparkle groups](https://github.com/sdf123098/Sparkle-Morpher/blob/b1230a431900a286d2cca198072df7fb43c490b4/common/src/main/java/com/micaftic/morpher/resource/bbmodel/BBToRawConverter.java#L214-L218)、[Sparkle mesh／locator](https://github.com/sdf123098/Sparkle-Morpher/blob/b1230a431900a286d2cca198072df7fb43c490b4/common/src/main/java/com/micaftic/morpher/resource/bbmodel/BBToRawConverter.java#L314-L365)、[Sparkle 数值 Bezier](https://github.com/sdf123098/Sparkle-Morpher/blob/b1230a431900a286d2cca198072df7fb43c490b4/common/src/main/java/com/micaftic/morpher/resource/bbmodel/BBToRawConverter.java#L764-L811)、[Sparkle 标准 controllers](https://github.com/sdf123098/Sparkle-Morpher/blob/b1230a431900a286d2cca198072df7fb43c490b4/common/src/main/java/com/micaftic/morpher/resource/bbmodel/BBToRawConverter.java#L1010-L1033) | MPA 拒绝独立 groups、mesh、locator／null_object、Bezier，只导入私有 ysm_animation_controllers；Sparkle 有独立转换入口，支持上述结构与数值曲线烘焙、标准 animation_controllers。此差异属于独立本地 BBModel 导入，不能用它证明公开二进制 YSM 的同名 Bezier 完整可用。 | 是，决策 B |
 | P2 · render_layers_first | [NativeYsmFile.java:229](../client/src/main/java/com/simmc/meplayeractions/client/model/NativeYsmFile.java#L229)、[ModelRenderer.java:468](../client/src/main/java/com/simmc/meplayeractions/client/render/ModelRenderer.java#L468) | [OpenYSM 图层顺序](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/geckolib3/geo/GeoReplacedEntityRenderer.java#L160-L170)、[OpenYSM 持物图层刷新](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/client/renderer/layer/CustomPlayerItemInHandLayer.java#L45) | 属性已保留但当前提交固定为模型、手持、装备。作者要求先绘制图层的顺序没有贯通；需按新版提交队列验证实际绘制顺序及缓冲刷新，仅交换 Java 调用顺序未必足够。 | 否，按来源补齐 |
 | P3 · all_cutout／cube culling | [NativeYsmFile.java:229](../client/src/main/java/com/simmc/meplayeractions/client/model/NativeYsmFile.java#L229)、[ModelRenderer.java:116](../client/src/main/java/com/simmc/meplayeractions/client/render/ModelRenderer.java#L116) | [OpenYSM forceCull](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/resource/YSMClientMapper.java#L344)、[OpenYSM cube.cullable](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/resource/YSMClientMapper.java#L408-L415) | all_cutout 在固定来源中影响背面剔除标记，不能解释成整张贴图强制 alpha cutout。MPA 未消费此属性、统一 NoCull；固定上游 CPU 路径也未完整贯通 cullable，不能据此断言所有模型画面错误或直接承诺性能收益。应先明确并贯通目标剔除路径。 | 否，需实现端核对 |
@@ -78,9 +78,48 @@
 
 ### 待用户决定的范围
 
-- **A · 私人分享的额外状态同步。** 建议先逐字段核对 food、等级、health／max_health、effects 与输入是否能由原版远端实体可靠获得，缺失字段才加有界、变化驱动的同步。服务器能确认的状态由服务器提供；按键／输入只能作为模型显示数据，不能作为移动、权限或动作校验依据。需确定是否包含 xxa／yya／zza 等输入及更新频率、带宽上限；XYZ 始终复用原版位置同步。
-- **B · 独立 native BBModel 导入。** 建议采用 Sparkle 的“独立解析并转换作者资产”入口补 groups、mesh／locator、标准 controllers 和数值 Bezier，沿用现有路径、像素、脚本及展开预算。需确定本地／私人上传 BBModel 的原生导入范围；普通服务器蓝图、现有数值／表达式上下文与旧资产兼容路径保持隔离，不能全局切成另一套 YSM 语义。
-- **C · locator 兼容范围。** 需确定原生 YSM 严格采用作者链、缺失不绘制，还是明确允许 Hand／Head 等回退。建议原生 YSM 跟随固定来源；本项目普通 BBModel 的回退单独保留，避免作者故意不声明 locator 时意外出现附件。
+这里决定的是兼容范围和运行策略。已经明确要求的完整本地功能、私人分享，以及能从固定源码确定的修复目标仍然有效，无需逐项重新授权。以下为候选方案，尚未视为用户选择。
+
+#### A · 私人分享是否同步“输入意图”
+
+**问题是什么：** 模型不仅读取位置，还可能读取饥饿、经验、效果等级和按键方向。当前私人远端食物值回退为 20，经验没有上游对应缓存；作者若根据这些值控制表情、服装或动作，本人与观看者可能看到不同表现。食物、经验和作者需要的完整效果 ID／等级已经属于此前确认的迁移目标，不需要再次决定是否补齐。
+
+1.21.11 的血量通过实体 DataTracker、最大血量通过被跟踪属性同步给观察者，应继续复用。食物和经验包发送给玩家本人；普通观察者的实体对象不能保证具有完整效果 ID／等级。这些字段应逐项选择真实服务器状态或已有原版同步，避免全部重复传送。核对入口为 `LivingEntity.getHealth()`、`EntityTrackerEntry.syncEntityData()`／被跟踪属性，以及 `ServerPlayerEntity` 的 `HealthUpdateS2CPacket`、`ExperienceBarUpdateS2CPacket`、效果包发送路径。
+
+**真正需要选择的是输入意图：** `ysm.xxa/yya/zza` 表示来源维护的移动输入值。玩家按住前进但撞墙时，输入仍存在，实际位移却为零；不能用坐标差代替。这可能影响依赖输入的侧移、姿态或特殊飞行动作，普通位置同步与一般走路判定不因此改成另一套机制。
+
+- **A1 · 支持展示输入同步（推荐）。** 核对目标服务器 API 能提供的输入；不足时，由获准发布私人模型的模组玩家受限上报。只对开启分享且需要该能力的模型／实例启用，变化及时发送，合并同值并限流；依赖无法可靠判定时优先保留兼容。观看者仍被动接收。输入仅供模型动画使用，不能改变真实移动、权限或服务器动作校验。
+- **A2 · 暂缓输入同步。** 先补齐服务器可确认的查询，输入依赖模型仍保留与本人不同的可能性。减少额外实时消息与适配工作，但不能将这一部分称为完整上游兼容。
+
+**代价与性能：** A1 增加实时状态消息，数量与玩家输入变化和实际观看人数有关，需测量后确定限频和字节预算。后台发现／资源管理可接受此前的 1–5 秒间隔；短暂按键及松开不能统一延后这么久，否则可能完全漏掉该动作。无需新增位置广播，也不需要客户端申请下载任意服务器模型。
+
+**待确认：** 采用 A1，还是先采用 A2。推荐 A1，限频和预算通过实现与测量确定，不要求用户预先填写 Hz。
+
+#### B · 本地／私人 BBModel 是否增加原生导入路径
+
+**问题是什么：** 当前独立 `.bbmodel` 解析器只接受一部分 Blockbench 结构。独立骨骼表 `groups`、mesh、locator／null_object、数值 Bézier 曲线会被拒绝；标准 `animation_controllers` 也没有被消费。Sparkle 的成熟转换器能将这些结构转为原生运行资产。并非所有 `.bbmodel` 都有问题，触发取决于文件是否使用这些能力。
+
+**玩家会遇到什么：** 一个文件在参考项目可用，在 MPA 可能加载失败；文件包含控制器时也可能被导入却没有相同的动作控制。数值 Bézier 表示作者设计的平滑变化曲线，不能直接等同于当前线性关键帧。以上是独立 BBModel 的差异，公开二进制 YSM 的同名曲线路径要单独核对。
+
+- **B1 · 增加独立原生导入路径（推荐）。** 本地选择与私人上传的 BBModel 参考 Sparkle 解析、转换，保留作者骨架、挂点、支持的曲线和控制器。与现有服务器／普通 BBModel 的上下文、轴向迁移和兼容逻辑隔离；ModelEngine 的蓝图导入及资源包生成流程保持现有分工。
+- **B2 · 继续使用当前受限导入。** 保持较小的解析范围，明确哪些结构不支持；使用这些结构的模型需要作者另行导出为受支持格式。降低此次开发和兼容检查范围，但保留与 Sparkle 的导入能力差距。
+
+**代价与兼容：** B1 的转换与验收工作较多，需要对照真实模型核对骨架、贴图、动画和附件；沿用路径、像素、几何、脚本及展开预算。文件扩展名相同不意味着全局切换解释语义，也不会给缺少动画定义的普通模型自动创造 YSM 动作。
+
+**待确认：** 本地与私人上传是否采用 B1。推荐 B1；现有服务器蓝图及旧资产使用独立兼容路径。
+
+#### C · 原生 YSM 缺少挂点时是否自动补附件
+
+**问题是什么：** 挂点（locator）是作者给手持物、头部附件指定的位置和旋转。当前 MPA 在主 HandLocator 没有声明时会尝试 Hand 骨骼，头部附件优先使用 HeadLocator 再使用 Head。上游原生 YSM 的指定链不同：主手持按对应 HandLocator，头部物品按其指定 Head 链。
+
+**玩家会遇到什么：** 作者可能有手骨，却故意不给主持物挂点。例如模型已画出一把武器，自动把原版持物再绑到手骨可能多出一把；同时存在 Head 和 HeadLocator 时，本项目优先级也可能把头上物品放到不同位置。这些是可能的触发例子，并非本轮已做实机复现。已声明但作者隐藏的 HandLocator 目前不会退回 Hand，不能把这项已保留的行为再列为缺陷。
+
+- **C1 · 原生严格、普通 BBModel 保留回退（推荐）。** 原生 YSM 按来源的指定链显示附件，没有所需主挂点时不擅自补画；普通／服务器 BBModel 继续使用其现有回退规则。按 B1 原生转换的资产遵循原生链。
+- **C2 · 原生也保留 MPA 回退。** 尽量让缺少标准挂点的模型仍能显示附件，但可能改变作者原本的画面。若保留，应明确为兼容模式，不能称为完全相同的上游规则。
+
+**代价与兼容：** C1 可能让依赖 MPA 回退的原生模型少显示附件，需要作者补正确挂点；它更符合原作者定义。C2 减少这类模型的调整，却继续存在重复持物或位置偏差风险。两种选择只影响附件绘制，不改玩家实际装备和物品。
+
+**待确认：** 采用 C1，还是原生也保留 C2。推荐 C1，普通 BBModel 的已有兼容行为单独保留。
 
 ### 不作为本项目特有缺陷的项目
 
