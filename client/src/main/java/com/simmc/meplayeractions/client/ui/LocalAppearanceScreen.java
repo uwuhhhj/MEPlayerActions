@@ -4,10 +4,11 @@ import com.simmc.meplayeractions.client.ClientRuntime;
 import com.simmc.meplayeractions.client.LocalAppearanceSettings;
 import com.simmc.meplayeractions.client.LocalModelLibrary;
 import com.simmc.meplayeractions.client.model.YsmModelProfile;
+import com.simmc.meplayeractions.client.network.PrivateUploadCatalogSnapshot;
 import net.minecraft.client.gui.Click;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.tooltip.Tooltip;
+import net.minecraft.client.gui.screen.ConfirmScreen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.client.gl.RenderPipelines;
@@ -56,6 +57,9 @@ public class LocalAppearanceScreen extends Screen {
     private String query = "", message = "";
     private boolean favoritesOnly, uploadedOnly, activeView, rotating;
     private Set<String> confirmedUploads=Set.of();
+    private Set<String> localSourceIds=Set.of();
+    private List<PrivateUploadCatalogSnapshot.Model> savedUploads=List.of();
+    private String observedDeleteId="",observedDeleteStatus="";
     private int sourceFilter, page, columns, rows, pageSize, inFlight;
     protected int drawnPreviewCount;
     protected int left, top, bottom, panelWidth, previewWidth, right, rightWidth, gridTop, gridBottom;
@@ -110,17 +114,37 @@ public class LocalAppearanceScreen extends Screen {
     protected String settingsButtonLabel(int buttonWidth) {return buttonWidth<65?"设置":"详情 / 设置";}
     protected boolean localGallery() {return true;}
     protected List<ClientRuntime.Action> galleryModels() {return runtime.localModels();}
-    protected CompletableFuture<LocalModelLibrary.Loaded> loadGalleryPreview(String id) {return runtime.loadLocalPreview(id);}
+    protected CompletableFuture<LocalModelLibrary.Loaded> loadGalleryPreview(String id) {
+        return uploadedOnly&&!runtime.privateModelUploadState(id).uploaded()?CompletableFuture.completedFuture(null):runtime.loadLocalPreview(id);
+    }
     protected YsmModelProfile galleryProfile(String id) {return runtime.localModelProfile(id);}
-    protected String gallerySourceLabel(String id) {return sourceLabel(id);}
-    protected String galleryStatus() {return runtime.localAppearanceStatus();}
-    protected String galleryPreviewUnavailableText(String id) {return "正在加载所选模型…";}
-    protected boolean canUseGalleryModel(String id,LocalModelLibrary.Loaded loaded) {return loaded!=null;}
-    protected String galleryUseTooltip() {return "使用当前浏览模型，只在本机显示；云朵按钮才上传并分享";}
+    protected String gallerySourceLabel(String id) {return uploadedOnly?"本人服务器存档":sourceLabel(id);}
+    protected String galleryStatus() {return uploadedOnly?runtime.privateUploadCatalogStatus():runtime.localAppearanceStatus();}
+    protected String galleryPreviewUnavailableText(String id) {return cloudModelHint(id).isEmpty()?"正在加载所选模型…":cloudModelHint(id);}
+    protected boolean canUseGalleryModel(String id,LocalModelLibrary.Loaded loaded) {
+        return loaded!=null&&(!uploadedOnly||runtime.privateModelUploadState(id).uploaded());
+    }
+    protected String galleryUseTooltip() {return runtime.canActivateLocalAppearance()
+            ? "使用所选模型，仅自己可见\n云朵按钮可上传分享" : "请先解除服务器伪装\n客户端与服务端外观不能同时使用";}
+    protected GalleryModelUseState.State galleryUseState(String id,LocalModelLibrary.Loaded loaded) {
+        if(uploadedOnly&&!runtime.privateModelUploadState(id).uploaded())
+            return new GalleryModelUseState.State(GalleryModelUseState.Phase.BLOCKED,"使用模型",false);
+        boolean current=runtime.currentAppearanceSource()==ClientRuntime.AppearanceSource.CLIENT;
+        return GalleryModelUseState.local(id,loaded==null?"":loaded.hash(),current?runtime.currentAppearanceModelId():"",
+                current?runtime.currentAppearanceAssetHash():"",runtime.pendingLocalAppearanceModelId(),
+                runtime.canActivateLocalAppearance(),canUseGalleryModel(id,loaded));
+    }
+    protected String galleryUseTooltip(GalleryModelUseState.State state) {
+        if(uploadedOnly&&!cloudModelHint(selection.modelId()).isEmpty())return "云端已保存\n"+cloudModelHint(selection.modelId()).replace("云端已保存 · ","")+"\n本机内容一致时才能使用\n云朵按钮可删除服务器资源";
+        if(state.current())return "当前正在使用此模型\n选择其他模型可切换";
+        if(state.waiting())return localGallery()?"正在加载所选模型\n请等待加载完成":"请求已发送\n等待服务器确认伪装";
+        return galleryUseTooltip();
+    }
     protected String galleryBrowsingMessage() {return "预览中，点击使用模型才应用";}
     protected boolean isFavoriteModel(String id) {return runtime.options.isFavorite(id);}
     protected void toggleModelFavorite(String id) {runtime.options.toggleFavorite(id);}
     protected void setGalleryMessage(String value) {message=value;}
+    protected void refreshGalleryModels() {refreshModels(false);}
     protected void resetGallery() {
         clearGalleryPreviews();models=List.of();filtered=List.of();visible=List.of();
         groupSource=sourceFilter=page=0;groupDirectory=query=message="";
@@ -133,37 +157,40 @@ public class LocalAppearanceScreen extends Screen {
         if (models.isEmpty()) refreshModels(false);
 
         boolean searchFocused=search!=null && search.isFocused();
-        int toolsWidth=localGallery()?167:57;
+        int toolsWidth=localGallery()?167:101;
         search = new TextFieldWidget(textRenderer, right + 5, top + 5, Math.max(35, rightWidth - toolsWidth), 20, Text.literal("搜索模型"));
         search.setMaxLength(80); search.setPlaceholder(Text.literal("搜索名称 / ID")); search.setText(query);
         search.setChangedListener(value -> { query = value; page = 0; rebuildGrid(); });
         addDrawableChild(search);
         if(searchFocused)setInitialFocus(search);
-        int favoritesX=right+rightWidth-(localGallery()?157:47);
+        int favoritesX=right+rightWidth-(localGallery()?157:91);
         iconButton(favoritesOnly ? "★ 收藏" : "☆ 收藏", favoritesX, top + 5, 20, 0,0,() -> {
             favoritesOnly = !favoritesOnly; page = 0; clearAndInit();
-        }, "仅显示已收藏的模型；每张卡片右上角可收藏");
+        }, "只显示收藏的模型\n卡片右上角可收藏");
         button(runtime.options.showModelIds ? "ID ✓" : "ID", favoritesX+22, top + 5, 20, () -> {
             runtime.options.showModelIds = !runtime.options.showModelIds; runtime.options.save(); clearAndInit();
         }, "优先在卡片上显示模型 ID");
 
         if(localGallery()) {
         cloudButton("已上传",right+rightWidth-113,top+5,20,()->{
-            uploadedOnly=!uploadedOnly;page=0;clearAndInit();
-        },()->uploadedOnly,()->true,()->"已上传筛选：只列出本次连接中服务器已确认的私人模型；不表示永久保存");
+            uploadedOnly=!uploadedOnly;groupSource=sourceFilter=page=0;groupDirectory="";clearGalleryPreviews();refreshModels(false);clearAndInit();
+        },()->uploadedOnly,runtime::privateUploadCatalogReady,()->runtime.privateUploadCatalogReady()
+                ?"只显示服务器已保存的本人模型\n本地文件须与保存内容一致":runtime.privateUploadCatalogStatus());
         iconButton(groupSource>0?"↑ 全部模型":new String[]{"全部来源", "内置", "本地 YSM", "本地 BB"}[sourceFilter], right + rightWidth - 91, top + 5, 20,groupSource>0?0:32,groupSource>0?32:0,
                 () -> {if(groupSource>0)navigateUp();else {sourceFilter=(sourceFilter+1)%4;page=0;clearAndInit();}},
-                groupSource>0?"返回上一级模型分组":"点击切换模型来源筛选；分组卡片可进入对应模型目录");
+                groupSource>0?"返回上一级模型分组":"切换模型来源筛选\n点击目录卡片进入分组");
         iconButton("文件夹", right + rightWidth - 69, top + 5, 20,80,0,() -> {
             Util.getOperatingSystem().open(runtime.localModelDirectory());
             message = "放入模型后点击刷新";
         }, "打开本地模型目录");
         button("刷新", right + rightWidth - 47, top + 5, 20, () -> {
             runtime.refreshLocalModelSources();refreshModels(true); page = 0; rebuildGrid(); message = "已刷新本地模型";
-        }, "重新扫描文件和模型预览；不会改变已使用的外观");
-        iconButton("导入说明", right + rightWidth - 25, top + 5, 20,80,16,
-                () -> client.setScreen(new ImportHelpScreen(this)), "查看 YSM 原始模型、模型包与 BBModel 导入方式");
-        }
+        }, "重新扫描模型与预览\n保留当前使用的外观");
+        } else iconButton("缓存目录",right+rightWidth-47,top+5,20,80,0,this::openServerCacheDirectory,
+                "打开本机服务器模型缓存\nconfig/meplayeractions/cache");
+        iconButton("使用教程",right+rightWidth-25,top+5,20,80,16,
+                ()->client.setScreen(new ModelHelpScreen(runtime,this,!localGallery())),localGallery()
+                        ?"客户端模型教程\n导入、使用、上传分享与存档管理":"服务端模型教程\n伪装、外观设置与客户端接管");
         buildSelectionControls();
         rebuildGrid();
     }
@@ -172,10 +199,12 @@ public class LocalAppearanceScreen extends Screen {
                 galleryUseTooltip());
         int half = (previewWidth - 13) / 2;
         settings = button(settingsButtonLabel(half), left + 5, bottom - 21, half,
-                () -> client.setScreen(new ModelSettingsScreen(runtime, selection.modelId(), this)), "查看模型信息，设置缩放、XYZ 位置与有效模型参数");
+                () -> client.setScreen(new ModelSettingsScreen(runtime, selection.modelId(), this)), "查看模型详情\n设置缩放、位置与作者配置");
         upload = cloudButton("上传分享",left+8+half,bottom-21,half,this::uploadSelectedModel,
-                ()->!selection.modelId().isEmpty()&&runtime.privateModelUploadState(selection.modelId()).uploaded(),
-                ()->canUploadModel(selection.modelId()),()->uploadTooltip(selection.modelId()));
+                ()->storedPrivateModel(selection.modelId())!=null||runtime.privateModelUploadState(selection.modelId()).published(),
+                ()->canUseCloudAction(selection.modelId()),()->uploadTooltip(selection.modelId()),
+                ()->runtime.deletingUploadedPrivateModel(selection.modelId())?"删除中":storedPrivateModel(selection.modelId())!=null
+                        ?"已上传":runtime.privateModelUploadState(selection.modelId()).published()?"已分享":"上传分享");
     }
     protected void buildFooterControls() {
         button("返回", left, footerY, 52, this::close, "返回上一页");
@@ -183,7 +212,7 @@ public class LocalAppearanceScreen extends Screen {
             runtime.options.defaultHeaddress = true; runtime.options.defaultBlueTexture = false;
             var defaults = LocalAppearanceSettings.defaults(); runtime.updateLocalAppearance(defaults);
             refreshModels(true); selection.restore(defaults.modelId()); message = "已恢复默认，本地外观关闭"; rebuildGrid();
-        }, "恢复默认模型、缩放和位置，并关闭本地外观");
+        }, "恢复默认模型、缩放与位置\n关闭私人外观");
     }
 
     protected ButtonWidget button(String label, int x, int y, int w, Runnable action, String tooltip) {
@@ -198,7 +227,7 @@ public class LocalAppearanceScreen extends Screen {
                 context.drawCenteredTextWithShadow(textRenderer,text,getX()+getWidth()/2,getY()+(getHeight()-8)/2,active?0xfff3f0e0:0xff8a929c);
             }
         };
-        button.setTooltip(Tooltip.of(Text.literal(tooltip)));
+        button.setTooltip(ModelUiTooltip.of(textRenderer,LocalAppearanceScreen.this.width,tooltip));
         return addDrawableChild(button);
     }
     protected ButtonWidget iconButton(String label,int x,int y,int w,int u,int v,Runnable action,String tooltip) {
@@ -209,21 +238,25 @@ public class LocalAppearanceScreen extends Screen {
                 context.drawTexture(RenderPipelines.GUI_TEXTURED,GUI_ICONS,getX()+(getWidth()-16)/2,getY()+2,(float)u,(float)v,16,16,256,256);
             }
         };
-        button.setTooltip(Tooltip.of(Text.literal(tooltip)));return addDrawableChild(button);
+        button.setTooltip(ModelUiTooltip.of(textRenderer,LocalAppearanceScreen.this.width,tooltip));return addDrawableChild(button);
     }
     private ButtonWidget cloudButton(String label,int x,int y,int w,Runnable action,BooleanSupplier selected,
                                      BooleanSupplier enabled,Supplier<String> tooltip) {
+        return cloudButton(label,x,y,w,action,selected,enabled,tooltip,()->selected.getAsBoolean()?"已上传":label);
+    }
+    private ButtonWidget cloudButton(String label,int x,int y,int w,Runnable action,BooleanSupplier selected,
+                                     BooleanSupplier enabled,Supplier<String> tooltip,Supplier<String> caption) {
         var button=new ButtonWidget(x,y,Math.max(20,w),20,Text.literal(label),b->action.run(),narration->narration.get()) {
             @Override protected void drawIcon(DrawContext context,int mouseX,int mouseY,float delta) {
-                active=enabled.getAsBoolean();setTooltip(Tooltip.of(net.minecraft.text.Text.literal(tooltip.get())));
-                setMessage(net.minecraft.text.Text.literal(selected.getAsBoolean()?"已上传":label));
+                active=enabled.getAsBoolean();setTooltip(ModelUiTooltip.of(textRenderer,LocalAppearanceScreen.this.width,tooltip.get()));
+                setMessage(net.minecraft.text.Text.literal(caption.get()));
                 context.fill(getX(),getY(),getRight(),getBottom(),selected.getAsBoolean()?-14774017:-12369342);
                 if(hovered || isFocused())context.drawStrokedRectangle(getX(),getY(),getWidth(),getHeight(),-790560);
                 CloudUploadIcon.draw(context,getX()+2,getY()+2,active?0xfff3f0e0:0xff8a929c,selected.getAsBoolean());
                 if(getWidth()>24)clipped(context,getMessage().getString(),getX()+20,getY()+6,getWidth()-22,active?0xfff3f0e0:0xff8a929c);
             }
         };
-        button.active=enabled.getAsBoolean();button.setTooltip(Tooltip.of(Text.literal(tooltip.get())));
+        button.active=enabled.getAsBoolean();button.setTooltip(ModelUiTooltip.of(textRenderer,LocalAppearanceScreen.this.width,tooltip.get()));
         return addDrawableChild(button);
     }
     private boolean canUploadModel(String id) {
@@ -231,23 +264,88 @@ public class LocalAppearanceScreen extends Screen {
         return localGallery()&&!id.isEmpty()&&runtime.canShareLocalModel()&&entry!=null&&entry.loaded!=null
                 &&!runtime.privateModelUploadState(id).inProgress();
     }
+    private boolean canUseCloudAction(String id) {
+        if(id.isEmpty()||runtime.deletingUploadedPrivateModel(id))return false;
+        if(storedPrivateModel(id)!=null)return runtime.privateUploadCatalogReady();
+        return runtime.privateModelUploadState(id).published()||canUploadModel(id);
+    }
+    private PrivateUploadCatalogSnapshot.Model storedPrivateModel(String id) {
+        return runtime.uploadedPrivateModels().stream().filter(model->model.modelId().equals(id)).findFirst().orElse(null);
+    }
+    private String cloudModelHint(String id) {
+        if(!uploadedOnly||storedPrivateModel(id)==null||runtime.privateModelUploadState(id).uploaded())return "";
+        if(!runtime.privateUploadCatalogReady())return "云端已保存 · 正在核对本机文件";
+        return localSourceIds.contains(id)?"云端已保存 · 本机文件内容不同":"云端已保存 · 本机未找到模型";
+    }
     private String uploadTooltip(String id) {
-        if(!runtime.canShareLocalModel())return "当前服务器未允许私人上传，或本人正在使用服务器伪装\n"+runtime.privateSyncStatus();
+        if(runtime.deletingUploadedPrivateModel(id))return "删除中\n等待服务器确认\n本地文件将保留";
+        if(storedPrivateModel(id)!=null)return "服务器已保存\n点击删除这个模型的服务器存档\n包含该模型的已保存旧版本\n会结束相关私人分享\n本地文件将保留\n"
+                +(runtime.privateModelUploadState(id).uploaded()?"本机内容一致":localSourceIds.contains(id)?"本机文件内容不同":"本机未找到模型")
+                +(runtime.privateUploadDeleteStatus(id).isEmpty()?"":"\n"+runtime.privateUploadDeleteStatus(id));
+        if(runtime.privateModelUploadState(id).published())return "已分享，尚未确认服务器保存\n点击结束私人分享\n保留本地文件与服务器缓存";
+        if(!runtime.canActivateLocalAppearance())return "请先解除服务器伪装\n私人模型上传与服务器伪装不能同时使用";
+        if(!runtime.canShareLocalModel())return "当前无法上传私人模型\n"+runtime.privateSyncStatus();
         if(id.isEmpty())return "先选择私人模型";
         var state=runtime.privateModelUploadState(id);
-        return "云朵：使用此私人模型并上传分享给获准的模组玩家；原版玩家仍看见原版人物\n"
-                +state.message()+"\n已上传只表示本次连接收到服务器确认；点击可重新分享。";
+        return "使用此模型并上传分享\n获准的模组玩家可见\n原版玩家看见原版人物\n"
+                +state.message()+(state.uploaded()?"\n服务器已保存；点击可再次分享":"");
     }
     private void uploadSelectedModel() {
         String id=selection.modelId();
+        if(!canUseCloudAction(id)){message=uploadTooltip(id);return;}
+        var expected=storedPrivateModel(id);
+        if(expected!=null) {
+            client.setScreen(new ConfirmScreen(confirmed->{
+                if(confirmed) {
+                    if(runtime.requestDeleteUploadedPrivateModel(expected)) {
+                        observedDeleteId=id;observedDeleteStatus=runtime.privateUploadDeleteStatus(id);message="删除请求已提交，等待服务器确认";
+                    } else {
+                        message=runtime.privateUploadDeleteStatus(id);
+                        if(message.isEmpty())message="当前无法删除服务器资源，请稍后重试";
+                    }
+                }
+                client.setScreen(this);
+            },Text.literal("删除服务器模型？"),Text.literal("删除 "+label(id)+" 的服务器存档及已保存旧版本。\n相关私人分享会结束，本地模型文件保留。"),
+                    Text.literal("删除服务器资源"),Text.literal("取消")));
+            return;
+        }
+        var shared=runtime.privateModelUploadState(id);
+        if(shared.published()) {
+            client.setScreen(new ConfirmScreen(confirmed->{
+                if(confirmed) {
+                    var current=runtime.privateModelUploadState(id);
+                    if(!current.published() || !current.hash().equals(shared.hash()))message="私人分享已变化，请返回后重新确认";
+                    else if(runtime.setPrivateSyncEnabled(false))message="已结束私人分享，本地模型与服务器缓存保留";
+                    else message="未能结束私人分享，请重试";
+                }
+                client.setScreen(this);
+            },Text.literal("结束私人分享？"),Text.literal("其他玩家将不再显示你的私人模型。\n本地模型文件和已保存的服务器缓存保留。"),Text.literal("结束分享"),Text.literal("取消")));
+            return;
+        }
         if(!canUploadModel(id)){message=uploadTooltip(id);return;}
-        message=runtime.uploadAndShareLocalModel(id)?"正在使用并上传私人模型；等待服务器确认":"当前无法上传私人模型";
+        message=runtime.uploadAndShareLocalModel(id)?"":"当前无法上传私人模型";
         updateSelectionButtons();
+    }
+
+    private void openServerCacheDirectory() {
+        try {
+            java.nio.file.Files.createDirectories(runtime.localServerCacheDirectory());
+            Util.getOperatingSystem().open(runtime.localServerCacheDirectory());
+            message="已打开本机服务器模型缓存";
+        } catch(java.io.IOException | SecurityException unavailable) {message="无法打开本机服务器模型缓存目录";}
     }
 
     private void refreshModels(boolean clear) {
         if (clear) { generation++; previews.clear(); inFlight = 0; preview.clear(); }
         models = List.copyOf(galleryModels());
+        if(localGallery()) {
+            localSourceIds=Set.copyOf(models.stream().map(ClientRuntime.Action::id).toList());
+            if(uploadedOnly) {
+                var byId=new LinkedHashMap<String,ClientRuntime.Action>();models.forEach(model->byId.put(model.id(),model));
+                runtime.uploadedPrivateModels().forEach(model->byId.putIfAbsent(model.modelId(),new ClientRuntime.Action(model.modelId(),model.modelId())));
+                models=List.copyOf(byId.values());
+            }
+        }
         selection.retain(models.stream().map(ClientRuntime.Action::id).toList());
     }
 
@@ -257,7 +355,7 @@ public class LocalAppearanceScreen extends Screen {
         gridWidgets.clear();
         String needle = query.strip().toLowerCase(Locale.ROOT);
         filtered = models.stream().filter(model -> (!favoritesOnly || isFavoriteModel(model.id()))
-                && (!uploadedOnly || runtime.privateModelUploadState(model.id()).uploaded())
+                && (!uploadedOnly || storedPrivateModel(model.id())!=null)
                 && (!localGallery() || sourceFilter == 0 || source(model.id()) == sourceFilter)
                 && (!localGallery() || groupSource == 0 || source(model.id()) == groupSource)
                 && (!localGallery() || groupSource == 0 || ModelGalleryIndex.contains(groupPath(),model.id()))
@@ -384,21 +482,25 @@ public class LocalAppearanceScreen extends Screen {
     }
     public void useSelectedModel() {
         if (selection.modelId().isEmpty()) return;
+        if(!runtime.canActivateLocalAppearance()){message="请先解除服务器伪装，再使用私人模型";return;}
         var entry = previews.get(selection.modelId());
         if (entry == null || entry.loaded == null) { message = "请等待模型预览加载完成"; return; }
-        if(!runtime.serverOwnModelPresent())runtime.setPrivateSyncEnabled(false);
+        if(!galleryUseState(selection.modelId(),entry.loaded).canUse())return;
+        runtime.setPrivateSyncEnabled(false);
         runtime.selectLocalModel(selection.modelId());
         runtime.options.showSelf = true; runtime.options.save();
-        message = client.world == null ? "已保存，进入世界后显示" : "已使用私人模型（第三人称查看）";
+        message = "";
         updateSelectionButtons();
     }
 
-    private void updateSelectionButtons() {
+    protected void updateSelectionButtons() {
         if (use == null) return;
         var entry = previews.get(selection.modelId());
-        use.active = !selection.modelId().isEmpty()&&canUseGalleryModel(selection.modelId(),entry==null?null:entry.loaded);
-        use.setTooltip(Tooltip.of(Text.literal(galleryUseTooltip())));
-        if(settings!=null){settings.active=!selection.modelId().isEmpty();settings.setTooltip(Tooltip.of(Text.literal("查看模型信息，设置缩放、XYZ 位置与作者配置")));}
+        var state=galleryUseState(selection.modelId(),entry==null?null:entry.loaded);
+        use.active=state.canUse();use.setMessage(Text.literal(state.buttonLabel()));
+        use.setTooltip(ModelUiTooltip.of(textRenderer,LocalAppearanceScreen.this.width,galleryUseTooltip(state)));
+        if(settings!=null){settings.active=!selection.modelId().isEmpty()&&(!uploadedOnly||runtime.privateModelUploadState(selection.modelId()).uploaded());settings.setTooltip(ModelUiTooltip.of(textRenderer,LocalAppearanceScreen.this.width,
+                settings.active?"查看模型详情\n设置缩放、位置与作者配置":"无法配置此服务器存档\n需要本机存在相同内容的模型"));}
         if(favorite!=null) {
             favorite.active=!selection.modelId().isEmpty();
             String favoriteText=isFavoriteModel(selection.modelId())?"★ 已收藏":"☆ 收藏";
@@ -464,7 +566,19 @@ public class LocalAppearanceScreen extends Screen {
         if (requiresLocalSource() && !runtime.canEditLocalAppearance()) { client.setScreen(new PlayerModelScreen(runtime)); return; }
         if(localGallery()) {
             Set<String> uploads=runtime.uploadedPrivateModelIds();
-            if(!uploads.equals(confirmedUploads)){confirmedUploads=Set.copyOf(uploads);if(uploadedOnly)rebuildGrid();}
+            List<PrivateUploadCatalogSnapshot.Model> saved=runtime.uploadedPrivateModels();
+            if(!uploads.equals(confirmedUploads)||!saved.equals(savedUploads)) {
+                confirmedUploads=Set.copyOf(uploads);savedUploads=List.copyOf(saved);
+                if(uploadedOnly){clearGalleryPreviews();refreshModels(false);rebuildGrid();}
+            }
+            if(!observedDeleteId.isEmpty()) {
+                String status=runtime.privateUploadDeleteStatus(observedDeleteId);
+                if(!status.equals(observedDeleteStatus)){observedDeleteStatus=status;message=status;}
+                if(!runtime.deletingUploadedPrivateModel(observedDeleteId)) {
+                    if(status.isEmpty())message="未收到服务器删除确认，请重新连接后查看存档";
+                    observedDeleteId=observedDeleteStatus="";
+                }
+            }
         }
         updateSelectionButtons();
         ticks++; pumpLoads();
@@ -488,13 +602,26 @@ public class LocalAppearanceScreen extends Screen {
     protected void renderAlternateContent(DrawContext context,float delta) { }
     private void renderGallery(DrawContext context,float delta) {
         renderSelectedPreview(context,delta);
-        if (visible.isEmpty() && visibleGroups.isEmpty()) clipped(context, uploadedOnly?"本次连接暂无已确认上传":favoritesOnly ? "暂无符合条件的收藏" : "没有符合条件的模型", right + 8, gridTop + 20, rightWidth - 16, 0xffbccce0);
+        if (visible.isEmpty() && visibleGroups.isEmpty()) clipped(context, uploadedOnly
+                ?runtime.privateUploadCatalogReady()?"暂无匹配的已上传模型":runtime.privateUploadCatalogStatus()
+                :favoritesOnly?"暂无符合条件的收藏":"没有符合条件的模型",right+8,gridTop+20,rightWidth-16,0xffbccce0);
         context.drawCenteredTextWithShadow(textRenderer, (page + 1) + " / " + pageCount(), right + rightWidth / 2, bottom - 15, 0xffe6ecf4);
         String status = message.isEmpty() ? galleryStatus() : message;
         clipped(context, status, left + footerStatusInset(), footerY + 6, panelWidth - footerStatusInset(), 0xffffd589);
     }
     protected void renderSelectedPreview(DrawContext context,float delta) {
+        boolean currentLocal=runtime.currentAppearanceSource()==ClientRuntime.AppearanceSource.CLIENT;
+        if(localGallery() && !currentLocal && !selection.modelId().isEmpty()) {
+            renderBrowsingPreview(context,delta,selection.modelId(),previews.get(selection.modelId()));
+            return;
+        }
         ClientRuntime.GuiPreviewAppearance appearance = runtime.guiPreviewAppearance();
+        if(currentLocal && appearance==null) {
+            String id=runtime.currentAppearanceModelId(),hash=runtime.currentAppearanceAssetHash();
+            var entry=previews.get(id);
+            if(entry!=null && entry.loaded!=null && entry.loaded.hash().equals(hash))
+                appearance=new ClientRuntime.GuiPreviewAppearance(id,"gallery-current:"+id,hash,entry.loaded.model(),entry.loaded.profile());
+        }
         var selectedEntry = previews.get(selection.modelId());
         var target = selection.target(appearance == null ? "" : appearance.modelId(),
                 appearance == null ? "" : appearance.assetHash(),
@@ -531,10 +658,13 @@ public class LocalAppearanceScreen extends Screen {
     private void renderBrowsingPreview(DrawContext context, float delta, String id, PreviewEntry entry) {
         leftPreviewId = id; leftPreviewSource = "selected-preview";
         clipped(context, label(id), left + 6, top + 6, previewWidth - 12, 0xfff3f6ff);
-        clipped(context, "预览 · 点击使用模型应用", left + 6, top + 17, previewWidth - 12, 0xff92b9df);
+        var state=galleryUseState(id,entry==null?null:entry.loaded);
+        String status=!cloudModelHint(id).isEmpty()?"云端存档 · 本机内容不匹配":state.current()?"当前使用":state.waiting()?"正在加载所选模型":runtime.canActivateLocalAppearance()
+                ?"预览 · 点击使用模型应用":"仅预览 · 请先解除服务器伪装";
+        clipped(context,status,left+6,top+17,previewWidth-12,0xff92b9df);
         if (entry == null || entry.loaded == null) {
-            String status = entry != null && !entry.error.isEmpty() ? "预览加载失败：" + entry.error : galleryPreviewUnavailableText(id);
-            clipped(context, status, previewX + 3, previewY + previewH / 2, previewW - 6, 0xffffc685);
+            String unavailable = entry != null && !entry.error.isEmpty() ? "预览加载失败：" + entry.error : galleryPreviewUnavailableText(id);
+            clipped(context, unavailable, previewX + 3, previewY + previewH / 2, previewW - 6, 0xffffc685);
             return;
         }
         leftPreviewKey = key(id, entry.loaded); leftPreviewHash = entry.loaded.hash();
@@ -597,7 +727,7 @@ public class LocalAppearanceScreen extends Screen {
         private final ModelGroup group;
         GroupCard(ModelGroup group,int x,int y,int w,int h) {
             super(x,y,w,h,net.minecraft.text.Text.literal(group.label()),button->browseGroup(group),DEFAULT_NARRATION_SUPPLIER);this.group=group;
-            setTooltip(Tooltip.of(net.minecraft.text.Text.literal(group.label()+" · "+group.count()+" 个模型\n"+group.path()+"\n点击进入模型目录")));
+            setTooltip(ModelUiTooltip.of(textRenderer,LocalAppearanceScreen.this.width,group.label()+" · "+group.count()+" 个模型\n"+group.path()+"\n点击进入模型目录"));
         }
         @Override protected void drawIcon(DrawContext context,int mouseX,int mouseY,float delta) {
             context.fill(getX(),getY(),getRight(),getBottom(),hovered?0xff394b62:0xff303d4e);
@@ -612,26 +742,29 @@ public class LocalAppearanceScreen extends Screen {
         ModelCard(ClientRuntime.Action model, int x, int y, int w, int h) {
             super(x, y, w, h, net.minecraft.text.Text.literal(model.label()), button -> browseModel(model.id()), DEFAULT_NARRATION_SUPPLIER);
             this.model = model;
-            refreshLabel();
+            refreshLabel(-1,-1);
         }
-        private void refreshLabel() {
+        private void refreshLabel(int mouseX,int mouseY) {
             String label=label(model.id());
             setMessage(net.minecraft.text.Text.literal(label));
             String description=profile(model.id()).localized(client==null?"zh_cn":client.getLanguageManager().getLanguage(),"metadata.description","");
-            String tooltip=label+"\n"+gallerySourceLabel(model.id())+" · "+model.id()+(description.isBlank()?"":"\n"+description)
-                    +"\n点击浏览；右上角 ☆ 收藏"+(localGallery()?"；左上角云朵上传分享\n"+uploadTooltip(model.id()):"");
-            if(!tooltip.equals(tooltipText)){tooltipText=tooltip;setTooltip(Tooltip.of(net.minecraft.text.Text.literal(tooltip)));}
+            var target=isMouseOver(mouseX,mouseY)?ModelCardActionRegions.target(mouseX-getX(),mouseY-getY(),getWidth(),localGallery()):ModelCardActionRegions.Target.BROWSE;
+            String tooltip=target==ModelCardActionRegions.Target.UPLOAD?uploadTooltip(model.id())
+                    :target==ModelCardActionRegions.Target.FAVORITE?(isFavoriteModel(model.id())?"取消收藏":"收藏模型")+"\n"+label
+                    :label+"\n"+gallerySourceLabel(model.id())+"\n"+model.id()+(description.isBlank()?"":"\n"+description)
+                    +"\n点击预览\n右上角收藏"+(localGallery()?"\n左上角上传／管理服务器存档":"");
+            if(!tooltip.equals(tooltipText)){tooltipText=tooltip;setTooltip(ModelUiTooltip.of(textRenderer,LocalAppearanceScreen.this.width,tooltip));}
         }
         @Override public void onClick(Click click, boolean doubled) {
             switch(ModelCardActionRegions.target(click.x()-getX(),click.y()-getY(),getWidth(),localGallery())) {
                 case FAVORITE -> {toggleModelFavorite(model.id());rebuildGrid();}
-                case UPLOAD -> {if(canUploadModel(model.id())){browseModel(model.id());uploadSelectedModel();}else setGalleryMessage(uploadTooltip(model.id()));}
+                case UPLOAD -> {if(canUseCloudAction(model.id())){browseModel(model.id());uploadSelectedModel();}else setGalleryMessage(uploadTooltip(model.id()));}
                 case BROWSE -> super.onClick(click,doubled);
             }
         }
         // PressableWidget.renderWidget is final: drawIcon owns the entire card, without drawButton's background.
         @Override protected void drawIcon(DrawContext context, int mouseX, int mouseY, float delta) {
-            refreshLabel();
+            refreshLabel(mouseX,mouseY);
             context.fill(getX(), getY(), getRight(), getBottom(), -12369342);
             var entry = previews.get(model.id());
             int imageHeight = Math.max(8, getHeight() - 20);
@@ -648,15 +781,18 @@ public class LocalAppearanceScreen extends Screen {
                         getWidth() - 4, imageHeight - 2, 0, -8, ticks + delta, parameters(model.id()), entry.loaded.previewAnimation(), entry.loaded.profile(), ModelPreview.Context.CARD);
                 if (rendered) {drawnPreviewCount++;drawnCards.add(model.id());}
                 else clipped(context, "预览不可用", getX() + 5, getY() + imageHeight / 2, getWidth() - 10, 0xffffc685);
-            } else clipped(context, entry != null && !entry.error.isEmpty() ? "加载失败" : localGallery()?"加载中…":"服务端模型", getX() + 5, getY() + imageHeight / 2, getWidth() - 10, 0xffc1cedc);
+            } else clipped(context,!cloudModelHint(model.id()).isEmpty()?localSourceIds.contains(model.id())?"文件已改":"本地未找到"
+                    :entry!=null&&!entry.error.isEmpty()?"加载失败":localGallery()?"加载中…":"服务端模型",getX()+5,getY()+imageHeight/2,getWidth()-10,0xffc1cedc);
             drawCardLabel(context, net.minecraft.text.Text.literal(runtime.options.showModelIds ? model.id() : getMessage().getString()),
                     getX(), getBottom(), 0xfff3f0e0, true);
             if(selection.modelId().equals(model.id()) || hovered || isFocused())context.drawStrokedRectangle(getX(), getY(), getWidth(), getHeight(), -790560);
             context.drawTexture(RenderPipelines.GUI_TEXTURED,GUI_ICONS,getRight()-16,getY(),isFavoriteModel(model.id())?16f:0f,0f,16,16,256,256);
             if(localGallery()) {
                 var state=runtime.privateModelUploadState(model.id());
-                int tint=state.uploaded()?0xff8df2b5:state.inProgress()?0xffffd589:canUploadModel(model.id())?0xfff3f0e0:0xff8a929c;
-                CloudUploadIcon.draw(context,getX()+1,getY()+1,tint,state.uploaded());
+                boolean saved=storedPrivateModel(model.id())!=null;
+                int tint=runtime.deletingUploadedPrivateModel(model.id())?0xffffd589:state.uploaded()?0xff8df2b5
+                        :saved||state.inProgress()||state.published()?0xffffd589:canUploadModel(model.id())?0xfff3f0e0:0xff8a929c;
+                CloudUploadIcon.draw(context,getX()+1,getY()+1,tint,saved||state.published());
             }
         }
     }
@@ -672,32 +808,4 @@ public class LocalAppearanceScreen extends Screen {
         }
     }
 
-    private final class ImportHelpScreen extends Screen {
-        private final Screen gallery;
-        private int scroll, maxScroll;
-        ImportHelpScreen(Screen gallery) { super(Text.literal("本地模型导入")); this.gallery = gallery; }
-        @Override protected void init() {
-            addDrawableChild(ButtonWidget.builder(Text.literal("打开模型文件夹"), b -> Util.getOperatingSystem().open(runtime.localModelDirectory()))
-                    .dimensions(width / 2 - 105, height - 50, 130, 20).build());
-            addDrawableChild(ButtonWidget.builder(Text.literal("返回图库"), b -> close()).dimensions(width / 2 + 30, height - 50, 75, 20).build());
-        }
-        @Override public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-            context.fill(0, 0, width, height, 0xED171F2A);
-            context.drawCenteredTextWithShadow(textRenderer, title, width / 2, 18, 0xfff3f6ff);
-            int textWidth = Math.min(520, width - 30), x = (width - textWidth) / 2;
-            String help = "仅导入你有权使用的模型。\n\nYSM：放入原始模型文件夹、.ysm 或 ZIP 模型包；文件夹保留 ysm.json、models、animations、textures 和模型提供的其它资源。可用子文件夹分类，图库按真实目录显示。\n\nBBModel：放入独立 .bbmodel 文件，纹理需嵌入。\n\n文件需位于此目录内；不跟随链接，不访问目录外资源。作者配置使用模型提供的 Molang 脚本。\n\n返回图库后点击“刷新”。“使用模型”仅本机显示；明确点击云朵“上传分享”才使用并上传，服务端允许后才分发。滚动可查看全部说明。";
-            var lines = textRenderer.wrapLines(Text.literal(help), textWidth);
-            maxScroll = Math.max(0, lines.size() * 11 - (height - 100));
-            scroll = Math.min(scroll, maxScroll);
-            context.enableScissor(x, 40, x + textWidth, height - 59);
-            for (int i = 0; i < lines.size(); i++) context.drawTextWithShadow(textRenderer, lines.get(i), x, 43 + i * 11 - scroll, 0xffc6d5e7);
-            context.disableScissor();
-            super.render(context, mouseX, mouseY, delta);
-        }
-        @Override public void close() { client.setScreen(gallery); }
-        @Override public boolean mouseScrolled(double mouseX, double mouseY, double horizontal, double vertical) {
-            scroll = Math.max(0, Math.min(maxScroll, scroll - (int) Math.round(vertical * 22))); return true;
-        }
-        @Override public boolean shouldPause() { return false; }
-    }
 }

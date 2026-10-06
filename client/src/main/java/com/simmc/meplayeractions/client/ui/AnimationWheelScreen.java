@@ -9,7 +9,6 @@ import net.minecraft.client.gl.RenderPipelines;
 import net.minecraft.client.gui.Click;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.tooltip.Tooltip;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.ClickableWidget;
 import net.minecraft.client.gui.widget.SliderWidget;
@@ -115,19 +114,19 @@ public final class AnimationWheelScreen extends Screen {
         centerButton=addControl("center",new FlatButton(centerX-centerWidth/2,centerY-centerHeight/2,
                 centerWidth,centerHeight,centerLabel(),this::activateCenter));
         centerButton.active=localMode?runtime.canUseLocalActions():serverAvailable;
-        centerButton.setTooltip(Tooltip.of(Text.literal(localMode?"移动时保持本地专用动作":"停止服务器专用动作")));
+        centerButton.setTooltip(ModelUiTooltip.of(textRenderer,width,localMode?"移动时保留本地动作":"停止服务器手动动作"));
         var settings=addControl("settings",new SettingsIconButton(width-28,8,()->{
             releaseConsumed=true;client.setScreen(new PlayerModelScreen(runtime,this));
         }));
-        settings.setTooltip(Tooltip.of(Text.literal("玩家模型设置")));
+        settings.setTooltip(ModelUiTooltip.of(textRenderer,width,"玩家模型设置"));
         // Match the existing flat navigation style; scope follows this exact screen source/instance.
         undisguiseButton=addControl(localMode?"undisguise-private":"undisguise-server",
                 new FlatButton(layout.sourcePanelX(),layout.navigationY(),layout.panelWidth(),layout.backHeight(),
                         localMode?"解除私人伪装":"解除服务器伪装",this::undisguiseCurrentSource));
         undisguiseButton.active=canUndisguiseCurrentSource();
-        undisguiseButton.setTooltip(Tooltip.of(Text.literal(localMode
-                ?"关闭私人伪装；保留模型、参数和皮肤；不会解除服务器伪装"
-                :"执行 /meplayeractions undisguise 请求解除本人服务器伪装；服务器校验权限；外部原生伪装仅停止 MPA 接管；私人设置保留")));
+        undisguiseButton.setTooltip(ModelUiTooltip.of(textRenderer,width,localMode
+                ?"关闭私人伪装\n保留模型、参数与皮肤"
+                :"请求解除本人服务器伪装\n等待服务器确认\n外部伪装仅结束 MPA 接管"));
         int aw=layout.navigationWidth(),ah=layout.navigationHeight();
         var previous=addControl("previous",new FlatButton(layout.panelX(),layout.navigationY(),aw,ah,"<",()->changePage(-1)));
         var next=addControl("next",new FlatButton(layout.panelRight()-aw,layout.navigationY(),aw,ah,">",()->changePage(1)));
@@ -406,12 +405,12 @@ public final class AnimationWheelScreen extends Screen {
             if(form.kind()==ModelConfigSchema.Kind.CHECKBOX) {
                 var widget=new AuthorFormWidgets.Check(textRenderer,layout.panelX(),layout.viewportY()+offset,contentWidth,12,form.title(),
                         ()->readForm(form)>0,()->applyForm(modelId,form.checkboxScript(readForm(form)<=0),null,-1),this::insideFormViewport);
-                widget.setTooltip(Tooltip.of(Text.literal(form.description())));
+                widget.setTooltip(ModelUiTooltip.of(textRenderer,width,form.description()));
                 widgets.add(widget);registerFormWidget(widget);offset+=14;
             } else if(form.kind()==ModelConfigSchema.Kind.RANGE) {
                 var widget=new AuthorFormWidgets.Range(textRenderer,layout.panelX(),layout.viewportY()+offset,contentWidth,15,form,
                         readForm(form,variables),requested->applyForm(modelId,form.rangeScript(requested),null,-1),this::insideFormViewport);
-                widget.setTooltip(Tooltip.of(Text.literal(form.description())));
+                widget.setTooltip(ModelUiTooltip.of(textRenderer,width,form.description()));
                 widgets.add(widget);registerFormWidget(widget);offset+=17;
             } else {
                 int maxLabel=0;
@@ -423,7 +422,7 @@ public final class AnimationWheelScreen extends Screen {
                             layout.viewportY()+offset+choice/columns*14,cellWidth,12,form.choices().get(choice).label(),
                             ()->form.selectedIndex(readForm(form))==choiceIndex,
                             ()->applyForm(modelId,form.radioScript(choiceIndex),form.key(),choiceIndex),this::insideFormViewport);
-                    widget.setTooltip(Tooltip.of(Text.literal(form.description())));
+                    widget.setTooltip(ModelUiTooltip.of(textRenderer,width,form.description()));
                     widgets.add(widget);registerFormWidget(widget);
                 }
                 offset+=AuthorFormLayout.radioRows(form.choices().size(),columns)*14+3;

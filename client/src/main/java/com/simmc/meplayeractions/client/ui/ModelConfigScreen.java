@@ -6,7 +6,6 @@ import com.simmc.meplayeractions.client.LocalModelLibrary;
 import net.minecraft.client.gui.Click;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.tooltip.Tooltip;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.ClickableWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
@@ -77,7 +76,7 @@ public final class ModelConfigScreen extends Screen {
     private ButtonWidget button(String label,int x,int y,int w,Runnable callback,String description) {
         var button=ButtonWidget.builder(Text.literal(textRenderer.trimToWidth(label,Math.max(1,w-8))),b->callback.run())
                 .dimensions(x,y,Math.max(20,w),20).build();
-        if(!description.isEmpty())button.setTooltip(Tooltip.of(Text.literal(description)));
+        if(!description.isEmpty())button.setTooltip(ModelUiTooltip.of(textRenderer,width,description));
         return addDrawableChild(button);
     }
     private void load() {
@@ -108,7 +107,7 @@ public final class ModelConfigScreen extends Screen {
         return scripts.containsKey(form.key()) && radios.containsKey(form.key())?radios.get(form.key()):form.selectedIndex(read(form));
     }
     private <T extends ClickableWidget> T formWidget(T widget,String description) {
-        if(!description.isEmpty())widget.setTooltip(Tooltip.of(Text.literal(description)));
+        if(!description.isEmpty())widget.setTooltip(ModelUiTooltip.of(textRenderer,width,description));
         formWidgets.add(widget);addSelectableChild(widget);return widget;
     }
     private int addForm(ModelConfigSchema.Form form,int y) {

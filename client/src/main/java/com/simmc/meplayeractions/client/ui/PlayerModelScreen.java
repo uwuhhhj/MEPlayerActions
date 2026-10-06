@@ -7,7 +7,6 @@ import com.simmc.meplayeractions.client.model.YsmModelProfile;
 import net.minecraft.client.gl.RenderPipelines;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.tooltip.Tooltip;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
@@ -28,27 +27,32 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
     private static final Identifier SETTINGS_ICON=Identifier.of("meplayeractions","textures/gui/settings.png");
     private final Map<ButtonWidget,String> roles=new IdentityHashMap<>();
     private final Set<String> serverFavorites=new HashSet<>();
-    private boolean clientTab,advanced,initializedLocalMode;
+    private boolean clientTab,advanced,initializedServerPresent,initializedServerOffline;
     private String initializedInstance="";
     private long initializedCatalogRevision=Long.MIN_VALUE;
     private Map<String,String> initializedServerPreviews=Map.of();
     private Map<String,String> serverLabels=Map.of();
+    private UsageSnapshot initializedUsage;
+    private record UsageSnapshot(ClientRuntime.AppearanceSource source,String modelId,String hash,
+                                 String pendingServer,String pendingLocal,String requestStatus,boolean canActivate,
+                                 boolean playerHidden,boolean playerRuleKnown,boolean modelShown,boolean modelShowAllowed) { }
 
     public PlayerModelScreen(ClientRuntime runtime) {this(runtime,null);}
     public PlayerModelScreen(ClientRuntime runtime,Screen parent) {
-        super(runtime,parent,Text.literal("玩家模型"));clientTab=runtime.interactionLocalMode();
+        super(runtime,parent,Text.literal("玩家模型"));clientTab=!runtime.serverOwnModelPresent();
     }
 
     @Override protected void init() {
-        // Returning from a child screen must compare the previous snapshot before recording the new one.
-        boolean localMode=runtime.interactionLocalMode();String instance=runtime.serverOwnModelInstance();
-        if(initializedLocalMode!=localMode || !initializedInstance.equals(instance)) {
-            clientTab=localMode;advanced=false;resetGallery();
+        boolean present=runtime.serverOwnModelPresent();String instance=runtime.serverOwnModelInstance();
+        if(!initializedServerPresent && present && clientTab) {
+            clientTab=false;advanced=false;resetGallery();
         }
-        initializedLocalMode=localMode;initializedInstance=instance;roles.clear();
+        initializedServerPresent=present;initializedInstance=instance;roles.clear();
+        initializedServerOffline=runtime.serverCatalogOfflineMode();
         super.init();
         initializedCatalogRevision=runtime.serverCatalogRevision();
         initializedServerPreviews=serverPreviewAssets();
+        initializedUsage=usageSnapshot();
     }
     @Override protected int galleryHeaderHeight(boolean compact) {
         return compact ? GalleryPanelLayout.HOME_COMPACT_HEADER_HEIGHT : GalleryPanelLayout.HOME_HEADER_HEIGHT;
@@ -67,16 +71,38 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
         if(clientTab)return super.galleryProfile(id);
         var loaded=runtime.serverModelForPreview(id);return loaded==null?YsmModelProfile.empty():loaded.profile();
     }
-    @Override protected String gallerySourceLabel(String id) {return clientTab?super.gallerySourceLabel(id):"服务器模型";}
-    @Override protected String galleryStatus() {return clientTab?super.galleryStatus():runtime.serverCatalogStatus();}
+    @Override protected String gallerySourceLabel(String id) {return clientTab?super.gallerySourceLabel(id):runtime.serverCachedPreviewOnly(id)?"本机缓存 · 仅预览":"服务器模型";}
+    @Override protected String galleryStatus() {
+        if(clientTab)return super.galleryStatus();
+        if(runtime.serverCatalogOfflineMode())return runtime.serverCatalogStatus()+" · 连接服务器后取得使用授权";
+        String request=runtime.serverDisguiseRequestStatus();
+        return request.isEmpty()?runtime.serverCatalogStatus():request;
+    }
     @Override protected String galleryPreviewUnavailableText(String id) {
-        return clientTab?super.galleryPreviewUnavailableText(id):"使用模型后由服务器下发资源";
+        return clientTab?super.galleryPreviewUnavailableText(id):runtime.serverCatalogOfflineMode()
+                ?"正在准备本机缓存预览…":"使用模型后由服务器下发资源";
     }
     @Override protected boolean canUseGalleryModel(String id,LocalModelLibrary.Loaded loaded) {
         return clientTab?super.canUseGalleryModel(id,loaded):runtime.canRequestServerDisguise(id);
     }
+    @Override protected GalleryModelUseState.State galleryUseState(String id,LocalModelLibrary.Loaded loaded) {
+        if(clientTab)return super.galleryUseState(id,loaded);
+        boolean current=runtime.currentAppearanceSource()==ClientRuntime.AppearanceSource.SERVER;
+        return GalleryModelUseState.server(id,current?runtime.currentAppearanceModelId():"",runtime.pendingServerDisguiseModelId(),
+                runtime.canRequestServerDisguise(id),!id.isEmpty()&&runtime.serverModelHasPersistentId(id)&&runtime.serverPreferencesNeedApply(id));
+    }
     @Override protected String galleryUseTooltip() {
-        return clientTab?super.galleryUseTooltip():"使用当前服务器模型；资源由服务器下发，其他玩家看到服务器伪装";
+        return clientTab?super.galleryUseTooltip():"请求使用所选服务器模型\n由服务器确认并下发资源\n其他玩家可见服务器伪装";
+    }
+    @Override protected String galleryUseTooltip(GalleryModelUseState.State state) {
+        if(!clientTab && runtime.serverCatalogOfflineMode())return "离线模式，仅可预览缓存\n需要连接服务器取得当前使用授权\n外观设置仍可保存于本机";
+        if(!clientTab && state.current() && state.canUse())return "保存的外观设置尚未应用\n点击后等待服务器确认";
+        if(!clientTab && !state.current() && !state.waiting() && !state.canUse()) {
+            if(runtime.serverCachedPreviewOnly(selectedModelId()))return "本机缓存，仅供预览\n此模型不在当前服务器授权图库\n缓存不能代替使用授权";
+            if(!runtime.pendingServerDisguiseModelId().isEmpty())return "等待另一个伪装请求完成\n收到服务器确认后再切换";
+            if(!runtime.serverCatalogReady())return "等待服务器模型图库\n"+runtime.serverCatalogStatus();
+        }
+        return super.galleryUseTooltip(state);
     }
     @Override protected String galleryBrowsingMessage() {
         return clientTab?super.galleryBrowsingMessage():"浏览服务器模型；点击使用模型才伪装";
@@ -87,15 +113,20 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
     }
     @Override protected void buildSelectionControls() {
         if(clientTab){super.buildSelectionControls();return;}
-        settings=favorite=null;
+        favorite=null;
         use=button("使用模型",left+5,bottom-44,previewWidth-10,this::useSelectedModel,galleryUseTooltip());
         roles.put(use,"useServerModel");
+        settings=button("外观设置…",left+5,bottom-21,previewWidth-10,
+                ()->{if(runtime.serverModelHasPersistentId(selectedModelId()))client.setScreen(new ServerAppearanceSettingsScreen(runtime,selectedModelId(),this));},
+                "保存此服务器模型的伪装参数\n返回后点击使用模型才提交");
+        roles.put(settings,"serverAppearanceSettings");
     }
     @Override public void useSelectedModel() {
         if(clientTab){super.useSelectedModel();return;}
         String id=selectedModelId();
-        if(!runtime.canRequestServerDisguise(id)){setGalleryMessage(runtime.serverCatalogStatus());return;}
-        setGalleryMessage(runtime.requestServerDisguise(id)?"已发送伪装请求，等待服务器确认":"无法发送伪装请求，请稍后重试");
+        if(!galleryUseState(id,runtime.serverModelForPreview(id)).canUse())return;
+        setGalleryMessage(runtime.requestServerDisguise(id)?"":"无法发送伪装请求，请稍后重试");
+        updateSelectionButtons();
     }
     @Override protected boolean requiresLocalSource() {return false;}
     @Override protected boolean showRotationHint() {return false;}
@@ -106,9 +137,10 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
         int half=(panelWidth-6)/2,y=top-sourceOffset;
         int sourceHeight=compactLayout?18:24;
         roles.put(flatButton(clientTab?"客户端 ✓":"客户端",left,y,half,sourceHeight,()->switchSource(true),
-                "本地模型图库与私人设置；使用模型仅本机可见，云朵按钮可主动上传分享",clientTab),"clientSource");
-        roles.put(flatButton(clientTab?"服务端":"服务端 ✓",left+half+6,y,panelWidth-half-6,sourceHeight,()->switchSource(false),
-                "浏览服务器允许使用的模型；点击使用后由服务器确认伪装并下发资源",!clientTab),"serverSource");
+                "浏览客户端模型\n使用模型仅自己可见\n云朵按钮可上传分享",clientTab),"clientSource");
+        String serverLabel=runtime.serverCatalogOfflineMode()?clientTab?"服务端 · 离线":"服务端 · 离线 ✓":clientTab?"服务端":"服务端 ✓";
+        roles.put(flatButton(serverLabel,left+half+6,y,panelWidth-half-6,sourceHeight,()->switchSource(false),
+                runtime.serverCatalogOfflineMode()?"离线模式\n浏览本机缓存并保存设置\n连接服务器后才能请求伪装":"浏览服务器可用模型\n点击使用后等待服务器确认",!clientTab),"serverSource");
     }
 
     @Override protected void buildFooterControls() {
@@ -117,35 +149,44 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
         // comes from the actual option; the label also identifies each separate switch.
         boolean serverDisguise = runtime.serverOwnModelPresent();
         int toggleX = left + 50, toggleY = footerY;
-        boolean hidePlayer = serverDisguise || runtime.options.hideVanillaPlayer;
-        var vanillaPlayer = flatButton(hidePlayer?"玩家隐藏":"玩家显示",toggleX,toggleY,44,20,()->{
+        boolean hidePlayer=runtime.ownPlayerHideSetting(),playerRuleUnknown=serverDisguise&&!runtime.serverOwnPlayerHideRuleKnown();
+        String playerLabel=playerRuleUnknown?"玩家·服务器控制":hidePlayer?"玩家隐藏":"玩家显示";
+        int playerWidth=Math.max(44,textRenderer.getWidth(playerLabel)+6),playerExtra=playerWidth-44;
+        var vanillaPlayer = flatButton(playerLabel,toggleX,toggleY,playerWidth,20,()->{
             if (runtime.serverOwnModelPresent()) return;
             runtime.options.hideVanillaPlayer=!runtime.options.hideVanillaPlayer;runtime.options.save();clearAndInit();
-        },serverDisguise?"服务器伪装期间，原版玩家本体保持隐藏；伪装模型单独控制"
-                :"只切换原版玩家本体；装备和伪装模型分别控制",hidePlayer);
+        },serverDisguise?playerRuleUnknown?"玩家由服务器控制\n未收到人物隐藏规则\n沿用原版服务器显示"
+                :"玩家由服务器控制\n当前规则："+(hidePlayer?"隐藏":"显示")+"\n调整服务端外观设置后应用"
+                :"只切换原版玩家\n装备与伪装分别控制",hidePlayer);
         vanillaPlayer.active = !serverDisguise;
         roles.put(vanillaPlayer,"vanillaPlayer");
         boolean hideEquipment = serverDisguise || runtime.options.hideVanillaEquipment;
-        var vanillaEquipment = flatButton(hideEquipment?"装备隐藏":"装备显示",toggleX+48,toggleY,44,20,()->{
+        var vanillaEquipment = flatButton(hideEquipment?"装备隐藏":"装备显示",toggleX+48+playerExtra,toggleY,44,20,()->{
             if (runtime.serverOwnModelPresent()) return;
             runtime.options.hideVanillaEquipment=!runtime.options.hideVanillaEquipment;runtime.options.save();clearAndInit();
-        },serverDisguise?"服务器伪装期间，原版盔甲、披风和鞘翅保持隐藏；伪装模型单独控制"
-                :"只切换原版盔甲、披风和鞘翅；玩家本体和伪装模型分别控制",hideEquipment);
+        },serverDisguise?"服务器伪装期间装备保持隐藏\n伪装模型由独立按钮控制"
+                :"只切换盔甲、披风与鞘翅\n玩家与伪装分别控制",hideEquipment);
         vanillaEquipment.active = !serverDisguise;
         roles.put(vanillaEquipment,"vanillaEquipment");
-        roles.put(flatButton(runtime.options.showSelf?"伪装显示":"伪装隐藏",toggleX+96,toggleY,44,20,()->{
+        boolean modelShown=runtime.ownModelShowSetting(),modelShowAllowed=runtime.serverOwnModelShowAllowed();
+        var ownModel=flatButton(modelShown?"伪装显示":"伪装隐藏",toggleX+96+playerExtra,toggleY,44,20,()->{
+            if(!runtime.serverOwnModelShowAllowed())return;
             runtime.options.showSelf=!runtime.options.showSelf;runtime.options.save();clearAndInit();
-        },"只切换本人的伪装模型；原版玩家和装备分别控制",runtime.options.showSelf),"selfVisibility");
-        var gear=new ButtonWidget(left+194,footerY,20,20,Text.literal("⚙"),button->{advanced=!advanced;clearAndInit();},narration->narration.get()) {
+        },modelShowAllowed?"只切换本人的伪装模型\n原版玩家与装备分别控制":"伪装显示由服务器控制\n当前未允许本人可见\n本机显示偏好保留\n可在服务端外观设置请求本人可见并应用",modelShown);
+        ownModel.active=modelShowAllowed;roles.put(ownModel,"selfVisibility");
+        var gear=new ButtonWidget(left+194+playerExtra,footerY,20,20,Text.literal("⚙"),button->{advanced=!advanced;clearAndInit();},narration->narration.get()) {
             @Override protected void drawIcon(DrawContext context,int mouseX,int mouseY,float delta) {
                 context.fill(getX(),getY(),getRight(),getBottom(),-12369342);
                 if(hovered || isFocused())context.drawStrokedRectangle(getX(),getY(),getWidth(),getHeight(),-790560);
                 context.drawTexture(RenderPipelines.GUI_TEXTURED,SETTINGS_ICON,getX()+2,getY()+2,0f,0f,16,16,32,32,32,32);
             }
         };
-        gear.setTooltip(Tooltip.of(Text.literal(advanced?"返回图库":"客户端设置：渲染与轮盘选项")));roles.put(addDrawableChild(gear),"clientSettings");
+        gear.setTooltip(ModelUiTooltip.of(textRenderer,width,advanced?"返回图库":"客户端设置\n渲染与轮盘选项"));roles.put(addDrawableChild(gear),"clientSettings");
     }
-    @Override protected int footerStatusInset() {return 223;}
+    @Override protected int footerStatusInset() {
+        String label=runtime.serverOwnModelPresent()&&!runtime.serverOwnPlayerHideRuleKnown()?"玩家·服务器控制":runtime.ownPlayerHideSetting()?"玩家隐藏":"玩家显示";
+        return 223+Math.max(0,textRenderer.getWidth(label)+6-44);
+    }
 
     @Override protected void buildAlternateControls() {
         if(!advanced)return;
@@ -154,49 +195,80 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
         int controlWidth = compact ? (w - 4) / 2 : w;
         roles.put(flatButton(runtime.options.enabled?compact?"渲染开启":"客户端渲染：开启":compact?"渲染关闭":"客户端渲染：关闭",x,y,controlWidth,20,()->{
             runtime.toggleEnabled();clearAndInit();
-        },"暂停客户端模型渲染并恢复服务器显示；保留模型、显隐和轮盘设置",runtime.options.enabled),"clientRendering");
+        },"暂停客户端模型渲染\n恢复服务器或原版显示\n保留模型与轮盘设置",runtime.options.enabled),"clientRendering");
         if(!compact)y+=25;
         roles.put(button(runtime.wheelPreferences().keepOpen()?compact?"轮盘保留":"选择后保持轮盘：开启":compact?"轮盘收起":"选择后保持轮盘：关闭",
                 compact?x+controlWidth+4:x,y,controlWidth,()->{
             runtime.updateWheelPreferences(runtime.wheelPreferences().withKeepOpen(!runtime.wheelPreferences().keepOpen()));clearAndInit();
-        },"选择动作后保留 J 轮盘；再次按 J 或返回可关闭"),"keepOpen");
+        },"选择动作后保持轮盘\n再次按 J 或返回关闭"),"keepOpen");
         y+=25;
         if(clientTab && runtime.canEditLocalAppearance()) {
             roles.put(button(runtime.localActionLocked()?compact?"动作保留":"移动时保留本地动作：开启":compact?"动作自动":"移动时保留本地动作：关闭",x,y,controlWidth,()->{
                 runtime.setLocalActionLocked(!runtime.localActionLocked());clearAndInit();
-            },"仅影响本地显式动作；服务器真实动作由服务器决定"),"localActionLock");
+            },"移动时保留本地动作\n服务器动作由服务器决定"),"localActionLock");
             if(!compact)y+=25;
-            roles.put(button(runtime.localAppearance().enabled()?compact?"本地开启":"本地外观：开启":compact?"本地关闭":"本地外观：关闭",
+            boolean privateApplied=runtime.currentAppearanceSource()==ClientRuntime.AppearanceSource.CLIENT;
+            roles.put(button(privateApplied?compact?"本地开启":"本地外观：开启":compact?"本地关闭":"本地外观：关闭",
                     compact?x+controlWidth+4:x,y,controlWidth,()->{
+                if(!runtime.canActivateLocalAppearance())return;
                 LocalAppearanceSettings current=runtime.localAppearance();
-                runtime.updateLocalAppearance(new LocalAppearanceSettings(!current.enabled(),current.modelId(),current.scale(),current.offsetX(),current.offsetY(),current.offsetZ()));clearAndInit();
-            },"保留模型选择与设置；只改变私人外观是否启用"),"privateEnabled");
+                if(runtime.currentAppearanceSource()==ClientRuntime.AppearanceSource.CLIENT)
+                    runtime.updateLocalAppearance(new LocalAppearanceSettings(false,current.modelId(),current.scale(),current.offsetX(),current.offsetY(),current.offsetZ()));
+                else runtime.selectLocalModel(current.modelId());
+                clearAndInit();
+            },"开启或关闭私人外观\n请先解除服务器伪装\n保留模型与设置"),"privateEnabled");
+            roles.entrySet().stream().filter(entry->entry.getValue().equals("privateEnabled"))
+                    .forEach(entry->entry.getKey().active=runtime.canActivateLocalAppearance());
             y+=25;
         }
         roles.put(button("返回图库",x,Math.max(y+25,bottom-22),w,()->{advanced=false;clearAndInit();},"关闭轮盘选项并回到当前来源"),"gallery");
     }
     private void switchSource(boolean local) {
-        if(local || runtime.serverOwnModelPresent()) {
-            runtime.selectInteractionSource(local);clientTab=runtime.interactionLocalMode();
-        } else clientTab=false; // Browsing an empty server tab does not change private or network state.
+        clientTab=local; // Tabs only browse; use buttons own appearance changes.
         advanced=false;resetGallery();clearAndInit();
     }
 
     @Override public void tick() {
-        if(initializedLocalMode!=runtime.interactionLocalMode() || !initializedInstance.equals(runtime.serverOwnModelInstance())) {
-            clientTab=runtime.interactionLocalMode();advanced=false;resetGallery();clearAndInit();
+        boolean offlineChanged=initializedServerOffline!=runtime.serverCatalogOfflineMode();
+        if(offlineChanged || !clientTab && initializedCatalogRevision!=runtime.serverCatalogRevision()) {
+            if(!clientTab)refreshGalleryModels();
+            clearAndInit();
         }
-        if(!clientTab && initializedCatalogRevision!=runtime.serverCatalogRevision()) {
-            resetGallery();clearAndInit();
+        boolean present=runtime.serverOwnModelPresent();String instance=runtime.serverOwnModelInstance();
+        if(!initializedServerPresent && present) {
+            clientTab=false;advanced=false;resetGallery();clearAndInit();
+        } else if(initializedServerPresent!=present || !initializedInstance.equals(instance)) {
+            setGalleryMessage("");clearAndInit();
         }
         if(!clientTab && !advanced) {
             Map<String,String> currentPreviews=serverPreviewAssets();
             if(!initializedServerPreviews.equals(currentPreviews)) {
                 clearGalleryPreviews();clearAndInit();
             }
-            if(use!=null)use.active=!selectedModelId().isEmpty()&&runtime.canRequestServerDisguise(selectedModelId());
+        }
+        UsageSnapshot current=usageSnapshot();
+        if(!current.equals(initializedUsage)) {
+            boolean visibilityChanged=initializedUsage!=null&&(current.playerHidden()!=initializedUsage.playerHidden()||current.playerRuleKnown()!=initializedUsage.playerRuleKnown()
+                    ||current.modelShown()!=initializedUsage.modelShown()||current.modelShowAllowed()!=initializedUsage.modelShowAllowed());
+            setGalleryMessage("");initializedUsage=current;
+            if(visibilityChanged)clearAndInit();else updateSelectionButtons();
         }
         super.tick();
+    }
+
+    private UsageSnapshot usageSnapshot() {
+        return new UsageSnapshot(runtime.currentAppearanceSource(),runtime.currentAppearanceModelId(),runtime.currentAppearanceAssetHash(),
+                runtime.pendingServerDisguiseModelId(),runtime.pendingLocalAppearanceModelId(),runtime.serverDisguiseRequestStatus(),runtime.canActivateLocalAppearance(),
+                runtime.ownPlayerHideSetting(),runtime.serverOwnPlayerHideRuleKnown(),runtime.ownModelShowSetting(),runtime.serverOwnModelShowAllowed());
+    }
+
+    @Override protected void updateSelectionButtons() {
+        super.updateSelectionButtons();
+        if(!clientTab && settings!=null) {
+            settings.active=!selectedModelId().isEmpty()&&runtime.serverModelHasPersistentId(selectedModelId());
+            settings.setTooltip(ModelUiTooltip.of(textRenderer,width,settings.active
+                    ?"保存此服务器模型的伪装参数\n返回后点击使用模型才提交":"缓存尚无服务器模型 ID\n仅可预览，不能保存伪装参数"));
+        }
     }
 
     /** Poll only the visible page and selection for already authorized resources; never requests a model. */
@@ -231,12 +303,19 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
         }
         var loaded=runtime.serverModelForPreview(id);
         String name=serverLabels.getOrDefault(id,id);
-        leftPreviewId=id;leftPreviewSource="server-catalog-preview";
+        var state=galleryUseState(id,loaded);
+        leftPreviewId=id;leftPreviewSource=state.current()?"server-catalog-current":"server-catalog-preview";
         clipped(context,name,left+6,top+6,previewWidth-12,0xfff3f0e0);
-        clipped(context,"预览 · 点击使用模型伪装",left+6,top+17,previewWidth-12,0xff92b9df);
-        clipped(context,"由服务器确认并下发",left+6,bottom-15,previewWidth-12,0xff92b9df);
+        clipped(context,state.waiting()?"等待服务器确认":state.current()?"当前使用":runtime.serverCatalogOfflineMode()?"离线缓存 · 仅预览"
+                        :runtime.serverCachedPreviewOnly(id)?"本机缓存 · 尚未授权":"预览 · 点击使用模型伪装",
+                left+6,top+17,previewWidth-12,0xff92b9df);
         if(loaded==null) {
             clipped(context,galleryPreviewUnavailableText(id),previewX+3,previewY+previewH/2,previewW-6,0xffffc685);
+            return;
+        }
+        String actualHash=state.current()?runtime.currentAppearanceAssetHash():"";
+        if(!actualHash.isEmpty()&&!actualHash.equals(loaded.hash())) {
+            clipped(context,"等待当前模型资源 · 缓存版本不同",previewX+3,previewY+previewH/2,previewW-6,0xffffc685);
             return;
         }
         leftPreviewKey="server-catalog:"+id+":"+loaded.hash();leftPreviewHash=loaded.hash();

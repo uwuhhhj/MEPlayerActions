@@ -6,7 +6,6 @@ import com.simmc.meplayeractions.client.LocalModelLibrary;
 import net.minecraft.client.gui.Click;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.tooltip.Tooltip;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.client.option.Perspective;
@@ -69,53 +68,53 @@ public final class ModelSettingsScreen extends Screen {
         int controlY = top + 6, scaleY = top + Math.max(42, available / 3 - 8), offsetsY = top + Math.max(82, available * 2 / 3 - 11);
         enabled = button(draftEnabled ? "本地：开启" : "本地：关闭", innerX, controlY, innerW, () -> {
             draftEnabled = !draftEnabled; updateToggleLabels();
-        }, "保存后开启或关闭私人外观；是否分享给模组玩家在玩家模型主页单独选择");
+        }, "保存私人外观启停设置\n分享由图库云朵按钮开启");
         if (modelId.equals("openysm_default")) {
             headdress = button(defaultHeaddress() ? "红色蝴蝶结 ✓" : "红色蝴蝶结 ×", innerX, controlY + controlHeight + 4, half,
-                    this::toggleDefaultHeaddress, "参考默认模型的红色蝴蝶结头饰；立即保存，预览同步更新");
+                    this::toggleDefaultHeaddress, "切换默认模型蝴蝶结\n立即保存并更新预览");
             skin = button(defaultBlueTexture() ? "皮肤：蓝色" : "皮肤：默认", innerX + half + 4, controlY + controlHeight + 4, half,
-                    this::toggleDefaultTexture, "参考默认模型的两张原始皮肤；立即保存并更新当前本地外观");
+                    this::toggleDefaultTexture, "切换默认模型皮肤\n立即保存并更新预览");
             // Keep the numeric fields below the real default-model control.
             scaleY = Math.max(scaleY, top + (height < 230 ? 54 : 63)); offsetsY = Math.max(offsetsY, top + (height < 230 ? 83 : 101));
         } else { headdress = null; skin = null; }
         scale = field(innerX, scaleY, innerW, "缩放", scaleText, "原始尺寸的倍数，范围 0.05 到 8");
         scale.setChangedListener(value -> scaleText = value);
         int col = (innerW - 8) / 3;
-        offsetX = field(innerX, offsetsY, col, "位置 X", xText, "世界 X 轴偏移，单位为方块，范围 -32 到 32");
-        offsetY = field(innerX + col + 4, offsetsY, col, "位置 Y", yText, "世界 Y 轴偏移；正值向上，单位为方块，范围 -32 到 32");
-        offsetZ = field(innerX + (col + 4) * 2, offsetsY, col, "位置 Z", zText, "世界 Z 轴偏移，单位为方块，范围 -32 到 32");
+        offsetX = field(innerX, offsetsY, col, "位置 X", xText, "世界 X 轴偏移\n范围 -32 到 32 格");
+        offsetY = field(innerX + col + 4, offsetsY, col, "位置 Y", yText, "世界 Y 轴偏移，正值向上\n范围 -32 到 32 格");
+        offsetZ = field(innerX + (col + 4) * 2, offsetsY, col, "位置 Z", zText, "世界 Z 轴偏移\n范围 -32 到 32 格");
         offsetX.setChangedListener(value -> xText = value); offsetY.setChangedListener(value -> yText = value); offsetZ.setChangedListener(value -> zText = value);
-        save=button("保存", innerX, bottom - 44, half, () -> saveSettings(false), "保存并立即应用当前设置，保留本页");
-        savePreview=button("保存并预览", innerX + half + 4, bottom - 44, half, () -> saveSettings(true), "开启并显示本人的本地伪装，在世界中切换到第三人称；玩家本体和装备显隐单独保存");
-        button("恢复默认", innerX, bottom - 21, half, this::restoreDefaults, "恢复默认模型、缩放和位置，并关闭本地外观");
+        save=button("保存", innerX, bottom - 44, half, () -> saveSettings(false), "保存私人模型设置\n服务器伪装期间仅保存草稿");
+        savePreview=button("保存并预览", innerX + half + 4, bottom - 44, half, () -> saveSettings(true), "使用私人模型并切换第三人称\n请先解除服务器伪装");
+        button("恢复默认", innerX, bottom - 21, half, this::restoreDefaults, "恢复默认模型、缩放与位置\n关闭私人外观");
         button("关闭本地", innerX + half + 4, bottom - 21, half, () -> {
             runtime.disableLocalAppearance(); draftEnabled = false; updateToggleLabels(); message = "已恢复服务器显示或原版人物";
-        }, "立即关闭本地外观，恢复服务器显示或原版人物");
-        button("返回", left, height - 27, 52, this::close, "返回上一页；未保存的外观设置不应用");
+        }, "关闭私人外观\n保留服务器伪装或原版显示");
+        button("返回", left, height - 27, 52, this::close, "返回上一页\n未保存的输入不应用");
         hideVanillaPlayer = layerToggle("玩家隐藏", left + 56, height - 27,
-                () -> runtime.serverOwnModelPresent() || draftHideVanillaPlayer, () -> {
+                () -> runtime.serverOwnModelPresent()?runtime.ownPlayerHideSetting():draftHideVanillaPlayer, () -> {
                     if (runtime.serverOwnModelPresent()) return;
                     draftHideVanillaPlayer = !draftHideVanillaPlayer; updateToggleLabels();
-                }, "保存后只切换原版玩家本体；装备与伪装模型单独控制");
+                }, "保存原版玩家显隐\n装备与伪装分别控制");
         hideVanillaEquipment = layerToggle("装备隐藏", left + 104, height - 27,
                 () -> runtime.serverOwnModelPresent() || draftHideVanillaEquipment, () -> {
                     if (runtime.serverOwnModelPresent()) return;
                     draftHideVanillaEquipment = !draftHideVanillaEquipment; updateToggleLabels();
-                }, "保存后只切换原版盔甲、披风和鞘翅；玩家本体与伪装模型单独控制");
-        showSelf = layerToggle("伪装显示", left + 152, height - 27, () -> draftShowSelf,
-                () -> { draftShowSelf = !draftShowSelf; updateToggleLabels(); },
-                "保存后只切换本人的伪装模型；玩家本体与装备单独控制");
+                }, "保存盔甲、披风与鞘翅显隐\n玩家与伪装分别控制");
+        showSelf = layerToggle("伪装显示", left + 152, height - 27, () -> runtime.serverOwnModelShowAllowed()&&draftShowSelf,
+                () -> {if(!runtime.serverOwnModelShowAllowed())return;draftShowSelf = !draftShowSelf; updateToggleLabels(); },
+                "保存本人伪装显隐\n原版玩家与装备分别控制");
         updateToggleLabels();
         authorConfig = button("作者配置 / 皮肤…", left + 4, bottom - 49, previewWidth - 8, () -> {
             client.setScreen(new ModelConfigScreen(runtime, modelId, this));
-        }, "作者定义的 checkbox、range、radio 和原始皮肤；按模型保存");
+        }, "作者定义的配置与皮肤\n按模型保存");
         authorConfig.active = loaded != null;
         loadPreview();
     }
 
     private ButtonWidget button(String label, int x, int y, int w, Runnable action, String tooltip) {
         var button = ButtonWidget.builder(Text.literal(textRenderer.trimToWidth(label, Math.max(1, w - 8))), b -> action.run()).dimensions(x, y, Math.max(20, w), controlHeight).build();
-        button.setTooltip(Tooltip.of(Text.literal(tooltip)));
+        button.setTooltip(ModelUiTooltip.of(textRenderer,width,tooltip));
         return addDrawableChild(button);
     }
     private ButtonWidget layerToggle(String label, int x, int y, BooleanSupplier selected, Runnable action, String tooltip) {
@@ -127,31 +126,40 @@ public final class ModelSettingsScreen extends Screen {
                         getX() + getWidth() / 2, getY() + (getHeight() - 8) / 2, active ? 0xfff3f0e0 : 0xff8a929c);
             }
         };
-        button.setTooltip(Tooltip.of(Text.literal(tooltip)));
+        button.setTooltip(ModelUiTooltip.of(textRenderer,width,tooltip));
         return addDrawableChild(button);
     }
     private TextFieldWidget field(int x, int y, int w, String label, String value, String tooltip) {
         var field = new TextFieldWidget(textRenderer, x, y, Math.max(20, w), controlHeight, Text.literal(label));
-        field.setMaxLength(16); field.setText(value); field.setTooltip(Tooltip.of(Text.literal(tooltip)));
+        field.setMaxLength(16); field.setText(value); field.setTooltip(ModelUiTooltip.of(textRenderer,width,tooltip));
         return addDrawableChild(field);
     }
     private void updateToggleLabels() {
         setButtonText(enabled, draftEnabled ? "本地：开启" : "本地：关闭");
         serverDisguisePresent = runtime.serverOwnModelPresent();
-        setButtonText(hideVanillaPlayer, serverDisguisePresent || draftHideVanillaPlayer ? "玩家隐藏" : "玩家显示");
+        setButtonText(hideVanillaPlayer, serverDisguisePresent&&!runtime.serverOwnPlayerHideRuleKnown()?"服务器控制"
+                :(serverDisguisePresent?runtime.ownPlayerHideSetting():draftHideVanillaPlayer)?"玩家隐藏":"玩家显示");
         setButtonText(hideVanillaEquipment, serverDisguisePresent || draftHideVanillaEquipment ? "装备隐藏" : "装备显示");
-        setButtonText(showSelf, draftShowSelf ? "伪装显示" : "伪装隐藏");
+        setButtonText(showSelf, runtime.serverOwnModelShowAllowed()&&draftShowSelf ? "伪装显示" : "伪装隐藏");
         if (hideVanillaPlayer != null) {
             hideVanillaPlayer.active = !serverDisguisePresent;
-            hideVanillaPlayer.setTooltip(Tooltip.of(Text.literal(serverDisguisePresent
-                    ? "服务器伪装期间，原版玩家本体保持隐藏；伪装模型单独控制"
-                    : "保存后只切换原版玩家本体；装备与伪装模型单独控制")));
+            hideVanillaPlayer.setTooltip(ModelUiTooltip.of(textRenderer,width,serverDisguisePresent
+                    ? runtime.serverOwnPlayerHideRuleKnown()?"玩家由服务器控制\n当前规则："+(runtime.ownPlayerHideSetting()?"隐藏":"显示")+"\n调整服务端外观设置后应用"
+                    :"玩家由服务器控制\n未收到人物隐藏规则\n沿用原版服务器显示"
+                    : "保存原版玩家显隐\n装备与伪装分别控制"));
         }
         if (hideVanillaEquipment != null) {
             hideVanillaEquipment.active = !serverDisguisePresent;
-            hideVanillaEquipment.setTooltip(Tooltip.of(Text.literal(serverDisguisePresent
-                    ? "服务器伪装期间，原版盔甲、披风和鞘翅保持隐藏；伪装模型单独控制"
-                    : "保存后只切换原版盔甲、披风和鞘翅；玩家本体与伪装模型单独控制")));
+            hideVanillaEquipment.setTooltip(ModelUiTooltip.of(textRenderer,width,serverDisguisePresent
+                    ? "服务器伪装期间装备保持隐藏\n伪装模型由独立按钮控制"
+                    : "保存盔甲、披风与鞘翅显隐\n玩家与伪装分别控制"));
+        }
+        if(enabled!=null)enabled.active=runtime.canActivateLocalAppearance();
+        if(savePreview!=null)savePreview.active=runtime.canActivateLocalAppearance();
+        if(showSelf!=null) {
+            showSelf.active=runtime.serverOwnModelShowAllowed();
+            showSelf.setTooltip(ModelUiTooltip.of(textRenderer,width,showSelf.active?"保存本人伪装显隐\n原版玩家与装备分别控制"
+                    :"伪装显示由服务器控制\n当前未允许本人可见\n本机显示偏好保留\n可在服务端外观设置请求本人可见并应用"));
         }
         setButtonText(headdress, defaultHeaddress() ? "红色蝴蝶结 ✓" : "红色蝴蝶结 ×");
         setButtonText(skin, defaultBlueTexture() ? "皮肤：蓝色" : "皮肤：默认");
@@ -233,11 +241,13 @@ public final class ModelSettingsScreen extends Screen {
     }
     public boolean saveSettings(boolean worldPreview) {
         try {
+            if(worldPreview && !runtime.canActivateLocalAppearance())throw new IllegalArgumentException("请先解除服务器伪装，再预览私人模型");
             LocalAppearanceSettings draft = draftSettings();
             if ((draft.enabled() || worldPreview) && loaded == null)
                 throw new IllegalArgumentException(previewError.isEmpty() ? "请等待模型预览加载完成" : "模型无法使用：" + previewError);
             if (worldPreview) draft = new LocalAppearanceSettings(true, draft.modelId(), draft.scale(), draft.offsetX(), draft.offsetY(), draft.offsetZ());
             runtime.updateLocalAppearance(draft);
+            if(worldPreview)runtime.selectLocalModel(draft.modelId());
             runtime.options.hideVanillaPlayer = draftHideVanillaPlayer;
             runtime.options.hideVanillaEquipment = draftHideVanillaEquipment;
             runtime.options.showSelf = worldPreview || draftShowSelf;
@@ -246,7 +256,8 @@ public final class ModelSettingsScreen extends Screen {
             draftHideVanillaPlayer = runtime.options.hideVanillaPlayer;
             draftHideVanillaEquipment = runtime.options.hideVanillaEquipment;
             draftShowSelf = runtime.options.showSelf; updateToggleLabels();
-            message = draft.enabled() ? client.world == null ? "已保存，进入世界后显示" : "已保存，私人外观已应用" : "已保存，私人外观关闭";
+            message=runtime.serverOwnModelPresent()?"已保存私人设置；请先解除服务器伪装":worldPreview
+                    ?"已保存；等待私人模型加载":"已保存私人模型设置";
             if (worldPreview && client.world != null) {
                 client.options.setPerspective(Perspective.THIRD_PERSON_BACK); client.setScreen(null);
             }
@@ -268,7 +279,7 @@ public final class ModelSettingsScreen extends Screen {
 
     @Override public void tick() {
         if (!runtime.canEditLocalAppearance()) { client.setScreen(new PlayerModelScreen(runtime)); return; }
-        if (serverDisguisePresent != runtime.serverOwnModelPresent()) updateToggleLabels();
+        updateToggleLabels();
         ticks++;
     }
     @Override public void render(DrawContext context, int mouseX, int mouseY, float delta) {
