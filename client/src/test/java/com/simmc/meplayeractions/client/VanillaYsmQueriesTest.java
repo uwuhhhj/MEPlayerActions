@@ -33,6 +33,49 @@ class VanillaYsmQueriesTest {
         assertEquals(530,VanillaYsmQueries.cameraRotation(1,17,350));
         assertThrows(IllegalArgumentException.class,()->VanillaYsmQueries.cameraRotation(2,17,350));
     }
+    @Test void nativeAxesReturnUnavailableAndKeepOrdinaryBbmodelValidation() {
+        Vec3d vector=new Vec3d(10,20,30);
+        assertEquals(10d,VanillaYsmQueries.axis(vector,0,true).doubleValue());
+        assertEquals(20d,VanillaYsmQueries.axis(vector,1,true).doubleValue());
+        assertEquals(30d,VanillaYsmQueries.axis(vector,2,true).doubleValue());
+        for(int axis:List.of(-1,3,8)) {
+            assertNull(VanillaYsmQueries.axis(vector,axis,true));
+            assertThrows(IllegalArgumentException.class,()->VanillaYsmQueries.axis(vector,axis,false));
+        }
+        assertEquals(-17d,VanillaYsmQueries.cameraRotation(0,17,350,true).doubleValue());
+        assertEquals(530d,VanillaYsmQueries.cameraRotation(1,17,350,true).doubleValue());
+        assertNull(VanillaYsmQueries.cameraRotation(-1,17,350,true));
+        assertNull(VanillaYsmQueries.cameraRotation(2,17,350,true));
+        var context=new Molang.Context();context.enableNativeYsm();
+        context.functions((name,args)->VanillaYsmQueries.axis(vector,((Number)args.getFirst()).intValue(),true));
+        assertEquals(9,Molang.compileNativeYsm("query.position(8) ?? 9").evaluate(context));
+    }
+    @Test void entityTypeNamesKeepNamespacesExceptTheExactUpstreamPlayerAndMaidAliases() {
+        assertEquals("player",VanillaYsmQueries.entityTypeName(true,"minecraft:player"));
+        assertEquals("maid",VanillaYsmQueries.entityTypeName(false,"touhou_little_maid:maid"));
+        assertEquals("minecraft:cat",VanillaYsmQueries.entityTypeName(false,"minecraft:cat"));
+        assertEquals("another_mod:maid",VanillaYsmQueries.entityTypeName(false,"another_mod:maid"));
+        assertEquals("touhou_little_maid:chair",VanillaYsmQueries.entityTypeName(false,"touhou_little_maid:chair"));
+        assertEquals("",VanillaYsmQueries.entityTypeName(false,null));
+    }
+    @Test void nativeHandAndArmorInvalidSlotsKeepDistinctNullCoalescingResults() {
+        for(Object slot:List.of("unknown","main_hand",0d)) {
+            assertFalse(VanillaYsmQueries.supportsEquipmentSlot("ctrl.hold",slot));
+            assertFalse(VanillaYsmQueries.supportsEquipmentSlot("ctrl.armor",slot));
+        }
+        assertFalse(VanillaYsmQueries.supportsEquipmentSlot("ctrl.hold","head"));
+        assertFalse(VanillaYsmQueries.supportsEquipmentSlot("ctrl.armor","mainhand"));
+        assertTrue(VanillaYsmQueries.supportsEquipmentSlot("ctrl.hold","OFFHAND"));
+        assertTrue(VanillaYsmQueries.supportsEquipmentSlot("ctrl.armor","HEAD"));
+        assertEquals(false,VanillaYsmQueries.unsupportedEquipmentResult("ctrl.hold",true));
+        assertNull(VanillaYsmQueries.unsupportedEquipmentResult("ctrl.armor",true));
+        assertEquals(false,VanillaYsmQueries.unsupportedEquipmentResult("ctrl.armor",false));
+        var context=new Molang.Context();context.enableNativeYsm();
+        context.functions((name,args)->VanillaYsmQueries.unsupportedEquipmentResult(name,true));
+        assertEquals(0,Molang.compileNativeYsm("ctrl.hold('head','empty') ?? 9").evaluate(context));
+        assertEquals(9,Molang.compileNativeYsm("ctrl.armor('mainhand','empty') ?? 9").evaluate(context));
+    }
+
     @Test void normalizedDayStartsWithQuarterDayOffsetFromMinecraftSunrise() {
         assertEquals(.25,VanillaYsmQueries.timeOfDay(0));
         assertEquals(.5,VanillaYsmQueries.timeOfDay(6000));

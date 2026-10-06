@@ -7,7 +7,6 @@ import net.minecraft.client.model.ModelPart;
 import net.minecraft.client.render.OverlayTexture;
 import net.minecraft.client.render.RenderLayers;
 import net.minecraft.client.render.command.OrderedRenderCommandQueue;
-import net.minecraft.client.render.entity.EntityRenderer;
 import net.minecraft.client.render.entity.EntityRendererFactory;
 import net.minecraft.client.render.entity.ParrotEntityRenderer;
 import net.minecraft.client.render.entity.equipment.EquipmentModel;
@@ -22,7 +21,6 @@ import net.minecraft.client.render.entity.state.ParrotEntityRenderState;
 import net.minecraft.client.render.item.ItemRenderState;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.component.DataComponentTypes;
-import net.minecraft.entity.Entity;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.passive.ParrotEntity;
@@ -49,21 +47,20 @@ public final class YsmEquipmentRenderer {
                              ItemStack stack, RegistryKey<EquipmentAsset> asset, EquipmentModel.LayerType layer,
                              Identifier texture, ItemRenderState item) { }
 
-    @SuppressWarnings("unchecked")
     public static List<Attachment> extract(PlayerEntity entity, AnimationPlayer animation) {
         if (entity == null || rendererContext == null) return List.of();
-        EntityRenderer<Entity, EntityRenderState> renderer = (EntityRenderer<Entity, EntityRenderState>) (Object)
-                MinecraftClient.getInstance().getEntityRenderDispatcher().getRenderer(entity);
-        // A fresh state prevents mutating the states already extracted for vanilla's command queue.
-        EntityRenderState fresh = renderer.createRenderState();
-        renderer.updateRenderState(entity, fresh, MinecraftClient.getInstance().getRenderTickCounter().getTickProgress(false));
-        if (!(fresh instanceof PlayerEntityRenderState state)) return List.of();
+        // Read the same immutable-in-use host frame as the body. Re-extracting here would give
+        // wings and shoulder companions a different interpolation/frozen-tick state.
+        NativePlayerPresentation.Snapshot frame = NativePlayerPresentation.frame(entity);
+        if (frame == null) return List.of();
+        PlayerEntityRenderState state = frame.renderState();
         List<Attachment> result = new ArrayList<>();
         for (EquipmentSlot slot : List.of(EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET)) {
             ItemStack stack = entity.getEquippedStack(slot).copy();
             if (stack.isEmpty()) continue;
             var equippable = stack.get(DataComponentTypes.EQUIPPABLE);
-            if (slot == EquipmentSlot.HEAD && (equippable == null || equippable.assetId().isEmpty())) {
+            if (slot == EquipmentSlot.HEAD && headItemEligible(animation.nativeYsm(),
+                    equippable == null ? null : equippable.slot(), equippable != null && equippable.assetId().isPresent())) {
                 headItem(result, entity, animation, stack); continue;
             }
             if (equippable == null || equippable.slot() != slot || equippable.assetId().isEmpty()) continue;
@@ -73,7 +70,7 @@ public final class YsmEquipmentRenderer {
                     var wings = new ElytraEntityModel(rendererContext.getPart(EntityModelLayers.ELYTRA));
                     Identifier texture = state.skinTextures.elytra() != null ? state.skinTextures.elytra().texturePath()
                             : state.skinTextures.cape() != null && state.capeVisible ? state.skinTextures.cape().texturePath() : null;
-                    result.add(new Attachment(new Matrix4f(locator.get()).scale(-1, -1, 1).translate(0, 0, .125f),
+                    result.add(new Attachment(wingTransform(locator.get(), animation.nativeYsm()),
                             "CHEST_WINGS", "ElytraLocator", wings, state, stack, equippable.assetId().get(),
                             EquipmentModel.LayerType.WINGS, texture, null));
                 }
@@ -87,7 +84,7 @@ public final class YsmEquipmentRenderer {
                 default -> List.of();
             };
             for (String piece : pieces) {
-                String bone = firstBone(animation, boneCandidates(piece));
+                String bone = firstBone(animation, boneCandidates(piece, animation.nativeYsm()));
                 if (bone.isEmpty()) continue;
                 Matrix4f transform = animation.boneTransform(bone).orElseThrow();
                 if (!YsmItemRenderer.usable(transform)) continue;
@@ -139,9 +136,10 @@ public final class YsmEquipmentRenderer {
                 null, null, ParrotEntityRenderer.getTexture(variant), null));
     }
 
-    private static List<String> boneCandidates(String piece) {
+    static List<String> boneCandidates(String piece, boolean nativeYsm) {
         return switch (piece) {
-            case "head" -> List.of("HeadLocator", "Head");
+            // YSMClientMapper's headIds selects Head; it never selects HeadLocator first.
+            case "head" -> nativeYsm ? List.of("Head") : List.of("HeadLocator", "Head");
             case "body" -> List.of("BodyLocator", "UpBody", "Body", "UpperBody");
             case "right_arm" -> List.of("RightArm");
             case "left_arm" -> List.of("LeftArm");
@@ -155,14 +153,27 @@ public final class YsmEquipmentRenderer {
         return "";
     }
     private static void headItem(List<Attachment> result, PlayerEntity entity, AnimationPlayer animation, ItemStack stack) {
-        String bone = firstBone(animation, boneCandidates("head"));
+        String bone = firstBone(animation, boneCandidates("head", animation.nativeYsm()));
         if (bone.isEmpty()) return;
         Matrix4f transform = animation.boneTransform(bone).orElseThrow();
         if (!YsmItemRenderer.usable(transform)) return;
         ItemRenderState item = new ItemRenderState();
         MinecraftClient.getInstance().getItemModelManager().updateForLivingEntity(item, stack, ItemDisplayContext.HEAD, entity);
-        if (!item.isEmpty()) result.add(new Attachment(new Matrix4f(transform).scale(.625f).translate(0, .25f, 0),
+        if (!item.isEmpty()) result.add(new Attachment(headItemTransform(transform),
                 "HEAD_ITEM", bone, null, null, stack, null, null, null, item));
+    }
+    /** OpenYSM 1.21.11 CustomPlayerArmorLayer.isArmorItem checks the equipped slot, not the asset ID. */
+    static boolean headItemEligible(boolean nativeYsm, EquipmentSlot equippableSlot, boolean hasEquipmentAsset) {
+        return nativeYsm ? equippableSlot != EquipmentSlot.HEAD : equippableSlot == null || !hasEquipmentAsset;
+    }
+    /** CustomPlayerArmorLayer's native Head item basis, after the complete authored chain. */
+    static Matrix4f headItemTransform(Matrix4f locator) {
+        return new Matrix4f(locator).scale(.625f).translate(0, .25f, 0);
+    }
+    /** CustomPlayerElytraLayer rotates the model 180 degrees around Z, without a guessed Z offset. */
+    static Matrix4f wingTransform(Matrix4f locator, boolean nativeYsm) {
+        return nativeYsm ? new Matrix4f(locator).rotateZ((float) Math.PI)
+                : new Matrix4f(locator).scale(-1, -1, 1).translate(0, 0, .125f);
     }
     @SuppressWarnings({"unchecked", "rawtypes"})
     public static void submit(List<Attachment> attachments, MatrixStack matrices, OrderedRenderCommandQueue queue, int light) {

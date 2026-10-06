@@ -1,6 +1,7 @@
 # Third-party notices
 
-Current artifacts are client **0.4.9** and server **0.4.9**. Version-specific
+Current source is client **0.5.1** and server **0.5.1**. This migration is
+source-only until a later delivery build is requested. Version-specific
 adaptation and validation descriptions below retain their historical scope.
 
 ## OpenYSM default player model
@@ -97,6 +98,65 @@ optional other-mod compatibility or its network protocol, and do not relicense
 the separately licensed model assets. The detailed implemented boundaries and
 validation scope are recorded in [0.4.7 documentation](docs/history/CLIENT_0_4_7_NATIVE_SYNC.md)
 and [YSM compatibility](docs/YSM_COMPATIBILITY.md).
+
+## 0.5.1 upstream source migration (MIT)
+
+The native BBModel importer retains the complete applicable source chain from
+Sparkle-Morpher revision `b1230a431900a286d2cca198072df7fb43c490b4` in
+[model/nativebbmodel](client/src/main/java/com/simmc/meplayeractions/client/model/nativebbmodel/).
+It includes `BBAnimation`, `BBAnimationController`, `BBCollection`,
+`BBDisplaySettings`, `BBElement`, `BBGroup`, `BBModelFile`, `BBModelParser`,
+`BBOutlinerNode`, `BbRotationCompat`, `BBTexture`, `BBToRawConverter`,
+`GsonTypeByField`, `ImportedActionPresetInstaller`, `ImportedHumanoidNormalizer`,
+`LocatorInference` and `ZipModelSniffer`, plus the source `Interpolations` and
+`MathHelper` utilities. Source packages and the existing `RawYsmModel` type are
+mapped to MPA; `BbImportHost` supplies logging and the source GeometryBaker's
+bone-name normalization. The source parser, numerical curve baking, meshes,
+controller/event conversion, humanoid normalization, locator inference and
+fallback action installation are retained. `NativeBbModel` is the host adapter
+for strict JSON/resource budgets, declared local PNG companions and the existing
+native runtime/profile conversion. Local and authorized private receivers use
+this same chain; the ordinary/server blueprint parser remains separate.
+
+The post-conversion local assembly also ports the source
+`BuiltinBbmodelActionPreset`, `ModelAssemblyFactory` semantic remapping,
+`SemanticSkeleton`, `YsmAnimationParsing`, `YsmJsonSupport` and
+`ImportedVanillaPoseController` routines. The three pinned preset animation JSON
+files and their original `README.md` / `CREDITS.md` are retained under
+[assets/meplayeractions/builtin/bbmodel/animations](client/src/main/resources/assets/meplayeractions/builtin/bbmodel/animations/).
+These preset assets have separate source attribution: the upstream credits
+identify adapted Mojang/Microsoft Bedrock animations and the CC BY idle animation
+by splatty. They are not relicensed as MIT by the software migration; the
+unchanged source credits and attribution links remain with the files.
+
+The fixed OpenYSM-Updated revision
+`0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85` and Sparkle revision above also supply
+the following runtime routines, adapted to MPA's model storage and Minecraft
+1.21.11 deferred render interfaces:
+
+| Fixed source routines | MPA host/runtime adaptation |
+| --- | --- |
+| `AnimationProcessor`, `BoneAnimationQueue`, `AnimationControllerInstance`, `BoneBlendState`, `MathUtil`, `AnimationControllerRuntime`, `SoundKeyFrameExecutor` | Per-channel ownership/reset, resolved beginning snapshots, native predicate blend rules, initial-rotation quaternion interpolation and scoped sound lifecycle in `AnimationPlayer` / `YsmAnimationController` |
+| `AnimationMapper.parse(list, mergeMultilineExpr)`, folder/binary property mapping | Source literal-newline script joining and author property propagation in `NativeYsmScriptArrays`, `NativeYsmFile`, `YsmFolderModel` and `YsmModelProfile` |
+| `QueryBinding`, `YSMBinding`, `Position`, `PositionDelta`, `RotationToCamera`, `HandRenderFunction`, `Armor` | Model-instance lifetime, qualified entity names, nullable native axes and distinct hand/armor unavailable results in `VanillaYsmQueries` |
+| `GeoReplacedEntityRenderer`, `CustomPlayerItemInHandLayer`, `CustomPlayerArmorLayer`, `CustomPlayerElytraLayer`, `RenderUtils` | Author mesh/attachment order, native visibility/outline and exact attachment transforms in `ModelRenderer`, `YsmItemRenderer`, `YsmEquipmentRenderer`; native vanilla label/fire/shadow submission retained through geometry-only suppression |
+
+Native held items retain Sparkle's verified main-arm and same-side extra-locator
+corrections, and OpenYSM's visible-chain interpretation. Native head equipment
+uses the modern OpenYSM `Equippable HEAD` exclusion. These source-specific choices
+are recorded explicitly, including the omission of pumpkin-like equippable head
+items from that generic native layer. Existing MPA armor/cape layer toggles are a
+previously requested extension, not an upstream feature. Fixed upstream CPU
+geometry rendering does not consume `cube.cullable`; retained `all_cutout`
+metadata does not introduce a GPU pipeline or reinterpret transparency.
+
+Original MIT notices remain bundled in `LICENSE.OpenYSM.txt` and
+`sparkle-morpher-MIT.txt`; new source files identify their pinned origin. Model
+asset licenses remain independent. Resource authorization, upload/observer
+budgets and MPA's private protocol are host adaptations. Per user decision,
+food/experience/full effect/input fields absent from vanilla observer updates
+are not additionally synchronized. This migration does not import the cloud
+service, upstream network protocol or optional other-mod integrations.
 
 ## Bundled native format and WebP dependencies
 

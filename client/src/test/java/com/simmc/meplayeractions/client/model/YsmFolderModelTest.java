@@ -140,6 +140,9 @@ class YsmFolderModelTest {
 
     @Test void sixtyFourTimelineProgramsKeepOrderAndIndependentReturns() throws Exception {
         Path folder = copyDefault(), path = folder.resolve("animations/extra.animation.json");
+        JsonObject manifest = read(folder.resolve("ysm.json"));
+        manifest.getAsJsonObject("properties").addProperty("merge_multiline_expr", false);
+        Files.writeString(folder.resolve("ysm.json"), manifest.toString());
         JsonObject source = read(path), probe = new JsonObject(), timeline = new JsonObject();
         JsonArray programs = new JsonArray(); programs.add("v.order=0;return 5;");
         for (int i = 1; i < 64; i++) programs.add("v.order=v.order+1;");
@@ -160,10 +163,10 @@ class YsmFolderModelTest {
     @Test void folderRejectsTimelineAndDurationBeyondObservedBoundedCompatibility() throws Exception {
         Path folder = copyDefault(), path = folder.resolve("animations/extra.animation.json");
         JsonObject source = read(path), probe = new JsonObject(), timeline = new JsonObject();
-        JsonArray programs = new JsonArray(); for (int i = 0; i < 65; i++) programs.add("1;");
+        JsonArray programs = new JsonArray(); for (int i = 0; i <= BbModel.MAX_NATIVE_TIMELINE_PROGRAMS; i++) programs.add("1;");
         probe.addProperty("animation_length", 1); timeline.add("0.0", programs); probe.add("timeline", timeline);
         source.getAsJsonObject("animations").add("bounded_probe", probe); Files.writeString(path, source.toString());
-        assertThrows(IOException.class, () -> YsmFolderModel.read(folder), "65 programs exceeds the evidenced 64-program limit");
+        assertThrows(IOException.class, () -> YsmFolderModel.read(folder), "Input count is checked before a merged array becomes one program");
         programs = new JsonArray(); for (int i = 0; i < 5; i++) programs.add("/*" + "酒".repeat(2200) + "*/1;");
         timeline.add("0.0", programs); Files.writeString(path, source.toString());
         assertThrows(IOException.class, () -> YsmFolderModel.read(folder), "UTF-8 aggregate bytes exceed 32 KiB despite individually short valid programs");

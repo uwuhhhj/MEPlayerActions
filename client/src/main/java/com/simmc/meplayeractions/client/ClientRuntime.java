@@ -13,6 +13,7 @@ import com.simmc.meplayeractions.client.network.*;
 import com.simmc.meplayeractions.client.render.ModelRenderer;
 import com.simmc.meplayeractions.client.render.NativePlayerPresentation;
 import com.simmc.meplayeractions.client.effects.YsmModelEffects;
+import com.simmc.meplayeractions.client.effects.ModelEffectInstances;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
@@ -75,9 +76,8 @@ public final class ClientRuntime {
     private final LocalModelLibrary localModelLibrary=new LocalModelLibrary(
             FabricLoader.getInstance().getConfigDir().resolve("meplayeractions/models"));
     private final Map<String,LocalModelLibrary.Loaded> localProfiles=new LinkedHashMap<>(16,.75f,true);
-    private record EffectKey(UUID owner,UUID entity) { }
     private record EffectState(YsmModelEffects effects,Entity entity,String instance,String hash,YsmModelProfile profile) { }
-    private final Map<EffectKey,EffectState> modelEffects=new LinkedHashMap<>();
+    private final ModelEffectInstances<EffectState> modelEffects=new ModelEffectInstances<>(256,state->state.effects().close());
     public final ClientOptions options;
     private boolean connected,acknowledged;
     private boolean pushNegotiated,unsupportedHandshake;
@@ -933,31 +933,40 @@ public final class ClientRuntime {
         Molang.FunctionResolver nativeFunctions=context.functionResolver();
         RenderBinding appearance=appearanceBinding(owner);
         YsmModelEffects frameEffects=appearance==null || player==null?null:
-                frameEffects(owner,player,appearance.instance(),appearance.assetHash(),modelProfile(owner));
+                frameEffects(owner,player,"body",appearance.instance(),appearance.assetHash(),modelProfile(owner));
         installFrameEffects(context,nativeFunctions,frameEffects);
         Binding motion=localAppearanceActive()&&owner.equals(client.player.getUuid())?localSelf:privateUsable(owner)?privateBindings.get(owner):binding;
         if(motion!=null)for(String controller:motion.localMotion.pausedControllers())context.query("ysm.pause."+controller,1d);
     }
+    /** Hash lookup remains for existing callers; render processors should pass their exact component identity. */
     public void configureComponentExpressionContext(UUID owner,Entity entity,String componentHash,Molang.Context context){
+        var component=modelProfile(owner).components().stream().filter(value->value.hash().equals(componentHash)).findFirst().orElse(null);
+        configureComponentExpressionContext(owner,entity,component,context);
+    }
+    public void configureComponentExpressionContext(UUID owner,Entity entity,YsmModelProfile.Component component,Molang.Context context){
         YsmModelProfile profile=modelProfile(owner);
-        var component=profile.components().stream().filter(value->value.hash().equals(componentHash)).findFirst().orElse(null);
-        VanillaYsmQueries.populateEntity(client,entity,20,component==null?"":component.selectedTexture(),context);
+        String texture=component==null?"":component.selectedTexture();
+        if(entity instanceof PlayerEntity player){
+            Binding binding=bindings.get(player.getUuid());
+            int food=player==client.player?player.getHungerManager().getFoodLevel():binding==null?20:binding.foodLevel;
+            VanillaYsmQueries.populate(client,player,food,texture,nativeFlying(player),context);
+        }else VanillaYsmQueries.populateEntity(client,entity,20,texture,context);
         context.query("ysm.is_first_person",component!=null && component.kind().equals("fp_arm")?1d:0d);
         Molang.FunctionResolver nativeFunctions=context.functionResolver();
         RenderBinding appearance=appearanceBinding(owner);
         YsmModelEffects effects=appearance==null || entity==null || component==null?null:
-                frameEffects(owner,entity,appearance.instance(),componentHash,profile);
+                frameEffects(owner,entity,componentEffectProcessor(component),appearance.instance(),component.hash(),profile);
         installFrameEffects(context,nativeFunctions,effects);
     }
-    private YsmModelEffects frameEffects(UUID owner,Entity entity,String instance,String hash,YsmModelProfile profile){
-        EffectKey key=new EffectKey(owner,entity.getUuid());EffectState state=modelEffects.get(key);
-        if(state!=null && (state.entity()!=entity || !state.instance().equals(instance) || !state.hash().equals(hash))){
-            state.effects().close();modelEffects.remove(key);state=null;
-        }
-        if(state==null){
-            if(modelEffects.size()>=256)return null;
-            state=new EffectState(new YsmModelEffects(client),entity,instance,hash,profile);modelEffects.put(key,state);
-        }
+    private static String componentEffectProcessor(YsmModelProfile.Component component) {
+        return "component:"+component.kind()+":"+component.id();
+    }
+    private YsmModelEffects frameEffects(UUID owner,Entity entity,String processor,String instance,String hash,YsmModelProfile profile){
+        ModelEffectInstances.Key key=new ModelEffectInstances.Key(owner,entity.getUuid(),processor);
+        EffectState state=modelEffects.acquire(key,
+                previous->previous.entity()==entity && previous.instance().equals(instance) && previous.hash().equals(hash),
+                ()->new EffectState(new YsmModelEffects(client),entity,instance,hash,profile));
+        if(state==null)return null;
         state.effects().update(entity,instance,hash,profile);return state.effects();
     }
     private static void installFrameEffects(Molang.Context context,Molang.FunctionResolver nativeFunctions,YsmModelEffects effects){
@@ -970,28 +979,22 @@ public final class ClientRuntime {
     private void tickModelEffects() {
         Map<UUID,RenderBinding> current=new HashMap<>();
         for(RenderBinding binding:animationBindings())current.put(binding.owner(),binding);
-        for(EffectKey key:List.copyOf(modelEffects.keySet())) {
-            RenderBinding binding=current.get(key.owner());EffectState state=modelEffects.get(key);
-            boolean valid=binding!=null && binding.instance().equals(state.instance())
-                    && (key.owner().equals(key.entity())?binding.assetHash().equals(state.hash()):
-                        modelProfile(key.owner()).components().stream().anyMatch(component->component.hash().equals(state.hash())));
-            if(!valid || state.entity().isRemoved() || state.entity().getEntityWorld()!=client.world){
-                state.effects().close();modelEffects.remove(key);continue;
-            }
-            state.effects().update(state.entity(),state.instance(),state.hash(),state.profile());
-        }
+        modelEffects.retain((key,state)->{
+            RenderBinding binding=current.get(key.owner());
+            return binding!=null && binding.instance().equals(state.instance())
+                    && (key.body()?binding.assetHash().equals(state.hash()) && key.owner().equals(key.entity()):
+                        modelProfile(key.owner()).components().stream().anyMatch(component->
+                                componentEffectProcessor(component).equals(key.processor()) && component.hash().equals(state.hash())))
+                    && !state.entity().isRemoved() && state.entity().getEntityWorld()==client.world;
+        });
+        modelEffects.forEach((key,state)->state.effects().update(state.entity(),state.instance(),state.hash(),state.profile()));
     }
-    private void closeModelEffects(UUID owner) {
-        for(EffectKey key:List.copyOf(modelEffects.keySet()))if(key.owner().equals(owner)){
-            modelEffects.remove(key).effects().close();
-        }
-    }
-    private void closeModelEffects() {
-        modelEffects.values().forEach(state->state.effects().close());modelEffects.clear();
-    }
+    private void closeModelEffects(UUID owner) { modelEffects.closeOwner(owner); }
+    private void closeModelEffects() { modelEffects.close(); }
     public Map<String,Object> modelEffectsDiagnostics() {
         Map<String,Object> result=new LinkedHashMap<>();
-        modelEffects.forEach((key,state)->result.put(key.owner().equals(key.entity())?key.owner().toString():key.owner()+"/"+key.entity(),state.effects().diagnostics()));
+        modelEffects.forEach((key,state)->result.put(key.body()?key.owner().toString():
+                key.owner()+"/"+key.entity()+"/"+key.processor(),state.effects().diagnostics()));
         return Map.copyOf(result);
     }
     public VanillaYsmAnimations.VanillaState vanillaState(UUID owner){return VanillaYsmQueries.vanillaState(client,nativePlayer(owner));}

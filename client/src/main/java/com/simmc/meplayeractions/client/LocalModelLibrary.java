@@ -5,6 +5,7 @@ import com.simmc.meplayeractions.client.model.BuiltinYsmModels;
 import com.simmc.meplayeractions.client.model.YsmFolderModel;
 import com.simmc.meplayeractions.client.model.YsmModelProfile;
 import com.simmc.meplayeractions.client.model.NativeModelBundle;
+import com.simmc.meplayeractions.client.model.NativeBbModel;
 import com.simmc.meplayeractions.client.network.AssetTransfer;
 import java.io.IOException;
 import java.io.InputStream;
@@ -78,7 +79,6 @@ public final class LocalModelLibrary {
         String previewAnimation = "";
         YsmModelProfile profile = YsmModelProfile.empty();
         if (id.startsWith("local:")) {
-            if (textureId != null && !textureId.isEmpty()) throw new IOException("独立 BBModel 没有 YSM 皮肤列表");
             checkDirectory();
             Path file = directory.resolve(id.substring(6)).normalize();
             if (!file.getParent().equals(directory) || !Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)
@@ -86,7 +86,11 @@ public final class LocalModelLibrary {
                 throw new IOException("模型必须是本地模型目录内的普通 .bbmodel 文件");
             if (Files.size(file) > AssetTransfer.MAX_RAW) throw new IOException("模型大小不能超过 8 MiB");
             try (InputStream input = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) { raw = read(input); }
-            if (!hasSource(id)) rememberFiles(id, "bbmodel", "model.bbmodel", Map.of("model.bbmodel", raw));
+            Map<String, byte[]> files = NativeBbModel.localSourceFiles(file, raw);
+            var imported = NativeBbModel.read(raw, files, textureId);
+            if (!hasSource(id)) rememberFiles(id, "bbmodel", "model.bbmodel", files);
+            return new Loaded(AssetTransfer.hash(imported.raw()), BbModel.parseLocal(imported.raw()),
+                    imported.previewAnimation(), imported.profile());
         } else if (id.startsWith("ysm:")) {
             checkDirectory();
             var imported = YsmFolderModel.readWithProfile(directory.resolve(id.substring(4)), textureId);

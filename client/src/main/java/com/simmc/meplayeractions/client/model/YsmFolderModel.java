@@ -275,6 +275,7 @@ public final class YsmFolderModel {
         final Map<String, byte[]> files = new LinkedHashMap<>(), pngFiles = new LinkedHashMap<>();
         final JsonObject functions = new JsonObject(), events = new JsonObject();
         int nativeFormat = 65535;
+        boolean mergeMultilineExpressions, allCutout;
         final int maximumBytes;
         int bytes, outputBytes;
         long pixels;
@@ -315,7 +316,11 @@ public final class YsmFolderModel {
             return result;
         }
         byte[] output(Converter converter, JsonObject controllers, String family) throws IOException {
-            converter.output.add("ysm_animation_controllers", controllers.deepCopy());
+            converter.output.add("ysm_animation_controllers", NativeYsmScriptArrays.controllerActions(controllers, mergeMultilineExpressions));
+            converter.output.addProperty("ysm_merge_multiline_expr", mergeMultilineExpressions);
+            // all_cutout is the source GPU cube forceCull policy, not a texture alpha mode.
+            // Its CPU ModelRendererBridge does not consume cullable; preserve that CPU behavior.
+            converter.output.addProperty("ysm_all_cutout", allCutout);
             converter.output.addProperty("ysm_controller_family", family);
             // OpenYSM's folder-deserializer internal format version, independent of manifest spec 2.
             converter.output.addProperty("ysm_format_version", nativeFormat);
@@ -373,6 +378,9 @@ public final class YsmFolderModel {
             JsonObject player = object(object(manifest.get("files")).get("player"));
             JsonObject modelFiles = object(player.get("model")), animationFiles = object(player.get("animation"));
             JsonObject properties = manifest.has("properties") ? object(manifest.get("properties")) : new JsonObject();
+            assets.mergeMultilineExpressions = bool(properties, "merge_multiline_expr", false);
+            assets.allCutout = bool(properties, "all_cutout", false);
+            bool(properties, "render_layers_first", false);
             if (manifest.has("metadata")) {
                 JsonObject metadata = object(manifest.get("metadata"));
                 if (metadata.has("authors")) for (JsonElement author : array(metadata.get("authors"))) {
@@ -393,19 +401,19 @@ public final class YsmFolderModel {
                     textureOverride == null || textureOverride.isEmpty() ? defaultTexture.id() : textureOverride, true);
             JsonObject geometry = assets.json(string(modelFiles, "main", ""));
             JsonObject controllers = controllers(assets, player.get("animation_controllers"));
-            Converter converter = new Converter(geometry, texture.png());
+            Converter converter = new Converter(geometry, texture.png(), assets.mergeMultilineExpressions);
             converter.animations(bodyAnimations(assets, animationFiles));
             byte[] result = assets.output(converter, controllers, "player");
             List<YsmModelProfile.Component> components = new ArrayList<>();
             if (modelFiles.has("arm")) {
-                Converter arm = new Converter(assets.json(string(modelFiles, "arm", "")), texture.png());
+                Converter arm = new Converter(assets.json(string(modelFiles, "arm", "")), texture.png(), assets.mergeMultilineExpressions);
                 if (animationFiles.has("arm")) arm.animations(assets.json(string(animationFiles, "arm", "")));
                 components.add(new YsmModelProfile.Component("arm", "arm", List.of(), textures, texture.id(),
                         assets.output(arm, new JsonObject(), "arm"), player, assets.maximumBytes));
             }
             if (modelFiles.has("fp_arm") || modelFiles.has("arm")) {
                 String geometryFile = string(modelFiles, modelFiles.has("fp_arm") ? "fp_arm" : "arm", "");
-                Converter arm = new Converter(assets.json(geometryFile), texture.png());
+                Converter arm = new Converter(assets.json(geometryFile), texture.png(), assets.mergeMultilineExpressions);
                 if (animationFiles.has("fp_arm")) arm.animations(assets.json(string(animationFiles, "fp_arm", "")));
                 else if (animationFiles.has("arm")) arm.animations(assets.json(string(animationFiles, "arm", "")));
                 components.add(new YsmModelProfile.Component("fp_arm", "fp_arm", List.of(), textures, texture.id(),
@@ -594,7 +602,7 @@ public final class YsmFolderModel {
                 throw invalid("YSM 子模型实体标识无效");
             List<YsmModelProfile.TextureChoice> textures = textureChoices(assets, descriptor.get("texture"));
             var texture = textures.getFirst();
-            Converter converter = new Converter(assets.json(string(descriptor, "model", "")), texture.png());
+            Converter converter = new Converter(assets.json(string(descriptor, "model", "")), texture.png(), assets.mergeMultilineExpressions);
             if (descriptor.has("animation")) converter.animations(assets.json(string(descriptor, "animation", "")));
             JsonObject controllers = controllers(assets, descriptor.get("animation_controllers"));
             target.add(new YsmModelProfile.Component(id, kind, matches, textures, texture.id(),
@@ -608,8 +616,10 @@ public final class YsmFolderModel {
         final Map<String, JsonObject> nodes = new LinkedHashMap<>();
         final Map<String, String> parents = new LinkedHashMap<>();
         final Map<String, JsonObject> namedClips = new LinkedHashMap<>();
+        final boolean mergeMultilineExpressions;
         int frames;
-        Converter(JsonObject source, byte[] png) {
+        Converter(JsonObject source, byte[] png, boolean mergeMultilineExpressions) {
+            this.mergeMultilineExpressions = mergeMultilineExpressions;
             JsonArray geometries = array(source.get("minecraft:geometry"));
             if (geometries.isEmpty() || geometries.size() > 32) throw invalid("YSM 几何列表无效或过大");
             JsonObject geometry = object(geometries.get(0)), description = object(geometry.get("description"));
@@ -757,9 +767,15 @@ public final class YsmFolderModel {
                         int programBytes = 0;
                         JsonObject key = new JsonObject(); key.addProperty("channel", "timeline"); key.addProperty("time", event.getKey());
                         JsonArray points = new JsonArray(); key.add("data_points", points);
+                        // Validate original lines before joining; multiline blocks cannot be compiled line by line.
                         for (JsonElement program : programs) {
                             if (!program.isJsonPrimitive() || !program.getAsJsonPrimitive().isString()) throw invalid("YSM 时间轴脚本必须是文本");
-                            String expression = normalize(program.getAsString());
+                            if (program.getAsString().length() > 8192) throw invalid("YSM 表达式过长");
+                        }
+                        if (mergeMultilineExpressions) programs = NativeYsmScriptArrays.merge(programs, BbModel.MAX_NATIVE_TIMELINE_PROGRAMS);
+                        for (JsonElement program : programs) {
+                            if (!program.isJsonPrimitive() || !program.getAsJsonPrimitive().isString()) throw invalid("YSM 时间轴脚本必须是文本");
+                            String expression = mergeMultilineExpressions ? completeTernaries(program.getAsString()) : normalize(program.getAsString());
                             if ((programBytes += expression.getBytes(StandardCharsets.UTF_8).length) > MAX_TIMELINE_BYTES)
                                 throw invalid("YSM 单时间轴脚本总大小超过 32 KiB");
                             Molang.compileNativeYsm(expression);
@@ -881,6 +897,8 @@ public final class YsmFolderModel {
     private static JsonArray array(JsonElement value) { if (value == null || !value.isJsonArray()) throw invalid("需要 JSON 数组"); return value.getAsJsonArray(); }
     private static String string(JsonObject value, String key, String fallback) { if (!value.has(key)) return fallback; JsonElement item = value.get(key); if (!item.isJsonPrimitive() || !item.getAsJsonPrimitive().isString()) throw invalid("需要文本: " + key); return item.getAsString(); }
     private static double number(JsonObject value, String key, double fallback) { if (!value.has(key)) return fallback; double result = value.get(key).getAsDouble(); if (!Double.isFinite(result)) throw invalid("无效数值: " + key); return result; }
+    // YsmJsonSupport.getBool deliberately uses Gson's boolean coercion, including authored string values.
+    private static boolean bool(JsonObject value, String key, boolean fallback) { return value.has(key) ? value.get(key).getAsBoolean() : fallback; }
     private static double[] vector(JsonElement value, double fallback) { if (value == null) return new double[]{fallback, fallback, fallback}; JsonArray axes = array(value); if (axes.size() != 3) throw invalid("需要三维坐标"); double[] result = new double[3]; for (int i = 0; i < 3; i++) { result[i] = axes.get(i).getAsDouble(); if (!Double.isFinite(result[i])) throw invalid("坐标必须有限"); } return result; }
     private static double[] vector2(JsonElement value) { JsonArray axes = array(value); if (axes.size() != 2) throw invalid("需要二维 UV"); double[] result = {axes.get(0).getAsDouble(), axes.get(1).getAsDouble()}; for (double axis : result) if (!Double.isFinite(axis)) throw invalid("UV 必须有限"); return result; }
     private static JsonArray numericVector(JsonElement value, boolean invertX, boolean invertY, double fallback) { double[] axes = vector(value, fallback); return numbers(invertX ? -axes[0] : axes[0], invertY ? -axes[1] : axes[1], axes[2]); }

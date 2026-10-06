@@ -3,6 +3,7 @@ package com.simmc.meplayeractions.client.model;
 import org.joml.Vector3f;
 import org.joml.Matrix4f;
 import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 import com.simmc.meplayeractions.expression.Molang;
 
 import java.util.*;
@@ -32,17 +33,21 @@ public final class AnimationPlayer {
     private boolean applyingSync;
     private final Deque<List<Double>> pendingSync = new ArrayDeque<>();
     private final Map<String,Double> roamingInputs = new HashMap<>();
+    private final NativeChannelReset nativeReset;
+    private final NativeYsmAnimationProcessor nativeProcessor;
+    private BiConsumer<BbModel.Pose, Molang.Context> nativeFallback = (pose, context) -> { };
 
-    public AnimationPlayer(BbModel model) { this.model = Objects.requireNonNull(model); ysm = model.ysmControllers() ? new YsmAnimationController(model) : null; sampledPose = model.emptyPose(); readingPose = sampledPose; }
+    public AnimationPlayer(BbModel model) { this.model = Objects.requireNonNull(model); ysm = model.ysmControllers() ? new YsmAnimationController(model) : null; sampledPose = model.emptyPose(); readingPose = sampledPose; nativeReset = new NativeChannelReset(sampledPose.channels.length); nativeProcessor = new NativeYsmAnimationProcessor(model); }
 
-    public void reset() { states.clear(); lastTick = Double.NaN; expressions.clear(); initialized = false; lifecycleInitialized = false; physicsRemainder = 0; groups.clear(); springs.clear(); nativeSprings.clear(); boneValues.clear(); pendingSync.clear(); roamingInputs.clear(); if (ysm != null) ysm.reset(); sampledPose = model.emptyPose(); readingPose = sampledPose; instanceStart = Double.NaN; }
+    public void reset() { if (ysm != null) ysm.reset(expressions); states.clear(); lastTick = Double.NaN; expressions.clear(); initialized = false; lifecycleInitialized = false; physicsRemainder = 0; groups.clear(); nativeReset.clear(); nativeProcessor.reset(); springs.clear(); nativeSprings.clear(); boneValues.clear(); pendingSync.clear(); roamingInputs.clear(); sampledPose = model.emptyPose(); readingPose = sampledPose; instanceStart = Double.NaN; }
     /** Disposing a model drops pending author work; it never dispatches effects from the old world. */
-    public void dispose() { reset(); configureFrame = context -> { }; expressions.functions(null); installedResolver = null; syncListener = null; }
+    public void dispose() { reset(); configureFrame = context -> { }; nativeFallback = (pose, context) -> { }; expressions.functions(null); installedResolver = null; syncListener = null; }
     public Map<String,Double> expressionVariables() { return expressions.variables(); }
     public Map<String,Object> expressionValues() { return expressions.values(); }
     /** The caller opts in only for the trusted local YSM loading path. */
     public void enableQueryDiagnostics() { expressions.enableDiagnostics(); }
     public void enableNativeYsm() { expressions.enableNativeYsm();expressions.enableNativeRoaming(); }
+    public boolean nativeYsm() { return expressions.nativeYsm(); }
     /** Root consumes this only for its locally owned world-body instance, never GUI/arm/observer instances. */
     public Map<String,Double> consumeRoamingChanges() { return expressions.consumeRoamingChanges(); }
     /** Installed only for the locally owned private YSM instance when transport is available. */
@@ -124,7 +129,11 @@ public final class AnimationPlayer {
     }
     /** Native bindings are injected after frame inputs, before any author code executes. */
     public void configureFrame(Consumer<Molang.Context> configure) { configureFrame = Objects.requireNonNull(configure); }
+    /** ImportedVanillaPoseController fallback runs after author ownership is known, before final channel reset. */
+    void configureNativeFallback(BiConsumer<BbModel.Pose, Molang.Context> fallback) { nativeFallback = Objects.requireNonNull(fallback); }
     public Map<String,Matrix4f> boneTransforms() { return model.boneTransforms(sampledPose); }
+    /** Imported BBModel VANILLA_EQUIPMENT locator chains intentionally omit authored bone scale. */
+    public Map<String,Matrix4f> equipmentLocatorTransforms() { return model.equipmentLocatorTransforms(sampledPose); }
     public boolean hasBone(String name) { return model.hasBone(name); }
     public Optional<Matrix4f> boneTransform(String name) { return Optional.ofNullable(boneTransforms().get(name)); }
     public List<BbModel.Vertex> filteredVertices(Set<String> selected) { return model.vertices(sampledPose, Set.copyOf(selected)); }
@@ -281,11 +290,11 @@ public final class AnimationPlayer {
             nativeSprings.values().forEach(spring -> spring.update((float)((tick-lastTick)/20)));
         lastTick = tick;
         BbModel.Pose combined = model.emptyPose(); readingPose = sampledPose;
+        if (expressions.nativeYsm()) nativeProcessor.beginFrame();
         double[] headWeights = model.defaultHeadWeights(); boolean[] authoredLook = { false };
         ysm.sample(tick, incoming, expressions, (frame, context) -> {
             BbModel.Pose target = model.emptyPose();
-            Group previousGroup=groups.get(frame.name());
-            BbModel.Pose previousController=previousGroup==null ? model.emptyPose() : previousGroup.current.copy();
+            List<NativeYsmAnimationProcessor.Contribution> nativeSources = new ArrayList<>();
             for (YsmAnimationController.Run run : frame.runs()) {
                 ysm.withPlayback(run.playback(), false, context, () -> {
                     if (run.events()) ysm.withCapture(run.active(),
@@ -295,10 +304,12 @@ public final class AnimationPlayer {
                     if (!accessories.isEmpty()) {
                         context.set("variable.roaming.a", accessories.get("a")); context.set("variable.roaming.b", accessories.get("b"));
                     }
-                    if (run.active()) {
-                        BbModel.Evaluated evaluated = expressions.nativeYsm()
-                                ? model.evaluateClip(run.animation(),run.elapsed(),run.loop(),context,previousController)
-                                : model.evaluateClip(run.animation(), run.elapsed(), run.loop(), context);
+                    if (expressions.nativeYsm()) {
+                        NativeYsmAnimationProcessor.Contribution contribution = nativeProcessor.prepare(run, context, sampledPose);
+                        if (contribution != null) nativeSources.add(contribution);
+                        if (run.active()) authoredLook[0] |= model.ownsHeadLook(run.animation());
+                    } else if (run.active()) {
+                        BbModel.Evaluated evaluated = model.evaluateClip(run.animation(), run.elapsed(), run.loop(), context);
                         // Multiple clips in the same state sum position/rotation and multiply weighted scale.
                         addState(target, evaluated.pose(), evaluated.weight());
                         authoredLook[0] |= model.ownsHeadLook(run.animation());
@@ -306,12 +317,21 @@ public final class AnimationPlayer {
                     }
                 });
             }
+            if (expressions.nativeYsm()) {
+                nativeProcessor.apply(combined, nativeSources, frame, ysm);
+                if (frame.cap()) {
+                    BbModel.Pose owned = model.emptyPose(); nativeProcessor.apply(owned, nativeSources, frame, ysm);
+                    model.suppressManualLook(headWeights, owned, frame.blend().fraction(tick - frame.changedAt()));
+                }
+                return;
+            }
             Group group = groups.get(frame.name());
             if (group == null) {
                 group = new Group(frame.revision(), model.emptyPose(), frame.changedAt(), frame.blend());
                 groups.put(frame.name(), group);
             } else if (group.revision != frame.revision()) {
-                group.previous = group.at(tick); group.revision = frame.revision();
+                group.previous = group.at(tick);
+                group.revision = frame.revision();
                 group.changedAt = frame.changedAt(); group.blend = frame.blend();
             }
             group.current = target;
@@ -320,7 +340,13 @@ public final class AnimationPlayer {
             applyGroup(combined, pose, frame.deprecated());
             if (frame.cap()) model.suppressManualLook(headWeights, pose, frame.blend().fraction(tick - frame.changedAt()));
             if (!expressions.nativeYsm()) readingPose = combined;
+        }, context -> {
+            applyLocalParameters(context, localParameters);
+            if (!accessories.isEmpty()) {
+                context.set("variable.roaming.a", accessories.get("a")); context.set("variable.roaming.b", accessories.get("b"));
+            }
         });
+        if (expressions.nativeYsm()) { nativeProcessor.finishFrame(); nativeFallback.accept(combined, expressions); nativeReset.complete(combined, sampledPose, tick); }
         if (!authoredLook[0]) model.applyLook(combined, yaw, pitch, headWeights);
         sampledPose = combined.copy(); readingPose = sampledPose;
         return model.vertices(combined);
@@ -357,6 +383,27 @@ public final class AnimationPlayer {
                 result.channels[i][c] = c == 1 ? rotationBlend(a, b, (float)fraction) : new Vector3f(a).lerp(b, (float)fraction);
             }
             return result;
+        }
+    }
+    /** Port of OpenYSM 0306e1f MathUtil.nlerpEulerAngles: include initial Euler rotation before quaternion mixing. */
+    private Vector3f nativeRotationBlend(Vector3f from, Vector3f to, int bone, float fraction) {
+        return NativeYsmAnimationProcessor.rotation(model, bone, from, to, fraction);
+    }
+    /** Port of AnimationProcessor's final BoneTopLevelSnapshot reset, separate from every controller's transition. */
+    private final class NativeChannelReset {
+        final double[][] mostRecent;
+        final Vector3f[][] previous;
+        NativeChannelReset(int bones) { mostRecent = new double[bones][3]; previous = new Vector3f[bones][3]; clear(); }
+        void clear() { for (int i = 0; i < mostRecent.length; i++) { Arrays.fill(mostRecent[i], Double.NaN); Arrays.fill(previous[i], null); } }
+        void complete(BbModel.Pose current, BbModel.Pose last, double tick) {
+            for (int i = 0; i < current.channels.length; i++) for (int c = 0; c < 3; c++) {
+                if (current.channels[i][c] != null) { mostRecent[i][c] = tick; previous[i][c] = null; continue; }
+                if (Double.isNaN(mostRecent[i][c])) continue;
+                if (previous[i][c] == null) previous[i][c] = last.channels[i][c] == null ? BbModel.defaultValue(c) : new Vector3f(last.channels[i][c]);
+                float reset = (float)BbModel.clamp((tick - mostRecent[i][c]) / 3);
+                current.channels[i][c] = c == 1 ? nativeRotationBlend(previous[i][c], BbModel.defaultValue(c), i, reset)
+                        : new Vector3f(previous[i][c]).lerp(BbModel.defaultValue(c), reset);
+            }
         }
     }
     private static Vector3f rotationBlend(Vector3f a, Vector3f b, float t) {
@@ -434,8 +481,10 @@ public final class AnimationPlayer {
         }
         if (name.startsWith("ctrl.") && ysm != null) return ysm.function(name, args, fallback);
         if (Set.of("ctrl.set_animation", "ctrl.set_beginning_transition_length", "ctrl.reset", "ctrl.indicate_reload").contains(name)) return 0d;
-        if (Set.of("ysm.play_sound", "ysm.stop_sound", "ysm.stop_all_sounds", "ysm.particle", "ysm.abs_particle").contains(name))
+        if (Set.of("ysm.play_sound", "ysm.stop_sound", "ysm.stop_all_sounds", "ysm.particle", "ysm.abs_particle").contains(name)) {
+            if (effects && target.nativeYsm() && ysm != null && name.equals("ysm.play_sound")) ysm.soundStarted(args);
             return fallback == null ? 0d : fallback.call(name, args);
+        }
         return fallback == null ? 0d : fallback.call(name, args);
     }
     private static float nativeFloat(Object value) {

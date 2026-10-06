@@ -40,7 +40,10 @@ import org.lwjgl.glfw.GLFW;
 
 import java.util.*;
 
-/** Read-only native-entity bindings. Remote owners never need the client mod or an input packet. */
+/**
+ * Read-only native-entity bindings. Additional food/experience/effect/input synchronization is
+ * deliberately absent: a remote query uses its vanilla client entity or the declared fallback.
+ */
 public final class VanillaYsmQueries implements Molang.FunctionResolver {
     private static final Map<Entity, NativeFrame> FRAMES = new WeakHashMap<>();
     private static final List<String> CONTROL_STATES = List.of("death","riptide","sleep","swim","climb","climbing",
@@ -66,18 +69,22 @@ public final class VanillaYsmQueries implements Molang.FunctionResolver {
     public static void populateEntity(MinecraftClient client,Entity entity,int food,String texture,Molang.Context c) {
         if(entity instanceof PlayerEntity player){populate(client,player,food,texture,c);return;}
         if(entity==null||client.world==null)return;
-        float fraction=client.getRenderTickCounter().getTickProgress(false);
-        Vec3d position=entity.getLerpedPos(fraction);
+        var nativeFrame=NativePlayerPresentation.entityFrame(entity.getUuid());
+        float fraction=nativeFrame==null?client.getRenderTickCounter().getTickProgress(false):nativeFrame.tickDelta();
+        Vec3d position=nativeFrame==null?entity.getLerpedPos(fraction):nativeFrame.entityPosition();
         Motion motion=frame(entity).motion.sample(client.world.getTime()+fraction,position.x,position.y,position.z,
                 Math.max(0,client.getRenderTickCounter().getDynamicDeltaTicks()));
         LivingEntity living=entity instanceof LivingEntity value?value:null;
         clearUnsupportedQueries(c,living!=null);
         populateSpatial(c,position,motion,entity.getVelocity(),MathHelper.wrapDegrees(entity.getYaw()-entity.lastYaw)*20);
         long time=entity.getEntityWorld().getTimeOfDay();
-        q(c,"life_time",(entity.age+(double)fraction)/20);
+        // Native QueryBinding.life_time belongs to this model instance's seek time.
+        // AnimationPlayer installs it before this callback; never replace it with entity age.
+        if(!c.nativeYsm())q(c,"life_time",(entity.age+(double)fraction)/20);
         q(c,"time_stamp",time);q(c,"time_of_day",timeOfDay(time));q(c,"moon_phase",time/24000%8);
         q(c,"actor_count",client.world.getRegularEntityCount());
-        q(c,"distance_from_camera",client.gameRenderer.getCamera().getCameraPos().distanceTo(entity.getEntityPos()));
+        Vec3d camera=nativeFrame==null?client.gameRenderer.getCamera().getCameraPos():NativePlayerPresentation.cameraPosition();
+        q(c,"distance_from_camera",camera.distanceTo(position));
         q(c,"walk_distance",entity.distanceTraveled);q(c,"modified_distance_moved",entity.distanceTraveled);
         q(c,"cardinal_facing_2d",entity.getHorizontalFacing().getIndex());
         q(c,"eye_target_x_rotation",entity.getPitch(fraction));q(c,"eye_target_y_rotation",entity.getYaw(fraction));
@@ -91,7 +98,11 @@ public final class VanillaYsmQueries implements Molang.FunctionResolver {
         y(c,"input_horizontal",inputDirection(motion.x(),motion.z(),entity.getYaw(fraction),true));
         y(c,"weather",entity.getEntityWorld().isThundering()?2:entity.getEntityWorld().isRaining()?1:0);
         c.stringQuery("ysm.dimension_name",entity.getEntityWorld().getRegistryKey().getValue().toString());
-        if(living!=null) {c.stringQuery("ysm.entity_type",Registries.ENTITY_TYPE.getId(entity.getType()).getPath());y(c,"is_player",false);y(c,"is_maid",false);}
+        if(living!=null) {
+            String id=Registries.ENTITY_TYPE.getId(entity.getType()).toString();
+            String type=c.nativeYsm()?entityTypeName(false,id):Registries.ENTITY_TYPE.getId(entity.getType()).getPath();
+            c.stringQuery("ysm.entity_type",type);y(c,"is_player",false);y(c,"is_maid",c.nativeYsm()&&type.equals("maid"));
+        }
         else for(String name:List.of("entity_type","is_player","is_maid"))c.query("ysm."+name,(Object)null);
         y(c,"is_passenger",entity.hasVehicle());
         y(c,"is_sleep",entity.getPose()==EntityPose.SLEEPING);y(c,"is_sneak",entity.isOnGround()&&entity.isInSneakingPose());
@@ -232,7 +243,7 @@ public final class VanillaYsmQueries implements Molang.FunctionResolver {
         y(c,"rendering_in_paperdoll",false);y(c,"rendering_in_inventory",false);
         y(c,"weather",client.world.isThundering()?2:client.world.isRaining()?1:0);
         c.stringQuery("ysm.dimension_name",client.world.getRegistryKey().getValue().toString());
-        c.stringQuery("ysm.entity_type",Registries.ENTITY_TYPE.getId(player.getType()).getPath());c.stringQuery("ysm.texture_name",texture==null?"":texture);
+        c.stringQuery("ysm.entity_type",entityTypeName(true,Registries.ENTITY_TYPE.getId(player.getType()).toString()));c.stringQuery("ysm.texture_name",texture==null?"":texture);
         y(c,"is_player",true);y(c,"is_maid",false);y(c,"is_passenger",player.hasVehicle());y(c,"is_sleep",player.isSleeping());
         y(c,"is_sneak",player.isOnGround()&&player.isInSneakingPose());y(c,"eye_in_water",player.isSubmergedInWater());
         // Explicitly deprecated in OpenYSM 0306e1f: returns null, not a biome classification.
@@ -481,10 +492,10 @@ public final class VanillaYsmQueries implements Molang.FunctionResolver {
         if(nativeYsm&&slotFunction(name)&&!knownSlot(a.getFirst()))return null;
         if(nativeYsm&&relativeFunction(name)&&!nativeRelativeRange(number(a.get(0)),number(a.get(1)),number(a.get(2))))return null;
         return switch(name) {
-            case "query.position"->axis(position,integer(a,0));
+            case "query.position"->axis(position,integer(a,0),nativeYsm);
             case "query.position_delta"->axis(positionDelta(motion,entity.getVelocity(),new Vec3d(entity.getX()-entity.lastX,entity.getY()-entity.lastY,entity.getZ()-entity.lastZ),
-                    entity instanceof PlayerEntity&&entity!=client.player),integer(a,0));
-            case "query.rotation_to_camera"->cameraRotation(integer(a,0),client.gameRenderer.getCamera().getPitch(),client.gameRenderer.getCamera().getYaw());
+                    entity instanceof PlayerEntity&&entity!=client.player),integer(a,0),nativeYsm);
+            case "query.rotation_to_camera"->cameraRotation(integer(a,0),client.gameRenderer.getCamera().getPitch(),client.gameRenderer.getCamera().getYaw(),nativeYsm);
             case "query.is_item_name_any"->!stack(a).isEmpty()&&a.subList(1,a.size()).stream().anyMatch(value->id(value).equals(Registries.ITEM.getId(stack(a).getItem())));
             case "query.equipped_item_all_tags"->!stack(a).isEmpty()&&a.subList(1,a.size()).stream().allMatch(value->stack(a).isIn(TagKey.of(RegistryKeys.ITEM,id(value))));
             case "query.equipped_item_any_tag"->!stack(a).isEmpty()&&a.subList(1,a.size()).stream().anyMatch(value->stack(a).isIn(TagKey.of(RegistryKeys.ITEM,id(value))));
@@ -538,9 +549,10 @@ public final class VanillaYsmQueries implements Molang.FunctionResolver {
             for(var effect:effects)if(effect.getEffectType().matchesId(requestedId)){total+=effect.getAmplifier()+1;break;}}
         return total;
     }
-    private boolean matchesEquipment(String function,List<Object>a){
+    private Object matchesEquipment(String function,List<Object>a){
+        if(nativeYsm&&!supportsEquipmentSlot(function,a.getFirst()))return unsupportedEquipmentResult(function,true);
         EquipmentSlot slot=slot(a.get(0));boolean armor=slot!=EquipmentSlot.MAINHAND&&slot!=EquipmentSlot.OFFHAND;
-        if(function.equals("ctrl.armor")!=armor)return false;
+        if(function.equals("ctrl.armor")!=armor)return unsupportedEquipmentResult(function,false);
         Hand hand=slot==EquipmentSlot.OFFHAND?Hand.OFF_HAND:Hand.MAIN_HAND;
         if(!handPredicate(function,YsmNativeInputState.isSwinging(client,living,hand),YsmNativeInputState.isUsing(client,living,hand),living.isSleeping()))return false;
         ItemStack item=living.getEquippedStack(slot);Set<String> tags=new HashSet<>();
@@ -562,7 +574,7 @@ public final class VanillaYsmQueries implements Molang.FunctionResolver {
             "ysm.get_equipped_item_name","ctrl.hold","ctrl.swing","ctrl.use","ctrl.armor").contains(name);}
     private static boolean slotFunction(String name) {
         return Set.of("query.is_item_name_any","query.equipped_item_all_tags","query.equipped_item_any_tag","query.max_durability",
-                "query.remaining_durability","ysm.equipped_enchantment_level","ctrl.hold","ctrl.swing","ctrl.use","ctrl.armor").contains(name);
+                "query.remaining_durability","ysm.equipped_enchantment_level").contains(name);
     }
     static boolean knownSlot(Object value) {return value instanceof String name&&Set.of("mainhand","offhand","head","chest","legs","feet").contains(name.toLowerCase(Locale.ROOT));}
     private static boolean relativeFunction(String name) {
@@ -591,7 +603,28 @@ public final class VanillaYsmQueries implements Molang.FunctionResolver {
     private static double number(Object value){double result=value instanceof Number n?n.doubleValue():value instanceof Boolean b?b?1:0:Double.NaN;
         if(!Double.isFinite(result))throw new IllegalArgumentException("Native model query number");return result;}
     private static Identifier id(Object value){if(!(value instanceof String text)||text.length()>256)throw new IllegalArgumentException("Model query identifier");Identifier id=Identifier.tryParse(text.startsWith("#")?text.substring(1):text);if(id==null)throw new IllegalArgumentException("Invalid model query identifier");return id;}
-    private static double axis(Vec3d value,int axis){return switch(axis){case 0->value.x;case 1->value.y;case 2->value.z;default->throw new IllegalArgumentException("Model query axis");};}
+    static Double axis(Vec3d value,int axis,boolean nativeYsm){
+        return switch(axis){case 0->value.x;case 1->value.y;case 2->value.z;default->{
+            if(nativeYsm)yield null;
+            throw new IllegalArgumentException("Model query axis");
+        }};
+    }
+    /** YSMBinding keeps the player/maid aliases; every other living type keeps its namespace. */
+    static String entityTypeName(boolean player,String registryId){
+        if(player)return "player";
+        if(registryId==null)return "";
+        return registryId.equals("touhou_little_maid:maid")?"maid":registryId;
+    }
+    /** HandRenderFunction returns false for an illegal/armor slot; Armor returns unavailable. */
+    static boolean supportsEquipmentSlot(String function,Object value){
+        if(!knownSlot(value))return false;
+        EquipmentSlot slot=slot(value);
+        boolean armor=slot!=EquipmentSlot.MAINHAND&&slot!=EquipmentSlot.OFFHAND;
+        return function.equals("ctrl.armor")==armor;
+    }
+    static Object unsupportedEquipmentResult(String function,boolean nativeYsm){
+        return nativeYsm&&function.equals("ctrl.armor")?null:false;
+    }
     private static String hitTargetId(MinecraftClient client){
         HitResult hit=client.crosshairTarget;if(hit==null||hit.getType()==HitResult.Type.MISS)return "";
         if(hit instanceof BlockHitResult block)return Registries.BLOCK.getId(client.world.getBlockState(block.getBlockPos()).getBlock()).toString();
@@ -610,7 +643,13 @@ public final class VanillaYsmQueries implements Molang.FunctionResolver {
                 "query.remaining_durability","ysm.mouse","ysm.mod_version","ysm.relative_block_name","ysm.get_equipped_item_name").contains(name);
         if(size<minimum||exact&&size!=minimum||size>256||name.startsWith("ctrl.")&&size>3)throw new IllegalArgumentException("Native model query arguments: "+name);
     }
-    static double cameraRotation(int axis,double pitch,double yaw){return switch(axis){case 0->-pitch;case 1->180+yaw;default->throw new IllegalArgumentException("Camera rotation axis");};}
+    static double cameraRotation(int axis,double pitch,double yaw){return cameraRotation(axis,pitch,yaw,false);}
+    static Double cameraRotation(int axis,double pitch,double yaw,boolean nativeYsm){
+        return switch(axis){case 0->-pitch;case 1->180+yaw;default->{
+            if(nativeYsm)yield null;
+            throw new IllegalArgumentException("Camera rotation axis");
+        }};
+    }
     static double timeOfDay(long timestamp){return ((float)(timestamp+6000L)/24000)%1;}
     static boolean closeEyes(double tick,long uuidLeastBits,boolean sleeping){double phase=(tick+(Math.abs(uuidLeastBits)%10))%90;return sleeping||phase>85&&phase<90;}
     static double inputDirection(double x,double z,double yaw,boolean horizontal){

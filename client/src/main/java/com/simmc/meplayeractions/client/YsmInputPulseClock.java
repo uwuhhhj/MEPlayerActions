@@ -16,4 +16,14 @@ final class YsmInputPulseClock {
     void reset() { swingTicks=0;swingAge=0;swingSequence=0;clearUse(); }
     int swingTicks() { return swingTicks; } int swingAge() { return swingAge; }
     int sequence() { return swingSequence; } int useTicks() { return useTicks; } int useAge() { return useAge; }
+    /** InputStateKey.getSwingTicks prefers the real entity swing, then the local pending pulse. */
+    float swingTicks(boolean nativeSwinging,int nativeTicks,float fraction,boolean local) {
+        if(nativeSwinging)return Math.max(0,nativeTicks+fraction);
+        return local&&swingTicks>0?Math.max(1,swingAge+fraction):0;
+    }
+    /** InputStateKey.getAttackProgress prefers positive vanilla interpolation before the main-hand pulse. */
+    float attackProgress(float nativeProgress,boolean localMainHand,float resolvedSwingTicks) {
+        if(nativeProgress>0)return nativeProgress;
+        return localMainHand&&swingTicks>0?Math.min(1,resolvedSwingTicks/6):0;
+    }
 }

@@ -191,7 +191,7 @@ public final class ModelPreview implements AutoCloseable {
             if (camera != null && previewContext == Context.OWNER && client.player != null) {
                 try {
                     var scene = asset.scenes.get(Context.OWNER);
-                    var items = YsmItemRenderer.extract(client.player, scene.animationPlayer());
+                    var items = YsmItemRenderer.extract(client.player, scene.animationPlayer(), profile.isImportedBbModel());
                     var equipment = runtime != null && (runtime.options.hideVanillaEquipment || runtime.isServerDisguised(client.player.getUuid()))
                             ? List.<YsmEquipmentRenderer.Attachment>of()
                             : YsmEquipmentRenderer.extract(client.player, scene.animationPlayer());

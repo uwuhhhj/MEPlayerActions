@@ -109,6 +109,9 @@ public final class YsmModelProfile {
         this.soundResources = Collections.unmodifiableMap(sounds);
         Map<String, String> extras = new LinkedHashMap<>();
         JsonObject properties = properties();
+        booleanProperty(properties, "render_layers_first");
+        booleanProperty(properties, "all_cutout");
+        booleanProperty(properties, "merge_multiline_expr");
         if (properties.has("extra_animation")) {
             JsonObject entries = properties.getAsJsonObject("extra_animation");
             if (entries.size() > 128) throw new IllegalArgumentException("YSM extra action count");
@@ -123,9 +126,21 @@ public final class YsmModelProfile {
     }
 
     public boolean isYsm() { return manifest.has("spec"); }
+    /** Preserved source footer origin; folder format 65535 alone is not a BBModel import. */
+    public boolean isImportedBbModel() { return "bbmodel".equals(text(manifest, "mpa_source_format", "")); }
     public JsonObject sourceManifest() { return manifest.deepCopy(); }
     public JsonObject metadata() { return objectOrEmpty(manifest, "metadata"); }
     public JsonObject properties() { return objectOrEmpty(manifest, "properties"); }
+    public boolean renderLayersFirst() { return booleanProperty(properties(), "render_layers_first"); }
+    /** Source GPU forceCull metadata; the migrated CPU renderer intentionally keeps source CPU behavior. */
+    public boolean allCutout() { return booleanProperty(properties(), "all_cutout"); }
+    public boolean mergeMultilineExpressions() { return booleanProperty(properties(), "merge_multiline_expr"); }
+    private static boolean booleanProperty(JsonObject properties, String name) {
+        JsonElement value = properties.get(name);
+        if (value == null) return false;
+        // Preserve YsmJsonSupport.getBool's author-facing Gson conversion.
+        return value.getAsBoolean();
+    }
     public JsonObject languages() { return languages.deepCopy(); }
     /** Original controller definitions, merged in file/author order, without the outer key. */
     public JsonObject animationControllers() { return controllers.deepCopy(); }

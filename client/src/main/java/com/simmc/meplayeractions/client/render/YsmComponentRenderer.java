@@ -12,9 +12,7 @@ import com.simmc.meplayeractions.client.mixin.YsmFishingLineRendererInvoker;
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldExtractionContext;
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderContext;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.render.WorldRenderer;
 import net.minecraft.client.render.RenderLayers;
-import net.minecraft.client.render.entity.FishingBobberEntityRenderer;
 import net.minecraft.client.render.entity.state.FishingBobberEntityState;
 import net.minecraft.client.render.command.OrderedRenderCommandQueue;
 import net.minecraft.client.util.math.MatrixStack;
@@ -32,7 +30,6 @@ import net.minecraft.registry.RegistryKeys;
 import net.minecraft.registry.tag.TagKey;
 import net.minecraft.util.Arm;
 import net.minecraft.util.Identifier;
-import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
@@ -58,7 +55,7 @@ public final class YsmComponentRenderer {
     private static List<Map<String, Object>> info = List.of();
 
     private YsmComponentRenderer() { }
-    private record Key(UUID owner, String instance, UUID entity, String hash) { }
+    private record Key(UUID owner, String instance, UUID entity, String kind, String componentId, String hash) { }
     private static final class Playback {
         final AnimationPlayer player;
         final BbModel model;
@@ -103,9 +100,12 @@ public final class YsmComponentRenderer {
         List<Map<String, Object>> diagnostics = new ArrayList<>();
         Set<UUID> hidden = new HashSet<>();
         Map<UUID, PassengerModel> passengers = new HashMap<>();
-        float delta = MinecraftClient.getInstance().getRenderTickCounter().getTickProgress(false);
+        Vec3d camera = context.worldState().cameraRenderState.pos;
         for (Entity entity : context.world().getEntities()) {
-            if (MinecraftClient.getInstance().player != null && entity.isInvisibleTo(MinecraftClient.getInstance().player)) continue;
+            var presentation = NativePlayerPresentation.entityFrame(entity.getUuid());
+            // A component replaces only an entity present in this actual native world frame.
+            // This shares frozen-tick interpolation and renderer offsets with the player's body.
+            if (presentation == null || presentation.invisible()) continue;
             PlayerEntity owner = owner(entity);
             if (owner == null) continue;
             ClientRuntime.RenderBinding binding = runtime.appearanceBinding(owner.getUuid());
@@ -117,44 +117,39 @@ public final class YsmComponentRenderer {
             if (component == null) continue;
             try {
                 if (!ModelRenderer.prepare(component.hash(), component.model())) continue;
-                Key key = new Key(owner.getUuid(), binding.instance(), entity.getUuid(), component.hash());
+                Key key = new Key(owner.getUuid(), binding.instance(), entity.getUuid(), component.kind(), component.id(), component.hash());
                 live.add(key);
                 Playback playback = PLAYERS.computeIfAbsent(key, ignored -> new Playback(component.model()));
                 playback.player.enableNativeYsm();
                 playback.player.configureFrame(expressions -> {
-                    runtime.configureComponentExpressionContext(owner.getUuid(), entity, component.hash(), expressions);
-                    // Spatial queries read this component's interpolated native entity frame.
-                    expressions.query("query.life_time", (entity.age + (double) delta) / 20);
+                    runtime.configureComponentExpressionContext(owner.getUuid(), entity, component, expressions);
+                    // query.life_time stays the component's AnimationPlayer instance clock.
+                    // Spatial queries consume this same frozen native world entity frame.
                     expressions.query("query.is_on_ground", entity.isOnGround() ? 1 : 0);
                     expressions.query("query.is_in_water", entity.isTouchingWater() ? 1 : 0);
                     expressions.query("query.is_on_fire", entity.isOnFire() ? 1 : 0);
                     expressions.query("query.has_rider", entity.hasPassengers() ? 1 : 0);
                 });
-                List<BbModel.Layer> layers = componentLayers(playback, component.model(), entity, entity.age + delta);
+                List<BbModel.Layer> layers = componentLayers(playback, component.model(), entity, presentation.age());
                 Map<String, Double> queries = new HashMap<>(runtime.expressionQueries(owner.getUuid()));
-                queries.put("query.life_time", (entity.age + (double) delta) / 20);
-                List<BbModel.Vertex> vertices = playback.player.sample(entity.age + delta, layers, 0, 0, queries);
-                float yaw = bodyYaw(entity, delta);
+                queries.remove("query.life_time");
+                List<BbModel.Vertex> vertices = playback.player.sample(presentation.age(), layers, 0, 0, queries);
+                float yaw = bodyYaw(entity, presentation);
                 if (!kind.equals("projectile")) passengers.put(entity.getUuid(),
                         new PassengerModel(yaw, playback.player.boneTransforms()));
-                Vec3d pos = entity.getLerpedPos(delta);
+                Vec3d pos = presentation.presentationPosition();
                 Box bounds = meshBounds(pos, vertices);
                 if (vertices.isEmpty() || !context.frustum().isVisible(bounds)) continue;
-                Vec3d camera = context.camera().getCameraPos();
-                int light = WorldRenderer.getLightmapCoordinates(context.world(), BlockPos.ofFloored(pos));
+                int light = presentation.light();
                 next.add(new ComponentFrame(entity.getUuid(), owner.getUuid(), binding.instance(), kind, component.id(), component.hash(),
                         Registries.ENTITY_TYPE.getId(entity.getType()).toString(),
                         pos.x - camera.x, pos.y - camera.y, pos.z - camera.z, yaw,
-                        kind.equals("projectile") && !(entity instanceof FishingBobberEntity) ? entity.getLerpedPitch(delta) : 0,
+                        kind.equals("projectile") && !(entity instanceof FishingBobberEntity) ? pitch(entity, presentation) : 0,
                         light, List.copyOf(vertices)));
                 if (entity instanceof FishingBobberEntity bobber && bobber.getPlayerOwner() != null) {
-                    var renderer = MinecraftClient.getInstance().getEntityRenderDispatcher().getRenderer(bobber);
-                    if (renderer instanceof FishingBobberEntityRenderer nativeRenderer) {
-                        FishingBobberEntityState state = nativeRenderer.createRenderState();
-                        nativeRenderer.updateRenderState(bobber, state, delta);
-                        if (state.pos != null) lines.add(new FishingLine(pos.x - camera.x, pos.y - camera.y, pos.z - camera.z,
+                    if (presentation.state() instanceof FishingBobberEntityState state && state.pos != null)
+                        lines.add(new FishingLine(pos.x - camera.x, pos.y - camera.y, pos.z - camera.z,
                                 state.pos, MinecraftClient.getInstance().getWindow().getMinimumLineWidth()));
-                    }
                 }
                 hidden.add(entity.getUuid());
                 diagnostics.add(Map.of("entity", entity.getUuid().toString(), "owner", owner.getUuid().toString(),
@@ -168,6 +163,27 @@ public final class YsmComponentRenderer {
         frame = List.copyOf(next); replaced = Set.copyOf(hidden); info = List.copyOf(diagnostics);
         fishingLines = List.copyOf(lines);
         passengerModels = Map.copyOf(passengers);
+    }
+
+    /** Prefer the yaw already extracted by the native renderer, including its entity-specific tick delta. */
+    static float bodyYaw(Entity entity, NativePlayerPresentation.EntityFrame frame) {
+        if (frame.state() instanceof net.minecraft.client.render.entity.state.LivingEntityRenderState living) return living.bodyYaw;
+        if (frame.state() instanceof net.minecraft.client.render.entity.state.BoatEntityRenderState boat) return boat.yaw;
+        if (frame.state() instanceof net.minecraft.client.render.entity.state.ProjectileEntityRenderState projectile) return projectile.yaw;
+        if (frame.state() instanceof net.minecraft.client.render.entity.state.MinecartEntityRenderState minecart) {
+            if (!minecart.usesExperimentalController && minecart.futurePos != null && minecart.pastPos != null) {
+                Vec3d direction = minecart.pastPos.subtract(minecart.futurePos);
+                if (direction.lengthSquared() > 0) return (float) Math.toDegrees(Math.atan2(direction.z, direction.x));
+            }
+            return minecart.lerpedYaw;
+        }
+        return bodyYaw(entity, frame.tickDelta());
+    }
+
+    static float pitch(Entity entity, NativePlayerPresentation.EntityFrame frame) {
+        if (frame.state() instanceof net.minecraft.client.render.entity.state.ProjectileEntityRenderState projectile) return projectile.pitch;
+        if (frame.state() instanceof net.minecraft.client.render.entity.state.LivingEntityRenderState living) return living.pitch;
+        return entity.getLerpedPitch(frame.tickDelta());
     }
 
     /** CustomVehicleRenderer uses living body yaw and the original minecart rail tangent. */
@@ -207,7 +223,11 @@ public final class YsmComponentRenderer {
         String locatorName = index == 0 ? "PassengerLocator" : "PassengerLocator" + (index + 1);
         Matrix4f locator = source.locators().get(locatorName);
         if (locator == null || !YsmItemRenderer.usable(locator)) return new Matrix4f();
-        double ridingOffset = -(vehicle.getPassengerRidingPos(rider).y - vehicle.getY()) - .5;
+        var riderFrame = NativePlayerPresentation.entityFrame(rider.getUuid());
+        var vehicleFrame = NativePlayerPresentation.entityFrame(vehicle.getUuid());
+        double ridingOffset = riderFrame != null && vehicleFrame != null
+                ? -(riderFrame.nativeY() - vehicleFrame.nativeY()) - .5
+                : -(vehicle.getPassengerRidingPos(rider).y - vehicle.getY()) - .5;
         return passengerTransform(source.yaw(), locator, ridingOffset);
     }
 
@@ -268,7 +288,7 @@ public final class YsmComponentRenderer {
                 .filter(value -> value.kind().equals("fp_arm")).findFirst().orElseGet(() -> runtime.modelProfile(binding.owner()).components().stream()
                         .filter(value -> value.kind().equals("arm")).findFirst().orElse(null));
         if (component == null || !ModelRenderer.prepare(component.hash(), component.model())) return;
-        Key key = new Key(binding.owner(), binding.instance(), binding.owner(), component.hash());
+        Key key = new Key(binding.owner(), binding.instance(), binding.owner(), component.kind(), component.id(), component.hash());
         live.add(key);
         Playback playback = PLAYERS.computeIfAbsent(key, ignored -> new Playback(component.model()));
         playback.player.enableNativeYsm();
@@ -297,7 +317,8 @@ public final class YsmComponentRenderer {
         Map<String, Double> queries = new HashMap<>(runtime.expressionQueries(binding.owner()));
         for (String slot : decision.slots().keySet()) queries.put("ysm.pause." + family + slot.substring(slot.indexOf('.')), decision.pauseSlots().contains(slot) ? 1d : 0d);
         playback.player.configureFrame(expressions -> {
-            runtime.configureExpressionContext(binding.owner(), expressions);
+            runtime.configureComponentExpressionContext(binding.owner(), client.player, component, expressions);
+            expressions.query("ysm.is_first_person", 1d);
             for (String slot : decision.slots().keySet()) expressions.query("ysm.pause." + family + slot.substring(slot.indexOf('.')),
                     decision.pauseSlots().contains(slot) ? 1d : 0d);
         });

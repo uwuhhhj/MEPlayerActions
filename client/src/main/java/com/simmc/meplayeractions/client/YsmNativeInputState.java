@@ -89,15 +89,13 @@ public final class YsmNativeInputState {
     }
     public static float swingTicks(MinecraftClient client,LivingEntity entity,float fraction) {
         if(entity==null||entity.isSleeping()||local(client,entity)&&usingOffhandShield(client.player))return 0;
-        if(local(client,entity)&&CLOCK.swingTicks()>0)return Math.max(1,CLOCK.swingAge()+fraction);
-        return entity.handSwinging?Math.max(0,entity.handSwingTicks+fraction):0;
+        return CLOCK.swingTicks(entity.handSwinging,entity.handSwingTicks,fraction,local(client,entity));
     }
     public static float attackProgress(MinecraftClient client,LivingEntity entity,float fraction) {
         if(entity==null||entity.isSleeping()||local(client,entity)&&usingOffhandShield(client.player))return 0;
-        if(local(client,entity)&&CLOCK.swingTicks()>0&&swingHand==Hand.MAIN_HAND)
-            return Math.min(1,swingTicks(client,entity,fraction)/6);
         float nativeProgress=entity.getHandSwingProgress(fraction);if(nativeProgress>0)return nativeProgress;
-        return 0;
+        return CLOCK.attackProgress(nativeProgress,local(client,entity)&&swingHand==Hand.MAIN_HAND,
+                swingTicks(client,entity,fraction));
     }
     public static long swingSequence(MinecraftClient client,LivingEntity entity) {
         return local(client,entity)&&CLOCK.swingTicks()>0?CLOCK.sequence():0;

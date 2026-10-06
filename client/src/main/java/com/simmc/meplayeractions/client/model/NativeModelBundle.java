@@ -94,9 +94,11 @@ public final class NativeModelBundle {
     public static LocalModelLibrary.Loaded decode(byte[] bundle, String textureId) throws IOException {
         Validated value = validate(bundle); Map<String, byte[]> files = value.files();
         if (value.kind().equals("bbmodel")) {
-            if (textureId != null && !textureId.isEmpty()) throw new IOException("独立 BBModel 没有 YSM 皮肤列表");
-            byte[] raw = files.get(value.entry());
-            return new LocalModelLibrary.Loaded(AssetTransfer.hash(raw), BbModel.parse(raw));
+            var imported = NativeBbModel.read(files.get(value.entry()), files, textureId);
+            // The original bundle already passed the 8 MiB wire budget. Source mesh/Bezier baking
+            // may expand its derived runtime JSON; the independent 64 MiB renderer budget still applies.
+            return new LocalModelLibrary.Loaded(AssetTransfer.hash(imported.raw()), BbModel.parseLocal(imported.raw()),
+                    imported.previewAnimation(), imported.profile());
         }
         YsmFolderModel.Imported imported = YsmFolderModel.readNetworkMemoryWithProfile(files, textureId);
         return new LocalModelLibrary.Loaded(AssetTransfer.hash(imported.raw()), BbModel.parse(imported.raw()),

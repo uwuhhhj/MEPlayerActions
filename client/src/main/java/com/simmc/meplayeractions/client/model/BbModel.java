@@ -196,6 +196,13 @@ public final class BbModel {
     public boolean animationFromPrimaryAssembly(String name) { return animationCatalog.fromPrimaryAssembly(name); }
     public VanillaYsmAnimations.Catalog animationCatalog() { return animationCatalog; }
     public int cubeCount() { return cubeCount; }
+    /** Immutable copy of the stored author basis rotation, in degrees. */
+    Vector3f initialBoneRotation(int bone) { return new Vector3f(bones.get(bone).rotation); }
+    /** Stable stored-bone index for source-derived semantic pose adapters. */
+    int boneIndex(String name) {
+        for (int i = 0; i < bones.size(); i++) if (bones.get(i).name.equals(name)) return i;
+        return -1;
+    }
     /** Geometry preparation never evaluates author expressions or timeline effects. */
     public List<Vertex> basisVertices() { return vertices(emptyPose()); }
     public Map<String,Matrix4f> basisBoneTransforms() { return boneTransforms(emptyPose(), false); }
@@ -523,6 +530,29 @@ public final class BbModel {
         }
         return new Evaluated(pose, animationWeight(name, context));
     }
+    /** Raw native queues retain animation bone order; channel expressions are evaluated later by their provider. */
+    Set<Integer> nativeAnimationBones(String name) { return clips.get(name).tracks.keySet(); }
+    boolean nativeChannelDeclared(String name, int bone, int channel) {
+        Track[] tracks = clips.get(name).tracks.get(bone);
+        return tracks != null && tracks[channel] != null;
+    }
+    /** AnimationProcessor asks rotation, position, then scale. Do not sample other channels or blend_weight here. */
+    Vector3f evaluateNativeChannel(String name, double elapsedTicks, String loop, boolean beginning,
+                                  int bone, int channel, Molang.Context context, Pose previousControllerPose) {
+        Track[] tracks = clips.get(name).tracks.get(bone);
+        if (tracks == null || tracks[channel] == null) return null;
+        Track track = tracks[channel];
+        Vector3f current = previousControllerPose == null ? null : previousControllerPose.channels[bone][channel];
+        current = current == null ? defaultValue(channel) : new Vector3f(current);
+        if (channel == 1) current.mul((float) DEG); else if (channel == 0 && legacyAnimationAxes) current.x = -current.x;
+        String previousScope = context.physicsScope();
+        try {
+            if (nativeFormatVersion > 0) context.physicsScope(bones.get(bone).id);
+            // TransitionKeyFrame.evaluateRaw uses the first pre point, with the current playback's anim_time.
+            return beginning ? track.keys[0].pre.value(context, current)
+                    : track.sample(Math.max(0, elapsedTicks) / 20, loop.equals("LOOP"), context, current);
+        } finally { context.physicsScope(previousScope); }
+    }
     void clipEvents(String name, String loop, double beforeTicks, double afterTicks, Molang.Context context) {
         events(new Layer("ysm", name, 0, 1, loop, 0, 0), beforeTicks, afterTicks, context);
     }
@@ -606,6 +636,15 @@ public final class BbModel {
     }
 
     Map<String, Matrix4f> boneTransforms(Pose pose) { return boneTransforms(pose, true); }
+    /** Sparkle VANILLA_EQUIPMENT uses prepMatrixForEquipmentLocator: pivot/rotation chains without bone scale. */
+    Map<String, Matrix4f> equipmentLocatorTransforms(Pose pose) {
+        Matrix4f[] matrices = matrices(pose, false);
+        Map<String, Matrix4f> result = new LinkedHashMap<>();
+        // The source caller ignores the helper's hidden-scale return; geometry visibility does not suppress this chain.
+        for (int i = 0; i < bones.size(); i++) if (!bones.get(i).name.isEmpty())
+            result.put(bones.get(i).name, new Matrix4f(matrices[i]));
+        return Collections.unmodifiableMap(result);
+    }
     private Map<String, Matrix4f> boneTransforms(Pose pose, boolean visibleOnly) {
         Matrix4f[] matrices = matrices(pose); Map<String, Matrix4f> result = new LinkedHashMap<>();
         boolean[] visible = new boolean[bones.size()];
@@ -617,7 +656,8 @@ public final class BbModel {
         }
         return Collections.unmodifiableMap(result);
     }
-    private Matrix4f[] matrices(Pose pose) {
+    private Matrix4f[] matrices(Pose pose) { return matrices(pose, true); }
+    private Matrix4f[] matrices(Pose pose, boolean includeBoneScale) {
         Matrix4f[] transforms = new Matrix4f[bones.size()];
         for (int i = 0; i < bones.size(); i++) {
             Bone bone = bones.get(i);
@@ -635,7 +675,7 @@ public final class BbModel {
                     .rotateX((float) ((bone.rotation.x + rotation.x) * DEG));
             Vector3f look = pose.look[i];
             if (look != null) transform.rotateY((float) (look.y * DEG)).rotateX((float) (look.x * DEG));
-            transform.scale(scale);
+            if (includeBoneScale) transform.scale(scale);
             transforms[i] = transform;
 
         }

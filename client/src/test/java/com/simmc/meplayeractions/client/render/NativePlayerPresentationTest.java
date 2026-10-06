@@ -1,6 +1,7 @@
 package com.simmc.meplayeractions.client.render;
 
 import net.minecraft.client.render.entity.state.PlayerEntityRenderState;
+import net.minecraft.client.render.entity.state.EntityRenderState;
 import net.minecraft.entity.EntityPose;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
@@ -116,6 +117,52 @@ class NativePlayerPresentationTest {
         NativePlayerPresentation.store(self, state, .75f, Vec3d.ZERO, new Matrix4f(), false);
         assertNotNull(NativePlayerPresentation.get(self));
         assertFalse(NativePlayerPresentation.captured(self), "A first-person fallback is not a visible native world body");
+    }
+
+    @Test void vehicleAndProjectileFramesUseNativeOriginsOffsetsFrozenDeltaAndVisibility() {
+        UUID entity = UUID.randomUUID();
+        EntityRenderState state = new EntityRenderState();
+        state.x = 18.25;
+        state.y = 67.75;
+        state.z = -4.5;
+        state.age = 123.625f;
+        state.light = 0xA000A0;
+        state.invisible = true;
+        state.outlineColor = 0xFF123456;
+        Vec3d rendererOffset = new Vec3d(.125, -.25, .5);
+        var frame = NativePlayerPresentation.storeEntity(entity, state, .625f, rendererOffset);
+        assertEquals(new Vec3d(18.25, 67.75, -4.5), frame.entityPosition());
+        assertEquals(new Vec3d(18.375, 67.5, -4), frame.presentationPosition());
+        assertEquals(.625f, frame.tickDelta());
+        assertEquals(123.625f, frame.age());
+        assertEquals(0xA000A0, frame.light());
+        assertTrue(frame.invisible());
+        assertEquals(0xFF123456, frame.outlineColor());
+        assertSame(state, frame.state(), "Accessories read the exact native queue snapshot without extracting it again");
+        assertSame(frame, NativePlayerPresentation.entityFrame(entity));
+        state.x = 999;
+        state.age = 999;
+        state.light = 0;
+        state.invisible = false;
+        state.outlineColor = 0;
+        assertEquals(18.375, frame.x());
+        assertEquals(18.25, frame.nativeX());
+        assertEquals(123.625f, frame.age());
+        assertEquals(0xA000A0, frame.light());
+        assertTrue(frame.invisible());
+        assertEquals(0xFF123456, frame.outlineColor());
+    }
+
+    @Test void worldFrameCameraAndAllEntitySnapshotsAreClearedTogether() {
+        Vec3d camera = new Vec3d(30.5, 80.125, -40.75);
+        NativePlayerPresentation.beginFrame(List.of(), camera);
+        UUID entity = UUID.randomUUID();
+        NativePlayerPresentation.storeEntity(entity, new EntityRenderState(), 1, Vec3d.ZERO);
+        assertEquals(camera, NativePlayerPresentation.cameraPosition());
+        assertNotNull(NativePlayerPresentation.entityFrame(entity));
+        NativePlayerPresentation.beginFrame(List.of());
+        assertNull(NativePlayerPresentation.entityFrame(entity));
+        assertEquals(Vec3d.ZERO, NativePlayerPresentation.cameraPosition());
     }
 
     @Test void sleepingAndUpsideDownParentStateIsCopiedWithoutDisablingVanillaAnimations() {

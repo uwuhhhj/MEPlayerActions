@@ -44,7 +44,11 @@ public final class NativeYsmFile {
     static YsmFolderModel.Imported importModel(RawYsmModel model, String textureId) throws IOException {
         if (model.mainEntity.mainModel == null || model.mainEntity.textures.isEmpty()) throw new IOException("YSM 主模型或贴图缺失");
         Map<String, byte[]> files = new LinkedHashMap<>();
-        JsonObject manifest = new JsonObject(); manifest.addProperty("spec", 2); manifest.addProperty("mpa_native_format", model.formatVersion);
+        JsonObject manifest = new JsonObject(); manifest.addProperty("spec", 2);
+        // Sparkle's BB converter uses the folder profile (65535), not a public binary version.
+        if (model.formatVersion != 65535) manifest.addProperty("mpa_native_format", model.formatVersion);
+        if ("sparkle_morpher:bbmodel_import".equals(model.footer.extra))
+            manifest.addProperty("mpa_source_format", "bbmodel");
         manifest.add("metadata", metadata(model.metadata, files)); manifest.add("properties", properties(model.properties, files));
         JsonObject declarations = new JsonObject(), player = new JsonObject(), geometry = new JsonObject(), animationFiles = new JsonObject();
         declarations.add("player", player); manifest.add("files", declarations);
@@ -54,8 +58,11 @@ public final class NativeYsmFile {
         }
         player.add("model", geometry);
         for (var entry : model.mainEntity.animationFiles.entrySet()) {
-            String family = entry.getKey(), path = "animations/" + family + ".json";
+            // BBToRawConverter stores animation-main; binary files already use main/arm/extra.
+            String family = entry.getKey().startsWith("animation-") ? entry.getKey().substring(10) : entry.getKey();
+            String path = "animations/" + family + ".json";
             if (!YsmFolderModel.safeRelativePath(path)) throw new IOException("YSM 动画族名称无效");
+            if (animationFiles.has(family)) throw new IOException("YSM 动画族名称重复");
             putJson(files, path, animations(entry.getValue())); animationFiles.addProperty(family, path);
         }
         if (!animationFiles.has("main")) {
@@ -227,6 +234,7 @@ public final class NativeYsmFile {
         JsonObject result = new JsonObject(); result.addProperty("height_scale", source.heightScale); result.addProperty("width_scale", source.widthScale);
         result.addProperty("default_texture", stem(source.defaultTexture)); result.addProperty("preview_animation", source.previewAnimation);
         result.addProperty("free", source.isFree); result.addProperty("render_layers_first", source.renderLayersFirst); result.addProperty("all_cutout", source.allCutout);
+        result.addProperty("merge_multiline_expr", source.mergeMultilineExpr);
         result.addProperty("disable_preview_rotation", source.disablePreviewRotation); result.addProperty("gui_no_lighting", source.guiNoLighting);
         JsonObject extra = new JsonObject(); source.extraAnimations.forEach(extra::addProperty); result.add("extra_animation", extra);
         JsonArray groups = new JsonArray();

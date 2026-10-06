@@ -6,6 +6,7 @@ import com.simmc.meplayeractions.client.model.YsmQueryDiagnostics;
 import com.simmc.meplayeractions.client.model.BbModel;
 import com.simmc.meplayeractions.client.model.YsmModelProfile;
 import com.simmc.meplayeractions.client.model.YsmRenderScale;
+import com.simmc.meplayeractions.client.model.NativeBbmodelPoseAdapter;
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldExtractionContext;
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderContext;
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents;
@@ -242,6 +243,7 @@ public final class ModelRenderer {
             return;
         }
         NativePlayerPresentation.beginFrame(List.of());
+        NativeRenderPhases.beginFrame();
         frame = List.of();
         frameModels = List.of();
         itemInfo = List.of();
@@ -276,12 +278,15 @@ public final class ModelRenderer {
             submittedItemDraws = List.of();
             submittedEquipmentDraws = List.of();
             YsmComponentRenderer.clear();
+            NativePlayerPresentation.beginFrame(List.of());
+            NativeRenderPhases.beginFrame();
             firstPersonSkipped = 0;
             extractedFrames++;
             return;
         }
-        NativePlayerPresentation.beginFrame(context.worldState().entityRenderStates);
         Vec3d camera = context.worldState().cameraRenderState.pos;
+        NativePlayerPresentation.beginFrame(context.worldState().entityRenderStates, camera);
+        NativeRenderPhases.beginFrame();
         UUID cameraOwner = context.camera().getFocusedEntity() == null
                 ? null : context.camera().getFocusedEntity().getUuid();
         boolean firstPerson = !context.camera().isThirdPerson();
@@ -305,11 +310,14 @@ public final class ModelRenderer {
             try {
                 YsmModelProfile profile = activeRuntime.modelProfile(binding.owner());
                 boolean nativeYsm = profile.isYsm();
+                var nativePlayer = activeRuntime.nativePlayer(binding.owner());
                 YsmRenderScale modelScale = YsmRenderScale.forProfile(profile);
                 AnimationPlayer player = PLAYERS.computeIfAbsent(key, ignored -> new AnimationPlayer(binding.model()));
                 if(nativeYsm){player.enableNativeYsm();player.enableQueryDiagnostics();}
                 player.syncListener(nativeYsm ? activeRuntime.nativeSyncListener(binding.owner()) : null);
                 player.configureFrame(expressions -> activeRuntime.configureExpressionContext(binding.owner(), expressions));
+                if (nativeYsm && profile.isImportedBbModel())
+                    NativeBbmodelPoseAdapter.install(player, binding.model(), nativePlayer, NativeHumanoidPoseSampler.frame(nativePlayer));
                 List<BbModel.Vertex> vertices = player.sample(binding.serverTick(), binding.layers(),
                         binding.headYaw() - binding.bodyYaw(), binding.headPitch(), activeRuntime.expressionQueries(binding.owner()),
                         activeRuntime.accessoryState(binding.owner()), activeRuntime.localParameters(binding.owner()));
@@ -321,13 +329,18 @@ public final class ModelRenderer {
                     skipped++;
                     continue;
                 }
-                var nativePlayer = activeRuntime.nativePlayer(binding.owner());
                 // Off-screen remote players have no body in this vanilla frame. Never reuse a previous frame's anchor.
                 if (nativePlayer != null && !binding.owner().equals(localOwner)
                         && !NativePlayerPresentation.captured(binding.owner())) continue;
-                var observer = MinecraftClient.getInstance().player;
-                boolean showModel = activeRuntime.shouldShowModel(binding.owner())
-                        && (!nativeYsm || nativePlayer == null || observer == null || !nativePlayer.isInvisibleTo(observer));
+                var presentation = NativePlayerPresentation.get(binding.owner());
+                var vanillaFrame = NativePlayerPresentation.entityFrame(binding.owner());
+                // OpenYSM's native body branch: hidden/invisible geometry is omitted, but glowing
+                // invisible players retain the source outline render type and native team color.
+                boolean requestedModel = activeRuntime.shouldShowModel(binding.owner());
+                boolean outlineOnly = nativeYsm && vanillaFrame != null && vanillaFrame.invisible()
+                        && vanillaFrame.outlineColor() != 0;
+                boolean showModel = requestedModel && (!nativeYsm || vanillaFrame == null || !vanillaFrame.invisible() || outlineOnly);
+                int outlineColor = outlineOnly ? vanillaFrame.outlineColor() : 0;
                 if (vertices.isEmpty()) continue;
                 Matrix4f passenger = nativeYsm ? YsmComponentRenderer.passengerTransform(nativePlayer) : new Matrix4f();
                 Matrix4f body = nativeYsm && nativePlayer != null ? NativePlayerPresentation.frame(nativePlayer).parent()
@@ -348,10 +361,14 @@ public final class ModelRenderer {
                 List<FrozenTexture> meshes = new ArrayList<>(byTexture.size());
                 Identifier playerSkin = nativeYsm ? YsmPlayerSkin.resolve(activeRuntime.appearanceModelId(binding.owner()),
                         activeRuntime.nativePlayer(binding.owner())).orElse(null) : null;
-                byTexture.forEach((index, mesh) -> meshes.add(new FrozenTexture(
-                        playerSkin != null && index == 0 ? RenderLayers.entityCutoutNoCull(playerSkin)
-                                : nativeYsm ? asset.textures().get(index).nativeLayer() : asset.textures().get(index).layer(), List.copyOf(mesh))));
-                int light = WorldRenderer.getLightmapCoordinates(context.world(),
+                byTexture.forEach((index, mesh) -> {
+                    Identifier textureId = playerSkin != null && index == 0 ? playerSkin : asset.textures().get(index).id();
+                    RenderLayer layer = outlineOnly ? RenderLayers.outlineNoCull(textureId)
+                            : playerSkin != null && index == 0 ? RenderLayers.entityCutoutNoCull(playerSkin)
+                            : nativeYsm ? asset.textures().get(index).nativeLayer() : asset.textures().get(index).layer();
+                    meshes.add(new FrozenTexture(layer, List.copyOf(mesh)));
+                });
+                int light = vanillaFrame != null ? vanillaFrame.light() : WorldRenderer.getLightmapCoordinates(context.world(),
                         BlockPos.ofFloored(binding.x(), binding.y() + Math.max(0.25, binding.scale()), binding.z()));
                 List<YsmItemRenderer.Attachment> items = List.of();
                 List<YsmEquipmentRenderer.Attachment> equipment = List.of();
@@ -360,11 +377,12 @@ public final class ModelRenderer {
                 try {
                     // Visible vanilla players already render hand items at their native pose.
                     // Hiding author geometry alone must not remove the player's real held items.
-                    if (hideNativePlayer) items = YsmItemRenderer.extract(nativePlayer, player);
+                    if (hideNativePlayer && (!nativeYsm || nativePlayer == null || !nativePlayer.isSpectator()))
+                        items = YsmItemRenderer.extract(nativePlayer, player, profile.isImportedBbModel());
                     // Native armor/cape/wings follow the original-player visibility policy. Visible
                     // vanilla players already submit their own equipment, so never attach it twice.
                     // Authored model geometry and independently resolved main/off-hand items stay visible.
-                    if (!hideNativeEquipment && hideNativePlayer)
+                    if (!hideNativeEquipment && hideNativePlayer && (!nativeYsm || nativePlayer == null || !nativePlayer.isSpectator()))
                         equipment = YsmEquipmentRenderer.extract(nativePlayer, player);
                 } catch (RuntimeException failure) { LOGGER.warn("Cannot extract equipment for {}: {}", binding.owner(), failure.toString()); }
                 Map<String, Object> itemSource = new LinkedHashMap<>();
@@ -378,6 +396,8 @@ public final class ModelRenderer {
                 itemSource.put("hideNativeEquipment", hideNativeEquipment);
                 itemSource.put("hideNativePlayer", hideNativePlayer);
                 itemSource.put("showDisguiseModel", showModel);
+                itemSource.put("outlineOnly", outlineOnly);
+                itemSource.put("renderLayersFirst", nativeYsm && profile.renderLayersFirst());
                 if (nativePlayer != null) {
                     itemSource.put("nativeEntityUuid", nativePlayer.getUuid().toString()); itemSource.put("nativeEntityId", nativePlayer.getId());
                     itemSource.put("swinging", nativePlayer.handSwinging); itemSource.put("swingTicks", nativePlayer.handSwingTicks);
@@ -399,8 +419,10 @@ public final class ModelRenderer {
                 if (meshes.isEmpty() && items.isEmpty() && equipment.isEmpty()) continue;
                 nextFrame.add(new FrozenModel(binding.x() - camera.x, binding.y() - camera.y,
                         binding.z() - camera.z, binding.bodyYaw(), binding.scale(), nativeYsm, modelScale, parent,
-                        light, nativeYsm && nativePlayer != null ? OverlayTexture.getUv(0, nativePlayer.hurtTime > 0 || nativePlayer.deathTime > 0)
-                                : OverlayTexture.DEFAULT_UV, List.copyOf(meshes), items, equipment, Map.copyOf(itemSource)));
+                        light, nativeYsm && presentation != null ? OverlayTexture.getUv(0,
+                                presentation.renderState().hurt || presentation.renderState().deathTime > 0)
+                                : OverlayTexture.DEFAULT_UV, nativeYsm && profile.renderLayersFirst(),
+                        outlineColor, List.copyOf(meshes), items, equipment, Map.copyOf(itemSource)));
                 if (showModel) modelInfo.add(new FrameModel(binding.owner().toString(), binding.assetHash(), vertices.size(),
                         geometry.minY, geometry.maxY, binding.bodyYaw(), 180 - binding.bodyYaw(),
                         geometry.minX, geometry.maxX, geometry.minZ, geometry.maxZ,
@@ -468,17 +490,22 @@ public final class ModelRenderer {
                     matrices.translate(0, YsmRenderScale.PLAYER_BODY_Y_OFFSET, 0);
                     matrices.scale(model.modelScale().x(), model.modelScale().y(), model.modelScale().z());
                 }
+                var geometryQueue = model.nativeYsm() ? NativeRenderPhases.geometry(context.commandQueue(), model.layersFirst())
+                        : context.commandQueue();
+                var attachmentsQueue = model.nativeYsm() ? NativeRenderPhases.attachments(context.commandQueue(), model.layersFirst())
+                        : context.commandQueue();
                 for (FrozenTexture texture : model.textures()) {
-                    context.commandQueue().submitCustom(matrices, texture.layer(),
-                            (entry, consumer) -> emit(entry, consumer, texture.vertices(), model.light(), model.overlay()));
+                    geometryQueue.submitCustom(matrices, texture.layer(),
+                            (entry, consumer) -> emit(entry, consumer, texture.vertices(), model.light(), model.overlay(),
+                                    model.outlineColor() == 0 ? 0xFFFFFFFF : model.outlineColor()));
                 }
-                for (Map<String, Object> draw : YsmItemRenderer.submit(model.items(), matrices, context.commandQueue(), model.light())) {
+                for (Map<String, Object> draw : YsmItemRenderer.submit(model.items(), matrices, attachmentsQueue, model.light())) {
                     Map<String, Object> proof = new LinkedHashMap<>(model.itemSource());
                     proof.putAll(draw); proof.put("extractedFrame", extractedFrames);
                     itemDraws.add(Map.copyOf(proof));
                 }
                 long equipmentBefore=YsmEquipmentRenderer.submittedEquipment();
-                YsmEquipmentRenderer.submit(model.equipment(), matrices, context.commandQueue(), model.light());
+                YsmEquipmentRenderer.submit(model.equipment(), matrices, attachmentsQueue, model.light());
                 Map<String,Object> equipmentProof=new LinkedHashMap<>(model.itemSource());
                 equipmentProof.put("extractedFrame",extractedFrames);
                 equipmentProof.put("equipment",YsmEquipmentRenderer.diagnostics(model.equipment()));
@@ -544,10 +571,13 @@ public final class ModelRenderer {
         emit(entry, consumer, vertices, light, OverlayTexture.DEFAULT_UV);
     }
     private static void emit(MatrixStack.Entry entry, VertexConsumer consumer, List<BbModel.Vertex> vertices, int light, int overlay) {
+        emit(entry, consumer, vertices, light, overlay, 0xFFFFFFFF);
+    }
+    private static void emit(MatrixStack.Entry entry, VertexConsumer consumer, List<BbModel.Vertex> vertices, int light, int overlay, int color) {
         drawnBatches++;
         for (BbModel.Vertex vertex : vertices) {
             consumer.vertex(entry, vertex.x(), vertex.y(), vertex.z())
-                    .color(0xFFFFFFFF).texture(vertex.u(), vertex.v())
+                    .color(color).texture(vertex.u(), vertex.v())
                     .overlay(overlay).light(vertex.emissive() ? 0xF000F0 : light)
                     .normal(entry, vertex.nx(), vertex.ny(), vertex.nz());
         }
@@ -558,7 +588,7 @@ public final class ModelRenderer {
     private record InstanceKey(UUID owner, String instance, String hash) { }
     private record FrozenTexture(RenderLayer layer, List<BbModel.Vertex> vertices) { }
     private record FrozenModel(double x, double y, double z, float yaw, float scale,
-                               boolean nativeYsm, YsmRenderScale modelScale, Matrix4f parent, int light, int overlay,
+                               boolean nativeYsm, YsmRenderScale modelScale, Matrix4f parent, int light, int overlay, boolean layersFirst, int outlineColor,
                                List<FrozenTexture> textures, List<YsmItemRenderer.Attachment> items,
                                List<YsmEquipmentRenderer.Attachment> equipment, Map<String, Object> itemSource) { }
 }

@@ -4,9 +4,10 @@ import com.google.gson.*;
 import com.simmc.meplayeractions.expression.Molang;
 import java.util.*;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 /** Bounded, per-instance interpretation of OpenYSM controller definitions.
- * Semantics audited against OpenYSM-Updated 0306e1f (MIT); this is an independent implementation.
+ * Controller and playback routines migrated from OpenYSM-Updated 0306e1f (MIT), adapted to the bounded MPA model representation.
  * State animation expressions enable slots; clip blend_weight supplies their numeric influence.
  */
 public final class YsmAnimationController {
@@ -39,9 +40,10 @@ public final class YsmAnimationController {
         }
     }
     record Run(String animation, String loop, double before, double elapsed, boolean active, boolean events,
-               Playback playback) { }
+               Playback playback, boolean contributes, boolean beginning, boolean ending, double progress, long activation,
+               double weight) { }
     record Frame(String name, long revision, double changedAt, Blend blend, List<Run> runs,
-                 boolean suppressed, boolean deprecated, boolean cap) { }
+                 boolean suppressed, boolean deprecated, boolean cap, boolean builtin) { }
 
     private final BbModel model;
     private final Map<String, Runtime> runtimes = new LinkedHashMap<>();
@@ -52,8 +54,10 @@ public final class YsmAnimationController {
     private boolean builtinEventPhase;
     private double tick;
     private long sequence;
+    private long playbackSequence;
     private double firstTick = Double.NaN;
     private int pendingCaptures;
+    private boolean globalSounds;
 
     /** OpenYSM 0306e1f AnimationControllerContext belongs to one animation instance/slot.
      * Captures wait for playback/state boundaries; they are not a frame-end queue.
@@ -66,6 +70,7 @@ public final class YsmAnimationController {
         double animTime;
         int instructionIndex, effectIndex;
         boolean flushing;
+        boolean sounds;
         boolean capture(List<Object> args) {
             if (flushing || args.isEmpty() || !(args.getFirst() instanceof String key) || key.isEmpty()
                     || args.size() - 1 > MAX_ARGUMENTS || captures.size() >= MAX_CAPTURES) return false;
@@ -73,7 +78,7 @@ public final class YsmAnimationController {
             return true;
         }
         void resetEvents() { instructionIndex = effectIndex = 0; }
-        void clear() { captures.clear(); scope.clear(); animTime = 0; resetEvents(); }
+        void clear() { captures.clear(); scope.clear(); animTime = 0; sounds = false; resetEvents(); }
     }
 
     Object defer(List<Object> args) {
@@ -84,7 +89,24 @@ public final class YsmAnimationController {
         boolean previous = captureAllowed; captureAllowed = clientSide;
         try { action.run(); } finally { captureAllowed = previous; }
     }
-    private void discard(Playback playback) { pendingCaptures = Math.max(0, pendingCaptures - playback.captures.size()); playback.clear(); }
+    private void discard(Playback playback, Molang.Context context) { stopPlayback(playback, context); pendingCaptures = Math.max(0, pendingCaptures - playback.captures.size()); playback.clear(); }
+    /** Source has distinct instance, controller PlaybackFlags and per-animation SoundKeyFrameExecutor managers. */
+    void soundStarted(List<Object> arguments) {
+        boolean global = arguments.size() >= 3 && ((int)number(arguments.get(2)) & 2) != 0;
+        if (global || evaluating == null && evaluatingPlayback == null) globalSounds = true;
+        else if (evaluatingPlayback != null) evaluatingPlayback.sounds = true;
+        else evaluating.sounds = true;
+    }
+    private void stopScope(String scope, Molang.Context context, boolean global) {
+        if (context == null || !context.nativeYsm() || context.functionResolver() == null) return;
+        String previous = context.effectScope(); context.effectScope(scope);
+        try { context.functionResolver().call("ysm.stop_all_sounds", global ? List.of(1d) : List.of()); }
+        finally { context.effectScope(previous); }
+    }
+    private void stopPlayback(Playback playback, Molang.Context context) {
+        if (!playback.sounds) return;
+        playback.sounds = false; stopScope("playback:" + playback.effectId, context, false);
+    }
     void withPlayback(Playback playback, boolean clientSide, Molang.Context context, Runnable action) {
         String previousEffectScope=context.effectScope();context.effectScope("playback:"+playback.effectId);
         Map<String,Object> previousScope = context.contextValues(), previousQueries = context.queryValues();
@@ -163,13 +185,22 @@ public final class YsmAnimationController {
         if (slot.startsWith("armor")) return 190;
         return 145;
     }
-    public void reset() { runtimes.values().forEach(Runtime::reset); firstTick = Double.NaN; evaluatingPlayback = null; captureAllowed = false; pendingCaptures = 0; }
+    public void reset() { reset(null); }
+    void reset(Molang.Context context) {
+        runtimes.values().forEach(runtime -> runtime.reset(context));
+        if (globalSounds) stopScope("", context, true);
+        globalSounds = false; firstTick = Double.NaN; evaluatingPlayback = null; captureAllowed = false; pendingCaptures = 0;
+    }
     public Map<String, String> states() {
         Map<String, String> result = new LinkedHashMap<>();
         runtimes.forEach((name, runtime) -> result.put(name, runtime.state == null ? "ysm-builtin" : runtime.state.name));
         return Collections.unmodifiableMap(result);
     }
     void sample(double tick, List<BbModel.Layer> layers, Molang.Context context, BiConsumer<Frame, Molang.Context> visitor) {
+        sample(tick, layers, context, visitor, frame -> { });
+    }
+    void sample(double tick, List<BbModel.Layer> layers, Molang.Context context, BiConsumer<Frame, Molang.Context> visitor,
+                Consumer<Molang.Context> beforeNativeWeight) {
         this.tick = tick; if (Double.isNaN(firstTick)) firstTick = tick; Map<String, BbModel.Layer> builtins = new HashMap<>();
         for (BbModel.Layer layer : layers) {
             String slot = switch (layer.layer()) {
@@ -187,7 +218,7 @@ public final class YsmAnimationController {
         }
         Map<String,Object> queries = context.queryValues(); Map<String,Object> scope = context.contextValues();String effectScope=context.effectScope();
         try {
-            for (Runtime runtime : runtimes.values()) runtime.process(tick, builtins, context, visitor, new HashSet<>());
+            for (Runtime runtime : runtimes.values()) runtime.process(tick, builtins, context, visitor, beforeNativeWeight, new HashSet<>());
         } finally { evaluating = null; evaluatingPlayback = null; captureAllowed = false; builtinEventPhase = false; context.restoreQueries(queries); context.restoreContextValues(scope);context.effectScope(effectScope); }
     }
     Object function(String name, List<Object> args, Molang.FunctionResolver fallback) {
@@ -240,6 +271,7 @@ public final class YsmAnimationController {
     }
     private final class Runtime {
         final String name, definitionName; final int depth;
+        final String audioScope = "controller:" + UUID.randomUUID();
         final Definition definition;
         final Playback builtinPlayback = new Playback();
         State state; Runtime child;
@@ -249,17 +281,22 @@ public final class YsmAnimationController {
         String scriptAnimation, scriptLoop = "ONCE"; double scriptStarted;
         String lastRequestedAnimation, lastRequestedLoop;
         Blend scriptBlend; boolean restartRequested;
-        boolean stopping, endingOnce, idleFlushPending;
+        boolean stopping, endingOnce, idleFlushPending, sounds;
+        Molang.Context currentContext;
         double stoppedAt;
         BbModel.Layer completedLayer;
         Runtime(String name, String definitionName, int depth) {
             this.name = name; this.definitionName = definitionName; this.depth = depth;
             definition = model.controllerDefinitions().definitions.get(definitionName);
         }
-        void reset() { if (child != null) child.reset(); state = null; child = null; scriptBlend = null; clearPlayback(true); }
+        void reset(Molang.Context context) { if (child != null) child.reset(context); stopController(context); state = null; child = null; scriptBlend = null; currentContext = context; clearPlayback(true); }
+        void stopController(Molang.Context context) {
+            if (!sounds) return;
+            sounds = false; stopScope(audioScope, context, false);
+        }
         void clearPlayback(boolean clearRequest) {
             if (clearRequest) {
-                slots.forEach(slot -> { discard(slot.playback); if (slot.clock != null) slot.clock.cancel(); }); discard(builtinPlayback);
+                slots.forEach(slot -> { discard(slot.playback, currentContext); if (slot.clock != null) slot.clock.cancel(); }); discard(builtinPlayback, currentContext);
             }
             slots.clear(); builtinLayer = null; scriptAnimation = null; restartRequested = false;
             stopping = endingOnce = idleFlushPending = false; completedLayer = null;
@@ -270,6 +307,7 @@ public final class YsmAnimationController {
             // Ctrl.Reset -> Predicate.clearAnimation -> Instance.cancelAnimation leaves its context intact.
             // A subsequent CONTINUE/PAUSE process reaches IDLE and flushes it. World reset uses clearPlayback.
             slots.forEach(slot -> { if (slot.clock != null) slot.clock.cancel(); });
+            stopPlayback(builtinPlayback, currentContext);
             clearPlayback(false); idleFlushPending = true;
             if (clearRequest) { lastRequestedAnimation = null; lastRequestedLoop = null; }
         }
@@ -285,18 +323,20 @@ public final class YsmAnimationController {
                 slot.endingTime = tick - slot.started < slot.delay ? 0 : slot.clock.stoppingTimeTicks(tick);
                 slot.playback.animTime = slot.endingTime / 20; slot.clock.cancel();
                 slot.ending = slot.finished = true;
+                slot.endingAt = tick;
             }
         }
         void finishStopping(Molang.Context context) {
-            flush(builtinPlayback, context); builtinPlayback.resetEvents();
+            flush(builtinPlayback, context); stopPlayback(builtinPlayback, context); builtinPlayback.resetEvents();
             completedLayer = endingOnce ? builtinLayer : null;
             slots.clear(); builtinLayer = null; stopping = endingOnce = idleFlushPending = false;
         }
-        void scoped(Molang.Context context) { context.restoreContextValues(Map.of()); evaluating = this;context.effectScope("controller:"+name); }
+        void scoped(Molang.Context context) { context.restoreContextValues(Map.of()); evaluating = this;context.effectScope(audioScope); }
         void save(Molang.Context context) { context.restoreContextValues(Map.of()); }
         void process(double tick, Map<String,BbModel.Layer> builtins, Molang.Context context,
-                     BiConsumer<Frame,Molang.Context> visitor, Set<String> ancestors) {
+                     BiConsumer<Frame,Molang.Context> visitor, Consumer<Molang.Context> beforeNativeWeight, Set<String> ancestors) {
             if (!ancestors.add(definitionName) || depth > 5) return;
+            currentContext = context;
             scoped(context); context.query("query.anim_time", 0d);
             boolean allFinished = true, anyFinished = false, anyActive = false;
             for (Slot slot : slots) if (slot.active) { anyActive = true; allFinished &= slot.finished; anyFinished |= slot.finished; }
@@ -332,7 +372,7 @@ public final class YsmAnimationController {
                 String childName = definitionName + "." + suffix;
                 if (!model.controllerDefinitions().definitions.containsKey(childName)) { child = null; save(context); return; }
                 if (child == null || !child.definitionName.equals(childName)) child = new Runtime(name, childName, depth + 1);
-                save(context); child.process(tick, builtins, context, visitor, ancestors); return;
+                save(context); child.process(tick, builtins, context, visitor, beforeNativeWeight, ancestors); return;
             }
             boolean builtin = state == null || state.name.equals("ysm-builtin");
             if (builtin) {
@@ -363,24 +403,27 @@ public final class YsmAnimationController {
                     if (desired == null && (slot.startsWith("pre_parallel_") || slot.startsWith("parallel_")) && model.animations().contains(clip))
                         desired = new BbModel.Layer(name, clip, (long)firstTick, 1, "LOOP", 0, 0);
                 }
-                if (scriptStop) startStopping(tick, false);
+                boolean predicateStop = context.nativeYsm() && !scriptStop && !scriptPause && decision != 2 && desired == null;
+                if (scriptStop || predicateStop) startStopping(tick, false);
+                // PlayerAnimationController binds PlayerCustomAnimationPredicate (markDirty) to gui_hover.
+                if (name.endsWith(".gui_hover") && desired == null) stopPlayback(builtinPlayback, context);
                 boolean resumedFromStop = false;
                 // A native predicate may request a fresh animation after STOP cleared the request key.
-                if (stopping && !endingOnce && !scriptStop && !scriptPause && decision != 2) {
+                if (stopping && !endingOnce && !scriptStop && !scriptPause && decision != 2 && !predicateStop) {
                     finishStopping(context); resumedFromStop = true;
                 }
                 if (stopping) {
                     if (tick - stoppedAt >= 3) {
                         boolean wasOnce = endingOnce;
                         finishStopping(context);
-                        if (scriptStop || scriptPause || wasOnce || decision == 2) desired = null;
+                        if (scriptStop || predicateStop || scriptPause || wasOnce || decision == 2) desired = null;
                     } else desired = builtinLayer;
                 }
                 if (completedLayer != null && Objects.equals(desired, completedLayer) && !restartRequested) desired = null;
                 if (idleFlushPending && !scriptStop) { flush(builtinPlayback, context); idleFlushPending = false; }
                 if (!scriptStop && (!Objects.equals(desired, builtinLayer) || restartRequested)) {
                     BbModel.Layer previous = builtinLayer;
-                    flush(builtinPlayback, context); builtinPlayback.resetEvents();
+                    flush(builtinPlayback, context); stopPlayback(builtinPlayback, context); builtinPlayback.resetEvents();
                     slots.forEach(slot -> { if (slot.clock != null) slot.clock.cancel(); });
                     builtinLayer = desired; slots.clear(); revision = ++sequence; changedAt = tick;
                     blend = desired == null ? scriptBlend != null ? scriptBlend : Blend.ticks(previous == null ? 4 : previous.outTicks())
@@ -396,11 +439,21 @@ public final class YsmAnimationController {
             }
             List<Run> runs = new ArrayList<>();
             boolean suppressed = context.get("ysm.pause." + name) != 0;
+            Playback conditionContext = null;
             for (Slot slot : slots) {
-                context.query("query.anim_time", 0d);
-                slot.active = slot.animation.enabled == null || slot.animation.enabled.evaluate(context) != 0;
+                if (context.nativeYsm() && conditionContext != null) {
+                    withPlayback(conditionContext, false, context,
+                            () -> slot.active = slot.animation.enabled == null || slot.animation.enabled.evaluate(context) != 0);
+                } else {
+                    context.query("query.anim_time", 0d);
+                    slot.active = slot.animation.enabled == null || slot.animation.enabled.evaluate(context) != 0;
+                }
                 if (slot.ending) {
-                    runs.add(new Run(slot.animation.name, slot.loop, slot.eventTick, slot.endingTime, false, false, slot.playback));
+                    double weight = context.nativeYsm() && tick - slot.endingAt < 3
+                            ? nativeWeight(slot, false, false, beforeNativeWeight, context) : 1;
+                    runs.add(new Run(slot.animation.name, slot.loop, slot.eventTick, slot.endingTime, false, false, slot.playback,
+                            slot.active && !suppressed && tick - slot.endingAt < 3, false, true, Math.min(1, (tick - slot.endingAt) / 3), slot.activation, weight));
+                    if (context.nativeYsm()) conditionContext = slot.playback;
                     continue;
                 }
                 YsmAnimationClock.Step[] advanced = new YsmAnimationClock.Step[1];
@@ -414,9 +467,11 @@ public final class YsmAnimationController {
                     slot.playback.animTime = length / 20;
                     withPlayback(slot.playback, clientSide, context,
                             () -> model.ysmEvents(slot.animation.name, slot.playback, length, true, clientSide, context));
+                    stopPlayback(slot.playback, context);
                     flush(slot.playback, context);
                     slot.ending = true; revision = ++sequence; changedAt = tick;
                     slot.endingTime = length;
+                    slot.endingAt = tick;
                     slot.finished = true; blend = Blend.ticks(3);
                     if (builtin) { stopping = endingOnce = true; stoppedAt = tick; }
                 } else if (step.crossedBoundary() && !slot.ending) {
@@ -425,22 +480,42 @@ public final class YsmAnimationController {
                         flush(slot.playback, context); slot.playback.animTime = length / 20;
                         withPlayback(slot.playback, clientSide, context,
                                 () -> model.ysmEvents(slot.animation.name, slot.playback, length, true, clientSide, context));
+                        stopPlayback(slot.playback, context);
                     }
                 }
                 if (step.restarted()) slot.playback.resetEvents();
                 else if (step.timeTicks() < step.beforeTimeTicks()) model.seekYsmEvents(slot.animation.name, slot.playback, elapsed);
                 slot.playback.animTime = slot.ending ? length / 20 : elapsed / 20;
+                double weight = context.nativeYsm()
+                        ? nativeWeight(slot, !beginning && !slot.ending, clientSide, beforeNativeWeight, context) : 1;
                 runs.add(new Run(slot.animation.name, slot.loop, slot.eventTick, elapsed,
-                        slot.active && !slot.ending && !suppressed, !beginning && !slot.ending, slot.playback));
+                        slot.active && !slot.ending && !suppressed, !context.nativeYsm() && !beginning && !slot.ending, slot.playback,
+                        slot.active && !suppressed, beginning && !slot.ending, slot.ending,
+                        slot.ending ? 0 : blend.fraction(tick - slot.activatedAt), slot.activation, weight));
                 slot.eventTick = elapsed;
+                if (context.nativeYsm()) conditionContext = slot.playback;
             }
             visitor.accept(new Frame(name, revision, changedAt, blend, List.copyOf(runs), suppressed,
-                    name.contains(".parallel_"), name.endsWith(".cap")), context);
+                    name.contains(".parallel_") && (!context.nativeYsm() || builtin && !stopping && tick - changedAt >= blend.duration()),
+                    name.endsWith(".cap"), builtin), context);
             save(context);
+        }
+        /** Runtime processes each condition and Instance completely before the next condition; channel queues stay lazy. */
+        double nativeWeight(Slot slot, boolean events, boolean clientSide, Consumer<Molang.Context> beforeWeight, Molang.Context context) {
+            double[] weight = {1};
+            withPlayback(slot.playback, false, context, () -> {
+                if (events) withCapture(clientSide, () -> model.ysmEvents(slot.animation.name, slot.playback,
+                        slot.playback.animTime * 20, false, clientSide, context));
+                beforeWeight.accept(context);
+                weight[0] = model.animationWeight(slot.animation.name, context);
+            });
+            return weight[0];
         }
         void enter(State next, double tick, Molang.Context context) {
             if (next == null) throw new IllegalArgumentException("Missing controller initial state");
             if (child != null) { child.exit(context); child = null; scoped(context); }
+            // AnimationControllerRuntime.transitionToEntry clears PlaybackFlags audio before exit/entry scripts.
+            stopController(context);
             if (state != null) for (Molang.Program program : state.exit) program.evaluateValue(context);
             List<Slot> previousSlots = slots;
             boolean previousBuiltin = state == null || state.name.equals("ysm-builtin");
@@ -450,8 +525,8 @@ public final class YsmAnimationController {
             for (Molang.Program program : next.entry) program.evaluateValue(context);
             for (String sound : next.sounds) if (context.functionResolver() != null)
                 context.functionResolver().call("ysm.play_sound", context.nativeYsm()?List.of(0d,sound):List.of(sound));
-            for (Slot slot : previousSlots) { flush(slot.playback, context); slot.clock.cancel(); }
-            if (previousBuiltin && previousSlots.isEmpty()) flush(builtinPlayback, context);
+            for (Slot slot : previousSlots) { flush(slot.playback, context); stopPlayback(slot.playback, context); slot.clock.cancel(); }
+            if (previousBuiltin && previousSlots.isEmpty()) { flush(builtinPlayback, context); stopPlayback(builtinPlayback, context); }
             context.restoreContextValues(Map.of());
             if (!next.name.equals("ysm-builtin") && !next.name.startsWith("ysm-entry-"))
                 for (Animation animation : next.animations) {
@@ -462,12 +537,14 @@ public final class YsmAnimationController {
         }
         void exit(Molang.Context context) {
             if (child != null) child.exit(context);
+            stopController(context);
             scoped(context); if (state != null) for (Molang.Program program : state.exit) program.evaluateValue(context);
-            for (Slot slot : slots) flush(slot.playback, context);
-            if (slots.isEmpty()) flush(builtinPlayback, context);
+            for (Slot slot : slots) { flush(slot.playback, context); stopPlayback(slot.playback, context); }
+            if (slots.isEmpty()) { flush(builtinPlayback, context); stopPlayback(builtinPlayback, context); }
             save(context);
         }
         void prepare(Slot slot, Molang.Context context) {
+            slot.activation = ++playbackSequence; slot.activatedAt = tick;
             slot.clock = model.animationClock(slot.animation.name, slot.loop, slot.speed, slot.started + slot.delay);
             withPlayback(slot.playback, false, context, () -> slot.clock.initialize(context));
         }
@@ -476,7 +553,7 @@ public final class YsmAnimationController {
         final Animation animation; final String loop; final double started, speed;
         final Playback playback;
         YsmAnimationClock clock;
-        double eventTick = -1e-5, delay, endingTime; boolean active = true, finished, ending;
+        double eventTick = -1e-5, delay, endingTime, endingAt, activatedAt; long activation; boolean active = true, finished, ending;
         Slot(Animation animation, String loop, double started, double speed, Playback playback) {
             this.animation = animation; this.loop = loop; this.started = started; this.speed = speed; this.playback = playback;
         }
@@ -502,7 +579,7 @@ public final class YsmAnimationController {
                 for (JsonElement animation : array(node, "animations", 32)) {
                     if (animation.isJsonPrimitive()) animations.add(new Animation(checkedName(animation.getAsString()), null));
                     else for (var clip : object(animation).entrySet())
-                        animations.add(new Animation(checkedName(clip.getKey()), program(clip.getValue(), nativeYsm)));
+                        animations.add(new Animation(checkedName(clip.getKey()), animationCondition(clip.getValue(), nativeYsm)));
                     if (animations.size() > 32) throw new IllegalArgumentException("YSM state clip count exceeded");
                 }
                 List<Transition> transitions = new ArrayList<>();
@@ -551,6 +628,13 @@ public final class YsmAnimationController {
     private static Molang.Program program(JsonElement value, boolean nativeYsm) {
         if (value == null || !value.isJsonPrimitive()) throw new IllegalArgumentException("Expected YSM expression");
         return nativeYsm ? Molang.compileNativeYsm(value.getAsString()) : Molang.compile(value.getAsString());
+    }
+    /** Sparkle AnimationMapper.buildControllers leaves empty conditions absent; its parse helper returns ZERO on failure. */
+    private static Molang.Program animationCondition(JsonElement value, boolean nativeYsm) {
+        if (!nativeYsm) return program(value, false);
+        if (value != null && value.isJsonPrimitive() && value.getAsString().isEmpty()) return null;
+        try { return program(value, true); }
+        catch (IllegalArgumentException invalidExpression) { return Molang.compileNativeYsm("0"); }
     }
     private static JsonObject object(JsonElement value) {
         if (value == null || !value.isJsonObject()) throw new IllegalArgumentException("Expected YSM controller object");

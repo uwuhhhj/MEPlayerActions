@@ -17,7 +17,10 @@ final class YsmBodyTransform {
     private static NativeParent nativeParent;
     private YsmBodyTransform() { }
 
-    static void rendererContext(EntityRendererFactory.Context context) { nativeParent = new NativeParent(context); }
+    static void rendererContext(EntityRendererFactory.Context context) {
+        nativeParent = new NativeParent(context);
+        NativeHumanoidPoseSampler.rendererContext(context);
+    }
 
     static Matrix4f extract(PlayerEntity entity, PlayerEntityRenderState presentation) {
         float bodyYaw = presentation.bodyYaw;
