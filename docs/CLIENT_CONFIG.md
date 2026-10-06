@@ -45,7 +45,7 @@
 
 内置 ID：`openysm_default`、CC0 原始玩家皮肤模型 `openysm_alex`／`openysm_steve`，以及 `wine_fox_01_taisho_maid`、`wine_fox_02_new_year`、`wine_fox_03_astronaut`。酒狐资产采用 [CC BY-NC-SA 4.0](../THIRD_PARTY_NOTICES.md#openysm-wine-fox-model-assets-cc-by-nc-sa-40)，仅供非商用，分发／改编须保留署名与相同许可；新增模型不改变已保存选择。服务器 `ysm_01_jk`／`ysm_02_jk` 不内置，须由服务器授权同步或自行私人导入。
 
-本地 YSM 原始输入、展开资源、转换结果分别限 64 MiB；独立 BBModel 限 8 MiB。私人分享归档和展开资源仍限 8 MiB，协商可降低；超过分享预算不取消本地加载。文件、图像、几何和脚本各有独立预算，格式与材质要求见 [YSM 支持范围](YSM_COMPATIBILITY.md)。
+本地 YSM 原始输入、展开资源、转换结果分别限 64 MiB；独立 BBModel 原文件限 8 MiB，声明的目录内 PNG 伴随资源及转换后资产分别限 64 MiB。私人分享归档和展开资源仍限 8 MiB，BBModel 的原生转换派生资产另限 64 MiB，协商可降低；超过分享预算不取消本地加载。文件、图像、几何和脚本各有独立预算，格式与材质要求见 [YSM 支持范围](YSM_COMPATIBILITY.md)。
 
 服务器缓存离服后保留，最多 128 MiB／512 个有效文件，按最近使用裁剪。命中缓存仍须校验、准备纹理和取得**当次绑定**确认，不能凭缓存申请任意服务器模型。重载撤销显示接管并重建纹理，保留完整推送资产、有效在途下载和同实例来源选择；断线／世界切换清理当前绑定和下载授权，磁盘缓存保留。推送不依赖私人分享开关，详见 [模型同步与部署](MODEL_DELIVERY.md)。
 
@@ -53,7 +53,7 @@
 
 CLIENT 中选择并使用模型只改变本机外观；选择“分享给模组玩家”才会上传，不把私人分享列为 SERVER 伪装。“仅自己可见”撤回当前分享。`privateSyncEnabled=false` 默认关闭，旧配置缺字段不会启用。还需服务端 `client-sync.enabled: true`、`client-sync.private-models.enabled: true` 和发布者 `mact.private.upload`／观看者 `mact.private.view` 权限（两项默认均为 `false`，OP 也需显式授予）。观看者须安装支持的客户端，但无需开启自己的分享开关，被动接收服务器授权模型；原版观看者仍看到原版玩家。关闭分享或私人外观撤回展示，保留本地内容和服务器有界资源缓存。
 
-`.ysm` 上传保留完整 geometry、动画、控制器、函数、作者配置、纹理、声音与必要资源；`.bbmodel` 保留原模型与内嵌贴图。网络上传的是经过验证的完整原生 bundle，不是丢失作者功能的单一转换模型。皮肤、作者参数、radio、额外动作和允许的原生事件可同步；物理／查询缓存、逐帧位置留在各客户端。
+`.ysm` 上传保留完整 geometry、动画、控制器、函数、作者配置、纹理、声音与必要资源；`.bbmodel` 保留原模型、内嵌贴图与已声明的目录内 PNG 伴随资源，本地与观看端复用同一上游转换链；不读取编辑器记录的绝对路径或下载外部 URL。网络上传的是经过验证的完整原生 bundle，不是丢失作者功能的单一转换模型。皮肤、作者参数、radio、额外动作和允许的原生事件可同步；物理／查询缓存、逐帧位置留在各客户端。
 
 本人有服务器伪装时，分享入口暂停，手动 CLIENT 覆盖始终仅供本人；不因暂停、上传失败或撤权修改保存的分享意愿。私人中继可在 Paper 1.21.11／Java 21 运行同一服务端 JAR，无需 ModelEngine 或服务器资源包；使用独立 `meplayeractions:private` v1，不与原 OpenYSM 网络协议互通。
 
