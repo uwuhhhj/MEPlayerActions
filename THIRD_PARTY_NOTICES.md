@@ -1,8 +1,8 @@
 # Third-party notices
 
-Current source is client **0.5.1** and server **0.5.1**. This migration is
-source-only until a later delivery build is requested. Version-specific
-adaptation and validation descriptions below retain their historical scope.
+This document identifies the third-party code and resources used by
+MEPlayerActions, their pinned sources, host adaptations and licenses.
+Current functionality is described in [YSM compatibility](docs/YSM_COMPATIBILITY.md).
 
 ## OpenYSM default player model
 
@@ -37,7 +37,7 @@ components. Bedrock coordinates are mapped once; authored typed expressions,
 null defaults, timeline scripts, loops, controller definitions, interpolation
 and per-instance physics remain available to the independent runtime. Local
 skins and authored form variables are saved by model ID. Private appearance is
-local by default; 0.4.7 can share it with authorized mod viewers only after
+local by default; it can be shared with authorized mod viewers only after
 explicit client opt-in and server negotiation/permissions on MPA's separate
 `meplayeractions:private` protocol 1. A manual private overlay over a server
 disguise remains self-only. Asset inclusion does not certify every OpenYSM
@@ -45,7 +45,7 @@ feature or any render/effect path that has not completed validation. Public,
 self-contained native `.ysm` versions 1–32, ZIP and spec 2 folders are supported
 within the documented geometry/resource budgets. The OpenYSM network/cache
 protocol, mesh skinning, PBR materials and third-party mod/cloud integrations
-remain outside this scope. See [0.4.7 scope](docs/history/CLIENT_0_4_7_NATIVE_SYNC.md).
+remain outside this scope. See [YSM compatibility](docs/YSM_COMPATIBILITY.md).
 
 The model assets' **CC0** declaration is separate from the reference software's
 **MIT** license. The unmodified software license is bundled as
@@ -55,7 +55,7 @@ and the corresponding resource notice is
 
 ## OpenYSM original Alex and Steve model assets (CC0)
 
-MEPlayerActions 0.4.7 additionally includes the original `misc/1_alex` and
+MEPlayerActions also includes the original `misc/1_alex` and
 `misc/2_steve` folders from OpenYSM-Updated revision
 `0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85`. Each original `ysm.json` declares
 `metadata.license.type: "CC 0"` and preserves the credits 哥斯拉 (model),
@@ -77,7 +77,7 @@ change the separate Wine Fox licenses. The dedication is
 
 ## Sparkle-Morpher source adaptations (MIT)
 
-The 0.4.7 native format, author configuration and vanilla runtime work adapts
+The native format, author configuration and vanilla runtime adapt
 selected portions of
 [sdf123098/Sparkle-Morpher](https://github.com/sdf123098/Sparkle-Morpher/tree/b1230a431900a286d2cca198072df7fb43c490b4)
 at revision `b1230a431900a286d2cca198072df7fb43c490b4`. The pinned repository's
@@ -95,11 +95,10 @@ is retained without modification as
 
 These are scoped adaptations. They do not import the reference cloud service,
 optional other-mod compatibility or its network protocol, and do not relicense
-the separately licensed model assets. The detailed implemented boundaries and
-validation scope are recorded in [0.4.7 documentation](docs/history/CLIENT_0_4_7_NATIVE_SYNC.md)
-and [YSM compatibility](docs/YSM_COMPATIBILITY.md).
+the separately licensed model assets. Implemented capabilities and limitations
+are recorded in [YSM compatibility](docs/YSM_COMPATIBILITY.md).
 
-## 0.5.1 upstream source migration (MIT)
+## Native BBModel and YSM runtime adaptations (MIT)
 
 The native BBModel importer retains the complete applicable source chain from
 Sparkle-Morpher revision `b1230a431900a286d2cca198072df7fb43c490b4` in
@@ -146,7 +145,7 @@ corrections, and OpenYSM's visible-chain interpretation. Native head equipment
 uses the modern OpenYSM `Equippable HEAD` exclusion. These source-specific choices
 are recorded explicitly, including the omission of pumpkin-like equippable head
 items from that generic native layer. Existing MPA armor/cape layer toggles are a
-previously requested extension, not an upstream feature. Fixed upstream CPU
+host extension, not an upstream feature. Fixed upstream CPU
 geometry rendering does not consume `cube.cullable`; retained `all_cutout`
 metadata does not introduce a GPU pipeline or reinterpret transparency.
 
@@ -185,7 +184,7 @@ also retain the notices and licenses.
 
 ## OpenYSM Wine Fox model assets (CC BY-NC-SA 4.0)
 
-MEPlayerActions 0.4.3 includes the first three Wine Fox model folders from
+MEPlayerActions includes the first three Wine Fox model folders from
 [IzumiiKonata/OpenYSM-Updated](https://github.com/IzumiiKonata/OpenYSM-Updated)
 at revision `0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85`. These are source assets already
 collected by that reference project, not newly authored MPA models. All 77
@@ -205,9 +204,7 @@ material or external-mod integration is supported or has passed game testing.
 The converted ordinary-folder representation preserves the source's authored
 explicit duration, even where later keys or events exist, and its infinite
 duration semantics when `animation_length` is absent. It keeps separate,
-author-ordered timeline programs. MPA applies bounded input validation: the
-0.4.7 converted internal-format `65535` YSM limit was 64 programs per timeline
-event. Client 0.4.8 permits at most 256 ordered programs per native YSM timeline
+author-ordered timeline programs. MPA permits at most 256 ordered programs per native YSM timeline
 event, including converted `65535` input, while retaining the 32 KiB aggregate
 UTF-8 text budget; it does not truncate or combine authored programs. Finite
 durations and key/event times remain bounded to 10,000 seconds. Ordinary
@@ -217,8 +214,8 @@ main/component output use separate 64 MiB stage budgets; private network
 archives and their expanded resources remain bounded to 8 MiB or the lower
 negotiated limit. Resource counts, geometry, image pixels and execution budgets
 continue to apply. These importer adaptations do not modify the 77 original
-Wine Fox resource files or imply game acceptance results; see the
-[0.4.8 import scope](docs/history/CLIENT_0_4_8_GALLERY_IMPORT.md).
+Wine Fox resource files. Current limits are listed in
+[YSM compatibility](docs/YSM_COMPATIBILITY.md).
 Converted internal-format `65535` cubes explicitly marked `ysm_signed_cube`
 retain signed endpoints, original faces, UVs and winding, following
 [YSMFolderDeserializer's signed bounds and corners](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/resource/YSMFolderDeserializer.java#L536-L645);
@@ -305,13 +302,13 @@ and the exact entity-type lookup in
 These MIT source references use the same pinned revision
 `0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85`. Modern `projectiles` definitions
 have priority, and no `spectral_arrow` alias is invented. This is a bounded
-folder compatibility mapping; it does not import or support the reference's
-complete binary YSM deserializer. The original Wine Fox resource bytes and
+folder compatibility mapping; public self-contained binary YSM decoding uses
+the separate source adaptations described above. The original Wine Fox resource bytes and
 asset licenses remain unchanged.
 
 ## OpenYSM first-person hand renderer adaptations (MIT)
 
-The 0.4.4 first-person correction follows
+The first-person renderer follows
 [HandItemRenderer.java](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/client/renderer/HandItemRenderer.java#L39)
 and the native `AvatarRenderer.renderRightHand` / `renderLeftHand` hooks in
 [ItemInHandRendererMixin.java](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/fabric/src/main/java/com/elfmcys/yesstevemodel/fabric/mixin/client/ItemInHandRendererMixin.java#L21)
@@ -335,7 +332,7 @@ or external-mod integration. The complete MIT notice and bundled
 
 ## OpenYSM GUI source adaptations and assets (MIT)
 
-MEPlayerActions clients 0.4.3 and 0.4.4 adapt portions of the gallery and classic animation
+The client adapts portions of the gallery and classic animation
 roulette from [IzumiiKonata/OpenYSM-Updated](https://github.com/IzumiiKonata/OpenYSM-Updated)
 at revision `0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85`, under the repository's
 [MIT software license](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/LICENSE.txt).
@@ -360,10 +357,10 @@ and [PlayerPreviewEntity](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0
 at the same MIT revision. MPA's `NativeGuiPreviewCamera`, `PreviewScene` and
 `ModelPreview` adapt the actual-player inventory framing (size 70 / offset
 0.0625) separately from the standing dummy-card framing (size 30 / disabled
-rotation offset 5.5). The gallery OWNER scene displays the currently used appearance, while card
-selection remains a draft until applied. OWNER samples native pose and typed
-queries in third-person inventory mode; CARD submits only the author's preview
-clip to `player.cap`. The 0.4.4 source-sized card is fixed at 52 by 90 pixels,
+rotation offset 5.5). Gallery selections remain drafts until applied.
+OWNER samples native pose and typed queries in third-person inventory mode;
+CARD submits only the author's preview clip to `player.cap`.
+The source-sized card is fixed at 52 by 90 pixels,
 with 55/93-pixel slot strides and 45-pixel title wrapping in at most two centered
 lines. Its preview is submitted at nominal height 76 and only model geometry is
 cropped to height 70; author background/foreground decorations cover the complete
@@ -373,7 +370,7 @@ The gallery and settings drag rules also reference
 [PlayerModelScreen.mouseDragged](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/client/gui/PlayerModelScreen.java#L427)
 and [PlayerTextureScreen.mouseDragged / adjustPitch](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/client/gui/PlayerTextureScreen.java#L282):
 `pitch -= dy`, `yaw += 1.5 * dx`, with the source's -90 to 90 degree pitch clamp.
-Ordinary BBModel retains its earlier bounds-fit camera. This does not port the entire upstream GUI renderer or GUI-held-item
+Ordinary BBModel uses its bounds-fit camera. This does not port the entire upstream GUI renderer or GUI-held-item
 geometry, and does not alter the 77 original Wine Fox resources or their
 separate asset license.
 
@@ -396,16 +393,10 @@ YSM, server and ordinary BBModel previews to the native offscreen color/depth pa
 the official `position_tex_color` shader, per-corner depth, LEQUAL depth testing
 and depth writes. Each submitted preview's attachment/render evidence is filled
 by actual renderer execution; preparing a mesh is not a GPU execution result.
-In 0.4.4, server and ordinary BBModel previews use this same depth path while
+Server and ordinary BBModel previews use this same depth path while
 retaining identity author scaling and their existing bounds-fit camera.
-Historical central 0.4.3 validation has
-confirmed the author INITIAL transform and actual RGBA8 / DEPTH32, LEQUAL and
-depth-write execution for its YSM path. Its visual review confirmed the default model's eye whites
-and complete head, plus the three Wine Fox model views. This does not guarantee
-arbitrary intersecting translucent-face ordering: translucent fragments still
-blend and write depth in submission order. The 0.4.4 fixes have not been run in
-unit tests or Minecraft; their delivery scope is compilation and package
-integrity checks, with user-run game verification pending. The original 77 Wine Fox resource
+Intersecting translucent-face ordering remains constrained by submission order:
+translucent fragments blend and write depth in that order. The original 77 Wine Fox resource
 bytes, source attribution and CC BY-NC-SA 4.0 declarations remain unchanged.
 
 The unmodified GUI PNG assets `roulette.png`, `icon.png`, `settings.png` and

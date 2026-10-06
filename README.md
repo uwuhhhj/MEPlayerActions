@@ -57,6 +57,4 @@ Paper 玩家伪装与动画插件，配套可选的 Fabric 客户端模组。当
 | 模块与生命周期 | [架构](ARCHITECTURE.md) |
 | 源码索引、构建与交付 | [开发指南](CONTRIBUTING.md) |
 | 服务器适配协议 | [客户端协议](docs/CLIENT_PROTOCOL.md) |
-| 版本变更与各次验证记录 | [版本历史](docs/history/README.md) |
-
-各版本测试证据属于对应交付，不代表千人服务器实测或所有模型已通过游戏验证。
+| 版本变更 | [更新日志](docs/history/README.md) |

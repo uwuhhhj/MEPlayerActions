@@ -2,7 +2,7 @@
 
 [文档索引](README.md) · [模型部署](MODEL_DELIVERY.md) · [架构](../ARCHITECTURE.md) · [协议](CLIENT_PROTOCOL.md)
 
-当前两端版本为 0.5.1。后台发现与模型动画使用独立频率；旧服务器配置缺少以下字段时，自动采用默认值，无需覆盖已有 `config.yml`。
+后台发现与模型动画使用独立频率；配置缺少以下字段时采用默认值，无需覆盖已有 `config.yml`。
 
 ```yaml
 performance:
@@ -23,7 +23,7 @@ performance:
 
 - 动画输入、动作选择、模型位置与服务端物理每 tick 更新，客户端显示按帧计算。
 - 逻辑状态变化向已关联观众与本人广播；同 tick 的模型快照和编码结果复用。新观众依后台发现加入。
-- 两端协商 `incremental_state` 后省略未变状态和动作目录；未协商的旧客户端仍每 20 tick 接收完整状态。显式服务器轨迹模式保留每 2 tick 的位置同步。
+- 两端协商 `incremental_state` 后省略未变状态和动作目录；未协商时每 20 tick 发送完整状态。协商 `server_timeline` 后每 2 tick 发送服务器轨迹状态，客户端渲染坐标始终复用原版，不据此重算位置或增加缓冲。
 - 服务端图库协商 `server_model_catalog` 后仅主动发送名称目录，不因浏览加载或推送全部资产。全局源缓存每 100 tick 更新，会话按既有发现周期复查；默认频率在 20 TPS 下最坏约 7 秒，每会话每 tick 最多成功发送一片，继续遵守连接与全局字节预算。
 - 私人分享缓存当前发布代次的观众；资源传输每块仍检查权限和可见性。上传、磁盘缓存命中校验和写入在有界工作队列中执行；活跃资源、在途上传和校验展开内存仍独立限制。私人服务关闭或无发布时跳过重观众维护。
 - 私人确认重试共用客户端每秒 16 包、突发 8 包的控制预算，不降低上传分片的每 tick 推进。publisher 每两秒补发当前参数；相同状态只续租，不向观看者重复广播或重启动作。
@@ -31,10 +31,10 @@ performance:
 
 协议身份、心跳、ACK 和限流细节集中在[协议说明](CLIENT_PROTOCOL.md)，不由频率配置改变。
 
-## 开销与验证
+## 开销与容量
 
 服务端按蓝图名称缓存最多 64 个模型模板，复用只读动画和已编译表达式；实例变量、时间线及物理状态各自独立。首次加载或缓存逐出后的加载仍会在主线程读取并解析资源，动画和物理本身的开销也仍存在。
 
-0.5.0 上传与恢复变更见[版本说明](history/CLIENT_0_5_0_SHARING.md)；0.4.9 的性能定向检查见[历史说明](history/CLIENT_0_4_9_PERFORMANCE.md)。tests ZIP／build JSON 保存对应交付证据。没有千人在线、TPS、帧率或真实网络负载的性能实测，配置间隔不等于服务器容量保证。
+尚无千人在线或真实网络负载下的容量实测，刷新间隔不能作为玩家容量、TPS 或帧率保证。
 
 源码入口：[PerformanceSettings](../src/main/java/com/simmc/meplayeractions/config/PerformanceSettings.java)、[ModelAudience](../src/main/java/com/simmc/meplayeractions/me/ModelAudience.java)、[RollingScan](../src/main/java/com/simmc/meplayeractions/action/RollingScan.java)、[ClientSyncService](../src/main/java/com/simmc/meplayeractions/client/ClientSyncService.java)、[PrivateModelSyncService](../src/main/java/com/simmc/meplayeractions/client/PrivateModelSyncService.java)。

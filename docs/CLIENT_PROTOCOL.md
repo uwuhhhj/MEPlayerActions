@@ -1,6 +1,6 @@
 # 客户端协议
 
-本文是 0.5.1 线格式、授权与限制的统一入口。本地私人外观不上传模型；私人多人分享使用独立 `meplayeractions:private` protocol 1；服务器伪装使用 `meplayeractions:main` protocol 3。私人发布不是服务器伪装实例，两频道身份和权限不能混用。模块与生命周期见 [架构](../ARCHITECTURE.md)，部署见 [模型同步](MODEL_DELIVERY.md)，后台频率见 [性能说明](PERFORMANCE.md)。
+本文定义当前线格式、授权与限制。本地私人外观不上传模型；私人多人分享使用独立 `meplayeractions:private` protocol 1；服务器伪装使用 `meplayeractions:main` protocol 3。私人发布不是服务器伪装实例，两频道身份和权限不能混用。模块与生命周期见 [架构](../ARCHITECTURE.md)，部署见 [模型同步](MODEL_DELIVERY.md)，后台频率见 [性能说明](PERFORMANCE.md)。
 
 频道 `meplayeractions:main`，严格 UTF-8 JSON，每包带整数 `protocol:3`、字符串 `type`。不兼容 v1/v2。所有消息保持分包顺序；不允许重复键、类型强制转换、非法 UTF-8、尾随内容；当前服务端还拒绝客户端请求中的额外字段。每包受 maxPayload（默认 16000 字节）限制；连接流量和下载预算见下文。客户端请求只操作自己，仍经过服务端权限校验。
 
@@ -16,9 +16,9 @@ v3 是玩家模型资产、动画状态及观众渲染接管协议。客户端�
 
 客户端发送：
 ```json
-{"protocol":3,"type":"hello","clientVersion":"0.5.0","capabilities":["local_render","server_push_models","incremental_state"]}
+{"protocol":3,"type":"hello","clientVersion":"0.5.1","capabilities":["local_render","server_push_models","incremental_state","server_model_catalog"]}
 ```
-`capabilities` 必须含 `local_render`，还可声明 `server_push_models`、旧 `resource_pack_models`，以及 `incremental_state`／`server_timeline` 和可选 `server_model_catalog`；不允许重复，其他 capability 拒绝。客户端默认声明增量能力，显式启用 `followServerTimeline` 时另声明 `server_timeline`。`clientVersion` 可省略（最多 64 字符）。hello 两次接受之间至少相隔一个单调时钟秒；这一时间戳属于玩家连接，未知协议结束会话或重新 hello 都不能重置。新 hello 清理旧绑定并恢复旧 ME 可见性，不授予渲染权限。
+`capabilities` 必须含 `local_render`，还可声明 `server_push_models`、`resource_pack_models`、`incremental_state`／`server_timeline` 和 `server_model_catalog`；不允许重复，其他 capability 拒绝。客户端默认声明增量能力与模型目录能力，显式启用 `followServerTimeline` 时另声明 `server_timeline`。`clientVersion` 可省略（最多 64 字符）。hello 两次接受之间至少相隔一个单调时钟秒；这一时间戳属于玩家连接，未知协议结束会话或重新 hello 都不能重置。新 hello 清理已有绑定并恢复其 ME 可见性，不授予渲染权限。
 
 返回 `hello_ack`：`mode:"local-render"`、`serverTick`、`heartbeatTicks:20`、`leaseTicks:100`、`maxPayload`、`requestCooldownTicks`。服务端优先选择 `server_push_models`，得到 `assetMode:"server-push"` 和对应能力；否则声明 `resource_pack_models` 的旧连接得到 `assetMode:"resource-pack"`，仅声明 `local_render` 的旧客户端得到 `assetMode:"legacy-download"`。ACK 只确认客户端已声明的增量／轨迹能力；`incremental_state` 必须双方同时确认才生效。当前客户端仍要求 ACK 确认 `server-push`、`local_render` 和 `server_push_models`；旧服务器以硬能力白名单拒绝扩展 hello 时，最多重试一次旧两项能力，不自动改用旧下载或资源包模式。模式在本次会话内固定，客户端不能在请求中传入 `assetMode` 改写模式。随后发送 `snapshot_begin {snapshotId,serverTick}`、可见状态、`snapshot_end {snapshotId}`；手动 `snapshot_request` 也会生成此快照边界。未协商增量时每 20 tick 发送完整 state；增量模式发送受管状态变化，静态 `animations` 可省略复用，精确绑定 heartbeat 续期。协商 `server_timeline` 保留每 2 tick 的轨迹 state。动作变化仍可即时发送；相同 sequence 的 transform 仍可能变化，客户端不能按 sequence 丢弃同序号位置包。
 
@@ -32,7 +32,7 @@ v3 是玩家模型资产、动画状态及观众渲染接管协议。客户端�
 {"protocol":3,"type":"state","owner":"00000000-0000-0000-0000-000000000001","instance":"00000000-0000-0000-0000-000000000002","modelId":"ysm_01_jk","assetHash":"小写SHA256","sequence":12,"serverTick":12345,"world":"00000000-0000-0000-0000-000000000003","x":1.0,"y":64.0,"z":2.0,"bodyYaw":90.0,"headYaw":100.0,"headPitch":10.0,"scale":1.5,"hidePlayer":true,"showSelf":true,"foodLevel":20,"layers":[{"layer":"posture","animation":"crawl_idle","startedAtTick":12340,"speed":1.0,"loop":"LOOP","inTicks":2,"outTicks":2}],"animations":[{"id":"wave","label":"挥手"}],"motion":{"features":["movement","crawl"],"clips":[{"state":"crawl-idle","animation":"crawl_idle","speed":1.0,"loop":"LOOP","inTicks":2,"outTicks":2}],"jumpMinTicks":17,"landingGraceTicks":6,"movementThreshold":0.025,"interruptMove":true,"interruptPosture":true,"flying":false,"interaction":"","forcedPose":"","specialPose":"","anchorX":0,"anchorY":0,"anchorZ":0,"anchorYaw":0}}
 ```
 
-`instance` 是伪装生命周期 UUID，模型更换生成新值。UUID 必须是标准 36 字符小写形式。`sequence` 是动画变化序号；`serverTick` 是名义 20 TPS、unsigned 32 位的服务器 tick，当前适配器取 Paper 当前 tick。x/y/z 与 body/head yaw/pitch 保留为服务器展示轨迹及诊断数据。0.5.1 根据 owner UUID 复用原版当帧 PlayerEntityRenderState 的坐标、实际 renderer 偏移、角度、tickDelta 和冻结相机；私人外观 offset 与明确的服务器姿态 anchor 是独立静态偏移。第一人称本人仅为手臂／脚本补建原版状态；不沿用旧帧远端坐标。查询与物理使用不含绘制偏移的原生位置。所有渲染接管模式均不叠加服务器 delay 或客户端位置缓冲，`followServerTimeline` 仅选择服务器动画层／动画时间线。未跟踪到原版实体时不绘制幽灵模型。动画使用客户端本地 tick 时钟，普通姿态在每个游戏 tick 采样；服务器手动层的开始时刻只转换一次，同实例回包不重启动画。
+`instance` 是伪装生命周期 UUID，模型更换生成新值。UUID 必须是标准 36 字符小写形式。`sequence` 是动画变化序号；`serverTick` 是名义 20 TPS、unsigned 32 位的服务器 tick，当前适配器取 Paper 当前 tick。x/y/z 与 body/head yaw/pitch 保留为服务器展示轨迹及诊断数据。客户端根据 owner UUID 复用原版当帧 PlayerEntityRenderState 的坐标、实际 renderer 偏移、角度、tickDelta 和冻结相机；私人外观 offset 与明确的服务器姿态 anchor 是独立静态偏移。第一人称本人仅为手臂／脚本补建原版状态；不沿用旧帧远端坐标。查询与物理使用不含绘制偏移的原生位置。所有渲染接管模式均不叠加服务器 delay 或客户端位置缓冲，`followServerTimeline` 仅选择服务器动画层／动画时间线。未跟踪到原版实体时不绘制幽灵模型。动画使用客户端本地 tick 时钟，普通姿态在每个游戏 tick 采样；服务器手动层的开始时刻只转换一次，同实例回包不重启动画。
 
 state 必须额外包含 `motion` 对象：`features` 为服务器及玩家允许的同步项，`clips` 为已解析且模型存在的 `{state,animation,speed,loop,inTicks,outTicks}` 集合；缺失映射不硬编码回退。另有 `jumpMinTicks`、`landingGraceTicks`、`movementThreshold`、`interruptMove`、`interruptPosture`、`flying`（远端能力不一定由原版同步）、`interaction`（空/mining/swing-mainhand/swing-offhand）。`forcedPose` 为空/crawl/sneak，仅传递 Paper 固定姿态或 GSit 强制爬行；本机原版重新计算为 STANDING 时仍必须遵守，不拿延迟的自动层猜测姿态。原生陆地爬行与游泳、床睡眠与 GSit 躺下分别判断；禁用姿态不落入其他状态。本人挖掘读取本地交互管理器，远端挖掘采用服务器的明确 interaction 状态，不能根据同名攻击动画猜测。
 
@@ -40,7 +40,7 @@ state 必须额外包含 `motion` 对象：`features` 为服务器及玩家允�
 
 `layers` 是完整集合：缺席的层应退出；名称 posture / interaction / manual，优先级依次 100 / 150 / 200。posture/manual 覆盖有关键帧的骨骼，interaction 叠加；in/outTicks 是 20 TPS 的过渡时长。loop 为 ONCE / LOOP / HOLD，startedAtTick 用于从服务器时间同步动画进度。animations 是可发送 play 请求的动作中文菜单目录：有模型目标动画的 custom-actions 使用动作别名 ID 和 label；仅 manual.allow-raw-animation=true 时补充符合服务器命令 ID（1–64 位小写英文、数字、_、-）的原始动画。同 ID 的自定义动作优先，目标缺失的别名也不会回退为不可执行的原始动作，目录去重并按 ID 排序。label 去除 ISOControl 后最多 64 个 Unicode code point。若 state 超出 maxPayload，先去掉目录并发送 animations:[]；位置与动作层仍超限时解绑并保持 ME，日志按观众/owner 去重。hidePlayer 控制真实人物渲染；showSelf 控制本人可见性。服务器尊重同世界、Player.canSee、disguise.view-distance 的严格三维距离限制、max-viewers 最近观众上限和 show-self，客户端不能据状态突破可见性。
 
-0.4.9 增量模式仅为静态 `animations` 增加省略语义：缺失时只保留相同 owner／instance／assetHash／modelId 的既有目录，显式 `[]` 清空；不同身份不能继承目录。未协商时缺失仍按旧规则清空。`layers` 与 `motion` 等当前状态仍完整发送，不把缺失动画层解释为保留上一层。
+增量模式允许省略静态 `animations`：缺失时只保留相同 owner／instance／assetHash／modelId 的既有目录，显式 `[]` 清空；不同身份不能继承目录。未协商时缺失表示清空。`layers` 与 `motion` 等当前状态仍完整发送，不把缺失动画层解释为保留上一层。
 
 非空 `assetHash` 表示服务器允许客户端准备这份实例的资产，空值表示保持后端显示，不允许 render_ready。当前 ModelEngine 适配器只有本插件创建、实体没有外来模型且有可分发资产的实例提供非空值；接管原生 ME、外来模型共存或资产失败时 hash 为空。state 还提供 `assetStatus`（pending/ready/missing/invalid，或不允许接管时的 server-only）、`assetReason` 和 `assetSource` 诊断；它们不授予渲染权限，原因不包含服务器私有文件路径。
 
@@ -106,13 +106,13 @@ hello／hello_ack 双方确认 `server_model_catalog` 后，服务器主动发�
 
 客户端 `config/meplayeractions/cache/<hash>.bbmodel` 缓存完整原始 JSON，读取时重新检查文件、8 MiB 和 SHA；模型解析由加载流程完成。缓存总量 128 MiB、最多 512 个有效条目，按最近使用时间裁剪，离服保留，与私人 `config/meplayeractions/models/` 分开。缓存命中仍需当前 offer、绑定和 ready/ACK；文件存在不授予使用权。存储不可用时不信任缓存，也不允许绕过资产校验。
 
-## 旧客户端兼容模式
+## 兼容资产模式
 
-旧客户端声明 `resource_pack_models` 时得到 `assetMode:"resource-pack"`，该会话的 `asset_request` 返回 `asset_resource_pack_mode`，不发送文件。模型来自 ResourceManager 的索引、元数据和 PNG，按原始 hash 恢复校验；缺失时保持 ME。格式见 [旧资源包说明](CLIENT_RESOURCE_PACK.md)，当前主动推送部署不需要此索引。
+未声明 `server_push_models` 而声明 `resource_pack_models` 时得到 `assetMode:"resource-pack"`，该会话的 `asset_request` 返回 `asset_resource_pack_mode`，不发送文件。模型来自 ResourceManager 的索引、元数据和 PNG，按原始 hash 恢复校验；缺失时保持 ME。格式见 [资源包兼容格式](CLIENT_RESOURCE_PACK.md)，主动推送部署不需要此索引。
 
-仅声明 `local_render` 的旧 0.4.0 客户端保留 `legacy-download`：发送 `asset_request {modelId,hash}`，两者须匹配当前可见绑定。返回不带 offerId 的旧 `asset_begin/chunk/end`，仍受原始/GZIP 上限、并发、连接及全局预算、100 tick hash 冷却限制。每次分片检查授权，无人再需要时取消，失败保持 ME。
+仅声明 `local_render` 时得到 `assetMode:"legacy-download"`：发送 `asset_request {modelId,hash}`，两者须匹配当前可见绑定。返回不带 offerId 的 `asset_begin/chunk/end`，受原始/GZIP 上限、并发、连接及全局预算、100 tick hash 冷却限制。每次分片检查授权，无人再需要时取消，失败保持 ME。
 
-新客户端不会在主动推送协商失败后自动发送 legacy 请求或切入资源包模式。同为 v3 不表示所有 capability 扩展互通；部署时建议插件和模组一同升级到 0.4.9。
+当前客户端要求主动推送协商成功，不自动发送 legacy 请求或切入资源包模式。同为 v3 不表示所有 capability 扩展互通，部署时须检查双方确认的能力。
 
 ## 连接预算
 
@@ -127,7 +127,7 @@ hello／hello_ack 双方确认 `server_model_catalog` 后，服务器主动发�
 | 其中资产传输消息（push 与 legacy） | 512 KiB/秒 | 256 KiB/tick |
 | 排队或进行中的 transfer（共享） | 2 | 32 |
 
-超出入站预算的包直接忽略，不解析或执行动作。出站包在扣减前同时核对所有适用预算，超限不消耗其他预算。0.4.9 区分 `SENT / DEFERRED / FAILED`：正常限流为 DEFERRED，保留绑定与显示接管，状态按 owner 合并最新待发包；unbind 等可延后的控制消息进入每会话最多 128 项有界队列，每次维护最多尝试 4 项，正常预算不足继续等待，身份失效、100 tick 到期、队列满或实际发送失败时清理，会话轮转。旧 unbind 发送前若相同 instance 已重绑则跳过，成功新 state 也取消相同 owner／instance 旧解绑，不清理新绑定。render_ack 只走先预留预算的 ready 路径，不进入该队列。资产 begin/chunk/end 超限保留阶段和分片下标，后续 tick 继续；未发送的分片不会跳号，正常完成只在 end 成功发送后释放传输。每个资产包实时检查绑定、当前快照及可见性。实际发送失败或失去授权才取消传输、释放槽并按原有后端回退处理；持续拥堵仍受租约超时约束。
+超出入站预算的包直接忽略，不解析或执行动作。出站包在扣减前同时核对所有适用预算，超限不消耗其他预算。发送结果分为 `SENT / DEFERRED / FAILED`：正常限流为 DEFERRED，保留绑定与显示接管，状态按 owner 合并最新待发包；unbind 等可延后的控制消息进入每会话最多 128 项有界队列，每次维护最多尝试 4 项，正常预算不足继续等待，身份失效、100 tick 到期、队列满或实际发送失败时清理，会话轮转。待发 unbind 若相同 instance 已重绑则跳过，成功发送 state 也取消相同 owner／instance 的待发解绑，不清理新绑定。render_ack 只走先预留预算的 ready 路径，不进入该队列。资产 begin/chunk/end 超限保留阶段和分片下标，后续 tick 继续；未发送的分片不会跳号，正常完成只在 end 成功发送后释放传输。每个资产包实时检查绑定、当前快照及可见性。实际发送失败或失去授权才取消传输、释放槽并按后端回退处理；持续拥堵仍受租约超时约束。
 
 主动推送只接收已签发 token 的状态反馈，资源包模式关闭本频道资产下载，legacy 只接受当前可见绑定的 modelId/hash；都不接受任意文件、URL 或路径。兼容能力不是可信客户端身份，恶意客户端仍可只声明 `local_render`，但受同一授权和预算约束。已接收的资产不能因解绑收回；ready/heartbeat 也是客户端声明，服务器能验证绑定和可见性，不能证明 GPU 实际绘制。完整 raw 包含内嵌 PNG，可能与 CE 包重复；跨包贴图复用尚未实现，ME／CE 的资源包保护不加密本频道资产。
 
@@ -141,7 +141,7 @@ hello／hello_ack 双方确认 `server_model_catalog` 后，服务器主动发�
 
 资源重载先撤销服务器渲染租约并发送 `render_failed`，让后端恢复显示；保留服务器绑定身份、完整推送模型及仍有效的在途 offer/下载，重新准备 GPU 后必须再次 ready/ack。私人与旧资源包预览的后台结果失效，旧资源包来源按当前 ResourceManager 重新加载；服务器磁盘缓存保留。默认推送不依赖 MPA 资源包索引，不能仅凭文件继续旧租约。私人外观设置保留，但有已知服务器本人伪装时仍等待该绑定重新就绪，避免与 ME 回退同时显示。断开、世界切换或无人再授权需要相同 hash 时，才清理对应旧推送授权和结果。
 
-对于其他玩家，ME 隐藏基础实体时原版追踪包也会被过滤。服务器在 ACK 前仅为该就绪观众及 owner 实体 ID 安装原版追踪通道，用 ME 公共 `ProtectedPacket` 保留出生、位移、朝向、姿态、装备、挥臂及乘客数据，并通过公共 forceSpawn 初始化原版实体。混合 bundle 保留顺序，其他实体包继续经过 ME。0.4.9 安装 pending 时按精确 ready 身份等待维护，最多 100 tick，不以临时 pending 发送 `render_unavailable` 处罚；取消／关闭撤回等待项。通道无法建立时拒绝接管并保持 ME；退租时移除隐藏基础实体的客户端副本及对应例外。被观看者无需握手或安装模组。
+对于其他玩家，ME 隐藏基础实体时原版追踪包也会被过滤。服务器在 ACK 前仅为该就绪观众及 owner 实体 ID 安装原版追踪通道，用 ME 公共 `ProtectedPacket` 保留出生、位移、朝向、姿态、装备、挥臂及乘客数据，并通过公共 forceSpawn 初始化原版实体。混合 bundle 保留顺序，其他实体包继续经过 ME。安装 pending 时按精确 ready 身份等待维护，最多 100 tick，不因临时 pending 发送 `render_unavailable`；取消／关闭撤回等待项。通道无法建立时拒绝接管并保持 ME；退租时移除隐藏基础实体的客户端副本及对应例外。被观看者无需握手或安装模组。
 
 解除伪装时，退租删除副本发生在 ME 解除基础实体隐藏之前，Paper 不会因为显示标记恢复而重新配对已追踪的玩家。服务器因此记住本实例接管过的远端观众，恢复原观众过滤器与 forcedInvisible 后补发原版配对数据；仅发送给仍在线、同世界、canSee 且当前追踪集合允许的观众。原版自己、消失的玩家、离开原版追踪距离的观众及其他插件的隐藏关系不在补发范围内。
 
@@ -201,13 +201,13 @@ ZIP 根必须含 `manifest.json`，最大 4096 字节，且只有 `{format:1,kin
 
 ZIP 原始上限与所有条目展开总量各 8 MiB，扫描条目（含目录）最多 256；可由服务器进一步缩小 ZIP 原始上限。只允许 json/bbmodel/png/bmp/jpg/jpeg/webp/ogg/molang 文件。拒绝 absolute/path traversal/点段/空段/反斜杠/冒号/控制符、casefold 重名、符号链接、加密、分卷和 ZIP64，逐条目检查 CRC，目录不得携带数据，不落盘解压。JSON 节点最多 200000、深度最多 64，重复字段和非有限数拒绝；图片以格式头检查维度（最多 8192）与全部外部纹理总像素（最多 16777216），服务器不执行图片解码器；BBModel 最大 4096 elements、16 项纹理声明；内嵌 PNG 与包内伴随纹理的像素按联合预算校验。伴随 PNG 按固定来源的 name／name+.png／relative_path 文件名匹配，不访问编辑器记录的绝对 path，重名歧义或缺失资源拒绝。ogg 检查 OggS 头，molang 检查 UTF-8。模型资源字段中的 HTTP/file URL 拒绝。客户端还必须独立完成 bundle、模型解析、图片解码和 GPU 校验，服务器接收不能替代本地验证。原始传输与展开仍受 8 MiB 约束；BBModel mesh／曲线转换派生资产独立限 64 MiB，不扩大网络容量。
 
-默认全服务器内存资源预算 32 MiB，包含已发布 ZIP、接收中的 ZIP及每个校验作业预留的最多 8 MiB 展开资源。0.5.0 私人磁盘缓存默认启用，目录 `plugins/MEPlayerActions/private-models/`，扁平文件名 `<ownerUUID>_<hash>.zip`；默认最多 128 MiB、512 条、同 owner 4 条，后台访问时按最近使用裁剪。设置为 `client-sync.private-models.cache-enabled`、`max-cache-bytes`、`max-cache-models`、`max-cache-models-per-player`。设 cache-enabled=false 不读写既有缓存。异步写入只接收整份校验成功的 bundle，cache 命中重新验证后才发布；缓存不可作为跨 owner 模型查询入口。文件保留不恢复旧 publication、generation、offer 或租约。服务端不把客户传来的字符串作为服务器模型 ID、任意文件路径或 URL。
+默认全服务器内存资源预算 32 MiB，包含已发布 ZIP、接收中的 ZIP及每个校验作业预留的最多 8 MiB 展开资源。私人磁盘缓存默认启用，目录 `plugins/MEPlayerActions/private-models/`，扁平文件名 `<ownerUUID>_<hash>.zip`；默认最多 128 MiB、512 条、同 owner 4 条，后台访问时按最近使用裁剪。设置为 `client-sync.private-models.cache-enabled`、`max-cache-bytes`、`max-cache-models`、`max-cache-models-per-player`。设 cache-enabled=false 不读写既有缓存。异步写入只接收整份校验成功的 bundle，cache 命中重新验证后才发布；缓存不可作为跨 owner 模型查询入口。文件保留不恢复此前的 publication、generation、offer 或租约。服务端不把客户传来的字符串作为服务器模型 ID、任意文件路径或 URL。
 
 ### 观看者主动 offer 与租约
 
 服务器只向同世界、`canSee(owner)`、真实实体 `owner.getTrackedBy()`、权限、严格距离和最近观看者名额均满足的已握手模组玩家分发。不向非模组玩家发资源或隐藏其原版人物。默认距离 64 格、最近其他观看者 10 人，本人不占名额也不重复下载自己的模型。
 
-0.4.9 按 publisher UUID 与当前 generation 缓存最近观看者集合，首次发布立即发现，之后默认每 40 tick 错峰刷新；已有关系每 20 tick 轻检。相关追踪／可见性事件立即撤销对应 offer 并使 owner 缓存失效，publication 更换／移除、策略变更、停用或发现间隔变化也会清理。活跃资产队列仍每 tick 推进，每片发送前实时检查授权；配置和事件直接转发缓存中仍合法的观看者。禁用或无 publication 时跳过重维护，不读取伪装 supplier。该缓存只复用观众身份，不授予额外观看权限或共享动画状态。
+服务端按 publisher UUID 与当前 generation 缓存最近观看者集合，首次发布立即发现，之后默认每 40 tick 错峰刷新；已有关系每 20 tick 轻检。相关追踪／可见性事件立即撤销对应 offer 并使 owner 缓存失效，publication 更换／移除、策略变更、停用或发现间隔变化也会清理。活跃资产队列每 tick 推进，每片发送前实时检查授权；配置和事件直接转发缓存中仍合法的观看者。禁用或无 publication 时跳过重维护，不读取伪装 supplier。该缓存只复用观众身份，不授予额外观看权限或共享动画状态。
 
 S2C `private_offer {owner,generation,hash,kind,offerId,bytes,sequence,appearance,extra}` 是当次观看授权。客户端只针对该 token 返回 `private_status {offerId,hash,status:"cached"|"missing"|"rejected"}`，不能指定其他 owner/模型。missing 后服务器发送 `asset_begin {offerId,hash,bytes,chunks}`、连续 `asset_chunk {offerId,hash,index,data}`、`asset_end {offerId,hash}`。每连接每次至多两个未完成 offer；它们继续使用 v3 的并发/总带宽上限和同 hash/代次最多三次的尝试预算。每个流每 tick 最多两个片段。
 
@@ -217,7 +217,7 @@ S2C `private_offer {owner,generation,hash,kind,offerId,bytes,sequence,appearance
 
 private_status、private_ready、upload_offer、upload_end 共用客户端控制预算：滚动一秒最多 16 包，令牌桶初始／突发 8 包、每秒恢复 16 个；各控制身份的重试间隔仍至少一秒。预算延后不扣重试时间、不撤身份，pending 观看者按 tick 轮转。这只限制上述控制包，upload_chunk 仍每 tick 最多一片；服务端两频道合计 48 包／秒入站上限不变。
 
-客户端完成缓存 hash 验证、bundle/model/GPU准备后发送 `private_ready {owner,generation,hash}`，收到精确 `private_ack` 后才允许远端私人绘制。此 ACK 仅是私人显示租约，不调用 ME 可见性接管。每 20 tick 发送 `private_heartbeat {bindings:[{owner,generation,hash}]}`；自己的 upload_committed 身份也必须放进 bindings 续期发布，即使没有其他观众。服务端只确认实际被续期的精确合法身份：`heartbeat {bindings:[...]}`，空数组仍表示频道存活。0.5.0 的 heartbeat 可额外带布尔 `allowedUpload`、`allowedView`，实时更新当前连接权限；缺省保持原协商权限，收到撤权后撤掉对应发布或远端显示。非法、过期、失去跟踪/权限、被服务器伪装遮盖的观看身份不会被 ACK。
+客户端完成缓存 hash 验证、bundle/model/GPU准备后发送 `private_ready {owner,generation,hash}`，收到精确 `private_ack` 后才允许远端私人绘制。此 ACK 仅是私人显示租约，不调用 ME 可见性接管。每 20 tick 发送 `private_heartbeat {bindings:[{owner,generation,hash}]}`；自己的 upload_committed 身份也必须放进 bindings 续期发布，即使没有其他观众。服务端只确认实际被续期的精确合法身份：`heartbeat {bindings:[...]}`，空数组仍表示频道存活。heartbeat 可额外带布尔 `allowedUpload`、`allowedView`，实时更新当前连接权限；缺省保持原协商权限，收到撤权后撤掉对应发布或远端显示。非法、过期、失去跟踪/权限、被服务器伪装遮盖的观看身份不会被 ACK。
 
 publisher 与 ready viewer 租约均 100 tick。模型改变、owner清理、离线、许可变化、失去跟踪、服务器伪装优先或租约到期会发送 `private_remove {owner,generation,hash,reason}`；客户端须按精确代次撤销绘制，资源缓存本身不授予显示权。私人渲染不维护幽灵实体，也不改变非模组玩家的显示。
 
@@ -231,8 +231,8 @@ owner 可以发送 `private_state {generation,hash,appearance,extra:{id,loop,loc
 
 每连接配置更新与作者事件分别最多 8 次/秒，窗口不因重新 hello 重置；仍计入两频道合计的入站 48 包/秒、256 KiB/秒。合计出站 2 MiB/秒，其中资产 512 KiB/秒；全服务器每 tick 出站 512 KiB，其中资产 256 KiB。上传、私人下载、v3下载共享每连接 2 个、全服务器 32 个 transfer 槽。超出预算的控制状态可能延后或触发租约恢复，接收到的资源无法因解绑撤回，权限检查授予观看使用权而不构成 DRM。
 
-### 0.5.1 私人分享附加状态
+### 服务器确认的飞行状态
 
-S2C `private_offer` 与 `private_state` 增加可选 `state:{flying:boolean}`。服务器从当前发布者的 `Player.isFlying()` 读取，只在变化时递增现有状态 sequence 并通知获准 READY 观看者，使用原有活动 publication 遍历，不额外扫描全部在线玩家。同包的 appearance 和 extra 保持原语义，extra.sequence 不变也必须更新 flying。受预算延后的状态合并为最新值，资源磁盘缓存不保存运动状态。
+S2C `private_offer` 与 `private_state` 可包含 `state:{flying:boolean}`。服务器从当前发布者的 `Player.isFlying()` 读取，只在变化时递增状态 sequence 并通知获准 READY 观看者，遍历活动 publication，不额外扫描全部在线玩家。同包的 appearance 和 extra 保持原语义，extra.sequence 不变也必须更新 flying。受预算延后的状态合并为最新值，资源磁盘缓存不保存运动状态。
 
-该状态只影响远端 `ctrl.fly`／`query.is_jumping` 及动作选择，不携带或修改玩家坐标。客户端不能在上传或续租中声明 state／flying，服务器拒绝这些额外字段。旧服务器缺此字段时 0.5.1 客户端默认 false，旧 0.5.0 客户端可忽略扩展字段；要修复私人远端飞行误判，应同时更新两端。原版玩家位置仍由 Minecraft 同步。
+该状态只影响远端 `ctrl.fly`／`query.is_jumping` 及动作选择，不携带或修改玩家坐标。客户端不能在上传或续租中声明 state／flying，服务器拒绝这些额外字段。服务端未提供该字段时，客户端默认 false。原版玩家位置由 Minecraft 同步。
