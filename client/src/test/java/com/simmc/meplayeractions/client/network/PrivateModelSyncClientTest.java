@@ -20,6 +20,32 @@ import static org.junit.jupiter.api.Assertions.*;
 class PrivateModelSyncClientTest {
     private static final long NOW=10_000_000_000L,SECOND=1_000_000_000L;
 
+    @Test void serverFlightStateWorksWithCachedAssetsAndChangesWithoutReplacingTheRemoteOrExtraAction() throws Exception {
+        Rig rig=new Rig();rig.acknowledge(false,true);rig.host.cached=CompletableFuture.completedFuture(rig.bundle);Offer offer=rig.offer();
+        JsonObject packet=offer.packet();packet.add("state",flight(true));rig.receive(packet,NOW);rig.host.drain();
+        PrivateModelSyncClient.Remote remote=rig.client.remote(offer.owner);assertTrue(remote.flying);assertFalse(rig.client.isFlying(offer.owner));
+        rig.receive(offer.identity("private_ack"),NOW);assertTrue(rig.client.isFlying(offer.owner));JsonObject originalExtra=remote.extra.deepCopy();
+        JsonObject grounded=offer.state(1,1);grounded.add("state",flight(false));rig.receive(grounded,NOW);
+        assertFalse(rig.client.isFlying(offer.owner));assertSame(remote,rig.client.remote(offer.owner));assertEquals(originalExtra,remote.extra);
+        assertEquals(1,rig.host.decodes);assertEquals(1,rig.host.prepared);
+        JsonObject repeated=offer.state(1,1);repeated.add("state",flight(true));rig.receive(repeated,NOW);assertFalse(remote.flying);
+        JsonObject stale=offer.state(99,1);stale.addProperty("generation",UUID.randomUUID().toString());stale.add("state",flight(true));rig.receive(stale,NOW);assertFalse(remote.flying);
+        JsonObject flying=offer.state(2,1);flying.add("state",flight(true));rig.receive(flying,NOW);assertTrue(rig.client.isFlying(offer.owner));
+        JsonObject revoked=heartbeat();revoked.addProperty("allowedView",false);rig.receive(revoked,NOW);assertFalse(rig.client.isFlying(offer.owner));
+    }
+
+    @Test void legacyOfferAndStateDefaultToNoAuthoritativeFlightAndMalformedFlightCannotChangeCurrentState() throws Exception {
+        Rig rig=new Rig();rig.acknowledge(false,true);rig.host.cached=CompletableFuture.completedFuture(rig.bundle);Offer offer=rig.offer();rig.activate(offer);
+        assertFalse(rig.client.isFlying(offer.owner));
+        JsonObject flying=offer.state(1,1);flying.add("state",flight(true));rig.receive(flying,NOW);assertTrue(rig.client.isFlying(offer.owner));
+        for(String invalid:List.of("{\"flying\":1}","{\"flying\":\"true\"}","{\"flying\":true,\"positionX\":10}","[]")) {
+            JsonObject state=offer.state(2,1);state.add("state",JsonParser.parseString(invalid));rig.receive(state,NOW);
+            assertTrue(rig.client.isFlying(offer.owner));assertEquals(1,rig.client.remote(offer.owner).sequence);
+        }
+        rig.receive(offer.state(2,1),NOW);assertFalse(rig.client.isFlying(offer.owner));
+        JsonObject empty=offer.state(3,1);empty.add("state",new JsonObject());rig.receive(empty,NOW);assertFalse(rig.client.isFlying(offer.owner));
+    }
+
     @Test void anUnnegotiatedOrUnauthorizedOfferCannotLoadOrRenderAModel() throws Exception {
         Rig rig=new Rig();Offer offer=rig.offer();
         rig.receive(offer.packet(),NOW);rig.receive(offer.identity("private_ack"),NOW);rig.host.drain();
@@ -425,6 +451,7 @@ class PrivateModelSyncClientTest {
         long attempts(String type){return controlAttempts.stream().filter(type::equals).count();}
     }
     private static JsonObject heartbeat(){JsonObject packet=PrivateModelSyncClient.envelope("heartbeat");packet.add("bindings",new JsonArray());return packet;}
+    private static JsonObject flight(boolean flying){JsonObject state=new JsonObject();state.addProperty("flying",flying);return state;}
     private static JsonObject appearance(double scale){
         JsonObject value=new JsonObject();value.addProperty("scale",scale);value.addProperty("offsetX",0);value.addProperty("offsetY",0);value.addProperty("offsetZ",0);
         value.addProperty("textureId","");value.add("variables",new JsonObject());value.add("radioSelections",new JsonObject());return value;

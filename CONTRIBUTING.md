@@ -65,8 +65,8 @@ finally { Pop-Location }
 python tools/package_current.py --help
 ```
 
-它读取已构建的两端 0.5.0 JAR、`build/validation-0.5.0/` 下的阶段报告、各阶段 `stage.json` 及最终 `build-commands.json`。阶段以 `server`、`client` 或 `integration` 开头，跨两端的 integration 阶段按 `server/`、`client/` 子目录保存原始 XML；每份命令证据标识 `version: "0.5.0"`，记录真实命令及成功退出码。`--stage-order` 顺序列出本轮实际保存的全部阶段目录名。可用 `--reference` 指定锁定的上游源码目录，`--gradle-cache` 指定依赖缓存。默认输出工作区 `dist/` 的 JAR、安装 ZIP、源码 ZIP、证据 ZIP 和构建 JSON；任一同名文件已存在就拒绝，保留历史交付。工具不执行构建、测试或实机验收。完整参数与证据结构见 [工具说明](tools/README.md)。
+它读取已构建的两端 0.5.1 JAR、`build/validation-0.5.1/` 下的阶段报告、各阶段 `stage.json` 及最终 `build-commands.json`。阶段以 `server`、`client` 或 `integration` 开头，跨两端的 integration 阶段按 `server/`、`client/` 子目录保存原始 XML；每份命令证据标识 `version: "0.5.1"`，记录真实命令及成功退出码。`--stage-order` 顺序列出本轮实际保存的全部阶段目录名。可用 `--reference` 指定锁定的上游源码目录，`--gradle-cache` 指定依赖缓存。默认输出工作区 `dist/` 的 JAR、安装 ZIP、源码 ZIP、证据 ZIP 和构建 JSON；任一同名文件已存在就拒绝，保留历史交付。工具不执行构建、测试或实机验收。完整参数与证据结构见 [工具说明](tools/README.md)。
 
-当前脚本的版本及证据合同固定为 0.5.0。下次行为发布须同步 `pom.xml`、`client/build.gradle`、脚本版本合同和当轮证据，不能把旧报告套用到新版本。服务端 `private-models/` 和 `private-fixture*` 属于运行时缓存或私有输入，必须排除源码交付；正常 `src` 资源和公开示例应完整保留。文档整理本身不必递增软件版本。旧 [package_release.py](tools/package_release.py) 保留资源/许可辅助函数和历史 `full` / `interactions` 验收流程，不作为当前日常打包入口。
+当前脚本的版本及证据合同固定为 0.5.1。下次行为发布须同步 `pom.xml`、`client/build.gradle`、脚本版本合同和当轮证据，不能把旧报告套用到新版本。服务端 `private-models/` 和 `private-fixture*` 属于运行时缓存或私有输入，必须排除源码交付；正常 `src` 资源和公开示例应完整保留。文档整理本身不必递增软件版本。旧 [package_release.py](tools/package_release.py) 保留资源/许可辅助函数和历史 `full` / `interactions` 验收流程，不作为当前日常打包入口。
 
 打包前核对插件/模组描述、安装说明和第三方声明；打包后检查 ZIP 完整性、结构、版本、许可、内容与当前源码/JAR 一致性，继续修改后重新打包。`tools/prepare_models.py` 会准备示例原模型和 ME 蓝图，`tools/build_client_resource_pack.py` 是旧资源包兼容工具；普通主动推送部署不需要运行它们，代码或文档整理也不应顺带重写模型资产。提交、推送和发布按用户授权另行执行。

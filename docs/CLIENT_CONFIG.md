@@ -1,4 +1,4 @@
-# 客户端配置与使用（0.5.0）
+# 客户端配置与使用（0.5.1）
 
 [文档索引](README.md) · [安装](../README.md) · [服务器模型与部署](MODEL_DELIVERY.md) · [YSM 支持范围](YSM_COMPATIBILITY.md) · [开发导航](../CONTRIBUTING.md)
 
@@ -98,7 +98,7 @@ CLIENT 中选择并使用模型只改变本机外观；选择“分享给模组�
 | 字段 | 类型与含义 |
 | --- | --- |
 | `enabled`、`showSelf`、`hideVanillaPlayer`、`hideVanillaEquipment` | 布尔；对应总渲染与三个显隐，默认见上文 |
-| `followServerTimeline` | 布尔，默认 `false`：按原版实体即时计算服务器模型位置／普通动作，服务器手动动作和许可仍生效；`true` 使用服务器轨迹和动画层。仅 JSON 配置，改变后重握手；私人模型始终使用本地实体 |
+| `followServerTimeline` | 布尔，默认 `false`：普通动作本地计算，服务器手动动作和许可仍生效；`true` 仅改用服务器动画时间线。所有模式的位置、角度和插值均复用原版本帧渲染状态；服务器轨迹只供诊断。仅 JSON 配置，改变后重握手；私人模型使用本地动画 |
 | `interpolationTicks` | 整数，默认 `2`，限制 `0–6`；仅服务器轨迹模式使用采样缓冲，即时模式不额外拖后位置 |
 | `showModelIds` | 布尔，默认 `false`；图库“ID”切换名称／ID，标题最多两行 |
 | `defaultHeaddress`、`defaultBlueTexture` | 布尔，默认 `true`／`false`；仅 `openysm_default` 的红蝴蝶结／蓝色皮肤兼容默认，已保存作者变量／皮肤优先；快捷按钮即时保存 |

@@ -1,8 +1,8 @@
-"""Package server/client 0.5.0 after saved targeted checks and final builds.
+"""Package server/client 0.5.1 after saved targeted checks and final builds.
 
 This helper does not run a build, a test, Minecraft, or the old runtime release gate.
 Both sides must be freshly built. No previous release proof or private model input is reused.
-Existing dist artifacts are never replaced. This tracked tool preserves the 0.5.0
+Existing dist artifacts are never replaced. This tracked tool preserves the 0.5.1
 release workflow; updating its version contract requires a separate release change.
 """
 from __future__ import annotations
@@ -24,7 +24,7 @@ import zipfile
 
 PROJECT = Path(__file__).resolve().parents[1]
 CLIENT = PROJECT / "client"
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 SERVER_VERSION = VERSION
 VALIDATION = PROJECT / "build" / f"validation-{VERSION}"
 REFERENCE_REVISION = "0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85"

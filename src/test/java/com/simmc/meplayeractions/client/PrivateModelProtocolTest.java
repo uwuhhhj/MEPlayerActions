@@ -11,6 +11,14 @@ import static org.junit.jupiter.api.Assertions.*;
 class PrivateModelProtocolTest {
     private static final String GENERATION="00000000-0000-0000-0000-000000000011",HASH="a".repeat(64);
     private static JsonObject decode(String text) throws IOException {return PrivateModelSyncService.decode(text.getBytes(StandardCharsets.UTF_8));}
+    @Test void uploadersCannotAdvertiseOrOverrideAuthoritativeFlightState() throws IOException {
+        String state="{\"protocol\":1,\"type\":\"private_state\",\"generation\":\""+GENERATION+"\",\"hash\":\""+HASH+"\",\"appearance\":{},\"extra\":{\"id\":\"\",\"loop\":\"ONCE\",\"locked\":false,\"sequence\":0}}";
+        assertEquals("private_state",decode(state).get("type").getAsString());
+        assertThrows(IOException.class,()->decode(state.substring(0,state.length()-1)+",\"state\":{\"flying\":true}}"));
+        assertThrows(IOException.class,()->decode(state.replace("\"appearance\":{}","\"appearance\":{\"flying\":true}")));
+        String offer="{\"protocol\":1,\"type\":\"upload_offer\",\"generation\":\""+GENERATION+"\",\"hash\":\""+HASH+"\",\"bytes\":2048,\"kind\":\"ysm\",\"appearance\":{},\"state\":{\"flying\":true}}";
+        assertThrows(IOException.class,()->decode(offer));
+    }
     @Test void handshakeRequiresTheExactIndependentCapabilityAndNeverAllowsAssetSelection() throws IOException {
         assertEquals("hello",decode("{\"protocol\":1,\"type\":\"hello\",\"capabilities\":[\"private_models_v1\"]}").get("type").getAsString());
         for(String invalid:List.of("{\"protocol\":1,\"type\":\"hello\",\"capabilities\":[]}",

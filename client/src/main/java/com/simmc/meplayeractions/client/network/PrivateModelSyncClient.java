@@ -38,7 +38,7 @@ public final class PrivateModelSyncClient {
         public final int bytes;
         public JsonObject appearance, extra;
         public long sequence, eventSequence=-1, lastLease;
-        public boolean ready, active;
+        public boolean ready, active, flying;
         private byte[] bundle;
         private long decodeRevision;
         private String pendingStatus="";
@@ -46,9 +46,9 @@ public final class PrivateModelSyncClient {
         private long lastStatusAttempt=-1,lastReadyAttempt=-1;
         private Download download;
         private Remote(UUID owner,UUID generation,UUID offerId,String hash,String kind,int bytes,
-                       JsonObject appearance,JsonObject extra,long sequence) {
+                       JsonObject appearance,JsonObject extra,long sequence,boolean flying) {
             this.owner=owner;this.generation=generation;this.offerId=offerId;this.hash=hash;this.kind=kind;this.bytes=bytes;
-            this.appearance=appearance;this.extra=extra;this.sequence=sequence;
+            this.appearance=appearance;this.extra=extra;this.sequence=sequence;this.flying=flying;
         }
     }
     private record Archive(byte[] bytes,String kind) { }
@@ -91,6 +91,8 @@ public final class PrivateModelSyncClient {
     public int uploadedBytes() { return uploadedBytes; }
     public Collection<Remote> remotes() { return List.copyOf(remotes.values()); }
     public Remote remote(UUID owner) { return remotes.get(owner); }
+    /** Server-authoritative creative flight is not present in vanilla remote player abilities. */
+    public boolean isFlying(UUID owner) {Remote remote=remotes.get(owner);return remote!=null && remote.active && remote.flying;}
     /** Reject the exact prepared instance; a delayed render failure cannot remove a newer generation. */
     public boolean rejectRemote(UUID owner,UUID generation){
         Remote remote=remotes.get(owner);if(remote==null||!remote.generation.equals(generation))return false;
@@ -254,7 +256,8 @@ public final class PrivateModelSyncClient {
                     Remote remote=matching(packet);if(remote==null)break;
                     long sequence=WireJson.integer(packet,"sequence",0,9_007_199_254_740_991L);if(sequence<=remote.sequence)break;
                     JsonObject appearance=appearance(packet),extra=extra(packet);String oldTexture=remote.appearance.get("textureId").getAsString();
-                    remote.sequence=sequence;remote.appearance=appearance;remote.extra=extra;
+                    boolean flying=flying(packet);
+                    remote.sequence=sequence;remote.appearance=appearance;remote.extra=extra;remote.flying=flying;
                     if(!oldTexture.equals(appearance.get("textureId").getAsString())&&remote.bundle!=null){remote.active=remote.ready=false;remote.lastLease=now;decode(remote);}
                     else host.state(remote);
                 }
@@ -292,7 +295,7 @@ public final class PrivateModelSyncClient {
         String hash=WireJson.hash(packet,"hash"),kind=WireJson.string(packet,"kind",16);
         if(!Set.of("ysm","bbmodel").contains(kind))throw new IOException("Private kind");
         int bytes=(int)WireJson.integer(packet,"bytes",1,maxBundleBytes);
-        JsonObject appearance=appearance(packet),extra=extra(packet);long sequence=WireJson.integer(packet,"sequence",0,9_007_199_254_740_991L);
+        JsonObject appearance=appearance(packet),extra=extra(packet);long sequence=WireJson.integer(packet,"sequence",0,9_007_199_254_740_991L);boolean flying=flying(packet);
         Remote previous=remotes.get(owner);
         if(previous!=null) {
             if(previous.offerId.equals(id)&&previous.generation.equals(generation)&&previous.hash.equals(hash)){
@@ -301,7 +304,7 @@ public final class PrivateModelSyncClient {
             remove(previous);
         }
         if(remotes.size()>=MAX_REMOTES) {status(id,hash,"rejected");return;}
-        Remote remote=new Remote(owner,generation,id,hash,kind,bytes,appearance,extra,sequence);remote.lastLease=now;remotes.put(owner,remote);
+        Remote remote=new Remote(owner,generation,id,hash,kind,bytes,appearance,extra,sequence,flying);remote.lastLease=now;remotes.put(owner,remote);
         long revision=epoch;
         host.cached(hash).whenComplete((bundle,error)->host.dispatch(()->{
             if(!current(remote,revision))return;
@@ -389,6 +392,13 @@ public final class PrivateModelSyncClient {
     public static JsonObject envelope(String type){JsonObject packet=new JsonObject();packet.addProperty("protocol",PROTOCOL);packet.addProperty("type",type);return packet;}
     private static JsonObject binding(UUID owner,UUID generation,String hash){JsonObject value=new JsonObject();value.addProperty("owner",owner.toString());value.addProperty("generation",generation.toString());value.addProperty("hash",hash);return value;}
     private static UUID uuid(JsonObject packet,String key){return UUID.fromString(WireJson.string(packet,key,36));}
+    /** Optional S2C extension: legacy servers omit it, model caches never supply entity state. */
+    private static boolean flying(JsonObject packet) {
+        if(!packet.has("state"))return false;
+        JsonElement state=packet.get("state");
+        if(!state.isJsonObject() || !Set.of("flying").containsAll(state.getAsJsonObject().keySet()))throw new IllegalArgumentException("Private server state");
+        JsonObject values=state.getAsJsonObject();return values.has("flying") && WireJson.bool(values,"flying");
+    }
     private static JsonObject appearance(JsonObject packet) {
         JsonObject value=packet.getAsJsonObject("appearance");if(value==null)throw new IllegalArgumentException("Private appearance");
         WireJson.number(value,"scale",.05,8);for(String key:List.of("offsetX","offsetY","offsetZ"))WireJson.number(value,key,-32,32);

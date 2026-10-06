@@ -179,6 +179,35 @@ class PrivateModelPerformanceTest {
             scene.tick=2;scene.maintain();assertEquals(sent+1,scene.viewer.count("private_state"));assertTrue(((Set<?>)field(scene.service,"pendingControls")).isEmpty());
         }
     }
+    @Test void pendingFlightUsesTheLatestServerStateWithoutReplayingThePreviousTickOrRediscoveringViewers() throws Exception {
+        try(var scene=new Scene(true,10)) {
+            scene.start();scene.ready();int sent=scene.viewer.count("private_state"),discoveries=scene.owner.discoveryIterations;
+            scene.saturate();scene.owner.flying=true;scene.maintain();assertEquals(sent,scene.viewer.count("private_state"));
+            assertEquals(1,((Map<?,?>)field(scene.session(scene.viewer),"pendingStates")).size());
+            scene.owner.flying=false;scene.tick=1;scene.maintain();
+            assertEquals(sent+1,scene.viewer.count("private_state"));assertFalse(scene.viewer.last("private_state").getAsJsonObject("state").get("flying").getAsBoolean());
+            assertEquals(2,scene.viewer.last("private_state").get("sequence").getAsInt());assertEquals(0,scene.viewer.last("private_state").getAsJsonObject("extra").get("sequence").getAsInt());
+            assertEquals(discoveries,scene.owner.discoveryIterations);assertTrue(((Set<?>)field(scene.service,"pendingControls")).isEmpty());
+        }
+    }
+    @Test void cachedPublicationUsesCurrentServerFlightRatherThanPersistingMotionInModelResources(@TempDir Path directory) throws Exception {
+        try(var scene=new Scene(true,10)) {
+            var store=new PrivateModelStore(directory,PrivateModelStore.Settings.defaults());store.saveValidated(scene.owner.id,scene.hash,scene.bundle);
+            setField(scene.service,"store",store);scene.owner.flying=true;scene.hello(scene.owner);scene.hello(scene.viewer);
+            scene.uploadOffer(scene.owner,scene.hash);scene.runWorker();scene.maintain();
+            JsonObject offered=scene.viewer.last("private_offer"),ready=packet("private_ready");
+            // A real upload chooses a new generation; the fixed Scene generation only describes start() fixtures.
+            for(String key:List.of("owner","generation","hash"))ready.add(key,offered.get(key));
+            scene.feedback("cached");scene.send(scene.viewer,ready);assertEquals("READY",field(scene.offer(),"status").toString());
+            assertEquals(0,scene.owner.count("upload_accept"));assertTrue(offered.getAsJsonObject("state").get("flying").getAsBoolean());
+            assertTrue(scene.viewer.last("private_state").getAsJsonObject("state").get("flying").getAsBoolean());
+            scene.send(scene.owner,packet("clear"));scene.owner.flying=false;scene.tick=200;
+            scene.uploadOffer(scene.owner,scene.hash);scene.runWorker();scene.maintain();
+            assertEquals(2,scene.viewer.count("private_offer"));
+            assertFalse(scene.viewer.last("private_offer").getAsJsonObject("state").get("flying").getAsBoolean());
+            assertArrayEquals(scene.bundle,store.load(scene.owner.id,scene.hash,"ysm",scene.bundle.length));
+        }
+    }
     @Test void readyAndCommitAcknowledgmentsRecoverFromBudgetPressureWithoutNewUploads() throws Exception {
         try(var scene=new Scene(true,10)) {
             scene.start();scene.feedback("cached");scene.saturate();scene.readyPacket();
@@ -313,7 +342,7 @@ class PrivateModelPerformanceTest {
     }
     private static final class Person {
         final UUID id;final Player player;final Set<Player> tracked=new HashSet<>();final List<JsonObject> messages=new ArrayList<>();
-        boolean allowed=true;int discoveryIterations;Runnable onChunk;
+        boolean allowed=true,flying;int discoveryIterations;Runnable onChunk;
         Person(UUID id,World world,double x) {
             this.id=id;
             Set<Player> trackingView=new AbstractSet<>() {
@@ -324,6 +353,7 @@ class PrivateModelPerformanceTest {
             player=proxy(Player.class,(instance,method,args)->switch(method.getName()) {
                 case "getUniqueId" -> id;case "isOnline" -> true;case "getWorld" -> world;case "getLocation" -> new Location(world,x,64,0);
                 case "canSee" -> true;case "getTrackedBy" -> trackingView;
+                case "isFlying" -> flying;
                 case "hasPermission" -> allowed && Set.of("mact.private.upload","mact.private.view").contains(args[0]);
                 case "sendPluginMessage" -> {
                     JsonObject value=JsonParser.parseString(new String((byte[])args[2],StandardCharsets.UTF_8)).getAsJsonObject();messages.add(value);

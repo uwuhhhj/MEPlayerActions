@@ -26,6 +26,23 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** Actual relay messages/maintenance using public Bukkit interface proxies; no running server. */
 class PrivateModelLifecycleTest {
+    @Test void authoritativeFlightChangesReachOnlyAuthorizedReadyViewersWithoutReplayingAppearanceOrExtra() throws Exception {
+        try(var scene=new Scene()) {
+            scene.transition("READY");Object original=scene.offer();
+            JsonObject initial=scene.viewer.last("private_state");assertFalse(initial.getAsJsonObject("state").get("flying").getAsBoolean());
+            int sent=scene.viewer.count("private_state");long sequence=initial.get("sequence").getAsLong();
+            scene.owner.flying=true;scene.advance(1);
+            JsonObject flying=scene.viewer.last("private_state");assertTrue(flying.getAsJsonObject("state").get("flying").getAsBoolean());
+            assertEquals(sent+1,scene.viewer.count("private_state"));assertEquals(sequence+1,flying.get("sequence").getAsLong());
+            assertEquals(initial.get("appearance"),flying.get("appearance"));assertEquals(initial.get("extra"),flying.get("extra"));assertSame(original,scene.offer());
+            scene.advance(1);assertEquals(sent+1,scene.viewer.count("private_state"));
+            scene.owner.flying=false;scene.advance(1);
+            JsonObject grounded=scene.viewer.last("private_state");assertFalse(grounded.getAsJsonObject("state").get("flying").getAsBoolean());
+            assertEquals(sequence+2,grounded.get("sequence").getAsLong());assertEquals(sent+2,scene.viewer.count("private_state"));
+            scene.viewer.allowed=false;scene.owner.flying=true;scene.advance(1);
+            assertEquals(sent+2,scene.viewer.count("private_state"));
+        }
+    }
     @ParameterizedTest @ValueSource(strings={"OFFERED","CACHED","QUEUED","SENDING","DELIVERED","READY"})
     void rendererRejectionRevokesEveryOfferPhaseAndWaitsForANewGeneration(String phase) throws Exception {
         try(var scene=new Scene()) {
@@ -141,11 +158,12 @@ class PrivateModelLifecycleTest {
     }
     private static final class Person {
         final UUID id=UUID.randomUUID();final Player player;final Set<Player> tracking=new HashSet<>();
-        final List<JsonObject> messages=new ArrayList<>();boolean allowed=true,dropAssetChunks;
+        final List<JsonObject> messages=new ArrayList<>();boolean allowed=true,dropAssetChunks,flying;
         Person(World world,double x) {
             player=proxy(Player.class,(instance,method,args)->switch(method.getName()) {
                 case "getUniqueId" -> id;case "isOnline" -> true;case "getWorld" -> world;case "getLocation" -> new Location(world,x,64,0);
                 case "canSee" -> true;case "getTrackedBy" -> Set.copyOf(tracking);
+                case "isFlying" -> flying;
                 case "hasPermission" -> allowed && Set.of("mact.private.upload","mact.private.view").contains(args[0]);
                 case "sendPluginMessage" -> {
                     JsonObject packet=JsonParser.parseString(new String((byte[])args[2],StandardCharsets.UTF_8)).getAsJsonObject();

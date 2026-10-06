@@ -2,7 +2,7 @@
 
 [文档索引](README.md) · [模型部署](MODEL_DELIVERY.md) · [架构](../ARCHITECTURE.md) · [协议](CLIENT_PROTOCOL.md)
 
-当前两端版本为 0.5.0。后台发现与模型动画使用独立频率；旧服务器配置缺少以下字段时，自动采用默认值，无需覆盖已有 `config.yml`。
+当前两端版本为 0.5.1。后台发现与模型动画使用独立频率；旧服务器配置缺少以下字段时，自动采用默认值，无需覆盖已有 `config.yml`。
 
 ```yaml
 performance:

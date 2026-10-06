@@ -1,6 +1,6 @@
 # 客户端协议
 
-本文是 0.5.0 线格式、授权与限制的统一入口。本地私人外观不上传模型；私人多人分享使用独立 `meplayeractions:private` protocol 1；服务器伪装使用 `meplayeractions:main` protocol 3。私人发布不是服务器伪装实例，两频道身份和权限不能混用。模块与生命周期见 [架构](../ARCHITECTURE.md)，部署见 [模型同步](MODEL_DELIVERY.md)，后台频率见 [性能说明](PERFORMANCE.md)。
+本文是 0.5.1 线格式、授权与限制的统一入口。本地私人外观不上传模型；私人多人分享使用独立 `meplayeractions:private` protocol 1；服务器伪装使用 `meplayeractions:main` protocol 3。私人发布不是服务器伪装实例，两频道身份和权限不能混用。模块与生命周期见 [架构](../ARCHITECTURE.md)，部署见 [模型同步](MODEL_DELIVERY.md)，后台频率见 [性能说明](PERFORMANCE.md)。
 
 频道 `meplayeractions:main`，严格 UTF-8 JSON，每包带整数 `protocol:3`、字符串 `type`。不兼容 v1/v2。所有消息保持分包顺序；不允许重复键、类型强制转换、非法 UTF-8、尾随内容；当前服务端还拒绝客户端请求中的额外字段。每包受 maxPayload（默认 16000 字节）限制；连接流量和下载预算见下文。客户端请求只操作自己，仍经过服务端权限校验。
 
@@ -32,7 +32,7 @@ v3 是玩家模型资产、动画状态及观众渲染接管协议。客户端�
 {"protocol":3,"type":"state","owner":"00000000-0000-0000-0000-000000000001","instance":"00000000-0000-0000-0000-000000000002","modelId":"ysm_01_jk","assetHash":"小写SHA256","sequence":12,"serverTick":12345,"world":"00000000-0000-0000-0000-000000000003","x":1.0,"y":64.0,"z":2.0,"bodyYaw":90.0,"headYaw":100.0,"headPitch":10.0,"scale":1.5,"hidePlayer":true,"showSelf":true,"foodLevel":20,"layers":[{"layer":"posture","animation":"crawl_idle","startedAtTick":12340,"speed":1.0,"loop":"LOOP","inTicks":2,"outTicks":2}],"animations":[{"id":"wave","label":"挥手"}],"motion":{"features":["movement","crawl"],"clips":[{"state":"crawl-idle","animation":"crawl_idle","speed":1.0,"loop":"LOOP","inTicks":2,"outTicks":2}],"jumpMinTicks":17,"landingGraceTicks":6,"movementThreshold":0.025,"interruptMove":true,"interruptPosture":true,"flying":false,"interaction":"","forcedPose":"","specialPose":"","anchorX":0,"anchorY":0,"anchorZ":0,"anchorYaw":0}}
 ```
 
-`instance` 是伪装生命周期 UUID，模型更换生成新值。UUID 必须是标准 36 字符小写形式。`sequence` 是动画变化序号；`serverTick` 是名义 20 TPS、unsigned 32 位的服务器 tick，当前适配器取 Paper 当前 tick。x/y/z 与 body/head yaw/pitch 为服务器展示轨迹，当前适配器保留 visual-follow.delay 历史帧，只在客户端显式开启 `followServerTimeline` 时使用。默认模式根据 owner UUID 查找观看者的原版 PlayerEntity，逐帧使用 getLerpedPos 与原版角度插值，既适用于本人，也适用于未安装模组的被观看者；不叠加服务器 delay 或客户端 interpolationTicks。未跟踪到原版实体时不绘制幽灵模型。动画使用客户端本地 tick 时钟，普通姿态在每个游戏 tick 采样；服务器手动层的开始时刻只转换一次，同实例回包不重启动画。
+`instance` 是伪装生命周期 UUID，模型更换生成新值。UUID 必须是标准 36 字符小写形式。`sequence` 是动画变化序号；`serverTick` 是名义 20 TPS、unsigned 32 位的服务器 tick，当前适配器取 Paper 当前 tick。x/y/z 与 body/head yaw/pitch 保留为服务器展示轨迹及诊断数据。0.5.1 根据 owner UUID 复用原版当帧 PlayerEntityRenderState 的坐标、实际 renderer 偏移、角度、tickDelta 和冻结相机；私人外观 offset 与明确的服务器姿态 anchor 是独立静态偏移。第一人称本人仅为手臂／脚本补建原版状态；不沿用旧帧远端坐标。查询与物理使用不含绘制偏移的原生位置。所有渲染接管模式均不叠加服务器 delay 或客户端位置缓冲，`followServerTimeline` 仅选择服务器动画层／动画时间线。未跟踪到原版实体时不绘制幽灵模型。动画使用客户端本地 tick 时钟，普通姿态在每个游戏 tick 采样；服务器手动层的开始时刻只转换一次，同实例回包不重启动画。
 
 state 必须额外包含 `motion` 对象：`features` 为服务器及玩家允许的同步项，`clips` 为已解析且模型存在的 `{state,animation,speed,loop,inTicks,outTicks}` 集合；缺失映射不硬编码回退。另有 `jumpMinTicks`、`landingGraceTicks`、`movementThreshold`、`interruptMove`、`interruptPosture`、`flying`（远端能力不一定由原版同步）、`interaction`（空/mining/swing-mainhand/swing-offhand）。`forcedPose` 为空/crawl/sneak，仅传递 Paper 固定姿态或 GSit 强制爬行；本机原版重新计算为 STANDING 时仍必须遵守，不拿延迟的自动层猜测姿态。原生陆地爬行与游泳、床睡眠与 GSit 躺下分别判断；禁用姿态不落入其他状态。本人挖掘读取本地交互管理器，远端挖掘采用服务器的明确 interaction 状态，不能根据同名攻击动画猜测。
 
@@ -218,3 +218,9 @@ owner 可以发送 `private_state {generation,hash,appearance,extra:{id,loop,loc
 成熟作者 `ysm.sync` 使用独立 `private_event {generation,hash,args:[...]}`，最多 16 个有限数。server 必须匹配本连接的已接收私人发布，随后返回带 owner/generation/hash/独立事件 sequence 的同名 private_event 给 publisher 和当前 ready 合法观看者。联网 listener 生效时作者 sync 是 relay-only，本机也只在服务器回显时执行一次 @sync，收包执行不会再次发送。服务器不执行函数、动画或脚本，不允许为其他 owner 发送事件。owner被服务器伪装遮盖时不转发事件。
 
 每连接配置更新与作者事件分别最多 8 次/秒，窗口不因重新 hello 重置；仍计入两频道合计的入站 48 包/秒、256 KiB/秒。合计出站 2 MiB/秒，其中资产 512 KiB/秒；全服务器每 tick 出站 512 KiB，其中资产 256 KiB。上传、私人下载、v3下载共享每连接 2 个、全服务器 32 个 transfer 槽。超出预算的控制状态可能延后或触发租约恢复，接收到的资源无法因解绑撤回，权限检查授予观看使用权而不构成 DRM。
+
+### 0.5.1 私人分享附加状态
+
+S2C `private_offer` 与 `private_state` 增加可选 `state:{flying:boolean}`。服务器从当前发布者的 `Player.isFlying()` 读取，只在变化时递增现有状态 sequence 并通知获准 READY 观看者，使用原有活动 publication 遍历，不额外扫描全部在线玩家。同包的 appearance 和 extra 保持原语义，extra.sequence 不变也必须更新 flying。受预算延后的状态合并为最新值，资源磁盘缓存不保存运动状态。
+
+该状态只影响远端 `ctrl.fly`／`query.is_jumping` 及动作选择，不携带或修改玩家坐标。客户端不能在上传或续租中声明 state／flying，服务器拒绝这些额外字段。旧服务器缺此字段时 0.5.1 客户端默认 false，旧 0.5.0 客户端可忽略扩展字段；要修复私人远端飞行误判，应同时更新两端。原版玩家位置仍由 Minecraft 同步。

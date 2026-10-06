@@ -6,4 +6,6 @@ import java.util.UUID;
 public interface ComponentRenderState {
     UUID meplayeractions$entityUuid();
     void meplayeractions$entityUuid(UUID uuid);
+    float meplayeractions$tickDelta();
+    void meplayeractions$tickDelta(float tickDelta);
 }

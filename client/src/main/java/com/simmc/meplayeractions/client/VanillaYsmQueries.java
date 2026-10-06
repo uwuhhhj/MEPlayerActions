@@ -1,6 +1,7 @@
 package com.simmc.meplayeractions.client;
 
 import com.simmc.meplayeractions.expression.Molang;
+import com.simmc.meplayeractions.client.render.NativePlayerPresentation;
 import com.simmc.meplayeractions.client.mixin.YsmArrowQueryAccessor;
 import com.simmc.meplayeractions.client.mixin.YsmFishingQueryAccessor;
 import com.simmc.meplayeractions.client.mixin.YsmThrownItemQueryInvoker;
@@ -176,9 +177,13 @@ public final class VanillaYsmQueries implements Molang.FunctionResolver {
     }
 
     public static void populate(MinecraftClient client,PlayerEntity player,int food,String texture,Molang.Context c) {
+        populate(client,player,food,texture,player!=null && player.getAbilities().flying,c);
+    }
+    public static void populate(MinecraftClient client,PlayerEntity player,int food,String texture,boolean flying,Molang.Context c) {
         if(player==null || client.world==null)return;
-        float fraction=client.getRenderTickCounter().getTickProgress(false);
-        Vec3d position=player.getLerpedPos(fraction);
+        var presentation=NativePlayerPresentation.frame(player);
+        float fraction=presentation.tickDelta();
+        Vec3d position=presentation.entityPosition();
         NativeFrame frame=frame(player);
         Motion motion=frame.motion.sample(client.world.getTime()+fraction,position.x,position.y,position.z,
                 Math.max(0,client.getRenderTickCounter().getDynamicDeltaTicks()));
@@ -209,7 +214,7 @@ public final class VanillaYsmQueries implements Molang.FunctionResolver {
         q(c,"is_sleeping",player.isSleeping());q(c,"is_using_item",player.isUsingItem());
         q(c,"item_in_use_duration",player.getItemUseTime()/20d);q(c,"item_max_use_duration",active.isEmpty()?0:active.getMaxUseTime(player)/20d);
         q(c,"item_remaining_use_duration",player.getItemUseTimeLeft()/20d);
-        q(c,"is_jumping",!player.getAbilities().flying&&!player.hasVehicle()&&!player.isOnGround()&&!player.isTouchingWater());
+        q(c,"is_jumping",!flying&&!player.hasVehicle()&&!player.isOnGround()&&!player.isTouchingWater());
         q(c,"player_level",player.experienceLevel);
         int equipment=0;for(EquipmentSlot slot:List.of(EquipmentSlot.HEAD,EquipmentSlot.CHEST,EquipmentSlot.LEGS,EquipmentSlot.FEET))if(!player.getEquippedStack(slot).isEmpty())equipment++;
         q(c,"equipment_count",equipment);
@@ -272,7 +277,7 @@ public final class VanillaYsmQueries implements Molang.FunctionResolver {
         }
         populateDebugDisabled(c);
         populateMovement(c,player,motion,fraction,player!=client.player);
-        populateControl(c,player,fraction,player.getAbilities().flying);
+        populateControl(c,player,fraction,flying);
         c.functions(new VanillaYsmQueries(client,player,motion,position,c.nativeYsm()));
     }
     /** Source MovementQuery prioritizes observed deltas, and suppresses synthetic movement for remote players. */

@@ -19,6 +19,7 @@ public abstract class EntityRendererMixin {
             at = @At("TAIL"))
     private void meplayeractions$captureHidden(Entity entity, EntityRenderState state, float tickDelta, CallbackInfo ci) {
         ((ComponentRenderState) state).meplayeractions$entityUuid(entity.getUuid());
+        ((ComponentRenderState) state).meplayeractions$tickDelta(tickDelta);
         ((HiddenPlayerRenderState) state).meplayeractions$setHidden(entity instanceof PlayerEntity
                 && state instanceof PlayerEntityRenderState && ModelRenderer.shouldHidePlayer(entity.getUuid()));
     }

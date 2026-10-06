@@ -11,6 +11,7 @@ import com.simmc.meplayeractions.expression.Molang;
 import com.simmc.meplayeractions.client.ui.ModelConfigSchema;
 import com.simmc.meplayeractions.client.network.*;
 import com.simmc.meplayeractions.client.render.ModelRenderer;
+import com.simmc.meplayeractions.client.render.NativePlayerPresentation;
 import com.simmc.meplayeractions.client.effects.YsmModelEffects;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.loader.api.FabricLoader;
@@ -854,14 +855,16 @@ public final class ClientRuntime {
         for(Binding binding:bindings.values()) {
             BbModel model=assets.get(binding.hash);
             if(!usable(binding,now) || model==null)continue;
+            PlayerEntity player=client.world.getPlayerByUuid(binding.owner);
+            if(player==null)continue;
+            RenderBinding nativeBinding=entityBinding(binding,model,player);
             if(options.followServerTimeline) {
-                TransformTimeline.Transform t=binding.timeline.sample(tick);
                 List<Layer> presentationLayers=binding.layerTimeline.sample(tick);
                 result.add(new RenderBinding(binding.owner,binding.instance,binding.hash,model,presentationLayers,tick,
-                        t.x(),t.y(),t.z(),t.bodyYaw(),t.headYaw(),t.headPitch(),binding.scale,binding.hidePlayer,"server-timeline"));
+                        nativeBinding.x(),nativeBinding.y(),nativeBinding.z(),nativeBinding.bodyYaw(),nativeBinding.headYaw(),
+                        nativeBinding.headPitch(),binding.scale,binding.hidePlayer,"native-position-server-animation"));
             } else {
-                PlayerEntity player=client.world.getPlayerByUuid(binding.owner);
-                if(player!=null) result.add(entityBinding(binding,model,player));
+                result.add(nativeBinding);
             }
         }
         for(Binding binding:privateBindings.values())if(privateUsable(binding.owner)){
@@ -925,7 +928,7 @@ public final class ClientRuntime {
     public void configureExpressionContext(UUID owner,Molang.Context context){
         PlayerEntity player=nativePlayer(owner);Binding binding=bindings.get(owner);
         int food=player==client.player&&player!=null?player.getHungerManager().getFoodLevel():binding==null?20:binding.foodLevel;
-        VanillaYsmQueries.populate(client,player,food,modelProfile(owner).selectedTexture(),context);
+        VanillaYsmQueries.populate(client,player,food,modelProfile(owner).selectedTexture(),nativeFlying(player),context);
         context.query("ysm.is_first_person",player!=null && player==client.player && client.options.getPerspective().isFirstPerson()?1d:0d);
         Molang.FunctionResolver nativeFunctions=context.functionResolver();
         RenderBinding appearance=appearanceBinding(owner);
@@ -1052,10 +1055,11 @@ public final class ClientRuntime {
         @Override public boolean isDamaged() {return trackedStack.isDamaged();}
     }
     private RenderBinding entityBinding(Binding binding,BbModel model,PlayerEntity player) {
-        float delta=client.getRenderTickCounter().getTickProgress(false);
-        Vec3d pos=player.getLerpedPos(delta);
-        float bodyYaw=MathHelper.lerpAngleDegrees(delta,player.lastBodyYaw,player.bodyYaw);
-        float headYaw=MathHelper.lerpAngleDegrees(delta,player.lastHeadYaw,player.headYaw),headPitch=player.getPitch(delta);
+        var presentation=NativePlayerPresentation.frame(player);
+        float delta=presentation.tickDelta();
+        Vec3d pos=new Vec3d(presentation.x(),presentation.y(),presentation.z());
+        float bodyYaw=presentation.bodyYaw();
+        float headYaw=presentation.headYaw(),headPitch=presentation.headPitch();
         LocalMotionPolicy policy=binding.motion;
         if(binding==localSelf)policy=policy.withActionLock(options.localActionLocked);
         else if(binding==privateBindings.get(binding.owner)){
@@ -1063,21 +1067,7 @@ public final class ClientRuntime {
             if(remote!=null&&binding.instance.equals(remote.generation.toString()))
                 policy=policy.withActionLock(remote.extra.get("locked").getAsBoolean());
         }
-        boolean own=player==client.player,bedSleeping=false;
-        if(policy.specialPose().isEmpty() && player.isSleeping()) {
-            var bed=player.getSleepingPosition().orElse(null);
-            if(bed!=null) {
-                var state=client.world.getBlockState(bed);
-                if(state.getBlock() instanceof net.minecraft.block.BedBlock) {
-                    var second=bed.offset(net.minecraft.block.BedBlock.getOppositePartDirection(state));
-                    pos=new Vec3d((bed.getX()+second.getX()+1)*.5,bed.getY()+9.0/16,(bed.getZ()+second.getZ()+1)*.5);
-                    bodyYaw=switch(state.get(net.minecraft.block.BedBlock.FACING)) {
-                        case SOUTH->0;case WEST->90;case NORTH->180;case EAST->-90;default->bodyYaw;
-                    };
-                    headYaw=bodyYaw;headPitch=0;bedSleeping=true;
-                }
-            }
-        }
+        boolean own=player==client.player,bedSleeping=policy.specialPose().isEmpty() && player.isSleeping();
         if(!policy.specialPose().isEmpty()) {
             pos=pos.add(policy.anchorX(),policy.anchorY(),policy.anchorZ());
             bodyYaw=policy.anchorYaw();
@@ -1087,12 +1077,26 @@ public final class ClientRuntime {
         String riding=vehicle==null?"":vehicle instanceof AbstractBoatEntity?"boat":vehicle instanceof AbstractMinecartEntity?"minecart":vehicle instanceof net.minecraft.entity.passive.PigEntity?"ride-pig":"ride";
         var current=player.getEntityPos();
         binding.localMotion.update(localTick,new EntityAnimationController.Sample(current.x,current.y,current.z,player.isOnGround(),
-                bedSleeping,player.getPose()==EntityPose.SWIMMING || policy.forcedPose().equals("crawl"),player.isTouchingWater(),own?player.getAbilities().flying:policy.flying(),
+                bedSleeping,player.getPose()==EntityPose.SWIMMING || policy.forcedPose().equals("crawl"),player.isTouchingWater(),nativeFlying(player),
                 player.isGliding(),player.isSneaking() || player.getPose()==EntityPose.CROUCHING || policy.forcedPose().equals("sneak"),player.isSprinting(),riding,player.handSwinging,player.handSwingTicks,
                 player.preferredHand==Hand.OFF_HAND,own && client.interactionManager!=null && client.interactionManager.isBreakingBlock(),own,player.isClimbing(),vanillaState(player.getUuid()),VanillaYsmQueries.movementFallback(client,player)),
                 policy,binding.localServerLayers,model.animationCatalog());
         return new RenderBinding(binding.owner,binding.instance,binding.hash,model,binding.localMotion.layers(),localTick+delta,
                 pos.x,pos.y,pos.z,bodyYaw,headYaw,headPitch,binding.scale,binding.hidePlayer,own?"local-player":"tracked-player");
+    }
+    /** Match YSM's remote-state cache: vanilla sends player abilities only to their owner. */
+    private boolean nativeFlying(PlayerEntity player) {
+        if(player==null)return false;
+        if(player==client.player)return player.getAbilities().flying;
+        if(privateUsable(player.getUuid()))return privateModels.isFlying(player.getUuid());
+        Binding binding=bindings.get(player.getUuid());
+        return binding==null?player.getAbilities().flying:binding.motion.flying();
+    }
+    /** GSit's explicit pose anchor is an authored offset, not a second player-position timeline. */
+    public boolean hasServerPoseAnchor(UUID owner) {
+        Binding binding=bindings.get(owner);
+        return binding!=null && !binding.motion.specialPose().isEmpty()
+                && !(localAppearanceActive() && owner.equals(client.player.getUuid()));
     }
     public boolean shouldHidePlayer(UUID owner) {
         if(!options.enabled)return false;
@@ -1415,7 +1419,7 @@ public final class ClientRuntime {
         text.add("客户端 "+clientVersion()+" · "+(acknowledged?"已连接动作服务器":"等待服务器 / 本地预览")
                 +" · 资产模式 "+(serverAssetMode.isEmpty()?"未协商":serverAssetMode));
         text.add("已接管 "+active+" / "+bindings.size()+" 个模型 · 资产 "+assets.size()+" · 模型加载 "+loading.size());
-        text.add((options.followServerTimeline?"服务器拖后轨迹 · 缓冲 "+options.interpolationTicks+" tick":"客户端实体即时跟随 · 无额外位置缓冲")
+        text.add((options.followServerTimeline?"原版实体位置 · 服务器动画缓冲 "+options.interpolationTicks+" tick":"原版实体渲染位置 · 无额外位置缓冲")
                 +" · 伪装模型 "+(options.showSelf?"显示":"隐藏")
                 +" · 玩家隐藏设置 "+(serverOwnModelPresent() || options.hideVanillaPlayer?"开启":"关闭")
                 +" · 装备隐藏设置 "+(serverOwnModelPresent() || options.hideVanillaEquipment?"开启":"关闭"));
@@ -1486,23 +1490,9 @@ public final class ClientRuntime {
         if(!pose.equals(previewPose)){previewPose=pose;previewStarted=tick;}
         List<Layer> layers=new ArrayList<>();layers.add(new Layer("posture",pose,previewStarted,1,"LOOP",2,2));
         if(!previewManual.isEmpty())layers.add(new Layer("manual",previewManual,previewManualStarted,1,"ONCE",2,2));
-        var pos=player.getLerpedPos(client.getRenderTickCounter().getTickProgress(false));
-        float bodyYaw=player.bodyYaw,headYaw=player.headYaw,headPitch=player.getPitch();
-        if(player.isSleeping()) {
-            var bed=player.getSleepingPosition().orElse(null);
-            if(bed!=null) {
-                var state=client.world.getBlockState(bed);
-                if(state.getBlock() instanceof net.minecraft.block.BedBlock) {
-                    var second=bed.offset(net.minecraft.block.BedBlock.getOppositePartDirection(state));
-                    pos=new net.minecraft.util.math.Vec3d((bed.getX()+second.getX()+1)*.5,
-                            bed.getY()+9.0/16,(bed.getZ()+second.getZ()+1)*.5);
-                    bodyYaw=switch(state.get(net.minecraft.block.BedBlock.FACING)) {
-                        case SOUTH->0;case WEST->90;case NORTH->180;case EAST->-90;default->bodyYaw;
-                    };
-                    headYaw=bodyYaw;headPitch=0;
-                }
-            }
-        }
+        var presentation=NativePlayerPresentation.frame(player);
+        var pos=new Vec3d(presentation.x(),presentation.y(),presentation.z());
+        float bodyYaw=presentation.bodyYaw(),headYaw=presentation.headYaw(),headPitch=presentation.headPitch();
         return new RenderBinding(player.getUuid(),"preview",previewHash,model,List.copyOf(layers),renderTick,
                 pos.x,pos.y,pos.z,bodyYaw,headYaw,headPitch,1,true,"preview");
     }

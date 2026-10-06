@@ -241,6 +241,7 @@ public final class ModelRenderer {
             client.execute(ModelRenderer::clear);
             return;
         }
+        NativePlayerPresentation.beginFrame(List.of());
         frame = List.of();
         frameModels = List.of();
         itemInfo = List.of();
@@ -279,7 +280,8 @@ public final class ModelRenderer {
             extractedFrames++;
             return;
         }
-        Vec3d camera = context.camera().getCameraPos();
+        NativePlayerPresentation.beginFrame(context.worldState().entityRenderStates);
+        Vec3d camera = context.worldState().cameraRenderState.pos;
         UUID cameraOwner = context.camera().getFocusedEntity() == null
                 ? null : context.camera().getFocusedEntity().getUuid();
         boolean firstPerson = !context.camera().isThirdPerson();
@@ -320,14 +322,18 @@ public final class ModelRenderer {
                     continue;
                 }
                 var nativePlayer = activeRuntime.nativePlayer(binding.owner());
+                // Off-screen remote players have no body in this vanilla frame. Never reuse a previous frame's anchor.
+                if (nativePlayer != null && !binding.owner().equals(localOwner)
+                        && !NativePlayerPresentation.captured(binding.owner())) continue;
                 var observer = MinecraftClient.getInstance().player;
                 boolean showModel = activeRuntime.shouldShowModel(binding.owner())
                         && (!nativeYsm || nativePlayer == null || observer == null || !nativePlayer.isInvisibleTo(observer));
                 if (vertices.isEmpty()) continue;
                 Matrix4f passenger = nativeYsm ? YsmComponentRenderer.passengerTransform(nativePlayer) : new Matrix4f();
-                Matrix4f body = nativeYsm ? YsmBodyTransform.extract(nativePlayer, binding.bodyYaw(),
-                        MinecraftClient.getInstance().getRenderTickCounter().getTickProgress(false))
+                Matrix4f body = nativeYsm && nativePlayer != null ? NativePlayerPresentation.frame(nativePlayer).parent()
                         : new Matrix4f().rotateY((float) Math.toRadians(180 - binding.bodyYaw()));
+                if (nativeYsm && nativePlayer != null && activeRuntime.hasServerPoseAnchor(binding.owner()))
+                    body.rotateLocalY((float) Math.toRadians(NativePlayerPresentation.frame(nativePlayer).bodyYaw() - binding.bodyYaw()));
                 Matrix4f parent = new Matrix4f(passenger).mul(body);
                 Box geometry = geometryBounds(binding, vertices, modelScale, nativeYsm, parent);
                 if (!context.frustum().isVisible(geometry.expand(.05))) continue;

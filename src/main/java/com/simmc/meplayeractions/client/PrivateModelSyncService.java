@@ -283,6 +283,7 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         if(isServerDisguised(player.getUniqueId())){error(player,"server_model_priority");return;}
         removePublication(player.getUniqueId(),"model_changed");
         Publication publication=new Publication(player.getUniqueId(),upload.generation,upload.hash,upload.kind,upload.bytes,upload.appearance,tick());
+        publication.flying=player.isFlying();
         publications.put(player.getUniqueId(),publication);storedBytes+=upload.bytes.length;
         session.committedUploadId=upload.id;session.committedPublication=publication;
         sendCommitted(player,session,publication);
@@ -364,6 +365,9 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         // allocating a new action sequence or replaying an unchanged author animation.
         if(publication.appearance.equals(appearance) && publication.extra.equals(extra))return;
         publication.appearance=appearance;publication.extra=extra;publication.sequence++;publication.lease=tick;
+        broadcastState(publication);
+    }
+    private void broadcastState(Publication publication) {
         Set<UUID> disguised=serverDisguised();
         for(UUID viewerId:audiences.viewers(publication.owner,publication.generation)) {
             Session session=sessions.get(viewerId);if(session==null)continue;
@@ -405,11 +409,20 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         }
         // A disabled/private-idle relay never asks the ModelEngine backend for its owners.
         if(!policy.enabled() || publications.isEmpty())return;
-        retryStates();
         for(Publication publication:publications.values()) {
+            // OpenYSM PlayerStateSynchronizer samples authoritative server abilities for remote players.
+            // Reuse the active publication walk; a client cannot publish or renew this state itself.
+            Player owner=Bukkit.getPlayer(publication.owner);
+            if(owner!=null && owner.isOnline()) {
+                boolean flying=owner.isFlying();
+                if(publication.flying!=flying) {
+                    publication.flying=flying;publication.sequence++;broadcastState(publication);
+                }
+            }
             if(audiences.refreshIfDue(publication.owner,publication.generation,tick,()->discoverAudience(publication)))
                 for(UUID viewer:audiences.viewers(publication.owner,publication.generation))offer(Bukkit.getPlayer(viewer),publication,tick);
         }
+        retryStates();
         if(validate) {
             Set<UUID> disguised;
             try{disguised=serverDisguised();}catch(RuntimeException unavailable){disguised=Set.copyOf(publications.keySet());}
@@ -578,6 +591,7 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
     }
     private static void addAppearance(JsonObject packet,Publication publication) {
         packet.addProperty("sequence",publication.sequence);packet.add("appearance",publication.appearance.deepCopy());packet.add("extra",publication.extra.deepCopy());
+        JsonObject state=new JsonObject();state.addProperty("flying",publication.flying);packet.add("state",state);
     }
     private boolean send(Player viewer,JsonObject packet,boolean asset) {
         if(viewer==null || !viewer.isOnline())return false;byte[] bytes=GSON.toJson(packet).getBytes(StandardCharsets.UTF_8);
@@ -682,7 +696,7 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
     private static final class Publication {
         final UUID owner,generation;final String hash,kind;final byte[] bytes;JsonObject appearance,extra;
         final Set<UUID> offeredViewers=new HashSet<>();
-        long sequence,eventSequence,lease;
+        long sequence,eventSequence,lease;boolean flying;
         Publication(UUID owner,UUID generation,String hash,String kind,byte[] bytes,JsonObject appearance,long tick){this.owner=owner;this.generation=generation;this.hash=hash;this.kind=kind;this.bytes=bytes;this.appearance=appearance;lease=tick;
             extra=new JsonObject();extra.addProperty("id","");extra.addProperty("loop","ONCE");extra.addProperty("locked",false);extra.addProperty("sequence",0);}
     }

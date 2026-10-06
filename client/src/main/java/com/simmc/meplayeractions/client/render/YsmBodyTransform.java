@@ -1,15 +1,11 @@
 package com.simmc.meplayeractions.client.render;
 
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.render.entity.EntityRenderer;
 import net.minecraft.client.render.entity.EntityRendererFactory;
 import net.minecraft.client.render.entity.LivingEntityRenderer;
 import net.minecraft.client.render.entity.model.EntityModelLayers;
 import net.minecraft.client.render.entity.model.PlayerEntityModel;
-import net.minecraft.client.render.entity.state.EntityRenderState;
 import net.minecraft.client.render.entity.state.PlayerEntityRenderState;
 import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityPose;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.state.property.Properties;
@@ -23,21 +19,12 @@ final class YsmBodyTransform {
 
     static void rendererContext(EntityRendererFactory.Context context) { nativeParent = new NativeParent(context); }
 
-    @SuppressWarnings("unchecked")
-    static Matrix4f extract(PlayerEntity entity, float bodyYaw, float delta) {
-        if (entity == null || nativeParent == null)
+    static Matrix4f extract(PlayerEntity entity, PlayerEntityRenderState presentation) {
+        float bodyYaw = presentation.bodyYaw;
+        if (nativeParent == null)
             return new Matrix4f().rotateY((float) Math.toRadians(180 - bodyYaw));
-        EntityRenderer<Entity, EntityRenderState> renderer = (EntityRenderer<Entity, EntityRenderState>) (Object)
-                MinecraftClient.getInstance().getEntityRenderDispatcher().getRenderer(entity);
-        EntityRenderState fresh = renderer.createRenderState();
-        renderer.updateRenderState(entity, fresh, delta);
-        if (!(fresh instanceof PlayerEntityRenderState state))
-            return new Matrix4f().rotateY((float) Math.toRadians(180 - bodyYaw));
-        // The source explicitly disables vanilla death and spin rotations because author controllers own them.
-        // Modify only this fresh state, never the actual player or vanilla's already submitted render state.
-        state.deathTime = 0;
-        state.usingRiptide = false;
-        if (entity.isClimbing()) {
+        PlayerEntityRenderState state = copyForModel(presentation);
+        if (entity != null && entity.isClimbing()) {
             var position = entity.getClimbingPos();
             if (position.isPresent()) {
                 var block = entity.getEntityWorld().getBlockState(position.get());
@@ -46,13 +33,36 @@ final class YsmBodyTransform {
             }
         }
         MatrixStack matrices = new MatrixStack();
-        if (entity.isSleeping() && entity.getSleepingDirection() != null) {
-            var direction = entity.getSleepingDirection();
-            float eye = entity.getEyeHeight(EntityPose.STANDING) - .1f;
+        if (state.isInPose(EntityPose.SLEEPING) && state.sleepingDirection != null) {
+            var direction = state.sleepingDirection;
+            float eye = state.standingEyeHeight - .1f;
             matrices.translate(-direction.getOffsetX() * eye, 0, -direction.getOffsetZ() * eye);
         }
         nativeParent.apply(state, matrices, bodyYaw);
         return new Matrix4f(matrices.peek().getPositionMatrix());
+    }
+
+    /** Copy the fields read by base setupTransforms; never alter vanilla's actual submitted state. */
+    static PlayerEntityRenderState copyForModel(PlayerEntityRenderState source) {
+        PlayerEntityRenderState state = new PlayerEntityRenderState();
+        copyForModel(source, state);
+        return state;
+    }
+
+    static void copyForModel(PlayerEntityRenderState source, PlayerEntityRenderState state) {
+        state.age = source.age;
+        state.height = source.height;
+        state.standingEyeHeight = source.standingEyeHeight;
+        state.bodyYaw = source.bodyYaw;
+        state.relativeHeadYaw = source.relativeHeadYaw;
+        state.pitch = source.pitch;
+        state.shaking = source.shaking;
+        state.flipUpsideDown = source.flipUpsideDown;
+        state.pose = source.pose;
+        state.sleepingDirection = source.sleepingDirection;
+        // OpenYSM leaves death and spin to author controllers instead of the vanilla rotations.
+        state.deathTime = 0;
+        state.usingRiptide = false;
     }
 
     /** Call the base LivingEntityRenderer method, as OpenYSM does; the native PlayerRenderer adds different swim/glide rules. */
