@@ -14,6 +14,18 @@ import java.util.function.Function;
 import static org.junit.jupiter.api.Assertions.*;
 
 class IncrementalStateProtocolTest {
+    @Test void disguiseResultsRequireBothPeersAndCannotLeakAcrossFallbackOrReconnect() {
+        var session=new IncrementalStateProtocol();
+        session.acknowledge(List.of(IncrementalStateProtocol.DISGUISE_RESULTS));assertFalse(session.disguiseResults());
+        session.helloSent(IncrementalStateProtocol.helloCapabilities(false));
+        session.acknowledge(List.of("local_render","server_push_models"));assertFalse(session.disguiseResults());
+        session.acknowledge(List.of(IncrementalStateProtocol.DISGUISE_RESULTS));assertTrue(session.disguiseResults());
+        session.reset();assertFalse(session.disguiseResults());
+        session.helloSent(IncrementalStateProtocol.helloCapabilities(false));
+        assertTrue(session.fallbackForError("unsupported_capability"));assertFalse(session.disguiseResults());
+        session.helloSent(session.nextHelloCapabilities(false));
+        session.acknowledge(List.of(IncrementalStateProtocol.DISGUISE_RESULTS));assertFalse(session.disguiseResults());
+    }
     private static final String INSTANCE = "8b3a986f-f7d9-4bd5-9cee-6c310ef2ba00";
     private static final String NEXT_INSTANCE = "8b3a986f-f7d9-4bd5-9cee-6c310ef2ba01";
     private static final String HASH = "1".repeat(64), NEXT_HASH = "2".repeat(64);

@@ -27,10 +27,14 @@ public final class ClientOptions {
     public boolean localActionLocked;
     /** Explicit opt-in; old configurations remain local until a server negotiates private uploads. */
     public boolean privateSyncEnabled;
+    /** A server disguise suspends saved private choices until the player explicitly uses one again. */
+    public boolean privateAppearancePaused;
     public static final int MAX_MODEL_PROFILES = 32, MAX_MODEL_VARIABLES = 128, MAX_RADIO_SELECTIONS = 64;
     public static final int MAX_ROAMING_VARIABLES = 64, MAX_ROAMING_VARIABLE_NAME_LENGTH = 32;
     private static final String ROAMING_PREFIX = "variable.roaming.";
     private final Map<String, ModelProfile> modelProfiles = new LinkedHashMap<>();
+    public static final int MAX_SERVER_DISGUISE_PROFILES = 32;
+    private final Map<String, ServerDisguisePreferences> serverDisguiseProfiles = new LinkedHashMap<>();
     private final Set<String> favorites = new LinkedHashSet<>();
     private final Path path;
     private LocalAppearanceSettings localAppearance = LocalAppearanceSettings.defaults();
@@ -57,8 +61,12 @@ public final class ClientOptions {
                 JsonElement privateSync = json.get("privateSyncEnabled");
                 privateSyncEnabled = privateSync != null && privateSync.isJsonPrimitive()
                         && privateSync.getAsJsonPrimitive().isBoolean() && privateSync.getAsBoolean();
+                JsonElement paused = json.get("privateAppearancePaused");
+                privateAppearancePaused = paused != null && paused.isJsonPrimitive()
+                        && paused.getAsJsonPrimitive().isBoolean() && paused.getAsBoolean();
                 wheelPreferences = readWheelPreferences(json);
                 readProfiles(json);
+                readServerDisguiseProfiles(json);
                 if (json.has("favorites") && json.get("favorites").isJsonArray()) {
                     for (JsonElement value : json.getAsJsonArray("favorites")) {
                         if (favorites.size() >= 64) break;
@@ -74,6 +82,39 @@ public final class ClientOptions {
 
     public LocalAppearanceSettings localAppearance() { return localAppearance; }
     public void setLocalAppearance(LocalAppearanceSettings settings) { localAppearance = Objects.requireNonNull(settings); }
+    public boolean updatePrivateAppearancePaused(boolean paused) {
+        if (privateAppearancePaused == paused) return true;
+        boolean previous = privateAppearancePaused; privateAppearancePaused = paused;
+        if (write()) return true;
+        privateAppearancePaused = previous; return false;
+    }
+    public ServerDisguisePreferences serverDisguisePreferences(String id) {
+        return serverDisguiseProfiles.getOrDefault(id, ServerDisguisePreferences.defaults());
+    }
+    public boolean updateServerDisguisePreferences(String id, ServerDisguisePreferences preferences) {
+        if (id == null || !id.matches("[a-z0-9_-]{1,64}") || preferences == null) return false;
+        try { preferences.command(id); } catch (IllegalArgumentException invalid) { return false; }
+        ServerDisguisePreferences previous = serverDisguiseProfiles.get(id);
+        if (!preferences.isDefault() && previous == null && serverDisguiseProfiles.size() >= MAX_SERVER_DISGUISE_PROFILES) return false;
+        if (preferences.isDefault()) serverDisguiseProfiles.remove(id); else serverDisguiseProfiles.put(id, preferences);
+        if (write()) return true;
+        if (previous == null) serverDisguiseProfiles.remove(id); else serverDisguiseProfiles.put(id, previous);
+        return false;
+    }
+    public boolean resetServerDisguisePreferences(String id) { return updateServerDisguisePreferences(id, ServerDisguisePreferences.defaults()); }
+    private void readServerDisguiseProfiles(JsonObject json) {
+        JsonElement entries = json.get("serverDisguiseProfiles");
+        if (entries == null || !entries.isJsonObject()) return;
+        for (var entry : entries.getAsJsonObject().entrySet()) {
+            if (serverDisguiseProfiles.size() >= MAX_SERVER_DISGUISE_PROFILES) break;
+            if (!entry.getKey().matches("[a-z0-9_-]{1,64}") || !entry.getValue().isJsonObject()) continue;
+            try {
+                var preferences = ServerDisguisePreferences.fromJson(entry.getValue().getAsJsonObject());
+                preferences.command(entry.getKey());
+                if (!preferences.isDefault()) serverDisguiseProfiles.put(entry.getKey(), preferences);
+            } catch (RuntimeException invalid) { LOGGER.warn("Invalid server disguise preferences for {}", entry.getKey()); }
+        }
+    }
     public WheelPreferences wheelPreferences() { return wheelPreferences; }
     /** Persist wheel memory atomically, retaining the previous memory on budget or IO failure. */
     public boolean updateWheelPreferences(WheelPreferences preferences) {
@@ -298,6 +339,7 @@ public final class ClientOptions {
         json.addProperty("defaultBlueTexture", defaultBlueTexture);
         json.addProperty("localActionLocked", localActionLocked);
         json.addProperty("privateSyncEnabled", privateSyncEnabled);
+        json.addProperty("privateAppearancePaused", privateAppearancePaused);
         JsonObject wheel = new JsonObject();
         wheel.addProperty("source", wheelPreferences.source().name().toLowerCase(Locale.ROOT));
         wheel.addProperty("clientPage", wheelPreferences.clientPage()); wheel.addProperty("serverPage", wheelPreferences.serverPage());
@@ -316,7 +358,10 @@ public final class ClientOptions {
             profile.variables().forEach(variables::addProperty); profile.radioSelections().forEach(radios::addProperty);
             data.add("variables", variables); data.add("radioSelections", radios); profiles.add(id, data);
         });
-        json.add("modelProfiles", profiles); return json;
+        json.add("modelProfiles", profiles);
+        JsonObject serverProfiles = new JsonObject();
+        serverDisguiseProfiles.forEach((id, preferences) -> serverProfiles.add(id, preferences.toJson()));
+        json.add("serverDisguiseProfiles", serverProfiles); return json;
     }
     public void save() { write(); }
     private boolean write() {

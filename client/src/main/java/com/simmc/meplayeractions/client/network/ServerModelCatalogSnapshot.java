@@ -2,6 +2,7 @@ package com.simmc.meplayeractions.client.network;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.simmc.meplayeractions.client.ServerDisguisePreferences;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -112,8 +113,12 @@ public final class ServerModelCatalogSnapshot {
     }
     /** Only builds the existing fixed server command, never arbitrary model/resource request packets. */
     public Optional<String> command(String id, boolean liveSession, long now) {
+        return command(id, liveSession, now, ServerDisguisePreferences.defaults());
+    }
+    public Optional<String> command(String id, boolean liveSession, long now, ServerDisguisePreferences preferences) {
         if (!canRequest(id, liveSession, now)) return Optional.empty();
+        String command = java.util.Objects.requireNonNull(preferences).command(id);
         commandSent = true; lastCommand = now;
-        return Optional.of("meplayeractions disguise " + id);
+        return Optional.of(command);
     }
 }

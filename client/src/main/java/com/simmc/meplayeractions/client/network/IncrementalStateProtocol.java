@@ -16,14 +16,15 @@ import java.util.function.Function;
 /** Optional protocol-3 optimizations are used only after both peers advertise them. */
 public final class IncrementalStateProtocol {
     public static final String INCREMENTAL = "incremental_state", TIMELINE = "server_timeline";
+    public static final String DISGUISE_RESULTS = "disguise_results";
     public static final int MAX_HEARTBEAT_BINDINGS = 64;
     public record Animation(String id, String label) { }
     public record Identity(UUID owner, String instance, String hash) { }
     private Set<String> offered = Set.of();
-    private boolean incremental, timeline, serverCatalog, timelinePreference, legacyHello;
+    private boolean incremental, timeline, serverCatalog, disguiseResults, timelinePreference, legacyHello;
 
     public static List<String> helloCapabilities(boolean followServerTimeline) {
-        var result = new ArrayList<>(List.of("local_render", "server_push_models", INCREMENTAL, ServerModelCatalogSnapshot.CAPABILITY));
+        var result = new ArrayList<>(List.of("local_render", "server_push_models", INCREMENTAL, ServerModelCatalogSnapshot.CAPABILITY, DISGUISE_RESULTS));
         if (followServerTimeline) result.add(TIMELINE);
         return List.copyOf(result);
     }
@@ -39,28 +40,30 @@ public final class IncrementalStateProtocol {
     public void helloSent(Collection<String> capabilities, boolean followServerTimeline) {
         offered = Set.copyOf(capabilities);
         timelinePreference = followServerTimeline;
-        incremental = false; timeline = false; serverCatalog = false;
+        incremental = false; timeline = false; serverCatalog = false; disguiseResults = false;
     }
 
     /** Pre-extension servers reject unknown hello capabilities; retry their original hello once. */
     public boolean fallbackForError(String code) {
         if (legacyHello || !Set.of("invalid_payload", "unsupported_capability").contains(code)
-                || !offered.contains(INCREMENTAL) && !offered.contains(TIMELINE) && !offered.contains(ServerModelCatalogSnapshot.CAPABILITY)) return false;
-        legacyHello = true; offered = Set.of(); incremental = false; timeline = false; serverCatalog = false; return true;
+                || !offered.contains(INCREMENTAL) && !offered.contains(TIMELINE) && !offered.contains(ServerModelCatalogSnapshot.CAPABILITY) && !offered.contains(DISGUISE_RESULTS)) return false;
+        legacyHello = true; offered = Set.of(); incremental = false; timeline = false; serverCatalog = false; disguiseResults = false; return true;
     }
 
     public void acknowledge(Collection<String> capabilities) {
         incremental = offered.contains(INCREMENTAL) && capabilities.contains(INCREMENTAL);
         timeline = offered.contains(TIMELINE) && capabilities.contains(TIMELINE);
         serverCatalog = offered.contains(ServerModelCatalogSnapshot.CAPABILITY) && capabilities.contains(ServerModelCatalogSnapshot.CAPABILITY);
+        disguiseResults = offered.contains(DISGUISE_RESULTS) && capabilities.contains(DISGUISE_RESULTS);
     }
 
     public boolean incremental() { return incremental; }
     public boolean serverTimeline() { return timeline; }
     public boolean serverCatalog() { return serverCatalog; }
+    public boolean disguiseResults() { return disguiseResults; }
     public boolean requestedTimeline() { return timelinePreference; }
     public void reset() {
-        offered = Set.of(); incremental = false; timeline = false; serverCatalog = false; timelinePreference = false; legacyHello = false;
+        offered = Set.of(); incremental = false; timeline = false; serverCatalog = false; disguiseResults = false; timelinePreference = false; legacyHello = false;
     }
 
     /** Absent catalogue means unchanged only in a negotiated incremental session. Explicit [] always clears it. */
