@@ -20,6 +20,24 @@ class IncrementalStateProtocolTest {
     private static final UUID OWNER = UUID.fromString("ea8ab104-10c7-4a8e-bb82-9aeeef29a601");
     private static final UUID OTHER = UUID.fromString("ea8ab104-10c7-4a8e-bb82-9aeeef29a602");
 
+    @Test void serverDirectoryRequiresBothPeersCapabilityAndCannotSurviveAResetOrLegacyFallback() {
+        var session = new IncrementalStateProtocol();
+        session.acknowledge(List.of(ServerModelCatalogSnapshot.CAPABILITY));
+        assertFalse(session.serverCatalog());
+        session.helloSent(IncrementalStateProtocol.helloCapabilities(false));
+        session.acknowledge(List.of("local_render", "server_push_models"));
+        assertFalse(session.serverCatalog());
+        session.acknowledge(List.of(ServerModelCatalogSnapshot.CAPABILITY));
+        assertTrue(session.serverCatalog());
+        session.reset(); assertFalse(session.serverCatalog());
+        session.helloSent(IncrementalStateProtocol.helloCapabilities(false));
+        assertTrue(session.fallbackForError("unsupported_capability"));
+        var legacy = session.nextHelloCapabilities(false);
+        assertFalse(legacy.contains(ServerModelCatalogSnapshot.CAPABILITY));
+        session.helloSent(legacy); session.acknowledge(List.of(ServerModelCatalogSnapshot.CAPABILITY));
+        assertFalse(session.serverCatalog());
+    }
+
     @Test void bothPeersMustAdvertiseTheIncrementalCapabilityBeforeOmissionsHaveMeaning() {
         var session = new IncrementalStateProtocol();
         session.acknowledge(List.of(IncrementalStateProtocol.INCREMENTAL));

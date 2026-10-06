@@ -59,6 +59,7 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
         clients.configure(settings.clientEnabled, settings.clientMaxPayload,
                 settings.clientCooldownTicks, settings.clientViewDistance);
         clients.snapshotSources(controller::ownerIds, controller::snapshot);
+        clients.modelCatalog(controller::models);
         clients.configurePerformance(settings.performance);
         clients.configurePrivateModels(settings.privateModels);
         clients.audience(controller::canView);

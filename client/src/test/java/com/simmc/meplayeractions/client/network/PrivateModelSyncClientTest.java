@@ -154,6 +154,8 @@ class PrivateModelSyncClientTest {
     @Test void heartbeatPermissionsRevokeUploadsAndViewingIndependentlyWithoutLosingTheUsersShareIntent() throws Exception {
         Rig rig=new Rig();rig.acknowledge(true,true);rig.host.explicitLocal=true;
         rig.host.cached=CompletableFuture.completedFuture(rig.bundle);Offer offer=rig.offer();rig.activate(offer);
+        assertNotNull(rig.client.remote(offer.owner),"The fixture must decode before checking independent permissions");
+        assertTrue(rig.client.remote(offer.owner).active);
         rig.client.tick(NOW);rig.host.drain();JsonObject upload=rig.host.sent("upload_offer").getLast();
         rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),upload),NOW);assertTrue(rig.client.committed());
         JsonObject revokeUpload=heartbeat();revokeUpload.addProperty("allowedUpload",false);rig.receive(revokeUpload,NOW);
@@ -278,6 +280,91 @@ class PrivateModelSyncClientTest {
         JsonObject stale=commit.deepCopy();stale.addProperty("hash","0".repeat(64));rig.receive(stale,NOW);assertFalse(rig.client.committed());
         rig.receive(commit,NOW);assertTrue(rig.client.committed());rig.host.explicitLocal=false;rig.client.tick(NOW);
         assertFalse(rig.client.committed());assertEquals(1,rig.host.sent("clear").size());
+    }
+
+    @Test void galleryUploadQueriesNeverReadSourceBytesOrStartAPublication() throws Exception {
+        Rig rig=new Rig();rig.acknowledge(true,true);
+        for(int i=0;i<3;i++) {
+            var state=rig.client.uploadState(rig.host.local.modelId());
+            assertEquals(PrivateModelSyncClient.UploadPhase.NOT_UPLOADED,state.phase());
+            assertFalse(state.uploaded());assertFalse(state.inProgress());assertFalse(state.published());
+            assertTrue(rig.client.uploadedModelIds().isEmpty());
+        }
+        assertEquals(0,rig.host.bundleReads);assertTrue(rig.host.sent("upload_offer").isEmpty());
+    }
+
+    @Test void galleryUploadPhasesRequireTheServerCommitAndKeepOnlySessionReceiptsAfterUnsharing() throws Exception {
+        Rig rig=new Rig();rig.acknowledge(true,true);rig.host.explicitLocal=true;
+        CompletableFuture<byte[]> archive=new CompletableFuture<>();rig.host.publication=archive;
+        String id=rig.host.local.modelId();rig.client.tick(NOW);
+        assertEquals(PrivateModelSyncClient.UploadPhase.BUILDING,rig.client.uploadState(id).phase());
+        archive.complete(rig.bundle);rig.host.drain();JsonObject offer=rig.host.sent("upload_offer").getLast();
+        assertEquals(PrivateModelSyncClient.UploadPhase.WAITING_APPROVAL,rig.client.uploadState(id).phase());
+        JsonObject accept=publicationNotice("upload_accept",rig.host.local.owner(),offer);
+        accept.addProperty("uploadId",UUID.randomUUID().toString());accept.addProperty("chunkBytes",128);rig.receive(accept,NOW);
+        rig.client.tick(NOW);var partial=rig.client.uploadState(id);
+        assertEquals(PrivateModelSyncClient.UploadPhase.UPLOADING,partial.phase());assertEquals(128,partial.sentBytes());
+        assertEquals(rig.bundle.length,partial.totalBytes());assertTrue(partial.inProgress());assertFalse(partial.uploaded());
+        for(int i=0;i<rig.bundle.length/128+2;i++)rig.client.tick(NOW);
+        assertEquals(PrivateModelSyncClient.UploadPhase.VALIDATING,rig.client.uploadState(id).phase());
+        assertFalse(rig.client.uploadState(id).uploaded());assertTrue(rig.client.uploadedModelIds().isEmpty());
+        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),offer),NOW);
+        var uploaded=rig.client.uploadState(id);assertTrue(uploaded.uploaded());assertTrue(uploaded.published());assertFalse(uploaded.inProgress());
+        assertEquals(offer.get("hash").getAsString(),uploaded.hash());assertEquals(Set.of(id),rig.client.uploadedModelIds());
+        rig.host.explicitLocal=false;rig.client.tick(NOW);
+        assertTrue(rig.client.uploadState(id).uploaded());assertFalse(rig.client.uploadState(id).published());
+        assertEquals(Set.of(id),rig.client.uploadedModelIds());rig.client.reset();
+        assertEquals(PrivateModelSyncClient.UploadPhase.NOT_UPLOADED,rig.client.uploadState(id).phase());
+        assertTrue(rig.client.uploadedModelIds().isEmpty());
+    }
+
+    @Test void explicitSourceReloadInvalidatesSameIdReceiptsAndLateCommitsFromOldBytes() throws Exception {
+        Rig rig=new Rig();rig.acknowledge(true,true);rig.host.explicitLocal=true;
+        String id=rig.host.local.modelId();rig.client.tick(NOW);rig.host.drain();JsonObject old=rig.host.sent("upload_offer").getLast();
+        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),old),NOW);assertTrue(rig.client.uploadState(id).uploaded());
+        rig.client.invalidateSources();assertTrue(rig.client.uploadedModelIds().isEmpty());assertFalse(rig.client.uploadState(id).uploaded());
+        rig.client.tick(NOW+1);rig.host.drain();JsonObject current=rig.host.sent("upload_offer").getLast();
+        assertNotEquals(old.get("generation"),current.get("generation"));
+        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),old),NOW+1);
+        assertFalse(rig.client.uploadState(id).uploaded());assertTrue(rig.client.uploadedModelIds().isEmpty());
+        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),current),NOW+1);
+        assertTrue(rig.client.uploadState(id).uploaded());assertTrue(rig.client.uploadState(id).published());
+    }
+
+    @Test void aLateCommitCannotMarkADifferentSelectedModelAsUploadedBeforeTheNextTick() throws Exception {
+        Rig rig=new Rig();rig.acknowledge(true,true);rig.host.explicitLocal=true;
+        String oldId=rig.host.local.modelId();rig.client.tick(NOW);rig.host.drain();JsonObject old=rig.host.sent("upload_offer").getLast();
+        rig.host.local=new PrivateModelSyncClient.Local(rig.host.local.owner(),"local:replacement.bbmodel",appearance(1),extra());
+        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),old),NOW);
+        assertFalse(rig.client.committed());assertFalse(rig.client.uploadState(oldId).uploaded());assertTrue(rig.client.uploadedModelIds().isEmpty());
+        rig.client.tick(NOW+1);rig.host.drain();JsonObject current=rig.host.sent("upload_offer").getLast();
+        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),current),NOW+1);
+        assertEquals(Set.of("local:replacement.bbmodel"),rig.client.uploadedModelIds());
+    }
+
+    @Test void galleryKeepsPerModelFailureWithoutClaimingRejectedBytesWereUploaded() throws Exception {
+        Rig rig=new Rig();rig.acknowledge(true,true);rig.host.explicitLocal=true;
+        String id=rig.host.local.modelId();rig.client.tick(NOW);rig.host.drain();JsonObject old=rig.host.sent("upload_offer").getLast();
+        JsonObject reject=PrivateModelSyncClient.envelope("error");reject.addProperty("code","private_bundle_invalid");rig.receive(reject,NOW);
+        var state=rig.client.uploadState(id);assertEquals(PrivateModelSyncClient.UploadPhase.FAILED,state.phase());
+        assertTrue(state.message().contains("格式无效"));assertFalse(state.uploaded());assertFalse(state.published());assertFalse(state.inProgress());
+        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),old),NOW);
+        assertEquals(PrivateModelSyncClient.UploadPhase.FAILED,rig.client.uploadState(id).phase());
+        assertTrue(rig.client.uploadedModelIds().isEmpty());
+    }
+
+    @Test void receiptsTrackSeveralAcknowledgedModelsWithoutStartingUploadsDuringFiltering() throws Exception {
+        Rig rig=new Rig();rig.acknowledge(true,true);rig.host.explicitLocal=true;
+        String firstId=rig.host.local.modelId();rig.client.tick(NOW);rig.host.drain();JsonObject first=rig.host.sent("upload_offer").getLast();
+        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),first),NOW);
+        String secondId="local:second.bbmodel";rig.host.local=new PrivateModelSyncClient.Local(rig.host.local.owner(),secondId,appearance(1),extra());
+        rig.client.tick(NOW+1);rig.host.drain();JsonObject second=rig.host.sent("upload_offer").getLast();
+        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),second),NOW+1);
+        int reads=rig.host.bundleReads;assertEquals(Set.of(firstId,secondId),rig.client.uploadedModelIds());
+        assertTrue(rig.client.uploadState(firstId).uploaded());assertFalse(rig.client.uploadState(firstId).published());
+        assertTrue(rig.client.uploadState(secondId).published());assertEquals(reads,rig.host.bundleReads);
+        rig.host.channel=false;assertTrue(rig.client.uploadedModelIds().isEmpty());assertFalse(rig.client.uploadState(secondId).uploaded());
+        rig.client.tick(NOW+2);rig.host.channel=true;rig.acknowledge(true,true);assertTrue(rig.client.uploadedModelIds().isEmpty());
     }
 
     @Test void aTamperedCacheDoesNotSkipValidationOrGrantRendering() throws Exception {
@@ -428,7 +515,7 @@ class PrivateModelSyncClientTest {
         long now=NOW;
         final Map<UUID,UUID> visible=new HashMap<>();
         final List<Event> events=new ArrayList<>();
-        final PrivateModelSyncClient.Local local;
+        PrivateModelSyncClient.Local local;
         FakeHost(byte[] bundle) {publication=CompletableFuture.completedFuture(bundle);local=new PrivateModelSyncClient.Local(UUID.randomUUID(),"local:test.bbmodel",appearance(1),extra());}
         public boolean channelAvailable(){return channel;}
         public boolean send(JsonObject packet){String type=packet.get("type").getAsString();controlAttempts.add(type);controlTimes.add(new TimedControl(type,now));if(blockedTypes.contains(type))return false;packets.add(packet.deepCopy());return true;}
@@ -464,7 +551,11 @@ class PrivateModelSyncClientTest {
              "outliner":[{"uuid":"root","name":"root","origin":[0,0,0],"children":["cube"]}]}
             """).getAsJsonObject();
         BufferedImage image=new BufferedImage(1,1,BufferedImage.TYPE_INT_ARGB);image.setRGB(0,0,0xffffffff);ByteArrayOutputStream png=new ByteArrayOutputStream();ImageIO.write(image,"png",png);
-        JsonObject texture=new JsonObject();texture.addProperty("source","data:image/png;base64,"+Base64.getEncoder().encodeToString(png.toByteArray()));raw.getAsJsonArray("textures").add(texture);
+        // The mature native converter preserves the author texture name as a resource path.
+        // This protocol fixture must remain a valid, renderable Blockbench asset too.
+        JsonObject texture=new JsonObject();texture.addProperty("uuid","fixture-texture");texture.addProperty("name","fixture.png");
+        texture.addProperty("width",1);texture.addProperty("height",1);
+        texture.addProperty("source","data:image/png;base64,"+Base64.getEncoder().encodeToString(png.toByteArray()));raw.getAsJsonArray("textures").add(texture);
         return NativeModelBundle.encode("bbmodel","model.bbmodel",Map.of("model.bbmodel",raw.toString().getBytes(StandardCharsets.UTF_8)));
     }
 }

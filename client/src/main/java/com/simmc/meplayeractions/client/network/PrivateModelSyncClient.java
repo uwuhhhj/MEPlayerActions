@@ -32,6 +32,16 @@ public final class PrivateModelSyncClient {
     public record Local(UUID owner, String modelId, JsonObject appearance, JsonObject extra) {
         public Local { appearance=appearance.deepCopy(); extra=extra.deepCopy(); }
     }
+    public enum UploadPhase { NOT_UPLOADED, BUILDING, WAITING_APPROVAL, UPLOADING, VALIDATING, UPLOADED, FAILED }
+    /** A receipt belongs to this connection, not to a permanent server-side model library. */
+    public record UploadState(String modelId, UploadPhase phase, String hash, int totalBytes, int sentBytes,
+                              boolean published, String message) {
+        public boolean uploaded() { return phase==UploadPhase.UPLOADED; }
+        public boolean inProgress() { return switch(phase) {
+            case BUILDING, WAITING_APPROVAL, UPLOADING, VALIDATING -> true;
+            default -> false;
+        }; }
+    }
     public static final class Remote {
         public final UUID owner, generation, offerId;
         public final String hash, kind;
@@ -54,6 +64,7 @@ public final class PrivateModelSyncClient {
     private record Archive(byte[] bytes,String kind) { }
     private final Host host;
     private final Map<UUID,Remote> remotes=new LinkedHashMap<>();
+    private final Map<String,UploadState> sessionUploads=new LinkedHashMap<>();
     private long epoch,publishRevision,lastHello,lastReceived,lastHeartbeat,lastState,lastEvent,uploadStarted,retryAfter,clockNow;
     private boolean acknowledged,allowedUpload,allowedView,building,committed;
     private int maxPayload=16000,maxBundleBytes=AssetTransfer.MAX_RAW,leaseTicks=100,chunkBytes=8192,uploadIndex;
@@ -71,7 +82,7 @@ public final class PrivateModelSyncClient {
     public PrivateModelSyncClient(Host host) { this.host=Objects.requireNonNull(host); }
     public void reset() {
         epoch++;publishRevision++;remotes.values().forEach(r->host.remove(r.owner,r.generation));remotes.clear();
-        acknowledged=allowedUpload=allowedView=building=committed=false;
+        acknowledged=allowedUpload=allowedView=building=committed=false;sessionUploads.clear();
         sourceId=ownHash=kind=sentState="";outgoing=null;ownOwner=ownGeneration=uploadId=null;uploadIndex=0;
         publicationBytes=uploadedBytes=0;
         outgoingOffer=null;lastUploadOfferAttempt=lastUploadEndAttempt=-1;uploadEndSent=false;
@@ -89,6 +100,32 @@ public final class PrivateModelSyncClient {
     }
     public int publicationBytes() { return publicationBytes; }
     public int uploadedBytes() { return uploadedBytes; }
+    /** Read-only gallery status. Browsing a model must never build or send an upload. */
+    public UploadState uploadState(String modelId) {
+        String id=modelId==null?"":modelId;
+        if(!acknowledged||!host.channelAvailable())return notUploaded(id);
+        if(ownGeneration!=null&&sourceId.equals(id)) {
+            UploadPhase phase=committed?UploadPhase.UPLOADED:building?UploadPhase.BUILDING
+                    :uploadId==null?UploadPhase.WAITING_APPROVAL:uploadEndSent?UploadPhase.VALIDATING:UploadPhase.UPLOADING;
+            return new UploadState(id,phase,ownHash,publicationBytes,uploadedBytes,committed&&currentLocal(),status());
+        }
+        return sessionUploads.getOrDefault(id,notUploaded(id));
+    }
+    /** Only exact upload_committed acknowledgements from the current server session populate this set. */
+    public Set<String> uploadedModelIds() {
+        if(!acknowledged||!host.channelAvailable())return Set.of();
+        Set<String> ids=new LinkedHashSet<>();
+        sessionUploads.forEach((id,state)->{if(state.uploaded())ids.add(id);});
+        if(ownGeneration!=null&&committed)ids.add(sourceId);
+        return Collections.unmodifiableSet(ids);
+    }
+    /** Explicit source reload invalidates receipts even when an edited file retains its model ID. */
+    public void invalidateSources() { stopPublishing();sessionUploads.clear(); }
+    private static UploadState notUploaded(String id) { return new UploadState(id,UploadPhase.NOT_UPLOADED,"",0,0,false,"尚未上传至当前服务器"); }
+    private void rememberUploadState(UploadState state) {
+        sessionUploads.put(state.modelId(),state);
+        while(sessionUploads.size()>160)sessionUploads.remove(sessionUploads.keySet().iterator().next());
+    }
     public Collection<Remote> remotes() { return List.copyOf(remotes.values()); }
     public Remote remote(UUID owner) { return remotes.get(owner); }
     /** Server-authoritative creative flight is not present in vanilla remote player abilities. */
@@ -99,11 +136,19 @@ public final class PrivateModelSyncClient {
         status(remote.offerId,remote.hash,"rejected");remove(remote);return true;
     }
     public void stopPublishing() {
+        if(ownGeneration!=null) {
+            if(committed)rememberUploadState(new UploadState(sourceId,UploadPhase.UPLOADED,ownHash,publicationBytes,uploadedBytes,false,"本次连接已上传 · 当前未分享"));
+            else sessionUploads.remove(sourceId);
+        }
         if(acknowledged&&ownGeneration!=null)send(envelope("clear"));
         publishRevision++;building=committed=false;ownOwner=ownGeneration=uploadId=null;sourceId=ownHash=sentState="";outgoing=null;ownEventSequence=-1;
         publicationBytes=uploadedBytes=0;
         outgoingOffer=null;lastUploadOfferAttempt=lastUploadEndAttempt=-1;uploadEndSent=false;
         status=acknowledged?"私人模型仅自己可见":"未协商私人同步";
+    }
+    private void failPublishing(String message) {
+        UploadState failure=new UploadState(sourceId,UploadPhase.FAILED,ownHash,publicationBytes,uploadedBytes,false,message);
+        stopPublishing();if(!failure.modelId().isEmpty())rememberUploadState(failure);status=message;
     }
     public void tick(long now) {
         clockNow=now;
@@ -133,7 +178,7 @@ public final class PrivateModelSyncClient {
                 } else if(lastUploadEndAttempt<0||now-lastUploadEndAttempt>=SECOND) {
                     JsonObject end=envelope("upload_end");end.addProperty("uploadId",uploadId.toString());
                     Boolean sent=sendControl(end,now);
-                    if(sent!=null){lastUploadEndAttempt=now;if(sent){uploadEndSent=true;status="模型已上传，等待服务器校验 · "+size(publicationBytes);}}
+                    if(sent!=null){lastUploadEndAttempt=now;if(sent){uploadEndSent=true;status="上传结束，等待服务器校验 · "+size(publicationBytes);}}
                 }
             }
         }
@@ -143,7 +188,7 @@ public final class PrivateModelSyncClient {
             for(int i=0;i<controls.size();i++)flushControl(controls.get((start+i)%controls.size()),now);
         }
         if(ownGeneration!=null&&!committed&&now-uploadStarted>90*SECOND) {
-            stopPublishing();retryAfter=now+10*SECOND;status="私人模型同步超时";
+            failPublishing("私人模型同步超时");retryAfter=now+10*SECOND;
         }
         if(committed&&local!=null&&now-lastState>=SECOND/8) {
             String signature=local.appearance().toString()+local.extra();
@@ -173,6 +218,7 @@ public final class PrivateModelSyncClient {
     }
     private void beginPublish(Local local,long now) {
         stopPublishing();building=true;sourceId=local.modelId();ownOwner=local.owner();ownGeneration=UUID.randomUUID();uploadStarted=now;status="正在归档私人模型";
+        sessionUploads.remove(sourceId);
         long revision=publishRevision;UUID generation=ownGeneration;
         host.bundle(local.modelId()).thenApply(bytes -> {
             try{return new Archive(bytes,NativeModelBundle.validate(bytes).kind());}
@@ -181,7 +227,7 @@ public final class PrivateModelSyncClient {
             if(revision!=publishRevision||!generation.equals(ownGeneration))return;
             building=false;
             Local current=host.local();
-            if(error!=null||current==null||!current.modelId().equals(sourceId)) { stopPublishing();retryAfter=clockNow+10*SECOND;status="私人模型归档不可用";return; }
+            if(error!=null||current==null||!current.modelId().equals(sourceId)) { failPublishing("私人模型归档不可用");retryAfter=clockNow+10*SECOND;return; }
             try {
                 byte[] bundle=archive.bytes();
                 if(bundle.length<1||bundle.length>maxBundleBytes)throw new IOException("Bundle size");
@@ -191,7 +237,7 @@ public final class PrivateModelSyncClient {
                 if(offer.toString().getBytes(StandardCharsets.UTF_8).length>maxPayload)throw new IOException("Appearance payload size");
                 outgoingOffer=offer;Boolean sent=sendControl(offer,clockNow);if(sent!=null)lastUploadOfferAttempt=clockNow;
                 status="等待服务器授权上传 · "+size(publicationBytes);
-            }catch(Exception invalid){stopPublishing();retryAfter=clockNow+10*SECOND;status="私人模型不可上传：归档无效或模型、参数超过服务器限制";}
+            }catch(Exception invalid){failPublishing("私人模型不可上传：归档无效或模型、参数超过服务器限制");retryAfter=clockNow+10*SECOND;}
         }));
     }
     public void event(List<Double> args,long now) {
@@ -222,7 +268,8 @@ public final class PrivateModelSyncClient {
                     if(uploadId!=null){if(!uploadId.equals(id)||chunkBytes!=size)throw new IOException("Conflicting upload accept");break;}
                     uploadId=id;chunkBytes=size;uploadIndex=0;
                 }
-                case "upload_committed" -> {if(matchesOwn(packet)){committed=true;outgoing=null;outgoingOffer=null;uploadId=null;status="私人模型已分享 · "+(uploadedBytes==0?"复用服务器缓存 · ":"")+size(publicationBytes);}}
+                case "upload_committed" -> {if(matchesOwn(packet)){committed=true;outgoing=null;outgoingOffer=null;uploadId=null;status="私人模型已分享 · "+(uploadedBytes==0?"复用服务器缓存 · ":"")+size(publicationBytes);
+                    rememberUploadState(new UploadState(sourceId,UploadPhase.UPLOADED,ownHash,publicationBytes,uploadedBytes,true,status));}}
                 case "private_offer" -> offer(packet,now);
                 case "asset_begin" -> {
                     Remote remote=offer(packet);if(remote==null||remote.bundle!=null)break;
@@ -275,8 +322,8 @@ public final class PrivateModelSyncClient {
                             ||Set.of("not_allowed","server_model_priority","private_generation_reused","private_storage_busy",
                                 "private_bundle_invalid","private_sync_disabled","private_state_not_authorized","private_event_not_authorized").contains(code)
                             ||code.equals("private_appearance_size")&&!committed;
-                    if(publicationFailure&&ownGeneration!=null){stopPublishing();retryAfter=now+10*SECOND;}
-                    status=errorStatus(code);
+                    if(publicationFailure&&ownGeneration!=null){failPublishing(errorStatus(code));retryAfter=now+10*SECOND;}
+                    else status=errorStatus(code);
                 }
                 default -> throw new IOException("Unknown private message");
             }
@@ -385,7 +432,8 @@ public final class PrivateModelSyncClient {
         return remotes.values().stream().filter(r->r.offerId.equals(id)&&r.hash.equals(hash)).findFirst().orElse(null);
     }
     private void remove(Remote remote){if(remotes.remove(remote.owner,remote)){remote.decodeRevision++;remote.download=null;remote.bundle=null;host.remove(remote.owner,remote.generation);}}
-    private boolean matchesOwn(JsonObject packet){return ownGeneration!=null&&ownGeneration.equals(uuid(packet,"generation"))&&ownHash.equals(WireJson.hash(packet,"hash"));}
+    private boolean currentLocal(){Local local=host.local();return local!=null&&local.owner().equals(ownOwner)&&local.modelId().equals(sourceId);}
+    private boolean matchesOwn(JsonObject packet){return ownGeneration!=null&&ownGeneration.equals(uuid(packet,"generation"))&&ownHash.equals(WireJson.hash(packet,"hash"))&&currentLocal();}
     private static JsonObject feedback(UUID offer,String hash,String state){JsonObject value=envelope("private_status");value.addProperty("offerId",offer.toString());value.addProperty("hash",hash);value.addProperty("status",state);return value;}
     private boolean status(UUID offer,String hash,String state){return Boolean.TRUE.equals(sendControl(feedback(offer,hash,state),clockNow));}
     private JsonObject identity(String type){JsonObject packet=envelope(type);packet.addProperty("generation",ownGeneration.toString());packet.addProperty("hash",ownHash);return packet;}

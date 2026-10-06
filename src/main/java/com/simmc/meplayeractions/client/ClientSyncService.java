@@ -28,7 +28,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     private static final Pattern ANIMATION_NAME = Pattern.compile("[a-zA-Z0-9_.:/-]{1,128}");
     private static final Pattern MODEL_ID = Pattern.compile("[a-z0-9_-]{1,64}"), HASH = Pattern.compile("[a-f0-9]{64}");
     private static final Set<String> ACTIONS = Set.of("play", "stop", "sit", "crawl", "reset");
-    private static final Set<String> CAPABILITIES = Set.of("local_render", "resource_pack_models", "server_push_models", "incremental_state", "server_timeline");
+    private static final Set<String> CAPABILITIES = Set.of("local_render", "resource_pack_models", "server_push_models", "incremental_state", "server_timeline", ServerModelCatalog.CAPABILITY);
     private final Plugin plugin;
     private final ClientSnapshotCache snapshotCache;
     private final Consumer<ActionRequest> actionRequests;
@@ -39,6 +39,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     private final Map<UUID, StateMetadata> stateMetadata = new HashMap<>();
     private final ConnectionLimits limits = new ConnectionLimits();
     private final PrivateModelSyncService privateModels;
+    private ServerModelCatalog modelCatalog = new ServerModelCatalog(List::of);
     private boolean configuredEnabled = true, running;
     private int maxPayload = 16000, requestCooldownTicks = 4;
     private double viewDistanceBlocks = 64;
@@ -55,6 +56,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         actionRequests = Objects.requireNonNull(requests); this.assets = Objects.requireNonNull(assets);
         privateModels = new PrivateModelSyncService(plugin, this::readOwnerIds, limits);
     }
+    public void modelCatalog(Supplier<List<String>> choices) { modelCatalog = new ServerModelCatalog(choices); }
     public void snapshotSources(Supplier<Set<UUID>> ownerIds, Function<UUID, StateSnapshot> snapshot) { snapshotCache.configure(ownerIds, snapshot); }
     public void configurePerformance(PerformanceSettings performance) {
         Objects.requireNonNull(performance); audienceRefreshTicks = performance.audienceRefreshTicks(); validationTicks = performance.validationTicks();
@@ -140,7 +142,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
                     ModelAssets.Status asset = assets.status(snapshot.modelId());
                     return "；本人资产 " + snapshot.modelId() + "=" + (snapshot.localRenderable() ? asset.state() : "server-only")
                             + "；来源 " + asset.source() + "；原因 " + (snapshot.localRenderable() ? asset.reason() : "当前伪装不允许客户端接管");
-                }).orElse("") + "；" + privateModels.status(player);
+                }).orElse("") + "；" + privateModels.status(player) + "；服务器可选目录 " + modelCatalog.status();
         if (!running || !configuredEnabled) return "disabled（服务器渲染）" + diagnostic;
         Session session = sessions.get(player.getUniqueId());
         return (session == null ? "未握手（服务器渲染）" : "local-render v3；客户端 " + session.clientVersion
@@ -165,7 +167,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             long now = System.nanoTime(); Session previous = sessions.get(player.getUniqueId());
             if (!limits.allowHello(player.getUniqueId(), now)) return;
             if (previous != null) endSession(player.getUniqueId(), player, previous, "new_handshake");
-            Session session = new Session(player.getUniqueId(), inbound.packModels(), inbound.pushModels(), inbound.incremental(), inbound.timeline(), currentTick(), audienceRefreshTicks, validationTicks); session.clientVersion = inbound.clientVersion();
+            Session session = new Session(player.getUniqueId(), inbound.packModels(), inbound.pushModels(), inbound.incremental(), inbound.timeline(), inbound.catalog(), currentTick(), audienceRefreshTicks, validationTicks); session.clientVersion = inbound.clientVersion();
             sessions.put(player.getUniqueId(), session); JsonObject ack = envelope("hello_ack");
             ack.addProperty("mode", "local-render"); ack.addProperty("serverTick", currentTick());
             ack.addProperty("assetMode", session.assetMode());
@@ -176,7 +178,10 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             else if (session.packModels) capabilities.add("resource_pack_models"); ack.add("capabilities", capabilities);
             if (session.incremental) capabilities.add("incremental_state");
             if (session.timeline) capabilities.add("server_timeline");
-            critical(player, session, "hello_ack", ack, () -> sendSnapshot(player), () -> {}, () -> sessions.get(session.viewer) == session); return;
+            if (session.catalog) capabilities.add(ServerModelCatalog.CAPABILITY);
+            critical(player, session, "hello_ack", ack, () -> {
+                session.helloAcknowledged = true; updateCatalog(player, session); pumpCatalog(player, session); sendSnapshot(player);
+            }, () -> {}, () -> sessions.get(session.viewer) == session); return;
         }
         Session session = sessions.get(player.getUniqueId()); if (session == null) return; long tick = currentTick();
         switch (inbound.type()) {
@@ -354,7 +359,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             maintainReady(viewer, session, tick);
             retryStates(viewer, session);
             if (ClientSyncCadence.due(tick, session.lastDiscoveryTick, audienceRefreshTicks)) {
-                reconcile(viewer, session, false); session.lastDiscoveryTick = tick;
+                reconcile(viewer, session, false); updateCatalog(viewer, session); session.lastDiscoveryTick = tick;
             }
             if (ClientSyncCadence.due(tick, session.lastValidationTick, validationTicks)) {
                 validateBindings(viewer, session); session.lastValidationTick = tick;
@@ -373,11 +378,35 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
                 }
                 if (!session.incremental) session.lastLegacyTick = tick;
             }
+            pumpCatalog(viewer, session);
             maintainOffers(viewer, session, tick, session.authorized); pumpAssets(viewer, session, session.authorized);
             if (ClientSyncCadence.due(tick, session.lastHeartbeatTick, HEARTBEAT_TICKS)) {
                 heartbeat(viewer, session, tick); session.lastHeartbeatTick = tick;
             }
         }
+    }
+    private boolean catalogPermitted(Player viewer) {
+        return viewer.hasPermission("mact.use") && viewer.hasPermission("mact.disguise");
+    }
+    private void updateCatalog(Player viewer, Session session) {
+        if (!session.catalog || !session.helloAcknowledged) return;
+        modelCatalog.refresh(currentTick());
+        ServerModelCatalog.Plan plan = modelCatalog.plan(catalogPermitted(viewer), maxPayload);
+        if (session.catalogPlan == plan) return;
+        session.catalogPlan = plan; session.catalogIndex = 0; session.catalogRevision++;
+        session.pendingCatalogBytes = null;
+    }
+    private void pumpCatalog(Player viewer, Session session) {
+        if (!session.catalog || !session.helloAcknowledged || session.catalogPlan == null
+                || session.catalogIndex >= session.catalogPlan.count()) return;
+        // A permission revocation cancels a partially sent directory before another chunk leaves.
+        if (session.catalogPlan.canDisguise != catalogPermitted(viewer)) updateCatalog(viewer, session);
+        long tick = currentTick();
+        if (session.catalogIndex >= session.catalogPlan.count() || session.lastCatalogSentTick == tick) return;
+        if (session.pendingCatalogBytes == null)
+            session.pendingCatalogBytes = session.catalogPlan.packet(session.catalogIndex, session.catalogRevision);
+        Result result = sendBytes(viewer, session.pendingCatalogBytes, false);
+        if (result == Result.SENT) { session.catalogIndex++; session.pendingCatalogBytes = null; session.lastCatalogSentTick = tick; }
     }
     private void validateBindings(Player viewer, Session session) {
         for (var entry : List.copyOf(session.bindings.entrySet())) {
@@ -756,7 +785,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         }
         if (!allowed.containsAll(fields)) throw new IllegalArgumentException("Field not allowed for message");
         return new Inbound(protocol, type, version, capabilities.contains("resource_pack_models"), capabilities.contains("server_push_models"),
-                capabilities.contains("incremental_state"), capabilities.contains("server_timeline"), action, argument, modelId, hash, offerId, assetStatus,
+                capabilities.contains("incremental_state"), capabilities.contains("server_timeline"), capabilities.contains(ServerModelCatalog.CAPABILITY), action, argument, modelId, hash, offerId, assetStatus,
                 owner == null ? null : new RenderLeases.Binding(owner, instance, hash), bindings);
     }
     private static List<RenderLeases.Binding> readBindings(JsonReader reader) throws IOException {
@@ -847,7 +876,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         boolean set(UUID viewer, UUID owner, UUID instance, boolean enabled);
         default boolean pending(UUID viewer, UUID owner, UUID instance) { return false; }
     }
-    private record Inbound(int protocol, String type, String clientVersion, boolean packModels, boolean pushModels, boolean incremental, boolean timeline, String action, String argument, String modelId,
+    private record Inbound(int protocol, String type, String clientVersion, boolean packModels, boolean pushModels, boolean incremental, boolean timeline, boolean catalog, String action, String argument, String modelId,
             String hash, UUID offerId, String assetStatus, RenderLeases.Binding binding, List<RenderLeases.Binding> bindings) {}
     private record BoundState(UUID instance, String modelId, String hash) {}
     private record StateSignature(UUID instance, String modelId, String hash, long sequence, UUID world, List<LayerState> layers,
@@ -858,9 +887,9 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     private record PendingState(StatePacket packet, boolean menu) {}
     private record PendingReady(RenderLeases.Binding binding, long since) {}
     private static final class Session {
-        final UUID viewer; final boolean packModels, pushModels, incremental, timeline;
-        Session(UUID viewer, boolean packModels, boolean pushModels, boolean incremental, boolean timeline, long tick, int discovery, int validation) {
-            this.viewer = viewer; this.packModels = packModels; this.pushModels = pushModels; this.incremental = incremental; this.timeline = timeline;
+        final UUID viewer; final boolean packModels, pushModels, incremental, timeline, catalog;
+        Session(UUID viewer, boolean packModels, boolean pushModels, boolean incremental, boolean timeline, boolean catalog, long tick, int discovery, int validation) {
+            this.viewer = viewer; this.packModels = packModels; this.pushModels = pushModels; this.incremental = incremental; this.timeline = timeline; this.catalog = catalog;
             lastDiscoveryTick = ClientSyncCadence.initialTick(viewer, tick, discovery);
             lastValidationTick = ClientSyncCadence.initialTick(viewer, tick, validation);
             lastHeartbeatTick = ClientSyncCadence.initialTick(viewer, tick, HEARTBEAT_TICKS); lastLegacyTick = tick;
@@ -878,6 +907,8 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         Set<String> authorized = Set.of();
         long lastDiscoveryTick, lastValidationTick, lastLegacyTick, lastHeartbeatTick;
         String clientVersion = "unspecified"; long snapshotId;
+        boolean helloAcknowledged; ServerModelCatalog.Plan catalogPlan;
+        int catalogIndex; long catalogRevision, lastCatalogSentTick = -1; byte[] pendingCatalogBytes;
     }
     private static final class Transfer {
         final ModelAssets.Asset asset; final int chunkBytes; final PushAssetOffers.Offer offer; int index; boolean started;

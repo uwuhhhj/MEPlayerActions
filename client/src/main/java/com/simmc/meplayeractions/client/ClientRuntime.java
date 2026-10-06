@@ -61,6 +61,7 @@ public final class ClientRuntime {
     private final Map<String,BbModel> assets=new LinkedHashMap<>(16,0.75f,true);
     private final Set<String> packAssets=new HashSet<>();
     private final Set<String> serverAssets=new HashSet<>();
+    private final Map<String,String> serverModelAssets=new HashMap<>();
     private final ServerPushAuthorization pushAuthorization=new ServerPushAuthorization();
     private final Map<String,Long> failedAssets=new HashMap<>();
     private final Set<String> loading=new HashSet<>();
@@ -84,6 +85,7 @@ public final class ClientRuntime {
     private String serverAssetMode="";
     private List<String> serverCapabilities=List.of();
     private final IncrementalStateProtocol stateProtocol=new IncrementalStateProtocol();
+    private final ServerModelCatalogSnapshot serverModelCatalog=new ServerModelCatalogSnapshot();
     private long pushOffersReceived,pushCacheHits,pushCacheMisses,pushTransfersBegun,pushTransfersCompleted,
             pushGpuPrepared,pushReadySent,pushRenderAcks,pushAssetRequests,pushCancelled,pushRejected;
     private long generation,lastHello,lastHeartbeat,lastReceived;
@@ -159,9 +161,9 @@ public final class ClientRuntime {
         closeModelEffects();
         VanillaYsmQueries.reset();
         releaseBindings();abortTransfers();connected=false;acknowledged=false;
-        loading.clear(); failedAssets.clear(); assets.clear(); packAssets.clear(); serverAssets.clear(); clock.reset();
+        loading.clear(); failedAssets.clear(); assets.clear(); packAssets.clear(); serverAssets.clear(); serverModelAssets.clear(); clock.reset();
         pushNegotiated=false;unsupportedHandshake=false;serverAssetMode="";serverCapabilities=List.of();
-        stateProtocol.reset();
+        stateProtocol.reset();serverModelCatalog.reset();
         lastHello=0;lastHeartbeat=0;lastReceived=0;previewId="";previewHash="";previewManual="";previewPose="";
         localSelf=null;localAppearanceError="";localAppearanceRetryAfter=0;
         ownAppearanceMissingSince=0;lastAppearanceSnapshotRequest=0;
@@ -187,10 +189,10 @@ public final class ClientRuntime {
         if (!connected || client.getNetworkHandler()==null) return;
         if(acknowledged && stateProtocol.requestedTimeline()!=options.followServerTimeline) {
             // Keep the known server appearance while its new snapshot is pending; only its render leases end.
-            releaseBindings();abortTransfers();acknowledged=false;pushNegotiated=false;stateProtocol.reset();lastHello=0;
+            releaseBindings();abortTransfers();acknowledged=false;pushNegotiated=false;stateProtocol.reset();serverModelCatalog.reset();serverModelAssets.clear();lastHello=0;
         }
         if (acknowledged && now-lastReceived>leaseTicks*50_000_000L) {
-            releaseBindings();abortTransfers();acknowledged=false;pushNegotiated=false;stateProtocol.reset();lastHello=0;lastError="服务器同步已超时，恢复服务器显示";
+            releaseBindings();abortTransfers();acknowledged=false;pushNegotiated=false;stateProtocol.reset();serverModelCatalog.reset();serverModelAssets.clear();lastHello=0;lastError="服务器同步已超时，恢复服务器显示";
         }
         // Rendering is optional; the server action session and its authoritative catalogue are not.
         if (!acknowledged && !unsupportedHandshake && now-lastHello>3*SECOND && ClientPlayNetworking.canSend(ActionPayload.ID)) {
@@ -244,7 +246,7 @@ public final class ClientRuntime {
                 List<String> caps=readCapabilities(json);
                 String mode=json.has("assetMode")?WireJson.string(json,"assetMode",32):"";
                 if(!ServerPushAuthorization.acceptsHandshake(mode,caps)) {
-                    releaseBindings();abortTransfers();acknowledged=false;pushNegotiated=false;stateProtocol.reset();
+                    releaseBindings();abortTransfers();acknowledged=false;pushNegotiated=false;stateProtocol.reset();serverModelCatalog.reset();serverModelAssets.clear();
                     unsupportedHandshake=true;
                     serverAssetMode=mode;serverCapabilities=caps;lastHello=now;
                     lastError="服务器未协商模型主动推送，请升级 MEPlayerActions 服务端到 0.4.2；保持服务器显示";
@@ -253,7 +255,7 @@ public final class ClientRuntime {
                 leaseTicks=(int)WireJson.integer(json,"leaseTicks",20,400);
                 maxPayload=(int)WireJson.integer(json,"maxPayload",384,32_766);
                 localAppearanceVisibility.serverSessionStarted();
-                releaseBindings();abortTransfers();
+                releaseBindings();abortTransfers();serverModelCatalog.reset();serverModelAssets.clear();
                 clock.observe(WireJson.integer(json,"serverTick",0,0xffff_ffffL),now);
                 serverAssetMode=mode;serverCapabilities=caps;pushNegotiated=true;unsupportedHandshake=false;
                 stateProtocol.acknowledge(caps);
@@ -273,6 +275,10 @@ public final class ClientRuntime {
                 return;
             }
             switch(type) {
+                case "server_model_catalog" -> {
+                    if(!stateProtocol.serverCatalog())throw new IllegalArgumentException("Unnegotiated server model catalogue");
+                    if(serverModelCatalog.accept(json))serverModelAssets.keySet().retainAll(serverModelCatalog.models().stream().map(ServerModelCatalogSnapshot.Model::id).toList());
+                }
                 case "state" -> state(json,now);
                 case "render_ack" -> {
                     Binding binding=matching(json);
@@ -288,7 +294,7 @@ public final class ClientRuntime {
                     String reason=WireJson.string(json,"reason",128);
                     if(client.player!=null && owner.equals(client.player.getUuid()))localAppearanceVisibility.serverUnbound(instance,reason);
                     if(Set.of("plugin-close","plugin_stopping","sync_disabled","session_ended").contains(reason)) {
-                        releaseBindings();abortTransfers();acknowledged=false;pushNegotiated=false;stateProtocol.reset();lastHello=0;
+                        releaseBindings();abortTransfers();acknowledged=false;pushNegotiated=false;stateProtocol.reset();serverModelCatalog.reset();serverModelAssets.clear();lastHello=0;
                     }
                 }
                 case "heartbeat" -> {
@@ -319,7 +325,7 @@ public final class ClientRuntime {
         } catch(Exception exception) {
             lastError="同步包校验失败，恢复服务器显示";
             MEPlayerActionsClient.LOGGER.warn("Rejected MPA packet: {}",exception.toString());
-            releaseBindings();abortTransfers();acknowledged=false;pushNegotiated=false;stateProtocol.reset();lastHello=System.nanoTime();
+            releaseBindings();abortTransfers();acknowledged=false;pushNegotiated=false;stateProtocol.reset();serverModelCatalog.reset();serverModelAssets.clear();lastHello=System.nanoTime();
         }
     }
     private void state(JsonObject json,long now) {
@@ -498,7 +504,8 @@ public final class ClientRuntime {
             if(!assetStatus(offer,"cached")){rejectPush(offer,"无法确认已校验的服务器模型缓存");return;}
             pushCacheHits++;
         } else pushTransfersCompleted++;
-        serverAssets.add(hash);pushState(hash,"等待服务器渲染确认","");pushAuthorization.remove(offer);
+        serverAssets.add(hash);serverModelAssets.put(offer.identity().modelId(),hash);
+        pushState(hash,"等待服务器渲染确认","");pushAuthorization.remove(offer);
     }
     private void rejectPush(ServerPushAuthorization.Offer offer,String reason) {
         if(!pushAuthorization.remove(offer))return;
@@ -554,6 +561,17 @@ public final class ClientRuntime {
         Binding server=bindings.get(owner);return server==null?"":server.modelId;
     }
     public boolean privateSyncAvailable(){return privateModels.available();}
+    /** Upload receipts belong to this live private-relay session and are read without touching source files. */
+    public PrivateModelSyncClient.UploadState privateModelUploadState(String id){return privateModels.uploadState(id);}
+    public Set<String> uploadedPrivateModelIds(){return privateModels.uploadedModelIds();}
+    /** Explicit cloud action selects and shares the file through the existing permission-gated publisher. */
+    public boolean uploadAndShareLocalModel(String id){
+        if(!canShareLocalModel() || !canEditLocalAppearance() || !LocalAppearanceSettings.isValidModelId(id)
+                || localModels().stream().noneMatch(model->model.id().equals(id)))return false;
+        selectLocalModel(id);
+        if(!localAppearance().enabled() || !localAppearance().modelId().equals(id))return false;
+        options.showSelf=true;options.save();return setPrivateSyncEnabled(true);
+    }
     public boolean privateSyncEnabled(){return options.privateSyncEnabled;}
     public boolean canShareLocalModel(){return privateSyncAvailable()&&!serverOwnModelPresent();}
     public String privateSyncStatus(){
@@ -688,7 +706,7 @@ public final class ClientRuntime {
     public void refreshLocalAppearance() {if(!canEditLocalAppearance()){suspendLocalAppearanceForServer();return;}invalidateLocalAppearance();ensureLocalAppearance();}
     public void refreshLocalModelSources() {
         localModelLibrary.clearSourceBundleCache();
-        privateModels.stopPublishing();
+        privateModels.invalidateSources();
         if(canEditLocalAppearance()){invalidateLocalAppearance();ensureLocalAppearance();}
     }
     private void begin(JsonObject json,long now) {
@@ -764,7 +782,8 @@ public final class ClientRuntime {
         while(iterator.hasNext()) {
             String hash=iterator.next().getKey();
             if(active.contains(hash))continue;
-            iterator.remove();packAssets.remove(hash);serverAssets.remove(hash);ModelRenderer.release(hash);return true;
+            iterator.remove();packAssets.remove(hash);serverAssets.remove(hash);
+            serverModelAssets.values().removeIf(hash::equals);ModelRenderer.release(hash);return true;
         }
         return false;
     }
@@ -1150,6 +1169,41 @@ public final class ClientRuntime {
                 && System.nanoTime()-lastReceived<leaseTicks*50_000_000L;
     }
     public boolean serverBridgeConnected() {return serverBridgeReady();}
+    /** Server-pushed command names only; browsing this list never requests a model or changes appearance. */
+    public List<Action> serverCatalog() {
+        return serverCatalogReady()?serverModelCatalog.models().stream().map(model->new Action(model.id(),model.label())).toList():List.of();
+    }
+    public long serverCatalogRevision() {return serverModelCatalog.displayRevision();}
+    public boolean serverCatalogReady() {return serverBridgeReady() && stateProtocol.serverCatalog() && serverModelCatalog.ready();}
+    public String serverCatalogStatus() {
+        if(!serverBridgeReady())return "当前服务器未连接模型图库";
+        if(!stateProtocol.serverCatalog())return "服务器尚未提供模型图库，请更新服务端";
+        if(serverModelCatalog.receiving())return "正在接收服务端模型目录";
+        if(!serverModelCatalog.ready())return "等待服务端模型目录";
+        if(!serverModelCatalog.canDisguise())return "服务器未授予伪装权限";
+        if(serverModelCatalog.models().isEmpty())return "暂无可用服务端模型";
+        return serverModelCatalog.truncated()?"已列出 "+serverModelCatalog.models().size()+" 个模型 · 目录达到上限":
+                "服务端模型 · "+serverModelCatalog.models().size()+" 个";
+    }
+    /** Only an already received, prepared asset from this session can be reused in a directory preview. */
+    public LocalModelLibrary.Loaded serverModelForPreview(String id) {
+        if(!serverCatalogReady() || !serverModelCatalog.contains(id))return null;
+        Binding current=bindings.values().stream().filter(binding->binding.modelId.equals(id)
+                && serverAssets.contains(binding.hash) && assets.containsKey(binding.hash) && ModelRenderer.has(binding.hash)).findFirst().orElse(null);
+        String hash=current==null?serverModelAssets.get(id):current.hash;
+        if(hash==null || !serverAssets.contains(hash) || !assets.containsKey(hash) || !ModelRenderer.has(hash))return null;
+        return new LocalModelLibrary.Loaded(hash,assets.get(hash),"",current==null?YsmModelProfile.empty():current.profile);
+    }
+    public boolean canRequestServerDisguise(String id) {
+        return serverModelCatalog.canRequest(id,serverCatalogReady() && client.player!=null,System.nanoTime());
+    }
+    /** The server command owns gameplay permission checks and later sends the authoritative binding. */
+    public boolean requestServerDisguise(String id) {
+        var command=serverModelCatalog.command(id,serverCatalogReady() && client.player!=null,System.nanoTime());
+        if(command.isEmpty())return false;
+        try {client.getNetworkHandler().sendChatCommand(command.get());requestPacketsSent++;return true;}
+        catch(RuntimeException unavailable){lastError="服务器伪装请求未发送：服务器连接不可用";return false;}
+    }
     public boolean serverOwnModelReady() {
         return client.player!=null && serverBridgeReady() && usable(bindings.get(client.player.getUuid()),System.nanoTime());
     }
