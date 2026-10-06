@@ -14,12 +14,18 @@ import java.util.concurrent.CompletionException;
 public final class PrivateModelSyncClient {
     public static final int PROTOCOL = 1;
     private static final long SECOND = 1_000_000_000L;
+    private static final long DELETE_TIMEOUT = 90*SECOND;
     private static final int MAX_REMOTES = 16;
     public interface Host {
         boolean channelAvailable();
         boolean send(JsonObject packet);
         Local local();
         CompletableFuture<byte[]> bundle(String modelId);
+        /** Production hosts run both source reading and ZIP identity validation on their bounded worker. */
+        default CompletableFuture<SourceIdentity> sourceIdentity(String modelId) {
+            return bundle(modelId).thenApply(bytes->{try{return new SourceIdentity(AssetTransfer.hash(bytes),NativeModelBundle.validate(bytes).kind(),bytes.length);}
+                catch(IOException invalid){throw new CompletionException(invalid);}});
+        }
         CompletableFuture<byte[]> cached(String hash);
         CompletableFuture<LocalModelLibrary.Loaded> decode(byte[] bundle, String texture);
         void cache(String hash, byte[] bundle);
@@ -28,12 +34,14 @@ public final class PrivateModelSyncClient {
         void remove(UUID owner, UUID generation);
         void state(Remote remote);
         void event(UUID owner, UUID generation, List<Double> args);
+        /** A confirmed deletion of the active publication stops sharing, while local source files remain. */
+        default void savedModelDeleted(String modelId,String hash) { }
     }
     public record Local(UUID owner, String modelId, JsonObject appearance, JsonObject extra) {
         public Local { appearance=appearance.deepCopy(); extra=extra.deepCopy(); }
     }
-    public enum UploadPhase { NOT_UPLOADED, BUILDING, WAITING_APPROVAL, UPLOADING, VALIDATING, UPLOADED, FAILED }
-    /** A receipt belongs to this connection, not to a permanent server-side model library. */
+    public enum UploadPhase { NOT_UPLOADED, BUILDING, WAITING_APPROVAL, UPLOADING, VALIDATING, PUBLISHED, UPLOADED, FAILED }
+    /** Saved status requires the owner's current server directory and matching local source bytes. */
     public record UploadState(String modelId, UploadPhase phase, String hash, int totalBytes, int sentBytes,
                               boolean published, String message) {
         public boolean uploaded() { return phase==UploadPhase.UPLOADED; }
@@ -62,9 +70,25 @@ public final class PrivateModelSyncClient {
         }
     }
     private record Archive(byte[] bytes,String kind) { }
+    public record SourceIdentity(String hash,String kind,int bytes) { }
     private final Host host;
     private final Map<UUID,Remote> remotes=new LinkedHashMap<>();
     private final Map<String,UploadState> sessionUploads=new LinkedHashMap<>();
+    private final PrivateUploadCatalogSnapshot uploadCatalog=new PrivateUploadCatalogSnapshot();
+    private final Map<String,SourceIdentity> sourceIdentities=new HashMap<>();
+    private final ArrayDeque<String> sourceChecks=new ArrayDeque<>();
+    private long sourceRevision;
+    private boolean catalogueNegotiated,legacyHello,sourceChecking;
+    private JsonObject deleteRequest;
+    private String deletingId="",deletingHash="";
+    private UUID deletePublicationGeneration;
+    private UUID uploadCatalogToken;
+    private long deleteSequence,deleteStartedAt,deletePublicationSerial,deleteCatalogRevision,publicationSerial;
+    private boolean deleteSent;
+    private long lastDeleteAttempt=-1;
+    private final Map<String,String> deleteStatuses=new LinkedHashMap<>();
+    private record DeleteReceipt(String modelId,String hash,UUID publicationGeneration,long publicationSerial,long catalogRevision) { }
+    private final Map<UUID,DeleteReceipt> lateDeletes=new LinkedHashMap<>();
     private long epoch,publishRevision,lastHello,lastReceived,lastHeartbeat,lastState,lastEvent,uploadStarted,retryAfter,clockNow;
     private boolean acknowledged,allowedUpload,allowedView,building,committed;
     private int maxPayload=16000,maxBundleBytes=AssetTransfer.MAX_RAW,leaseTicks=100,chunkBytes=8192,uploadIndex;
@@ -83,6 +107,8 @@ public final class PrivateModelSyncClient {
     public void reset() {
         epoch++;publishRevision++;remotes.values().forEach(r->host.remove(r.owner,r.generation));remotes.clear();
         acknowledged=allowedUpload=allowedView=building=committed=false;sessionUploads.clear();
+        catalogueNegotiated=legacyHello=sourceChecking=false;sourceRevision++;uploadCatalog.reset();sourceIdentities.clear();sourceChecks.clear();
+        clearDelete();uploadCatalogToken=null;deleteSequence=publicationSerial=0;deleteStatuses.clear();lateDeletes.clear();
         sourceId=ownHash=kind=sentState="";outgoing=null;ownOwner=ownGeneration=uploadId=null;uploadIndex=0;
         publicationBytes=uploadedBytes=0;
         outgoingOffer=null;lastUploadOfferAttempt=lastUploadEndAttempt=-1;uploadEndSent=false;
@@ -100,27 +126,99 @@ public final class PrivateModelSyncClient {
     }
     public int publicationBytes() { return publicationBytes; }
     public int uploadedBytes() { return uploadedBytes; }
-    /** Read-only gallery status. Browsing a model must never build or send an upload. */
+    /** Read-only gallery status. Metadata verification is queued separately and never publishes. */
     public UploadState uploadState(String modelId) {
         String id=modelId==null?"":modelId;
         if(!acknowledged||!host.channelAvailable())return notUploaded(id);
         if(ownGeneration!=null&&sourceId.equals(id)) {
-            UploadPhase phase=committed?UploadPhase.UPLOADED:building?UploadPhase.BUILDING
+            UploadPhase phase=committed?(savedIdentity(id)!=null?UploadPhase.UPLOADED:UploadPhase.PUBLISHED):building?UploadPhase.BUILDING
                     :uploadId==null?UploadPhase.WAITING_APPROVAL:uploadEndSent?UploadPhase.VALIDATING:UploadPhase.UPLOADING;
             return new UploadState(id,phase,ownHash,publicationBytes,uploadedBytes,committed&&currentLocal(),status());
         }
+        SourceIdentity saved=savedIdentity(id);
+        if(saved!=null)return new UploadState(id,UploadPhase.UPLOADED,saved.hash(),saved.bytes(),0,false,"服务器已保存 · 本机内容一致");
         return sessionUploads.getOrDefault(id,notUploaded(id));
     }
-    /** Only exact upload_committed acknowledgements from the current server session populate this set. */
+    /** The server's owner-only directory does not confer permission to download or publish. */
     public Set<String> uploadedModelIds() {
         if(!acknowledged||!host.channelAvailable())return Set.of();
         Set<String> ids=new LinkedHashSet<>();
-        sessionUploads.forEach((id,state)->{if(state.uploaded())ids.add(id);});
-        if(ownGeneration!=null&&committed)ids.add(sourceId);
+        for(var entry:uploadCatalog.models())if(savedIdentity(entry.modelId())!=null)ids.add(entry.modelId());
         return Collections.unmodifiableSet(ids);
     }
-    /** Explicit source reload invalidates receipts even when an edited file retains its model ID. */
-    public void invalidateSources() { stopPublishing();sessionUploads.clear(); }
+    /** Recheck the saved directory after the host clears its source cache; edited IDs cannot retain a badge. */
+    public void invalidateSources() { stopPublishing();sessionUploads.clear();sourceRevision++;sourceChecking=false;sourceIdentities.clear();queueSourceChecks(); }
+    public String uploadedDirectoryStatus() {
+        if(!acknowledged||!host.channelAvailable())return "等待服务器已上传目录";
+        if(!catalogueNegotiated)return "当前服务器未提供已上传目录";
+        if(!allowedUpload)return "没有私人模型上传权限";
+        if(!uploadCatalog.ready())return "正在同步服务器已上传目录";
+        if(!uploadCatalog.available())return "服务器未开放已上传目录（上传权限或资源缓存不可用）";
+        if(sourceChecking||!sourceChecks.isEmpty())return "正在核对本机模型与服务器保存内容";
+        return "服务器已保存 "+uploadCatalog.models().size()+" 个本人模型 · 本机匹配 "+uploadedModelIds().size()+" 个";
+    }
+    public boolean uploadCatalogReady(){return catalogueNegotiated&&allowedUpload&&host.channelAvailable()&&uploadCatalog.available()&&!sourceChecking&&sourceChecks.isEmpty();}
+    public String uploadCatalogStatus(){return uploadedDirectoryStatus();}
+    /** Includes server-saved entries whose local file is missing or has since changed. */
+    public List<PrivateUploadCatalogSnapshot.Model> uploadedModels(){return catalogueNegotiated&&allowedUpload&&host.channelAvailable()?uploadCatalog.models():List.of();}
+    public boolean deletingUploadedModel(String id){return deleteRequest!=null&&deletingId.equals(id);}
+    public String uploadDeleteStatus(String id){return deletingUploadedModel(id)?"正在等待服务器确认删除":deleteStatuses.getOrDefault(id,"");}
+    public boolean requestDeleteUploadedModel(String id) {
+        var entry=uploadedModels().stream().filter(model->model.modelId().equals(id)).findFirst().orElse(null);
+        return entry!=null&&requestDeleteUploadedModel(entry);
+    }
+    /** A confirmation targets the saved version originally displayed, rather than a newer same-ID replacement. */
+    public boolean requestDeleteUploadedModel(PrivateUploadCatalogSnapshot.Model expected) {
+        if(expected==null)return false;String id=expected.modelId();
+        if(!acknowledged||!catalogueNegotiated||uploadCatalogToken==null||!allowedUpload||!uploadCatalog.available()||deleteRequest!=null||deleteSequence>=9_007_199_254_740_991L
+                ||ownGeneration!=null&&!committed&&sourceId.equals(id))return false;
+        var entry=uploadedModels().stream().filter(model->model.modelId().equals(id)).findFirst().orElse(null);if(entry==null)return false;
+        if(!entry.equals(expected)){rememberDeleteStatus(id,"服务器保存内容已变化，请重新确认删除");return false;}
+        JsonObject request=envelope("upload_delete");request.addProperty("requestId",UUID.randomUUID().toString());request.addProperty("modelId",id);request.addProperty("hash",entry.hash());
+        request.addProperty("catalogToken",uploadCatalogToken.toString());request.addProperty("requestSequence",++deleteSequence);
+        request.addProperty("kind",entry.kind());request.addProperty("bytes",entry.bytes());deleteRequest=request;deletingId=id;deletingHash=entry.hash();lastDeleteAttempt=-1;
+        deletePublicationGeneration=committed&&sourceId.equals(id)?ownGeneration:null;
+        deleteStartedAt=clockNow;deleteSent=false;deletePublicationSerial=publicationSerial;deleteCatalogRevision=uploadCatalog.revision();
+        deleteStatuses.remove(id);return true;
+    }
+    private DeleteReceipt deleteReceipt(){return new DeleteReceipt(deletingId,deletingHash,deletePublicationGeneration,deletePublicationSerial,deleteCatalogRevision);}
+    private void clearDelete(){deleteRequest=null;deletingId=deletingHash="";deletePublicationGeneration=null;lastDeleteAttempt=-1;deleteStartedAt=deletePublicationSerial=deleteCatalogRevision=0;deleteSent=false;}
+    private void expireDelete() {
+        if(deleteSent) {
+            lateDeletes.put(UUID.fromString(deleteRequest.get("requestId").getAsString()),deleteReceipt());
+            while(lateDeletes.size()>16)lateDeletes.remove(lateDeletes.keySet().iterator().next());
+        }
+        rememberDeleteStatus(deletingId,"未确认删除，请刷新目录或重试");clearDelete();
+    }
+    private SourceIdentity savedIdentity(String id) {
+        if(!catalogueNegotiated||!allowedUpload||!uploadCatalog.available())return null;
+        SourceIdentity local=sourceIdentities.get(id);if(local==null)return null;
+        return uploadCatalog.models().stream().anyMatch(entry->entry.modelId().equals(id)&&entry.hash().equals(local.hash())
+                &&entry.kind().equals(local.kind())&&entry.bytes()==local.bytes())?local:null;
+    }
+    private void queueSourceChecks() {
+        sourceChecks.clear();
+        if(catalogueNegotiated&&allowedUpload)for(var entry:uploadCatalog.models())if(!sourceIdentities.containsKey(entry.modelId()))sourceChecks.addLast(entry.modelId());
+        checkNextSource();
+    }
+    private void checkNextSource() {
+        if(sourceChecking||sourceChecks.isEmpty()||!acknowledged)return;
+        String id=sourceChecks.removeFirst();sourceChecking=true;long revision=sourceRevision,connection=epoch;
+        CompletableFuture<SourceIdentity> reading;
+        try {reading=host.sourceIdentity(id);}catch(RuntimeException failed){reading=CompletableFuture.failedFuture(failed);}
+        reading.whenComplete((identity,error)->host.dispatch(()->{
+                if(connection!=epoch||revision!=sourceRevision)return;
+                sourceChecking=false;if(error==null)rememberSource(id,identity);checkNextSource();
+            }));
+    }
+    private void rememberSource(String id,SourceIdentity identity) {
+        sourceIdentities.put(id,identity);
+        while(sourceIdentities.size()>PrivateUploadCatalogSnapshot.MAX_MODELS) {
+            String stale=sourceIdentities.keySet().stream().filter(key->!key.equals(id)&&uploadCatalog.models().stream().noneMatch(model->model.modelId().equals(key))).findFirst()
+                    .orElseGet(()->sourceIdentities.keySet().stream().filter(key->!key.equals(id)).findFirst().orElse(id));
+            sourceIdentities.remove(stale);
+        }
+    }
     private static UploadState notUploaded(String id) { return new UploadState(id,UploadPhase.NOT_UPLOADED,"",0,0,false,"尚未上传至当前服务器"); }
     private void rememberUploadState(UploadState state) {
         sessionUploads.put(state.modelId(),state);
@@ -137,8 +235,7 @@ public final class PrivateModelSyncClient {
     }
     public void stopPublishing() {
         if(ownGeneration!=null) {
-            if(committed)rememberUploadState(new UploadState(sourceId,UploadPhase.UPLOADED,ownHash,publicationBytes,uploadedBytes,false,"本次连接已上传 · 当前未分享"));
-            else sessionUploads.remove(sourceId);
+            sessionUploads.remove(sourceId);
         }
         if(acknowledged&&ownGeneration!=null)send(envelope("clear"));
         publishRevision++;building=committed=false;ownOwner=ownGeneration=uploadId=null;sourceId=ownHash=sentState="";outgoing=null;ownEventSequence=-1;
@@ -155,17 +252,21 @@ public final class PrivateModelSyncClient {
         if(!host.channelAvailable()) { if(acknowledged||ownGeneration!=null||!remotes.isEmpty())reset();return; }
         if(acknowledged&&now-lastReceived>leaseTicks*50_000_000L)reset();
         if(!acknowledged&&now-lastHello>3*SECOND) {
-            JsonObject hello=envelope("hello");JsonArray caps=new JsonArray();caps.add("private_models_v1");hello.add("capabilities",caps);
+            JsonObject hello=envelope("hello");JsonArray caps=new JsonArray();caps.add("private_models_v1");if(!legacyHello)caps.add(PrivateUploadCatalogSnapshot.CAPABILITY);hello.add("capabilities",caps);
             if(send(hello))lastHello=now;
         }
         if(!acknowledged)return;
+        if(deleteRequest!=null&&now-deleteStartedAt>=DELETE_TIMEOUT)expireDelete();
+        if(deleteRequest!=null&&allowedUpload&&(lastDeleteAttempt<0||now-lastDeleteAttempt>=SECOND)) {
+            Boolean sent=sendControl(deleteRequest,now);if(sent!=null){lastDeleteAttempt=now;deleteSent|=sent;}
+        }
         for(Remote remote:List.copyOf(remotes.values())) {
             long timeout=remote.active?leaseTicks*50_000_000L:remote.download!=null?15*SECOND:60*SECOND;
             if(now-remote.lastLease>timeout)remove(remote);
         }
         Local local=host.local();
         if(local==null||!allowedUpload) { if(ownGeneration!=null)stopPublishing(); }
-        else if(!sourceId.equals(local.modelId())&&!building&&now>=retryAfter)beginPublish(local,now);
+        else if(!sourceId.equals(local.modelId())&&!building&&now>=retryAfter&&(!deletingUploadedModel(local.modelId())))beginPublish(local,now);
         if(outgoing!=null&&!committed) {
             if(uploadId==null&&outgoingOffer!=null) {
                 if(lastUploadOfferAttempt<0||now-lastUploadOfferAttempt>=SECOND){Boolean sent=sendControl(outgoingOffer,now);if(sent!=null)lastUploadOfferAttempt=now;}
@@ -217,7 +318,7 @@ public final class PrivateModelSyncClient {
         controlTokens--;controlWindow.addLast(now);return send(packet);
     }
     private void beginPublish(Local local,long now) {
-        stopPublishing();building=true;sourceId=local.modelId();ownOwner=local.owner();ownGeneration=UUID.randomUUID();uploadStarted=now;status="正在归档私人模型";
+        stopPublishing();publicationSerial++;building=true;sourceId=local.modelId();ownOwner=local.owner();ownGeneration=UUID.randomUUID();uploadStarted=now;status="正在归档私人模型";
         sessionUploads.remove(sourceId);
         long revision=publishRevision;UUID generation=ownGeneration;
         host.bundle(local.modelId()).thenApply(bytes -> {
@@ -232,7 +333,9 @@ public final class PrivateModelSyncClient {
                 byte[] bundle=archive.bytes();
                 if(bundle.length<1||bundle.length>maxBundleBytes)throw new IOException("Bundle size");
                 kind=archive.kind();ownHash=AssetTransfer.hash(bundle);outgoing=bundle;uploadIndex=0;publicationBytes=bundle.length;uploadedBytes=0;
+                rememberSource(sourceId,new SourceIdentity(ownHash,kind,publicationBytes));
                 JsonObject offer=identity("upload_offer");offer.addProperty("bytes",bundle.length);offer.addProperty("kind",kind);
+                if(catalogueNegotiated)offer.addProperty("modelId",sourceId);
                 offer.add("appearance",current.appearance().deepCopy());
                 if(offer.toString().getBytes(StandardCharsets.UTF_8).length>maxPayload)throw new IOException("Appearance payload size");
                 outgoingOffer=offer;Boolean sent=sendControl(offer,clockNow);if(sent!=null)lastUploadOfferAttempt=clockNow;
@@ -257,10 +360,37 @@ public final class PrivateModelSyncClient {
                 int payload=(int)WireJson.integer(packet,"maxPayload",1024,ActionPayload.MAX_BYTES);
                 int bundle=(int)WireJson.integer(packet,"maxBundleBytes",1,AssetTransfer.MAX_RAW);
                 int lease=(int)WireJson.integer(packet,"leaseTicks",20,1200);
-                if(acknowledged)reset();acknowledged=true;allowedUpload=upload;allowedView=view;maxPayload=payload;maxBundleBytes=bundle;leaseTicks=lease;
+                boolean catalogue=caps.asList().stream().anyMatch(v->v.isJsonPrimitive()&&v.getAsString().equals(PrivateUploadCatalogSnapshot.CAPABILITY));
+                UUID catalogToken=catalogue?uuid(packet,"uploadCatalogToken"):null;
+                if(acknowledged)reset();acknowledged=true;allowedUpload=upload;allowedView=view;maxPayload=payload;maxBundleBytes=bundle;leaseTicks=lease;catalogueNegotiated=catalogue;uploadCatalogToken=catalogToken;
                 status=upload?"可分享私人模型；需要主动开启分享":"没有私人模型上传权限";
-            } else if(!acknowledged)return;
+            } else if(!acknowledged) {
+                if(type.equals("error")&&!legacyHello&&WireJson.string(packet,"code",128).equals("invalid_private_payload")){legacyHello=true;lastHello=0;}
+                return;
+            }
             else switch(type) {
+                case "upload_catalog" -> {if(catalogueNegotiated&&uploadCatalog.accept(packet))queueSourceChecks();}
+                case "upload_deleted" -> {
+                    UUID request=uuid(packet,"requestId");boolean current=deleteRequest!=null&&request.toString().equals(deleteRequest.get("requestId").getAsString());
+                    DeleteReceipt receipt=current?deleteReceipt():lateDeletes.get(request);
+                    if(receipt==null||!WireJson.string(packet,"modelId",128).equals(receipt.modelId())||!WireJson.hash(packet,"hash").equals(receipt.hash()))break;
+                    boolean active=receipt.publicationGeneration()!=null&&receipt.publicationSerial()==publicationSerial
+                            &&(ownGeneration==null||receipt.publicationGeneration().equals(ownGeneration));
+                    if(uploadCatalog.revision()==receipt.catalogRevision())uploadCatalog.deleted(receipt.modelId(),receipt.hash());
+                    if(active){stopPublishing();host.savedModelDeleted(receipt.modelId(),receipt.hash());}
+                    if(current)clearDelete();else lateDeletes.remove(request);
+                    rememberDeleteStatus(receipt.modelId(),"服务器已删除保存的私人模型；本地文件保留");
+                }
+                case "upload_delete_failed" -> {
+                    UUID request=uuid(packet,"requestId");boolean current=deleteRequest!=null&&request.toString().equals(deleteRequest.get("requestId").getAsString());
+                    DeleteReceipt receipt=current?deleteReceipt():lateDeletes.get(request);if(receipt==null)break;
+                    String code=WireJson.string(packet,"code",128);rememberDeleteStatus(receipt.modelId(),switch(code){
+                        case "private_delete_denied"->"服务器拒绝删除：权限或缓存不可用";
+                        case "private_delete_busy"->"资源正在上传或存档仍在校验，请稍后再删除";
+                        case "private_delete_not_found"->"服务器保存内容已变化，等待目录同步";
+                        default->"服务器未完成删除，请重试";
+                    });if(current)clearDelete();else lateDeletes.remove(request);
+                }
                 case "upload_accept" -> {
                     if(!matchesOwn(packet)||outgoing==null)break;
                     UUID id=uuid(packet,"uploadId");int size=(int)WireJson.integer(packet,"chunkBytes",1,8192);
@@ -269,7 +399,8 @@ public final class PrivateModelSyncClient {
                     uploadId=id;chunkBytes=size;uploadIndex=0;
                 }
                 case "upload_committed" -> {if(matchesOwn(packet)){committed=true;outgoing=null;outgoingOffer=null;uploadId=null;status="私人模型已分享 · "+(uploadedBytes==0?"复用服务器缓存 · ":"")+size(publicationBytes);
-                    rememberUploadState(new UploadState(sourceId,UploadPhase.UPLOADED,ownHash,publicationBytes,uploadedBytes,true,status));}}
+                    // A publication ACK is separate from a durable, owner-scoped directory entry.
+                }}
                 case "private_offer" -> offer(packet,now);
                 case "asset_begin" -> {
                     Remote remote=offer(packet);if(remote==null||remote.bundle!=null)break;
@@ -374,7 +505,14 @@ public final class PrivateModelSyncClient {
         if(allowedUpload&&!upload&&ownGeneration!=null)stopPublishing();
         if(allowedView&&!view)for(Remote remote:List.copyOf(remotes.values()))remove(remote);
         allowedUpload=upload;allowedView=view;
+        if(uploadChanged&&!upload&&deleteRequest!=null) {
+            if(deleteSent)rememberDeleteStatus(deletingId,"上传权限已撤销，等待服务器删除结果");
+            else {rememberDeleteStatus(deletingId,"上传权限已撤销，删除请求未发送");clearDelete();}
+        }
         if(uploadChanged)status=upload?"上传权限已开放；开启分享后上传私人模型":"上传权限已撤销；私人模型仅自己可见";
+    }
+    private void rememberDeleteStatus(String id,String status) {
+        deleteStatuses.put(id,status);while(deleteStatuses.size()>64)deleteStatuses.remove(deleteStatuses.keySet().iterator().next());
     }
     private void queueStatus(Remote remote,String value) {
         remote.pendingStatus=value;remote.statusSent=false;remote.lastStatusAttempt=-1;flushControl(remote,clockNow);

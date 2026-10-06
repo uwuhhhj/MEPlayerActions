@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
@@ -293,8 +294,8 @@ class PrivateModelSyncClientTest {
         assertEquals(0,rig.host.bundleReads);assertTrue(rig.host.sent("upload_offer").isEmpty());
     }
 
-    @Test void galleryUploadPhasesRequireTheServerCommitAndKeepOnlySessionReceiptsAfterUnsharing() throws Exception {
-        Rig rig=new Rig();rig.acknowledge(true,true);rig.host.explicitLocal=true;
+    @Test void galleryUploadPhasesSeparatePublicationFromServerSavedDirectoryAfterUnsharing() throws Exception {
+        Rig rig=new Rig();rig.acknowledgeCatalog();rig.host.explicitLocal=true;
         CompletableFuture<byte[]> archive=new CompletableFuture<>();rig.host.publication=archive;
         String id=rig.host.local.modelId();rig.client.tick(NOW);
         assertEquals(PrivateModelSyncClient.UploadPhase.BUILDING,rig.client.uploadState(id).phase());
@@ -309,6 +310,8 @@ class PrivateModelSyncClientTest {
         assertEquals(PrivateModelSyncClient.UploadPhase.VALIDATING,rig.client.uploadState(id).phase());
         assertFalse(rig.client.uploadState(id).uploaded());assertTrue(rig.client.uploadedModelIds().isEmpty());
         rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),offer),NOW);
+        assertEquals(PrivateModelSyncClient.UploadPhase.PUBLISHED,rig.client.uploadState(id).phase());assertTrue(rig.client.uploadedModelIds().isEmpty());
+        rig.confirmSaved(id,offer,NOW);
         var uploaded=rig.client.uploadState(id);assertTrue(uploaded.uploaded());assertTrue(uploaded.published());assertFalse(uploaded.inProgress());
         assertEquals(offer.get("hash").getAsString(),uploaded.hash());assertEquals(Set.of(id),rig.client.uploadedModelIds());
         rig.host.explicitLocal=false;rig.client.tick(NOW);
@@ -319,26 +322,29 @@ class PrivateModelSyncClientTest {
     }
 
     @Test void explicitSourceReloadInvalidatesSameIdReceiptsAndLateCommitsFromOldBytes() throws Exception {
-        Rig rig=new Rig();rig.acknowledge(true,true);rig.host.explicitLocal=true;
+        Rig rig=new Rig();rig.acknowledgeCatalog();rig.host.explicitLocal=true;
         String id=rig.host.local.modelId();rig.client.tick(NOW);rig.host.drain();JsonObject old=rig.host.sent("upload_offer").getLast();
-        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),old),NOW);assertTrue(rig.client.uploadState(id).uploaded());
+        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),old),NOW);rig.confirmSaved(id,old,NOW);assertTrue(rig.client.uploadState(id).uploaded());
+        rig.host.publication=CompletableFuture.completedFuture(fixtureBundle(0xff00ffff));
         rig.client.invalidateSources();assertTrue(rig.client.uploadedModelIds().isEmpty());assertFalse(rig.client.uploadState(id).uploaded());
         rig.client.tick(NOW+1);rig.host.drain();JsonObject current=rig.host.sent("upload_offer").getLast();
         assertNotEquals(old.get("generation"),current.get("generation"));
         rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),old),NOW+1);
         assertFalse(rig.client.uploadState(id).uploaded());assertTrue(rig.client.uploadedModelIds().isEmpty());
         rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),current),NOW+1);
+        assertFalse(rig.client.uploadState(id).uploaded());rig.confirmSaved(id,current,NOW+1);
         assertTrue(rig.client.uploadState(id).uploaded());assertTrue(rig.client.uploadState(id).published());
     }
 
     @Test void aLateCommitCannotMarkADifferentSelectedModelAsUploadedBeforeTheNextTick() throws Exception {
-        Rig rig=new Rig();rig.acknowledge(true,true);rig.host.explicitLocal=true;
+        Rig rig=new Rig();rig.acknowledgeCatalog();rig.host.explicitLocal=true;
         String oldId=rig.host.local.modelId();rig.client.tick(NOW);rig.host.drain();JsonObject old=rig.host.sent("upload_offer").getLast();
         rig.host.local=new PrivateModelSyncClient.Local(rig.host.local.owner(),"local:replacement.bbmodel",appearance(1),extra());
         rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),old),NOW);
         assertFalse(rig.client.committed());assertFalse(rig.client.uploadState(oldId).uploaded());assertTrue(rig.client.uploadedModelIds().isEmpty());
         rig.client.tick(NOW+1);rig.host.drain();JsonObject current=rig.host.sent("upload_offer").getLast();
         rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),current),NOW+1);
+        rig.confirmSaved("local:replacement.bbmodel",current,NOW+1);
         assertEquals(Set.of("local:replacement.bbmodel"),rig.client.uploadedModelIds());
     }
 
@@ -354,12 +360,15 @@ class PrivateModelSyncClientTest {
     }
 
     @Test void receiptsTrackSeveralAcknowledgedModelsWithoutStartingUploadsDuringFiltering() throws Exception {
-        Rig rig=new Rig();rig.acknowledge(true,true);rig.host.explicitLocal=true;
+        Rig rig=new Rig();rig.acknowledgeCatalog();rig.host.explicitLocal=true;
         String firstId=rig.host.local.modelId();rig.client.tick(NOW);rig.host.drain();JsonObject first=rig.host.sent("upload_offer").getLast();
         rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),first),NOW);
+        rig.confirmSaved(firstId,first,NOW);
         String secondId="local:second.bbmodel";rig.host.local=new PrivateModelSyncClient.Local(rig.host.local.owner(),secondId,appearance(1),extra());
+        rig.host.publication=CompletableFuture.completedFuture(fixtureBundle(0xff00ff00));
         rig.client.tick(NOW+1);rig.host.drain();JsonObject second=rig.host.sent("upload_offer").getLast();
         rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),second),NOW+1);
+        rig.confirmSaved(secondId,second,NOW+1);
         int reads=rig.host.bundleReads;assertEquals(Set.of(firstId,secondId),rig.client.uploadedModelIds());
         assertTrue(rig.client.uploadState(firstId).uploaded());assertFalse(rig.client.uploadState(firstId).published());
         assertTrue(rig.client.uploadState(secondId).published());assertEquals(reads,rig.host.bundleReads);
@@ -421,6 +430,136 @@ class PrivateModelSyncClientTest {
         rig.receive(remove,NOW+11*SECOND);assertTrue(rig.client.committed());
     }
 
+    @Test void reconnectRestoresOnlySavedMatchingLocalBytesWithoutStartingSharingOrDownloading() throws Exception {
+        Rig rig=new Rig();rig.acknowledgeCatalog();String id=rig.host.local.modelId();
+        rig.savedModels.put(id,savedEntry(id,rig.bundle,"bbmodel"));rig.catalog(true,NOW);
+        assertTrue(rig.client.uploadedModelIds().isEmpty());assertEquals(1,rig.host.bundleReads);rig.host.drain();
+        assertEquals(Set.of(id),rig.client.uploadedModelIds());assertFalse(rig.client.uploadState(id).published());
+        assertTrue(rig.host.sent("upload_offer").isEmpty());assertEquals(0,rig.host.cacheReads);assertTrue(rig.host.visible.isEmpty());
+        rig.client.reset();assertTrue(rig.client.uploadedModelIds().isEmpty());rig.acknowledgeCatalog();rig.catalog(true,NOW);rig.host.drain();
+        assertEquals(Set.of(id),rig.client.uploadedModelIds());assertEquals(2,rig.host.bundleReads);assertTrue(rig.host.sent("upload_offer").isEmpty());
+    }
+    @Test void permissionRevocationAndServerCacheEvictionRemoveBadgesWithoutDeletingLocalAppearance() throws Exception {
+        Rig rig=new Rig();rig.acknowledgeCatalog();String id=rig.host.local.modelId();
+        rig.savedModels.put(id,savedEntry(id,rig.bundle,"bbmodel"));rig.catalog(true,NOW);rig.host.drain();assertTrue(rig.client.uploadState(id).uploaded());
+        JsonObject revoked=heartbeat();revoked.addProperty("allowedUpload",false);rig.receive(revoked,NOW);assertTrue(rig.client.uploadedModelIds().isEmpty());
+        assertEquals(id,rig.host.local.modelId());JsonObject restored=heartbeat();restored.addProperty("allowedUpload",true);rig.receive(restored,NOW);
+        rig.savedModels.clear();rig.catalog(true,NOW);assertTrue(rig.client.uploadedModelIds().isEmpty());
+        rig.savedModels.put(id,savedEntry(id,rig.bundle,"bbmodel"));rig.catalog(false,NOW);assertFalse(rig.client.uploadState(id).uploaded());
+        assertTrue(rig.client.uploadedDirectoryStatus().contains("权限或资源缓存不可用"));
+    }
+    @Test void localIdentityMismatchOrFailedSourceReadCannotRestoreServerSavedBadge() throws Exception {
+        for(String mismatch:List.of("hash","bytes","kind")) {
+            Rig rig=new Rig();rig.acknowledgeCatalog();String id=rig.host.local.modelId();JsonObject entry=savedEntry(id,rig.bundle,"bbmodel");
+            switch(mismatch){case "hash"->entry.addProperty("hash","a".repeat(64));case "bytes"->entry.addProperty("bytes",rig.bundle.length+1);case "kind"->entry.addProperty("kind","ysm");}
+            rig.savedModels.put(id,entry);rig.catalog(true,NOW);rig.host.drain();assertTrue(rig.client.uploadedModelIds().isEmpty(),mismatch);
+        }
+        Rig absent=new Rig();absent.acknowledgeCatalog();absent.host.publication=CompletableFuture.failedFuture(new IOException("source missing"));
+        absent.savedModels.put(absent.host.local.modelId(),savedEntry(absent.host.local.modelId(),absent.bundle,"bbmodel"));absent.catalog(true,NOW);absent.host.drain();
+        assertTrue(absent.client.uploadedModelIds().isEmpty());assertTrue(absent.host.sent("upload_offer").isEmpty());
+    }
+    @Test void savedDirectorySourceChecksStaySingleFlightAndLateCallbacksCannotCrossServers() throws Exception {
+        Rig rig=new Rig();rig.acknowledgeCatalog();CompletableFuture<byte[]> delayed=new CompletableFuture<>();rig.host.publication=delayed;
+        for(String id:List.of("local:first.bbmodel","local:second.bbmodel","local:third.bbmodel"))rig.savedModels.put(id,savedEntry(id,rig.bundle,"bbmodel"));
+        rig.catalog(true,NOW);assertEquals(1,rig.host.bundleReads);assertTrue(rig.client.uploadedDirectoryStatus().contains("正在核对"));
+        rig.client.reset();rig.acknowledgeCatalog();delayed.complete(rig.bundle);rig.host.drain();
+        assertTrue(rig.client.uploadedModelIds().isEmpty());assertEquals(1,rig.host.bundleReads);assertTrue(rig.host.sent("upload_offer").isEmpty());
+    }
+    @Test void extendedHelloFallsBackOnceForLegacyServersAndNeverSendsUnnegotiatedSourceIds() throws Exception {
+        Rig rig=new Rig();rig.client.tick(NOW);JsonArray caps=rig.host.sent("hello").getLast().getAsJsonArray("capabilities");assertEquals(2,caps.size());
+        JsonObject denied=PrivateModelSyncClient.envelope("error");denied.addProperty("code","invalid_private_payload");rig.receive(denied,NOW);rig.client.tick(NOW+1);
+        assertEquals(1,rig.host.sent("hello").getLast().getAsJsonArray("capabilities").size());rig.receive(denied,NOW+1);rig.client.tick(NOW+2);assertEquals(2,rig.host.sent("hello").size());
+        rig.acknowledge(true,false);rig.host.explicitLocal=true;rig.client.tick(NOW);rig.host.drain();JsonObject offer=rig.host.sent("upload_offer").getLast();
+        assertFalse(offer.has("modelId"));rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),offer),NOW);
+        assertEquals(PrivateModelSyncClient.UploadPhase.PUBLISHED,rig.client.uploadState(rig.host.local.modelId()).phase());assertTrue(rig.client.uploadedModelIds().isEmpty());
+    }
+    @Test void savedFilesWithoutLocalSourcesRemainBrowsableAndDeleteOnlyAfterAnExactServerAck() throws Exception {
+        Rig rig=new Rig();rig.acknowledgeCatalog();String id="ysm:已移走的模型.ysm";
+        rig.host.publication=CompletableFuture.failedFuture(new IOException("not on this client"));rig.savedModels.put(id,savedEntry(id,rig.bundle,"ysm"));rig.catalog(true,NOW);rig.host.drain();
+        assertEquals(1,rig.client.uploadedModels().size());assertTrue(rig.client.uploadedModelIds().isEmpty());assertTrue(rig.client.requestDeleteUploadedModel(id));
+        rig.client.tick(NOW);JsonObject request=rig.host.sent("upload_delete").getLast();assertEquals(rig.savedModels.get(id).get("hash"),request.get("hash"));
+        assertEquals(1,rig.client.uploadedModels().size());JsonObject ack=deleteReply(request);JsonObject stale=ack.deepCopy();stale.addProperty("requestId",UUID.randomUUID().toString());rig.receive(stale,NOW);
+        assertTrue(rig.client.deletingUploadedModel(id));stale=ack.deepCopy();stale.addProperty("hash","b".repeat(64));rig.receive(stale,NOW);assertEquals(1,rig.client.uploadedModels().size());
+        rig.receive(ack,NOW);assertFalse(rig.client.deletingUploadedModel(id));assertTrue(rig.client.uploadedModels().isEmpty());assertTrue(rig.host.sent("upload_offer").isEmpty());assertEquals(0,rig.host.deleted.size());
+        rig.client.reset();rig.acknowledgeCatalog();rig.catalog(true,NOW);rig.host.drain();rig.receive(ack,NOW);assertEquals(1,rig.client.uploadedModels().size());
+    }
+    @Test void currentPublicationDeletionCannotRestartSharingBetweenRemoveAndTheSuccessfulAck() throws Exception {
+        Rig rig=new Rig();rig.acknowledgeCatalog();rig.host.explicitLocal=true;String id=rig.host.local.modelId();rig.client.tick(NOW);rig.host.drain();JsonObject offer=rig.host.sent("upload_offer").getLast();
+        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),offer),NOW);rig.confirmSaved(id,offer,NOW);assertTrue(rig.client.requestDeleteUploadedModel(id));
+        rig.client.tick(NOW);JsonObject request=rig.host.sent("upload_delete").getLast();assertTrue(rig.client.committed());
+        rig.receive(publicationNotice("private_remove",rig.host.local.owner(),offer),NOW);assertFalse(rig.client.committed());
+        rig.receive(heartbeat(),NOW+11*SECOND);rig.client.tick(NOW+11*SECOND);assertEquals(1,rig.host.sent("upload_offer").size());
+        rig.receive(deleteReply(request),NOW+11*SECOND);assertEquals(List.of(id),rig.host.deleted);assertFalse(rig.host.explicitLocal);
+        rig.receive(heartbeat(),NOW+15*SECOND);rig.client.tick(NOW+15*SECOND);assertEquals(1,rig.host.sent("upload_offer").size());assertEquals(id,rig.host.local.modelId());
+    }
+    @Test void failedDeletionKeepsSavedMetadataAndRetryUsesANewRequestIdentity() throws Exception {
+        Rig rig=new Rig();rig.acknowledgeCatalog();String id=rig.host.local.modelId();rig.savedModels.put(id,savedEntry(id,rig.bundle,"bbmodel"));rig.catalog(true,NOW);rig.host.drain();
+        assertTrue(rig.client.requestDeleteUploadedModel(id));rig.client.tick(NOW);JsonObject original=rig.host.sent("upload_delete").getLast();
+        JsonObject failure=PrivateModelSyncClient.envelope("upload_delete_failed");failure.add("requestId",original.get("requestId"));failure.addProperty("code","private_delete_busy");rig.receive(failure,NOW);
+        assertFalse(rig.client.deletingUploadedModel(id));assertTrue(rig.client.uploadState(id).uploaded());assertTrue(rig.client.uploadDeleteStatus(id).contains("稍后"));
+        assertTrue(rig.client.requestDeleteUploadedModel(id));rig.client.tick(NOW+1);JsonObject retry=rig.host.sent("upload_delete").getLast();assertNotEquals(original.get("requestId"),retry.get("requestId"));
+        assertEquals(original.get("catalogToken"),retry.get("catalogToken"));assertEquals(original.get("requestSequence").getAsLong()+1,retry.get("requestSequence").getAsLong());
+        rig.receive(deleteReply(original),NOW+1);assertTrue(rig.client.deletingUploadedModel(id));assertTrue(rig.client.uploadState(id).uploaded());
+    }
+    @Test void deletingAnOldSavedModelDoesNotStopADifferentCurrentPublication() throws Exception {
+        Rig rig=new Rig();rig.acknowledgeCatalog();String old="local:old-model.bbmodel";rig.savedModels.put(old,savedEntry(old,fixtureBundle(0xff00ffff),"bbmodel"));rig.catalog(true,NOW);rig.host.drain();
+        rig.host.explicitLocal=true;rig.client.tick(NOW);rig.host.drain();JsonObject active=rig.host.sent("upload_offer").getLast();rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),active),NOW);rig.confirmSaved(rig.host.local.modelId(),active,NOW);
+        assertTrue(rig.client.requestDeleteUploadedModel(old));rig.client.tick(NOW);rig.receive(deleteReply(rig.host.sent("upload_delete").getLast()),NOW);
+        assertTrue(rig.client.committed());assertTrue(rig.host.explicitLocal);assertTrue(rig.host.deleted.isEmpty());assertEquals(1,rig.client.uploadedModels().size());
+    }
+    @Test void deletingTheLatestSavedVersionAlsoStopsAnOlderPublicationOfThatSameSource() throws Exception {
+        Rig rig=new Rig();rig.acknowledgeCatalog();rig.host.explicitLocal=true;String id=rig.host.local.modelId();rig.client.tick(NOW);rig.host.drain();JsonObject offer=rig.host.sent("upload_offer").getLast();
+        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),offer),NOW);
+        rig.savedModels.put(id,savedEntry(id,fixtureBundle(0xff315599),"bbmodel"));rig.catalog(true,NOW);rig.host.drain();
+        assertFalse(rig.client.uploadState(id).uploaded());assertTrue(rig.client.requestDeleteUploadedModel(id));rig.client.tick(NOW);
+        JsonObject request=rig.host.sent("upload_delete").getLast();assertNotEquals(offer.get("hash"),request.get("hash"));rig.receive(deleteReply(request),NOW);
+        assertFalse(rig.client.committed());assertFalse(rig.host.explicitLocal);assertEquals(List.of(id),rig.host.deleted);assertTrue(rig.client.uploadedModels().isEmpty());
+    }
+    @Test void revokingUploadBeforeADeleteWasSentReleasesTheButtonAndNeverPretendsTheFileWasDeleted() throws Exception {
+        Rig rig=new Rig();rig.acknowledgeCatalog();String id=rig.host.local.modelId();rig.savedModels.put(id,savedEntry(id,rig.bundle,"bbmodel"));rig.catalog(true,NOW);rig.host.drain();
+        assertTrue(rig.client.requestDeleteUploadedModel(id));JsonObject revoked=heartbeat();revoked.addProperty("allowedUpload",false);rig.receive(revoked,NOW);
+        assertFalse(rig.client.deletingUploadedModel(id));assertTrue(rig.client.uploadDeleteStatus(id).contains("未发送"));assertTrue(rig.host.sent("upload_delete").isEmpty());assertTrue(rig.host.deleted.isEmpty());
+        JsonObject restored=heartbeat();restored.addProperty("allowedUpload",true);rig.receive(restored,NOW+1);
+        assertTrue(rig.client.uploadState(id).uploaded());assertTrue(rig.client.requestDeleteUploadedModel(id));rig.client.tick(NOW+1);assertEquals(1,rig.host.sent("upload_delete").size());
+    }
+    @Test void aConfirmationOfAnOlderSavedVersionCannotDeleteASameIdReplacement() throws Exception {
+        Rig rig=new Rig();rig.acknowledgeCatalog();String id=rig.host.local.modelId();rig.savedModels.put(id,savedEntry(id,rig.bundle,"bbmodel"));rig.catalog(true,NOW);rig.host.drain();
+        var displayed=rig.client.uploadedModels().getFirst();rig.savedModels.put(id,savedEntry(id,fixtureBundle(0xff001155),"bbmodel"));rig.catalog(true,NOW+1);rig.host.drain();
+        assertFalse(rig.client.requestDeleteUploadedModel(displayed));assertFalse(rig.client.deletingUploadedModel(id));assertTrue(rig.client.uploadDeleteStatus(id).contains("重新确认"));assertTrue(rig.host.sent("upload_delete").isEmpty());assertEquals(1,rig.client.uploadedModels().size());
+        assertTrue(rig.client.requestDeleteUploadedModel(rig.client.uploadedModels().getFirst()));rig.client.tick(NOW+1);assertEquals(1,rig.host.sent("upload_delete").size());
+    }
+    @Test void aSentDeleteExpiresWithoutClaimingSuccessAndItsLateAckStillStopsTheOriginalPublication() throws Exception {
+        Rig rig=new Rig();rig.acknowledgeCatalog();rig.host.explicitLocal=true;String id=rig.host.local.modelId();rig.client.tick(NOW);rig.host.drain();JsonObject offer=rig.host.sent("upload_offer").getLast();
+        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),offer),NOW);rig.confirmSaved(id,offer,NOW);assertTrue(rig.client.requestDeleteUploadedModel(id));rig.client.tick(NOW);
+        JsonObject request=rig.host.sent("upload_delete").getLast();long expired=NOW+90*SECOND;rig.receive(heartbeat(),expired);rig.client.tick(expired);
+        assertFalse(rig.client.deletingUploadedModel(id));assertTrue(rig.client.uploadDeleteStatus(id).contains("未确认删除"));assertTrue(rig.client.uploadState(id).uploaded());assertTrue(rig.client.committed());assertTrue(rig.host.deleted.isEmpty());
+        rig.receive(deleteReply(request),expired+1);assertFalse(rig.client.committed());assertFalse(rig.host.explicitLocal);assertEquals(List.of(id),rig.host.deleted);assertTrue(rig.client.uploadedModels().isEmpty());
+    }
+    @Test void aLateDeleteAckCannotStopANewerPublicationOrEraseItsNewerDirectoryReceiptEvenWithTheSameHash() throws Exception {
+        Rig rig=new Rig();rig.acknowledgeCatalog();rig.host.explicitLocal=true;String id=rig.host.local.modelId();rig.client.tick(NOW);rig.host.drain();JsonObject original=rig.host.sent("upload_offer").getLast();
+        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),original),NOW);rig.confirmSaved(id,original,NOW);assertTrue(rig.client.requestDeleteUploadedModel(id));rig.client.tick(NOW);
+        JsonObject request=rig.host.sent("upload_delete").getLast();long expired=NOW+90*SECOND;rig.receive(heartbeat(),expired);rig.client.tick(expired);
+        rig.client.stopPublishing();rig.client.tick(expired+1);rig.host.drain();JsonObject replacement=rig.host.sent("upload_offer").getLast();assertNotEquals(original.get("generation"),replacement.get("generation"));
+        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),replacement),expired+1);rig.confirmSaved(id,replacement,expired+1);rig.receive(deleteReply(request),expired+2);
+        assertTrue(rig.client.committed());assertTrue(rig.host.explicitLocal);assertTrue(rig.host.deleted.isEmpty());assertTrue(rig.client.uploadState(id).uploaded());assertEquals(1,rig.client.uploadedModels().size());
+    }
+    @Test void lateDeleteHistoryIsBoundedAndIsClearedWhenTheConnectionChanges() throws Exception {
+        Rig rig=new Rig();rig.acknowledgeCatalog();String id=rig.host.local.modelId();rig.savedModels.put(id,savedEntry(id,rig.bundle,"bbmodel"));rig.catalog(true,NOW);rig.host.drain();
+        long now=NOW;List<JsonObject> requests=new ArrayList<>();
+        for(int index=0;index<17;index++) {
+            assertTrue(rig.client.requestDeleteUploadedModel(id));rig.client.tick(now);requests.add(rig.host.sent("upload_delete").getLast());now+=90*SECOND;
+            rig.receive(heartbeat(),now);rig.client.tick(now);assertFalse(rig.client.deletingUploadedModel(id));assertTrue(rig.client.uploadState(id).uploaded());
+        }
+        rig.receive(deleteReply(requests.getFirst()),now);assertEquals(1,rig.client.uploadedModels().size());
+        rig.receive(deleteReply(requests.getLast()),now);assertTrue(rig.client.uploadedModels().isEmpty());
+        rig.client.reset();rig.acknowledgeCatalog();rig.catalog(true,now);rig.host.drain();rig.receive(deleteReply(requests.get(15)),now);assertEquals(1,rig.client.uploadedModels().size());
+    }
+    private static JsonObject deleteReply(JsonObject request) {
+        JsonObject ack=PrivateModelSyncClient.envelope("upload_deleted");for(String key:List.of("requestId","modelId","hash"))ack.add(key,request.get(key));return ack;
+    }
+    private static JsonObject savedEntry(String id,byte[] bundle,String kind) {
+        JsonObject entry=new JsonObject();entry.addProperty("modelId",id);entry.addProperty("hash",AssetTransfer.hash(bundle));entry.addProperty("kind",kind);entry.addProperty("bytes",bundle.length);return entry;
+    }
     private static JsonObject publicationNotice(String type,UUID owner,JsonObject offer){
         JsonObject packet=PrivateModelSyncClient.envelope(type);packet.addProperty("owner",owner.toString());
         packet.add("generation",offer.get("generation"));packet.add("hash",offer.get("hash"));return packet;
@@ -489,13 +628,29 @@ class PrivateModelSyncClientTest {
         final byte[] bundle;
         final FakeHost host;
         final PrivateModelSyncClient client;
+        long catalogRevision;
+        final Map<String,JsonObject> savedModels=new LinkedHashMap<>();
         Rig() throws Exception {bundle=fixtureBundle();host=new FakeHost(bundle);client=new PrivateModelSyncClient(host);}
         Offer offer() {return new Offer(UUID.randomUUID(),UUID.randomUUID(),UUID.randomUUID(),AssetTransfer.hash(bundle),bundle.length);}
         void receive(JsonObject packet,long now) {client.receive(packet.toString().getBytes(StandardCharsets.UTF_8),now);}
         void acknowledge(boolean upload,boolean view) {
+            acknowledge(upload,view,false);
+        }
+        void acknowledgeCatalog(){acknowledge(true,true,true);}
+        void acknowledge(boolean upload,boolean view,boolean catalogue) {
             JsonObject packet=PrivateModelSyncClient.envelope("hello_ack");JsonArray caps=new JsonArray();caps.add("private_models_v1");packet.add("capabilities",caps);
+            if(catalogue){caps.add(PrivateUploadCatalogSnapshot.CAPABILITY);packet.addProperty("uploadCatalogToken",UUID.randomUUID().toString());}
             packet.addProperty("allowedUpload",upload);packet.addProperty("allowedView",view);packet.addProperty("maxPayload",16000);
             packet.addProperty("maxBundleBytes",AssetTransfer.MAX_RAW);packet.addProperty("leaseTicks",20);receive(packet,NOW);
+        }
+        void confirmSaved(String id,JsonObject offer,long now) {
+            savedModels.values().removeIf(entry->entry.get("hash").equals(offer.get("hash")));
+            JsonObject entry=new JsonObject();entry.addProperty("modelId",id);entry.add("hash",offer.get("hash"));entry.add("kind",offer.get("kind"));entry.add("bytes",offer.get("bytes"));savedModels.put(id,entry);
+            catalog(true,now);host.drain();
+        }
+        void catalog(boolean available,long now) {
+            JsonObject packet=PrivateModelSyncClient.envelope("upload_catalog");packet.addProperty("revision",++catalogRevision);packet.addProperty("index",0);packet.addProperty("count",1);packet.addProperty("available",available);
+            JsonArray models=new JsonArray();if(available)savedModels.values().forEach(models::add);packet.add("models",models);receive(packet,now);
         }
         void begin(Offer offer) {JsonObject packet=offer.asset("asset_begin");packet.addProperty("bytes",bundle.length);packet.addProperty("chunks",1);receive(packet,NOW);}
         void chunk(Offer offer,byte[] bytes) {JsonObject packet=offer.asset("asset_chunk");packet.addProperty("index",0);packet.addProperty("data",Base64.getEncoder().encodeToString(bytes));receive(packet,NOW);}
@@ -515,6 +670,7 @@ class PrivateModelSyncClientTest {
         long now=NOW;
         final Map<UUID,UUID> visible=new HashMap<>();
         final List<Event> events=new ArrayList<>();
+        final List<String> deleted=new ArrayList<>();
         PrivateModelSyncClient.Local local;
         FakeHost(byte[] bundle) {publication=CompletableFuture.completedFuture(bundle);local=new PrivateModelSyncClient.Local(UUID.randomUUID(),"local:test.bbmodel",appearance(1),extra());}
         public boolean channelAvailable(){return channel;}
@@ -533,6 +689,7 @@ class PrivateModelSyncClientTest {
         public void remove(UUID owner,UUID generation){visible.remove(owner,generation);}
         public void state(PrivateModelSyncClient.Remote remote){if(remote.ready&&remote.active)visible.put(remote.owner,remote.generation);else visible.remove(remote.owner,remote.generation);}
         public void event(UUID owner,UUID generation,List<Double> args){events.add(new Event(owner,generation,args));}
+        public void savedModelDeleted(String id,String hash){deleted.add(id);if(local.modelId().equals(id))explicitLocal=false;}
         void drain(){while(!dispatch.isEmpty())dispatch.removeFirst().run();}
         List<JsonObject> sent(String type){return packets.stream().filter(packet->packet.get("type").getAsString().equals(type)).toList();}
         long attempts(String type){return controlAttempts.stream().filter(type::equals).count();}
@@ -544,13 +701,14 @@ class PrivateModelSyncClientTest {
         value.addProperty("textureId","");value.add("variables",new JsonObject());value.add("radioSelections",new JsonObject());return value;
     }
     private static JsonObject extra(){JsonObject value=new JsonObject();value.addProperty("id","");value.addProperty("loop","ONCE");value.addProperty("locked",false);value.addProperty("sequence",0);return value;}
-    private static byte[] fixtureBundle() throws Exception {
+    private static byte[] fixtureBundle() throws Exception {return fixtureBundle(0xffffffff);}
+    private static byte[] fixtureBundle(int color) throws Exception {
         JsonObject raw=JsonParser.parseString("""
             {"meta":{"format_version":"5.0"},"textures":[],"animations":[],
              "elements":[{"uuid":"cube","from":[0,0,0],"to":[16,16,16],"faces":{"north":{"uv":[0,0,16,16],"texture":0}}}],
              "outliner":[{"uuid":"root","name":"root","origin":[0,0,0],"children":["cube"]}]}
             """).getAsJsonObject();
-        BufferedImage image=new BufferedImage(1,1,BufferedImage.TYPE_INT_ARGB);image.setRGB(0,0,0xffffffff);ByteArrayOutputStream png=new ByteArrayOutputStream();ImageIO.write(image,"png",png);
+        BufferedImage image=new BufferedImage(1,1,BufferedImage.TYPE_INT_ARGB);image.setRGB(0,0,color);ByteArrayOutputStream png=new ByteArrayOutputStream();ImageIO.write(image,"png",png);
         // The mature native converter preserves the author texture name as a resource path.
         // This protocol fixture must remain a valid, renderable Blockbench asset too.
         JsonObject texture=new JsonObject();texture.addProperty("uuid","fixture-texture");texture.addProperty("name","fixture.png");
