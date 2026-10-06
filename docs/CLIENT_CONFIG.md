@@ -8,6 +8,7 @@
 
 - J 轮盘右上角齿轮或 `/mpaclient settings` 打开玩家模型主页。顶部 CLIENT 浏览私人模型，SERVER 查看当前服务器下发模型；SERVER 不是服务器模型下载列表。CLIENT 内“仅自己可见／分享给模组玩家”选择私人外观的分发方式。
 - 点击图库卡片只切换左侧草稿预览。等待加载完成，再点“使用模型”才改变世界外观，并开启总渲染与本人伪装显示；保留已有玩家／装备显隐、缩放和 XYZ。加载失败不会用旧模型冒充新选择。
+- 图库沿 [OpenYSM 经典面板](https://github.com/IzumiiKonata/OpenYSM-Updated/blob/0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85/common/src/main/java/com/elfmcys/yesstevemodel/client/gui/PlayerModelScreen.java#L330-L331) 使用居中的 420 逻辑像素宽面板与 5×2 卡片；内容区为 238 高，容纳本项目搜索和分页间距。来源／分享按钮与页脚随面板定位，放大窗口不再只扩展空白背景；小 GUI 缩减行列与按钮间距，实际物理尺寸受 Minecraft GUI 缩放设置影响。
 - 轮盘可悬停后松开 J、点击或按 1–8 选择。普通区域滚轮切页；打开作者配置后，右侧面板内滚轮滚动表单。CLIENT 中心切换动作锁定，SERVER 中心停止手动动作。保持轮盘打开在主页齿轮设置中调整。
 - 轮盘左侧“解除私人伪装”关闭私人外观并保留配置；手动 CLIENT 覆盖服务器伪装时切回 SERVER。“解除服务器伪装”发送固定 `/meplayeractions undisguise`，等待服务器权限检查和解绑确认；外部原生模型只结束 MPA 接管。关闭渲染仍可使用解除入口。
 

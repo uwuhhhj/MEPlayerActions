@@ -33,7 +33,8 @@ public class LocalAppearanceScreen extends Screen {
     private static final int MAX_LOADS = 3;
     // OpenYSM ModelButton(52, 90), PlayerModelScreen's 55/93 slot stride,
     // and ModelButton's 76-pixel entity viewport (ModelPreview crops only the entity to 70).
-    private static final int CARD_WIDTH = 52, CARD_HEIGHT = 90, CARD_GAP = 3,
+    private static final int CARD_WIDTH = GalleryPanelLayout.CARD_WIDTH,
+            CARD_HEIGHT = GalleryPanelLayout.CARD_HEIGHT, CARD_GAP = GalleryPanelLayout.CARD_GAP,
             CARD_RENDER_HEIGHT = 76;
     protected static final Identifier GUI_ICONS=Identifier.of("meplayeractions","textures/gui/icon.png");
     private static final Identifier PACK_ICON=Identifier.of("meplayeractions","textures/gui/default_pack_icon.png");
@@ -54,6 +55,8 @@ public class LocalAppearanceScreen extends Screen {
     private int sourceFilter, page, columns, rows, pageSize, inFlight;
     protected int drawnPreviewCount;
     protected int left, top, bottom, panelWidth, previewWidth, right, rightWidth, gridTop, gridBottom;
+    protected int frameTop, frameBottom, titleY, footerY;
+    protected boolean compactLayout;
     protected int previewX, previewY, previewW, previewH;
     protected boolean leftPreviewDrawn;
     protected String leftPreviewId="",leftPreviewKey="";
@@ -78,18 +81,15 @@ public class LocalAppearanceScreen extends Screen {
 
     @Override protected void init() {
         activeView = true;
-        panelWidth = Math.max(220, Math.min(1040, width - 16));
-        left = (width - panelWidth) / 2;
-        top = galleryTop();
-        bottom = height - 34;
-        previewWidth = Math.max(88, Math.min(290, panelWidth * 31 / 100));
-        right = left + previewWidth + 6;
-        rightWidth = panelWidth - previewWidth - 6;
+        var layout = GalleryPanelLayout.create(width, height, galleryHeaderHeight(false), galleryHeaderHeight(true));
+        panelWidth = layout.panelWidth(); left = layout.left(); top = layout.top(); bottom = layout.bottom();
+        previewWidth = layout.previewWidth(); right = layout.right(); rightWidth = layout.rightWidth();
+        frameTop = layout.frameTop(); frameBottom = layout.frameBottom();
+        titleY = layout.titleY(); footerY = layout.footerY(); compactLayout = layout.compact();
         previewX = left + 4; previewY = top + 25;
         previewW = previewWidth - 8; previewH = Math.max(30, bottom - previewY - (showRotationHint()?63:46));
         gridTop = top + 29; gridBottom = bottom - 26;
-        columns = Math.max(1, Math.min(5, (rightWidth - 10 + CARD_GAP) / (CARD_WIDTH + CARD_GAP)));
-        rows = Math.max(1, Math.min(2, (gridBottom - gridTop + CARD_GAP) / (CARD_HEIGHT + CARD_GAP)));
+        columns = layout.columns(); rows = layout.rows();
         pageSize = columns * rows;
         use=null;settings=null;favorite=null;
         buildHeaderControls();
@@ -98,7 +98,7 @@ public class LocalAppearanceScreen extends Screen {
         buildFooterControls();
     }
 
-    protected int galleryTop() {return height < 230 ? 29 : 38;}
+    protected int galleryHeaderHeight(boolean compact) {return compact ? 29 : 38;}
     protected boolean clientGalleryVisible() {return true;}
     protected boolean requiresLocalSource() {return true;}
     protected boolean showRotationHint() {return true;}
@@ -144,8 +144,8 @@ public class LocalAppearanceScreen extends Screen {
         rebuildGrid();
     }
     protected void buildFooterControls() {
-        button("返回", left, height - 27, 52, this::close, "返回上一页");
-        button("恢复默认", left + 56, height - 27, 65, () -> {
+        button("返回", left, footerY, 52, this::close, "返回上一页");
+        button("恢复默认", left + 56, footerY, 65, () -> {
             runtime.options.defaultHeaddress = true; runtime.options.defaultBlueTexture = false;
             var defaults = LocalAppearanceSettings.defaults(); runtime.updateLocalAppearance(defaults);
             refreshModels(true); selection.restore(defaults.modelId()); message = "已恢复默认，本地外观关闭"; rebuildGrid();
@@ -286,6 +286,8 @@ public class LocalAppearanceScreen extends Screen {
         var result=new LinkedHashMap<String,Object>();
         result.put("referenceRevision","0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85");
         result.put("layout","left-preview/right-search-model-cards");result.put("groupPath",groupPath());
+        result.put("panel",Map.of("x",left,"y",frameTop,"width",panelWidth,"height",frameBottom-frameTop,
+                "columns",columns,"rows",rows,"compact",compactLayout));
         result.put("search",query);result.put("favoritesOnly",favoritesOnly);result.put("sourceFilter",sourceFilter);
         result.put("page",page);result.put("pageCount",pageCount());result.put("selectedModelId",selection.modelId());
         result.put("leftPreview",Map.of("x",previewX,"y",previewY,"width",previewW,"height",previewH,
@@ -394,7 +396,7 @@ public class LocalAppearanceScreen extends Screen {
         preview.beginFrame(context);
         drawnPreviewCount = 0;leftPreviewDrawn=false;leftPreviewId="";leftPreviewKey="";drawnCards.clear();
         leftPreviewSource="native-player";leftPreviewInstance="";leftPreviewHash="";
-        context.fill(0, 0, width, height, 0xCF10171F);
+        context.fill(left - 4, frameTop - 2, left + panelWidth + 4, frameBottom + 2, 0xCF10171F);
         renderHeader(context);
         context.fill(left, top, left + previewWidth, bottom, 0xE6222730);
         context.fill(right, top, right + rightWidth, bottom, 0xE6222730);
@@ -403,8 +405,8 @@ public class LocalAppearanceScreen extends Screen {
         super.render(context, mouseX, mouseY, delta);
     }
     protected void renderHeader(DrawContext context) {
-        context.drawCenteredTextWithShadow(textRenderer, title, width / 2, 7, 0xfff3f6ff);
-        if (height >= 230) context.drawCenteredTextWithShadow(textRenderer, "本地模型 · 分享在玩家模型主页主动开启", width / 2, 23, 0xffbccce0);
+        context.drawCenteredTextWithShadow(textRenderer, title, width / 2, titleY, 0xfff3f6ff);
+        if (!compactLayout) context.drawCenteredTextWithShadow(textRenderer, "本地模型 · 分享在玩家模型主页主动开启", width / 2, titleY + 16, 0xffbccce0);
     }
     protected void renderAlternateContent(DrawContext context,float delta) { }
     private void renderGallery(DrawContext context,float delta) {
@@ -412,7 +414,7 @@ public class LocalAppearanceScreen extends Screen {
         if (visible.isEmpty() && visibleGroups.isEmpty()) clipped(context, favoritesOnly ? "暂无符合条件的收藏" : "没有符合条件的模型", right + 8, gridTop + 20, rightWidth - 16, 0xffbccce0);
         context.drawCenteredTextWithShadow(textRenderer, (page + 1) + " / " + pageCount(), right + rightWidth / 2, bottom - 15, 0xffe6ecf4);
         String status = message.isEmpty() ? runtime.localAppearanceStatus() : message;
-        clipped(context, status, left + footerStatusInset(), height - 21, panelWidth - footerStatusInset(), 0xffffd589);
+        clipped(context, status, left + footerStatusInset(), footerY + 6, panelWidth - footerStatusInset(), 0xffffd589);
     }
     protected void renderSelectedPreview(DrawContext context,float delta) {
         ClientRuntime.GuiPreviewAppearance appearance = runtime.guiPreviewAppearance();

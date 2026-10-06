@@ -40,25 +40,30 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
         initializedLocalMode=localMode;initializedInstance=instance;roles.clear();
         super.init();
     }
-    @Override protected int galleryTop() {return (height<210?52:58)+(clientTab?24:0);}
+    @Override protected int galleryHeaderHeight(boolean compact) {
+        return clientTab ? (compact ? 58 : 73) : (compact ? 37 : 49);
+    }
     @Override protected boolean clientGalleryVisible() {return clientTab && !advanced;}
     @Override protected boolean requiresLocalSource() {return false;}
     @Override protected boolean showRotationHint() {return false;}
     @Override protected String settingsButtonLabel(int buttonWidth) {return "外观设置…";}
 
     @Override protected void buildHeaderControls() {
-        int half=(panelWidth-6)/2,y=top-(clientTab?53:29);
-        roles.put(flatButton(clientTab?"客户端 ✓":"客户端",left,y,half,24,()->switchSource(true),
+        int sourceOffset=clientTab?(compactLayout?41:53):(compactLayout?20:29);
+        int half=(panelWidth-6)/2,y=top-sourceOffset;
+        int sourceHeight=compactLayout?18:24;
+        roles.put(flatButton(clientTab?"客户端 ✓":"客户端",left,y,half,sourceHeight,()->switchSource(true),
                 "本地图库与私人设置；选择仅自己可见或授权分享。手动覆盖服务器伪装仍只在本机显示",clientTab),"clientSource");
-        roles.put(flatButton(clientTab?"服务器下发":"服务器下发 ✓",left+half+6,y,panelWidth-half-6,24,()->switchSource(false),
+        roles.put(flatButton(clientTab?"服务器下发":"服务器下发 ✓",left+half+6,y,panelWidth-half-6,sourceHeight,()->switchSource(false),
                 "仅展示当前服务器绑定的模型；模型选择与分发由服务器决定",!clientTab),"serverSource");
         selfOnly=sharedModel=null;
         if(clientTab) {
             boolean sharing=runtime.privateSyncEnabled()&&!runtime.serverOwnModelPresent();
-            selfOnly=flatButton(sharing?"仅自己可见":"仅自己可见 ✓",left,top-26,half,20,()->{
+            int sharingY=top-(compactLayout?20:26),sharingHeight=compactLayout?16:20;
+            selfOnly=flatButton(sharing?"仅自己可见":"仅自己可见 ✓",left,sharingY,half,sharingHeight,()->{
                 runtime.setPrivateSyncEnabled(false);clearAndInit();
             },"只在自己的客户端显示，不上传模型，也不改变服务器伪装",!sharing);
-            sharedModel=flatButton(sharing?"分享给模组玩家 ✓":"分享给模组玩家",left+half+6,top-26,panelWidth-half-6,20,()->{
+            sharedModel=flatButton(sharing?"分享给模组玩家 ✓":"分享给模组玩家",left+half+6,sharingY,panelWidth-half-6,sharingHeight,()->{
                 runtime.setPrivateSyncEnabled(true);clearAndInit();
             },sharingTooltip(),sharing);
             sharedModel.active=runtime.canShareLocalModel();
@@ -67,11 +72,11 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
     }
 
     @Override protected void buildFooterControls() {
-        roles.put(button("返回",left,height-27,46,this::close,"返回上一页"),"back");
+        roles.put(button("返回",left,footerY,46,this::close,"返回上一页"),"back");
         // Like OpenYSM ConfigCheckBoxForge / BooleanOptionRow, visible selection
         // comes from the actual option; the label also identifies each separate switch.
         boolean serverDisguise = runtime.serverOwnModelPresent();
-        int toggleX = left + 50, toggleY = height - 27;
+        int toggleX = left + 50, toggleY = footerY;
         boolean hidePlayer = serverDisguise || runtime.options.hideVanillaPlayer;
         var vanillaPlayer = flatButton(hidePlayer?"玩家隐藏":"玩家显示",toggleX,toggleY,44,20,()->{
             if (runtime.serverOwnModelPresent()) return;
@@ -91,7 +96,7 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
         roles.put(flatButton(runtime.options.showSelf?"伪装显示":"伪装隐藏",toggleX+96,toggleY,44,20,()->{
             runtime.options.showSelf=!runtime.options.showSelf;runtime.options.save();clearAndInit();
         },"只切换本人的伪装模型；原版玩家和装备分别控制",runtime.options.showSelf),"selfVisibility");
-        var gear=new ButtonWidget(left+194,height-27,20,20,Text.literal("⚙"),button->{advanced=!advanced;clearAndInit();},narration->narration.get()) {
+        var gear=new ButtonWidget(left+194,footerY,20,20,Text.literal("⚙"),button->{advanced=!advanced;clearAndInit();},narration->narration.get()) {
             @Override protected void drawIcon(DrawContext context,int mouseX,int mouseY,float delta) {
                 context.fill(getX(),getY(),getRight(),getBottom(),-12369342);
                 if(hovered || isFocused())context.drawStrokedRectangle(getX(),getY(),getWidth(),getHeight(),-790560);
@@ -151,7 +156,7 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
     }
 
     @Override protected void renderHeader(DrawContext context) {
-        context.drawCenteredTextWithShadow(textRenderer,title,width/2,7,0xfff3f0e0);
+        context.drawCenteredTextWithShadow(textRenderer,title,width/2,titleY,0xfff3f0e0);
     }
     @Override protected void renderAlternateContent(DrawContext context,float delta) {
         if(clientTab)renderSelectedPreview(context,delta);else renderServerPreview(context,delta);
