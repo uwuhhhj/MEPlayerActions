@@ -18,6 +18,8 @@ import java.lang.reflect.InvocationTargetException;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /** Pure Bukkit entry point: optional ModelEngine signatures never participate in listener scanning. */
 public final class MEPlayerActionsPlugin extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
@@ -106,12 +108,14 @@ public final class MEPlayerActionsPlugin extends JavaPlugin implements Listener,
         if (normalized[0].equals("reload")) {
             if (!sender.hasPermission("mact.admin")) { message(sender, "缺少权限：mact.admin"); return true; }
             try {
-                reloadConfig();
-                ResourceSettings resourceSettings = ResourceSettings.fromConfiguration(getConfig());
-                ServerBackend next = prepareBackend(); // Validate before releasing the active mode.
-                shutdown();
-                resources = new ResourceProtection(this, resourceSettings); resources.start();
-                startBackend(next);
+                replaceAfterValidation(() -> {
+                    reloadConfig();
+                    return new BackendReload(ResourceSettings.fromConfiguration(getConfig()), prepareBackend());
+                }, prepared -> {
+                    shutdown();
+                    resources = new ResourceProtection(this, prepared.settings()); resources.start();
+                    startBackend(prepared.backend());
+                }, this::shutdown);
                 message(sender, "配置已重载，旧伪装和私人共享会话已清理；" + backend.diagnosis() + "。客户端将重新协商共享。");
             } catch (RuntimeException | LinkageError failure) { message(sender, "重载失败：" + failure.getMessage()); }
             return true;
@@ -126,6 +130,17 @@ public final class MEPlayerActionsPlugin extends JavaPlugin implements Listener,
             message(sender, "玩家使用 " + CommandLayout.PREFIX + "；控制台可用 status 查看全局资源与保护状态，reload 重载配置。");
         }
         return true;
+    }
+    private record BackendReload(ResourceSettings settings, ServerBackend backend) { }
+    /** Validation keeps the old mode alive; a failed replacement must close partial new services. */
+    static <T> void replaceAfterValidation(Supplier<T> validate, Consumer<T> replace, Runnable cleanupFailed) {
+        T prepared = validate.get();
+        try { replace.accept(prepared); }
+        catch (RuntimeException | LinkageError failure) {
+            try { cleanupFailed.run(); }
+            catch (RuntimeException | LinkageError cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
+            throw failure;
+        }
     }
     public void status(CommandSender sender, String[] args) {
         permission(sender, "mact.debug");
