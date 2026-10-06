@@ -159,6 +159,8 @@ bindings 最多 64 项，owner 唯一。只续租已有且 instance/hash 完全�
 
 ## 私人模型同步 v1
 
+私人状态协议不增加原版未下发给普通观看者的食物、经验、完整效果等级或移动输入字段；远端使用既有缺省／原版实体字段。本人本地读取真实原版状态；XYZ 始终复用原版同步。授权资产、作者配置及动作事件仍按以下协议传送。
+
 独立频道 `meplayeractions:private`，每包严格 UTF-8 JSON `{protocol:1,type:...}`。该频道由 `PrivateModelSyncService` 实现，服务类不引用 ModelEngine，不读取 ME 或管理员服务器模型路径，也不建立 HTTP/云存储连接。它只经 `PrivateModelStore` 读取已验证的 owner/hash 私人资源缓存。它与 v3 服务器主动推送共享连接和全局流量、并发预算，两个握手各自保留一秒冷却。现有 v3 的能力、授权和服务器 BBModel 主动推送继续有效，私人频道不能索取任意服务器模型，也不创建 ME 蓝图或伪装。
 
 服务器须开启 `client-sync.enabled` 和 `client-sync.private-models.enabled`，并授予发布者 `mact.private.upload`、观看者 `mact.private.view`；私人开关与两个权限默认关闭，OP 也须显式授权。客户端须显式选择分享，选择模型本身不上传；关闭分享发送 `clear`，本机外观继续独立使用。
