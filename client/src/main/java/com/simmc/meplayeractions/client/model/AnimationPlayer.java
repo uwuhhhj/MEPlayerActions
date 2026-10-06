@@ -173,8 +173,19 @@ public final class AnimationPlayer {
         // A world/clock reset must not blend a pose from the previous connection.
         if (!Double.isNaN(lastTick) && serverTick + 1 < lastTick) reset();
         Map<String, Double> inputs = new HashMap<>(queries);
-        inputs.put("ysm.head_yaw", (double) relativeHeadYaw); inputs.put("ysm.head_pitch", (double) headPitch);
-        inputs.put("query.head_x_rotation",(double)relativeHeadYaw);inputs.put("query.head_y_rotation",(double)headPitch);
+        double queryYaw = relativeHeadYaw, queryPitch = headPitch;
+        if (expressions.nativeYsm()) {
+            // OpenYSM AnimatableEntity exposes negated head angles to author expressions.
+            // Keep the raw inputs for applyLook: its automatic head rotation already negates them.
+            float wrappedYaw = relativeHeadYaw % 360;
+            if (wrappedYaw >= 180) wrappedYaw -= 360;
+            if (wrappedYaw < -180) wrappedYaw += 360;
+            queryYaw = -Math.max(-85, Math.min(85, wrappedYaw));
+            queryPitch = -headPitch;
+        }
+        inputs.put("ysm.head_yaw", queryYaw); inputs.put("ysm.head_pitch", queryPitch);
+        // Preserve the upstream QueryBinding aliases (X is yaw; Y is pitch).
+        inputs.put("query.head_x_rotation", queryYaw); inputs.put("query.head_y_rotation", queryPitch);
         inputs.putIfAbsent("ysm.food_level", 20d); inputs.put("query.life_time", serverTick / 20);
         expressions.frame(inputs);
         if (Double.isNaN(instanceStart)) instanceStart = serverTick;
