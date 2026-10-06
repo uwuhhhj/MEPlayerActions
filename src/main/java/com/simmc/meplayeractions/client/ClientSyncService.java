@@ -3,6 +3,7 @@ import com.google.gson.*;
 import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonToken;
 import com.simmc.meplayeractions.config.PerformanceSettings;
+import com.simmc.meplayeractions.action.DisguiseOptions;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -23,12 +24,14 @@ import java.util.regex.Pattern;
 public final class ClientSyncService implements PluginMessageListener, AutoCloseable {
     public static final String CHANNEL = "meplayeractions:main";
     public static final int PROTOCOL = 3;
+    public static final String DISGUISE_RESULTS = "disguise_results";
+    private static final int DISGUISE_RECEIPTS = 32;
     private static final int HEARTBEAT_TICKS = 20;
     private static final Gson GSON = new GsonBuilder().setStrictness(Strictness.STRICT).create();
     private static final Pattern ANIMATION_NAME = Pattern.compile("[a-zA-Z0-9_.:/-]{1,128}");
     private static final Pattern MODEL_ID = Pattern.compile("[a-z0-9_-]{1,64}"), HASH = Pattern.compile("[a-f0-9]{64}");
     private static final Set<String> ACTIONS = Set.of("play", "stop", "sit", "crawl", "reset");
-    private static final Set<String> CAPABILITIES = Set.of("local_render", "resource_pack_models", "server_push_models", "incremental_state", "server_timeline", ServerModelCatalog.CAPABILITY);
+    private static final Set<String> CAPABILITIES = Set.of("local_render", "resource_pack_models", "server_push_models", "incremental_state", "server_timeline", ServerModelCatalog.CAPABILITY, DISGUISE_RESULTS);
     private final Plugin plugin;
     private final ClientSnapshotCache snapshotCache;
     private final Consumer<ActionRequest> actionRequests;
@@ -71,6 +74,69 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     public void audience(BiPredicate<Player, UUID> value) { audience = Objects.requireNonNull(value); }
     public void configurePrivateModels(PrivateModelSyncService.Policy policy) { privateModels.configure(policy); }
     public void rendering(RenderControl value) { renderControl = Objects.requireNonNull(value); }
+    /** Capture the current negotiated connection. Replays never execute a command twice. */
+    public DisguiseRequest beginDisguiseRequest(Player player, UUID requestId, String modelId, String fingerprint, int bytes) {
+        Session session = sessions.get(player.getUniqueId());
+        if (requestId == null || !running || !configuredEnabled || session == null || !session.disguiseResults
+                || !session.helloAcknowledged || !player.isOnline() || !MODEL_ID.matcher(modelId).matches()) return null;
+        if (!limits.allowInbound(player.getUniqueId(), Math.max(1, bytes), System.nanoTime())) {
+            DisguiseRequest denied = new DisguiseRequest(session, requestId, new DisguiseReceipt(modelId, fingerprint), false, false);
+            disguiseFailure(player, denied, "request_cooldown", "伪装请求过于频繁，请稍后重试"); return denied;
+        }
+        DisguiseReceipt receipt = session.disguiseReceipts.get(requestId);
+        if (receipt != null) {
+            if (!receipt.modelId.equals(modelId) || !receipt.fingerprint.equals(fingerprint)) {
+                DisguiseRequest conflict = new DisguiseRequest(session, requestId, new DisguiseReceipt(modelId, fingerprint), false, false);
+                disguiseFailure(player, conflict, "request_id_reused", "请求标识已用于另一条伪装指令");
+                return conflict;
+            }
+            DisguiseRequest replay = new DisguiseRequest(session, requestId, receipt, false, true);
+            if (receipt.result != null) sendDisguiseResult(player, replay);
+            return replay;
+        }
+        while (session.disguiseReceipts.size() >= DISGUISE_RECEIPTS) {
+            UUID oldest = session.disguiseReceipts.keySet().iterator().next();
+            session.disguiseReceipts.remove(oldest); session.controls.cancel("disguise_result:" + oldest);
+        }
+        receipt = new DisguiseReceipt(modelId, fingerprint); session.disguiseReceipts.put(requestId, receipt);
+        DisguiseRequest request = new DisguiseRequest(session, requestId, receipt, true, true);
+        if (!limits.allowRequest(player.getUniqueId(), "disguise_command", "", currentTick(), requestCooldownTicks)) {
+            disguiseFailure(player, request, "request_cooldown", "伪装请求过于频繁，请稍后重试");
+            return new DisguiseRequest(session, requestId, receipt, false, true);
+        }
+        return request;
+    }
+    public void disguiseSucceeded(Player player, DisguiseRequest request, UUID instance, DisguiseOptions options) {
+        if (request == null || request.receipt.result != null) return;
+        Objects.requireNonNull(instance); Objects.requireNonNull(options);
+        if (!request.receipt.modelId.equals(options.modelId())) throw new IllegalArgumentException("Disguise result model differs from request");
+        JsonObject result = disguiseResult(request, true); result.addProperty("instance", instance.toString());
+        JsonObject values = new JsonObject(); values.addProperty("scale", options.scale()); values.addProperty("hideSelf", options.hideSelf());
+        values.addProperty("showSelf", options.showSelf()); values.addProperty("viewDistance", options.viewDistance());
+        values.addProperty("maxViewers", options.maxViewers()); values.addProperty("delay", options.visualDelay());
+        values.addProperty("effect", options.effects().isEmpty() ? "" : options.effects().get(0).display());
+        result.add("options", values); request.receipt.result = result; sendDisguiseResult(player, request);
+    }
+    public void disguiseFailure(Player player, DisguiseRequest request, String code, String message) {
+        if (request == null || request.receipt.result != null) return;
+        JsonObject result = disguiseResult(request, false); result.addProperty("code", code);
+        result.addProperty("message", truncateLabel(Objects.toString(message, "伪装失败")));
+        request.receipt.result = result; sendDisguiseResult(player, request);
+    }
+    private static JsonObject disguiseResult(DisguiseRequest request, boolean success) {
+        JsonObject result = envelope("disguise_result"); result.addProperty("requestId", request.requestId.toString());
+        result.addProperty("modelId", request.receipt.modelId); result.addProperty("success", success); return result;
+    }
+    private void sendDisguiseResult(Player player, DisguiseRequest request) {
+        if (request.receipt.result == null || !disguiseRequestCurrent(player, request)) return;
+        String key = (request.tracked ? "disguise_result:" : "disguise_error:") + request.requestId; request.session.controls.cancel(key);
+        critical(player, request.session, key, request.receipt.result, () -> {}, () -> {}, () -> disguiseRequestCurrent(player, request));
+    }
+    private boolean disguiseRequestCurrent(Player player, DisguiseRequest request) {
+        return request.session.viewer.equals(player.getUniqueId()) && sessions.get(player.getUniqueId()) == request.session
+                && request.session.disguiseResults && request.session.helloAcknowledged && player.isOnline()
+                && (!request.tracked || request.session.disguiseReceipts.get(request.requestId) == request.receipt);
+    }
     public void enable() {
         if (running) return; var messenger = plugin.getServer().getMessenger();
         messenger.registerOutgoingPluginChannel(plugin, CHANNEL);
@@ -167,7 +233,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             long now = System.nanoTime(); Session previous = sessions.get(player.getUniqueId());
             if (!limits.allowHello(player.getUniqueId(), now)) return;
             if (previous != null) endSession(player.getUniqueId(), player, previous, "new_handshake");
-            Session session = new Session(player.getUniqueId(), inbound.packModels(), inbound.pushModels(), inbound.incremental(), inbound.timeline(), inbound.catalog(), currentTick(), audienceRefreshTicks, validationTicks); session.clientVersion = inbound.clientVersion();
+            Session session = new Session(player.getUniqueId(), inbound.packModels(), inbound.pushModels(), inbound.incremental(), inbound.timeline(), inbound.catalog(), inbound.disguiseResults(), currentTick(), audienceRefreshTicks, validationTicks); session.clientVersion = inbound.clientVersion();
             sessions.put(player.getUniqueId(), session); JsonObject ack = envelope("hello_ack");
             ack.addProperty("mode", "local-render"); ack.addProperty("serverTick", currentTick());
             ack.addProperty("assetMode", session.assetMode());
@@ -179,6 +245,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             if (session.incremental) capabilities.add("incremental_state");
             if (session.timeline) capabilities.add("server_timeline");
             if (session.catalog) capabilities.add(ServerModelCatalog.CAPABILITY);
+            if (session.disguiseResults) capabilities.add(DISGUISE_RESULTS);
             critical(player, session, "hello_ack", ack, () -> {
                 session.helloAcknowledged = true; updateCatalog(player, session); pumpCatalog(player, session); sendSnapshot(player);
             }, () -> {}, () -> sessions.get(session.viewer) == session); return;
@@ -207,6 +274,10 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     private void ready(Player viewer, Session session, RenderLeases.Binding binding, long tick) {
         BoundState bound = session.bindings.get(binding.owner());
         StateSnapshot current = readSnapshot(binding.owner());
+        if (current != null && viewer.getUniqueId().equals(binding.owner()) && !current.showSelf()) {
+            // Ownership metadata remains visible to the owner. It never grants a hidden model a render lease.
+            session.pendingReady.remove(binding.owner()); sendError(viewer, "render_not_authorized", binding); return;
+        }
         if (bound == null || current == null || !current.localRenderable() || !current.instance().equals(binding.instance())
                 || !bound.instance().equals(binding.instance()) || !bound.hash().equals(binding.hash()) || !canObserve(viewer, binding.owner())
                 || assets.get(current.modelId()).filter(asset -> asset.hash().equals(binding.hash())).isEmpty()) {
@@ -538,9 +609,10 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     private boolean canObserve(Player viewer, UUID ownerId) {
         if (viewer == null || !viewer.isOnline()) return false;
         Player owner = Bukkit.getPlayer(ownerId);
-        return owner != null && owner.isOnline() && audience.test(viewer, ownerId) && viewer.getWorld().equals(owner.getWorld())
-                && (viewer.getUniqueId().equals(ownerId) || viewer.canSee(owner)
-                && viewer.getLocation().distanceSquared(owner.getLocation()) <= viewDistanceBlocks * viewDistanceBlocks);
+        if (owner == null || !owner.isOnline() || !viewer.getWorld().equals(owner.getWorld())) return false;
+        if (viewer.getUniqueId().equals(ownerId)) return true;
+        return audience.test(viewer, ownerId) && viewer.canSee(owner)
+                && viewer.getLocation().distanceSquared(owner.getLocation()) <= viewDistanceBlocks * viewDistanceBlocks;
     }
     private void sendState(Player viewer, Session session, StateSnapshot snapshot, boolean force) {
         sendState(viewer, session, snapshot, force, false);
@@ -785,7 +857,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         }
         if (!allowed.containsAll(fields)) throw new IllegalArgumentException("Field not allowed for message");
         return new Inbound(protocol, type, version, capabilities.contains("resource_pack_models"), capabilities.contains("server_push_models"),
-                capabilities.contains("incremental_state"), capabilities.contains("server_timeline"), capabilities.contains(ServerModelCatalog.CAPABILITY), action, argument, modelId, hash, offerId, assetStatus,
+                capabilities.contains("incremental_state"), capabilities.contains("server_timeline"), capabilities.contains(ServerModelCatalog.CAPABILITY), capabilities.contains(DISGUISE_RESULTS), action, argument, modelId, hash, offerId, assetStatus,
                 owner == null ? null : new RenderLeases.Binding(owner, instance, hash), bindings);
     }
     private static List<RenderLeases.Binding> readBindings(JsonReader reader) throws IOException {
@@ -876,7 +948,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         boolean set(UUID viewer, UUID owner, UUID instance, boolean enabled);
         default boolean pending(UUID viewer, UUID owner, UUID instance) { return false; }
     }
-    private record Inbound(int protocol, String type, String clientVersion, boolean packModels, boolean pushModels, boolean incremental, boolean timeline, boolean catalog, String action, String argument, String modelId,
+    private record Inbound(int protocol, String type, String clientVersion, boolean packModels, boolean pushModels, boolean incremental, boolean timeline, boolean catalog, boolean disguiseResults, String action, String argument, String modelId,
             String hash, UUID offerId, String assetStatus, RenderLeases.Binding binding, List<RenderLeases.Binding> bindings) {}
     private record BoundState(UUID instance, String modelId, String hash) {}
     private record StateSignature(UUID instance, String modelId, String hash, long sequence, UUID world, List<LayerState> layers,
@@ -886,10 +958,25 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     private record StateMetadata(StateSnapshot snapshot, BoundState binding, StateSignature signature, ModelAssets.Status status, int food) {}
     private record PendingState(StatePacket packet, boolean menu) {}
     private record PendingReady(RenderLeases.Binding binding, long since) {}
+    public static final class DisguiseRequest {
+        private final Session session;
+        private final UUID requestId;
+        private final DisguiseReceipt receipt;
+        private final boolean execute, tracked;
+        private DisguiseRequest(Session session, UUID requestId, DisguiseReceipt receipt, boolean execute, boolean tracked) {
+            this.session = session; this.requestId = requestId; this.receipt = receipt; this.execute = execute; this.tracked = tracked;
+        }
+        public boolean execute() { return execute; }
+    }
+    private static final class DisguiseReceipt {
+        final String modelId, fingerprint;
+        JsonObject result;
+        DisguiseReceipt(String modelId, String fingerprint) { this.modelId = modelId; this.fingerprint = fingerprint; }
+    }
     private static final class Session {
-        final UUID viewer; final boolean packModels, pushModels, incremental, timeline, catalog;
-        Session(UUID viewer, boolean packModels, boolean pushModels, boolean incremental, boolean timeline, boolean catalog, long tick, int discovery, int validation) {
-            this.viewer = viewer; this.packModels = packModels; this.pushModels = pushModels; this.incremental = incremental; this.timeline = timeline; this.catalog = catalog;
+        final UUID viewer; final boolean packModels, pushModels, incremental, timeline, catalog, disguiseResults;
+        Session(UUID viewer, boolean packModels, boolean pushModels, boolean incremental, boolean timeline, boolean catalog, boolean disguiseResults, long tick, int discovery, int validation) {
+            this.viewer = viewer; this.packModels = packModels; this.pushModels = pushModels; this.incremental = incremental; this.timeline = timeline; this.catalog = catalog; this.disguiseResults = disguiseResults;
             lastDiscoveryTick = ClientSyncCadence.initialTick(viewer, tick, discovery);
             lastValidationTick = ClientSyncCadence.initialTick(viewer, tick, validation);
             lastHeartbeatTick = ClientSyncCadence.initialTick(viewer, tick, HEARTBEAT_TICKS); lastLegacyTick = tick;
@@ -904,6 +991,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         final LinkedHashMap<UUID, PendingState> pendingStates = new LinkedHashMap<>();
         final Map<UUID, PendingReady> pendingReady = new HashMap<>();
         final DeferredClientPackets controls = new DeferredClientPackets();
+        final LinkedHashMap<UUID, DisguiseReceipt> disguiseReceipts = new LinkedHashMap<>();
         Set<String> authorized = Set.of();
         long lastDiscoveryTick, lastValidationTick, lastLegacyTick, lastHeartbeatTick;
         String clientVersion = "unspecified"; long snapshotId;

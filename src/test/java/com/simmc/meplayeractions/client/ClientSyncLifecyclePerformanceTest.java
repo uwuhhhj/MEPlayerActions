@@ -1,6 +1,7 @@
 package com.simmc.meplayeractions.client;
 
 import com.google.gson.*;
+import com.simmc.meplayeractions.action.DisguiseOptions;
 import org.bukkit.*;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
@@ -18,6 +19,112 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ClientSyncLifecyclePerformanceTest {
     @TempDir Path temporary;
+    @Test void hiddenSelfStillReceivesOwnershipStateAndResultsWithoutObtainingARenderLease() throws Exception {
+        try (Scene scene = new Scene(temporary)) {
+            Person owner = scene.person(true), other = scene.person(false); owner.showSelf = false; scene.local(owner);
+            scene.service.audience((viewer, id) -> false); AtomicInteger renderCalls = new AtomicInteger();
+            scene.service.rendering((viewer, id, instance, enabled) -> { renderCalls.incrementAndGet(); return true; });
+            scene.hello(owner, true, false, true); scene.hello(other, true, false, true);
+            assertEquals(1, owner.count("state")); assertEquals(0, other.count("state"));
+            assertEquals(owner.instance.toString(), owner.last("state").get("instance").getAsString());
+            assertFalse(owner.last("state").get("showSelf").getAsBoolean());
+            var request = scene.service.beginDisguiseRequest(owner.player, UUID.randomUUID(), "fixture", "show-self=false", 100);
+            scene.service.disguiseSucceeded(owner.player, request, owner.instance, new DisguiseOptions("fixture", 1, true, 0, false, 8, 10, List.of()));
+            assertEquals(owner.last("state").get("instance"), owner.last("disguise_result").get("instance"));
+            scene.ready(owner, owner); assertEquals(0, renderCalls.get()); assertEquals(0, owner.count("render_ack"));
+            assertEquals("render_not_authorized", owner.last("error").get("code").getAsString());
+            Object session = ((Map<?, ?>) field(scene.service, "sessions")).get(owner.id);
+            assertEquals(0, ((RenderLeases) field(session, "leases")).size());
+            scene.tick += 100; scene.maintain(); assertEquals(0, owner.count("unbind")); assertEquals(0, other.count("state"));
+        }
+    }
+    @Test void disguiseResultsConfirmActualSevenOptionsAndTheUnchangedIdempotentInstance() throws Exception {
+        try (Scene scene = new Scene(temporary)) {
+            Person owner = scene.person(true), other = scene.person(false); scene.hello(owner, true, false, true); scene.hello(other, true, false, true);
+            owner.messages.clear(); other.messages.clear();
+            var options = new DisguiseOptions("fixture", 2, false, 3, false, 12, 0, List.of(new DisguiseOptions.Effect("slowness", 1, 0)));
+            UUID first = UUID.randomUUID(); var request = scene.service.beginDisguiseRequest(owner.player, first, "fixture", "same-options", 180);
+            assertTrue(request.execute()); scene.service.disguiseSucceeded(owner.player, request, owner.instance, options);
+            JsonObject result = owner.last("disguise_result"); assertTrue(result.get("success").getAsBoolean());
+            assertEquals(first.toString(), result.get("requestId").getAsString()); assertEquals(owner.instance.toString(), result.get("instance").getAsString());
+            JsonObject actual = result.getAsJsonObject("options"); assertEquals(Set.of("scale", "hideSelf", "showSelf", "viewDistance", "maxViewers", "delay", "effect"), actual.keySet());
+            assertEquals(2, actual.get("scale").getAsDouble()); assertFalse(actual.get("hideSelf").getAsBoolean()); assertFalse(actual.get("showSelf").getAsBoolean());
+            assertEquals(12, actual.get("viewDistance").getAsDouble()); assertEquals(0, actual.get("maxViewers").getAsInt()); assertEquals(3, actual.get("delay").getAsInt());
+            assertEquals("slowness:1", actual.get("effect").getAsString()); assertEquals(0, other.count("disguise_result"));
+            scene.tick += 4; UUID second = UUID.randomUUID(); var idempotent = scene.service.beginDisguiseRequest(owner.player, second, "fixture", "same-options", 180);
+            assertTrue(idempotent.execute()); scene.service.disguiseSucceeded(owner.player, idempotent, owner.instance, options);
+            assertEquals(owner.instance.toString(), owner.last("disguise_result").get("instance").getAsString());
+            assertEquals(second.toString(), owner.last("disguise_result").get("requestId").getAsString());
+        }
+    }
+    @Test void disguiseFailureKeepsItsNonceAndDoesNotInventSuccessOrAppliedOptions() throws Exception {
+        try (Scene scene = new Scene(temporary)) {
+            Person owner = scene.person(true); scene.hello(owner, true, false, true); UUID nonce = UUID.randomUUID();
+            var request = scene.service.beginDisguiseRequest(owner.player, nonce, "fixture", "request", 100);
+            scene.service.disguiseFailure(owner.player, request, "permission_denied", "缺少权限：mact.disguise\n" + "🦊".repeat(80));
+            JsonObject result = owner.last("disguise_result"); assertFalse(result.get("success").getAsBoolean());
+            assertEquals("permission_denied", result.get("code").getAsString()); assertEquals(nonce.toString(), result.get("requestId").getAsString());
+            assertFalse(result.has("instance")); assertFalse(result.has("options"));
+            String text = result.get("message").getAsString(); assertTrue(text.codePointCount(0, text.length()) <= 64); assertFalse(text.contains("\n"));
+        }
+    }
+    @Test void repeatedNonceReplaysOriginalResultAndCannotReapplyEffectsOrDifferentArguments() throws Exception {
+        try (Scene scene = new Scene(temporary)) {
+            Person owner = scene.person(true); scene.hello(owner, true, false, true); UUID nonce = UUID.randomUUID();
+            var options = new DisguiseOptions("fixture", 1, true, 0, true, 8, 10, List.of(new DisguiseOptions.Effect("slowness", 2, 60)));
+            var original = scene.service.beginDisguiseRequest(owner.player, nonce, "fixture", "effect=slowness:2:60", 100);
+            assertTrue(original.execute()); scene.service.disguiseSucceeded(owner.player, original, owner.instance, options);
+            owner.messages.clear();
+            var replay = scene.service.beginDisguiseRequest(owner.player, nonce, "fixture", "effect=slowness:2:60", 100);
+            assertFalse(replay.execute()); assertTrue(owner.last("disguise_result").get("success").getAsBoolean());
+            assertEquals("slowness:2:60", owner.last("disguise_result").getAsJsonObject("options").get("effect").getAsString());
+            var conflict = scene.service.beginDisguiseRequest(owner.player, nonce, "fixture", "scale=8", 100);
+            assertFalse(conflict.execute()); assertEquals("request_id_reused", owner.last("disguise_result").get("code").getAsString());
+            assertFalse(scene.service.beginDisguiseRequest(owner.player, nonce, "fixture", "effect=slowness:2:60", 100).execute());
+            assertTrue(owner.last("disguise_result").get("success").getAsBoolean());
+        }
+    }
+    @Test void busyDisguiseResultUsesDeferredBudgetAndAnEndedConnectionCannotPublishIt() throws Exception {
+        try (Scene scene = new Scene(temporary)) {
+            Person owner = scene.person(true); scene.hello(owner, true, false, true); owner.messages.clear();
+            var first = scene.service.beginDisguiseRequest(owner.player, UUID.randomUUID(), "fixture", "first", 100);
+            ConnectionLimits limits = (ConnectionLimits) field(scene.service, "limits"); scene.fillBudget(limits, new UUID(2, 95));
+            scene.service.disguiseSucceeded(owner.player, first, owner.instance, DisguiseOptions.defaults("fixture", 2, true, 0));
+            assertEquals(0, owner.count("disguise_result")); Object session = ((Map<?, ?>) field(scene.service, "sessions")).get(owner.id);
+            assertEquals(1, ((DeferredClientPackets) field(session, "controls")).size());
+            scene.tick++; scene.maintain(); assertEquals(1, owner.count("disguise_result"));
+            scene.tick += 4; var stale = scene.service.beginDisguiseRequest(owner.player, UUID.randomUUID(), "fixture", "old-session", 100);
+            scene.fillBudget(limits, new UUID(2, 96)); scene.service.disguiseFailure(owner.player, stale, "action_failed", "old connection");
+            scene.service.forget(owner.player); scene.tick++; owner.messages.clear(); scene.hello(owner, true, false, true);
+            scene.service.disguiseSucceeded(owner.player, stale, owner.instance, DisguiseOptions.defaults("fixture", 1, true, 0)); scene.maintain();
+            assertEquals(0, owner.count("disguise_result"));
+        }
+    }
+    @Test void optionalDisguiseResultsRequireTheAcknowledgedCapabilityAndRemainBounded() throws Exception {
+        try (Scene scene = new Scene(temporary)) {
+            Person plain = scene.person(true); scene.hello(plain, true, false);
+            assertNull(scene.service.beginDisguiseRequest(plain.player, UUID.randomUUID(), "fixture", "plain", 100));
+            assertFalse(plain.last("hello_ack").getAsJsonArray("capabilities").asList().stream().anyMatch(value -> value.getAsString().equals(ClientSyncService.DISGUISE_RESULTS)));
+            Person owner = scene.person(true); scene.hello(owner, true, false, true);
+            assertTrue(owner.last("hello_ack").getAsJsonArray("capabilities").asList().stream().anyMatch(value -> value.getAsString().equals(ClientSyncService.DISGUISE_RESULTS)));
+            Object session = ((Map<?, ?>) field(scene.service, "sessions")).get(owner.id); setField(session, "helloAcknowledged", false);
+            assertNull(scene.service.beginDisguiseRequest(owner.player, UUID.randomUUID(), "fixture", "unacked", 100)); setField(session, "helloAcknowledged", true);
+            for (int i = 0; i < 40; i++) {
+                scene.tick += 4; var request = scene.service.beginDisguiseRequest(owner.player, UUID.randomUUID(), "fixture", "request" + i, 100);
+                assertTrue(request.execute()); scene.service.disguiseFailure(owner.player, request, "invalid_options", "fixture");
+            }
+            assertEquals(32, ((Map<?, ?>) field(session, "disguiseReceipts")).size());
+        }
+    }
+    @Test void nonceCommandBudgetDenialNeverExecutesAndStillReportsCorrelatedFailure() throws Exception {
+        try (Scene scene = new Scene(temporary)) {
+            Person owner = scene.person(true); scene.hello(owner, true, false, true);
+            var first = scene.service.beginDisguiseRequest(owner.player, UUID.randomUUID(), "fixture", "first", 100); assertTrue(first.execute());
+            UUID second = UUID.randomUUID(); var denied = scene.service.beginDisguiseRequest(owner.player, second, "fixture", "second", 100);
+            assertFalse(denied.execute()); assertEquals(second.toString(), owner.last("disguise_result").get("requestId").getAsString());
+            assertEquals("request_cooldown", owner.last("disguise_result").get("code").getAsString()); assertFalse(owner.last("disguise_result").get("success").getAsBoolean());
+        }
+    }
     @Test void incrementalHelloIsImmediateAndUnchangedModelsOnlyReceiveIdentityHeartbeats() throws Exception {
         try (Scene scene = new Scene(temporary)) {
             Person owner = scene.person(true), first = scene.person(false), second = scene.person(false);
@@ -184,12 +291,16 @@ class ClientSyncLifecyclePerformanceTest {
             Person owner = owners.get(id); if (owner == null) return null;
             var motion = new ClientSyncService.MotionState(List.of(), List.of(), 17, 6, .025, true, true, false, "", "", "", 0, 0, 0, 0);
             return new ClientSyncService.StateSnapshot(id, owner.instance, "fixture", owner.sequence, tick, List.of(), worldId,
-                    owner.x, 64, 0, 0, 0, 0, 1, true, true, owner.animations, owner.localRenderable, motion);
+                    owner.x, 64, 0, 0, 0, 0, 1, true, owner.showSelf, owner.animations, owner.localRenderable, motion);
         }
         void hello(Person person, boolean incremental, boolean timeline) {
+            hello(person, incremental, timeline, false);
+        }
+        void hello(Person person, boolean incremental, boolean timeline, boolean disguiseResults) {
             JsonObject packet = new JsonObject(); packet.addProperty("protocol", 3); packet.addProperty("type", "hello");
             JsonArray capabilities = new JsonArray(); capabilities.add("local_render"); capabilities.add("resource_pack_models");
-            if (incremental) capabilities.add("incremental_state"); if (timeline) capabilities.add("server_timeline"); packet.add("capabilities", capabilities);
+            if (incremental) capabilities.add("incremental_state"); if (timeline) capabilities.add("server_timeline");
+            if (disguiseResults) capabilities.add(ClientSyncService.DISGUISE_RESULTS); packet.add("capabilities", capabilities);
             service.onPluginMessageReceived(ClientSyncService.CHANNEL, person.player, packet.toString().getBytes(StandardCharsets.UTF_8));
         }
         void maintain() throws Exception { Method method = ClientSyncService.class.getDeclaredMethod("maintainSessions"); method.setAccessible(true); method.invoke(service); }
@@ -213,7 +324,7 @@ class ClientSyncLifecyclePerformanceTest {
     }
     private static final class Person {
         final UUID id; UUID instance = UUID.randomUUID(); final Player player; final List<JsonObject> messages = new ArrayList<>();
-        double x; long sequence = 1; int lastBytes; boolean localRenderable; List<ClientSyncService.AnimationInfo> animations = List.of(new ClientSyncService.AnimationInfo("idle", "Idle"));
+        double x; long sequence = 1; int lastBytes; boolean localRenderable, showSelf = true; List<ClientSyncService.AnimationInfo> animations = List.of(new ClientSyncService.AnimationInfo("idle", "Idle"));
         Person(UUID id, World world) {
             this.id = id;
             player = proxy(Player.class, (instance, method, args) -> switch (method.getName()) {

@@ -101,6 +101,7 @@ public final class ActionController {
     public List<String> models() { return bridge.modelIds().stream().filter(settings.allowedModels::contains).toList(); }
     public boolean controlled(Player player) { return sessions.containsKey(player.getUniqueId()); }
     public String modelId(Player player) { return requireSession(player).attachment.modelId(); }
+    public DisguiseOptions disguiseOptions(Player player) { return requireSession(player).options; }
     public List<String> animations(Player player) { return requireSession(player).animations.stream().filter(id -> !id.startsWith("parallel") && !id.startsWith("pre_parallel")).toList(); }
 
     public void disguise(Player player, String modelId) {

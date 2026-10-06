@@ -12,6 +12,7 @@ import com.simmc.meplayeractions.gameplay.GameplayBackend;
 import com.simmc.meplayeractions.gameplay.PaperEffectPort;
 import com.simmc.meplayeractions.ui.ActionMenu;
 import com.simmc.meplayeractions.command.CommandLayout;
+import com.simmc.meplayeractions.command.DisguiseRequestId;
 import com.ticxo.modelengine.api.animation.BlueprintAnimation.LoopMode;
 import org.bukkit.Bukkit;
 import org.bukkit.command.*;
@@ -99,7 +100,14 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
         }
     }
     @Override public void handleAction(Player player, String[] args) {
+        ClientSyncService.DisguiseRequest resultRequest = null;
         try {
+            DisguiseRequestId.Parsed request = DisguiseRequestId.parse(args);
+            args = request.arguments();
+            if (clients != null && request.requestId() != null) {
+                resultRequest = clients.beginDisguiseRequest(player, request.requestId(), request.modelId(), request.fingerprint(), request.wireBytes());
+                if (resultRequest != null && !resultRequest.execute()) return;
+            }
             ActionController.permission(player, "mact.use");
             args = CommandLayout.normalize(args);
             String sub = args[0];
@@ -109,6 +117,8 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
                     ActionController.permission(player, "mact.disguise");
                     var options = DisguiseOptions.parse(args, DisguiseOptions.defaults(settings.defaultModel, settings));
                     controller.disguise(player, options);
+                    if (resultRequest != null) clients.disguiseSucceeded(player, resultRequest,
+                            controller.snapshot(player.getUniqueId()).instance(), controller.disguiseOptions(player));
                     message(player, "已伪装为 " + controller.modelId(player) + "；" + options.description() + "。/meplayeractions menu 打开动作菜单。");
                 }
                 case "attach" -> {
@@ -168,12 +178,23 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
                 }
                 default -> throw new IllegalArgumentException("未知子命令；使用 " + CommandLayout.PREFIX + " help");
             }
-        } catch (NumberFormatException ex) { message(player, "速度请输入有效数字。"); }
-        catch (IllegalArgumentException | IllegalStateException ex) { message(player, Objects.toString(ex.getMessage(), "动作失败")); }
+        } catch (NumberFormatException ex) {
+            if (clients != null) clients.disguiseFailure(player, resultRequest, "invalid_options", ex.getMessage());
+            message(player, "速度请输入有效数字。");
+        }
+        catch (IllegalArgumentException | IllegalStateException ex) {
+            if (clients != null) clients.disguiseFailure(player, resultRequest, disguiseFailureCode(ex), ex.getMessage());
+            message(player, Objects.toString(ex.getMessage(), "动作失败"));
+        }
         catch (RuntimeException ex) {
+            if (clients != null) clients.disguiseFailure(player, resultRequest, "action_failed", "伪装执行失败，请查看服务器日志");
             plugin.getLogger().warning("指令执行失败 " + player.getName() + ": " + ex);
             message(player, "动作执行失败，请查看服务器日志和 /meplayeractions status。");
         }
+    }
+    static String disguiseFailureCode(RuntimeException failure) {
+        if (Objects.toString(failure.getMessage(), "").startsWith("缺少权限：")) return "permission_denied";
+        return failure instanceof IllegalArgumentException ? "invalid_options" : "action_unavailable";
     }
     private void help(Player player) {
         String prefix = CommandLayout.PREFIX;

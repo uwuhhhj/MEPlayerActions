@@ -22,6 +22,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** Exercises the real wire decoder without a Bukkit server or invented player permissions. */
 class ClientSyncServiceTest {
     private static final Method DECODER = decoderMethod();
+    @Test void disguiseResultCapabilityIsOptionalStrictAndHelloOnly() throws IOException {
+        Object capable = decode("{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\",\"disguise_results\"]}");
+        assertEquals(true, field(capable, "disguiseResults"));
+        Object plain = decode("{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\"]}");
+        assertEquals(false, field(plain, "disguiseResults"));
+        assertRejected("{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\",\"disguise_results\",\"disguise_results\"]}");
+        assertRejected("{\"protocol\":3,\"type\":\"request\",\"action\":\"stop\",\"capabilities\":[\"disguise_results\"]}");
+        assertRejected("{\"protocol\":3,\"type\":\"disguise_result\",\"requestId\":\"00000000-0000-0000-0000-000000000012\",\"success\":true}");
+    }
     @Test void acceptsPushOnlyOrPushPlusResourcePackCapabilitiesWithoutWeakeningHello() throws IOException {
         for (String capabilities : List.of("\"local_render\",\"server_push_models\"",
                 "\"local_render\",\"resource_pack_models\",\"server_push_models\"")) {
