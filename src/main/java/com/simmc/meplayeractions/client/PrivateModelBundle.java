@@ -69,17 +69,61 @@ public final class PrivateModelBundle {
                     || !model.has("textures") || !model.get("textures").isJsonArray() || model.getAsJsonArray("textures").isEmpty()
                     || model.getAsJsonArray("textures").size() > 16 || !model.has("outliner") || !model.get("outliner").isJsonArray())
                 throw new IOException("bundle_bbmodel");
-            long pixels=0;
-            for(JsonElement texture:model.getAsJsonArray("textures")) {
-                String source=string(object(texture),"source",MAX_BYTES);
+            Map<String,String> companions=bbmodelCompanions(files);
+            for(JsonElement value:model.getAsJsonArray("textures")) {
+                JsonObject texture=object(value);
+                String source=optionalString(texture,"source",MAX_BYTES);
                 String prefix="data:image/png;base64,";
-                if(!source.startsWith(prefix))throw new IOException("bundle_bbmodel_texture");
-                try{pixels+=PrivateTextureHeaders.pixels("texture.png",Base64.getDecoder().decode(source.substring(prefix.length())));}
-                catch(IllegalArgumentException malformed){throw new IOException("bundle_bbmodel_texture",malformed);}
-                if(pixels>16_777_216)throw new IOException("bundle_texture_budget");
+                boolean embedded=source.startsWith("data:");
+                // Preserve embedded PNG validation even when upstream selects a side PNG first.
+                // Included image headers and embedded bytes share one decoded-pixel budget.
+                if(embedded) {
+                    if(!source.startsWith(prefix))throw new IOException("bundle_bbmodel_texture");
+                    try{texturePixels+=PrivateTextureHeaders.pixels("texture.png",Base64.getDecoder().decode(source.substring(prefix.length())));}
+                    catch(IllegalArgumentException malformed){throw new IOException("bundle_bbmodel_texture",malformed);}
+                    if(texturePixels>16_777_216)throw new IOException("bundle_texture_budget");
+                } else if(!source.isEmpty()) {
+                    // Never treat a file/source string as a server filesystem or network lookup.
+                    safePath(source.replace('\\','/'),false);
+                }
+                String companion=pickBbmodelCompanion(texture,companions);
+                if(companion==null&&!embedded)throw new IOException("bundle_bbmodel_texture");
             }
         } else object(parseJson(files.get(path), MAX_BYTES));
         return new Validated(kind, path, expanded);
+    }
+
+    /** The migrated BBToRawConverter uses lowercase PNG leaf names, never archive-order wins. */
+    private static Map<String,String> bbmodelCompanions(Map<String,byte[]> files) throws IOException {
+        Map<String,String> companions=new LinkedHashMap<>();
+        for(String path:files.keySet()) {
+            String lower=path.toLowerCase(Locale.ROOT);
+            if(!lower.endsWith(".png"))continue;
+            String leaf=lower.substring(lower.lastIndexOf('/')+1);
+            if(companions.putIfAbsent(leaf,path)!=null)throw new IOException("bundle_bbmodel_texture_ambiguous");
+        }
+        return companions;
+    }
+    /** Match the pinned converter: name, name + .png, then the relative_path basename. */
+    private static String pickBbmodelCompanion(JsonObject texture,Map<String,String> companions) throws IOException {
+        String name=optionalString(texture,"name",240).toLowerCase(Locale.ROOT);
+        if(!name.isEmpty()) {
+            if(companions.containsKey(name))return companions.get(name);
+            if(!name.endsWith(".png")&&companions.containsKey(name+".png"))return companions.get(name+".png");
+        }
+        String relative=optionalString(texture,"relative_path",240).replace('\\','/');
+        if(relative.isEmpty())return null;
+        String lower=relative.toLowerCase(Locale.ROOT);
+        String matched=companions.get(lower.substring(lower.lastIndexOf('/')+1));
+        if(matched==null)return null;
+        // An embedded file may carry old editor path metadata that is never consulted. Once
+        // relative_path selects companion bytes, require a safe path inside this asset bundle.
+        safePath(relative,false);
+        return matched;
+    }
+    private static String optionalString(JsonObject object,String key,int maximum) throws IOException {
+        JsonElement value=object.get(key);
+        return value==null||value.isJsonNull()?"":string(object,key,maximum);
     }
 
     public static String hash(byte[] bytes) {
@@ -171,7 +215,7 @@ public final class PrivateModelBundle {
     }
     private static void rejectExternalReferences(JsonElement value) throws IOException {
         if(value.isJsonObject()) for(var field:value.getAsJsonObject().entrySet()) {
-            if(Set.of("source","uri","file","texture","model").contains(field.getKey()) && field.getValue().isJsonPrimitive()
+            if(Set.of("source","uri","file","texture","model","relative_path").contains(field.getKey()) && field.getValue().isJsonPrimitive()
                     && field.getValue().getAsJsonPrimitive().isString()) {
                 String reference=field.getValue().getAsString().toLowerCase(Locale.ROOT);
                 if(reference.startsWith("http:") || reference.startsWith("https:") || reference.startsWith("file:") || reference.startsWith("\\\\"))
