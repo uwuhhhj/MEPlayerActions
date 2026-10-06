@@ -2,6 +2,8 @@
 
 本项目包含 Paper 服务端与独立 Fabric 客户端。先看 [架构](ARCHITECTURE.md) 定位模块；线格式和授权语义以 [协议](docs/CLIENT_PROTOCOL.md) 为准，用户部署见 [README](README.md)。
 
+资源处理遵守“主线程快检／快照 → 有界后台工作 → 主线程复核提交”。新增后台作业使用共享资源运行时，不直接向 Bukkit 全局异步池提交无界资源任务；拒绝策略不能在调用线程执行重工作。取消后的运行任务仍保留字节预留，直到工作线程实际退出。Bukkit／ModelEngine 实体操作留在安全线程，解绑、撤权、ACK 和退出清理不得被负载保护关闭。运行限制与诊断见 [服务器资源保护](docs/SERVER_RESOURCE_PROTECTION.md)。
+
 ## 仓库入口
 
 | 路径 | 用途 |
@@ -65,9 +67,9 @@ finally { Pop-Location }
 python tools/package_current.py --help
 ```
 
-它读取已构建的两端 0.5.1 JAR、`build/validation-0.5.1/` 下的阶段报告与实际命令记录，校验后输出工作区 `dist/` 的 JAR、安装 ZIP、源码 ZIP、证据 ZIP 和构建 JSON。同名文件已存在时拒绝输出。工具不执行构建、测试或实机验收；参数、阶段顺序与证据结构见 [工具说明](tools/README.md)。
+它读取已构建的两端 0.6.0 JAR、`build/validation-0.6.0/` 下的阶段报告与实际命令记录，校验后输出工作区 `dist/` 的 JAR、安装 ZIP、源码 ZIP、证据 ZIP 和构建 JSON。同名文件已存在时拒绝输出。工具不执行构建、测试或实机验收；参数、阶段顺序与证据结构见 [工具说明](tools/README.md)。
 
-脚本的版本及证据合同固定为 0.5.1。行为发布须同步 `pom.xml`、`client/build.gradle`、脚本版本合同和相应证据。源码交付排除服务端 `private-models/`、`private-fixture*` 和其他私有输入，完整保留正常 `src` 资源与公开示例。文档整理本身不必递增软件版本。[package_release.py](tools/package_release.py) 提供资源、许可和 ZIP 辅助校验；其 `full` / `interactions` 流程不作为当前打包入口。
+脚本的版本及证据合同固定为 0.6.0。行为发布须同步 `pom.xml`、`client/build.gradle`、脚本版本合同和相应证据。源码交付排除服务端 `private-models/`、`private-fixture*` 和其他私有输入，完整保留正常 `src` 资源与公开示例。文档整理本身不必递增软件版本。[package_release.py](tools/package_release.py) 提供资源、许可和 ZIP 辅助校验；其 `full` / `interactions` 流程不作为当前打包入口。
 
 打包前核对插件/模组描述、安装说明和第三方声明；打包后检查 ZIP 完整性、结构、版本、许可、内容与当前源码/JAR 一致性，继续修改后重新打包。`tools/prepare_models.py` 准备示例原模型和 ME 蓝图，`tools/build_client_resource_pack.py` 用于资源包兼容模式；主动推送部署不需要运行它们，文档整理不重写模型资产。提交、推送和发布按用户授权执行。
 

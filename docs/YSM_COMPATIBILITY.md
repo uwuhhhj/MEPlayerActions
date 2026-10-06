@@ -1,4 +1,4 @@
-# YSM 功能与来源（0.5.1）
+# YSM 功能与来源（0.6.0）
 
 [文档索引](README.md) · [客户端使用与配置](CLIENT_CONFIG.md) · [同步协议](CLIENT_PROTOCOL.md) · [开发导航](../CONTRIBUTING.md)
 

@@ -44,11 +44,13 @@ MPA 不生成或重打包 ME／CE 资源包。完整原模型含内嵌贴图，�
 /meplayeractions disguise ysm_02_jk scale=0.8 show-self=true view-distance=8 max-viewers=10 delay=2 effect=slowness:1
 ```
 
-`delay` 默认 2 tick，只影响 ME 视觉轨迹，客户端默认即时跟随；`effect` 默认无，只允许缓慢效果并需 `mact.disguise.effects`。手动动作使用 `play <动作> [速度] [ONCE|LOOP|HOLD]`，`stop` 停动作，`undisguise` 解除本插件伪装；`pose sit`／`pose crawl` 需要 GSit，`reset` 清理本插件姿态与效果。`animations`／`menu` 查看动作，`sync` 调整同步项目，`status` 查看诊断。完整帮助用 `/meplayeractions help`。
+`delay` 默认 2 tick，只影响 ME 视觉轨迹，客户端默认即时跟随；`effect` 默认无，只允许缓慢效果并需 `mact.disguise.effects`。手动动作使用 `play <动作> [速度] [ONCE|LOOP|HOLD]`，`stop` 停动作，`undisguise` 解除本插件伪装；`pose sit`／`pose crawl` 需要 GSit，`reset` 清理本插件姿态与效果。`animations`／`menu` 查看动作，`sync` 调整同步项目。管理员 `status` 查看全服健康状态，`status player <玩家名>` 查看个人诊断。完整帮助用 `/meplayeractions help`。
 
 私人分享另需授予发布者 `mact.private.upload`、观看者 `mact.private.view`，两个权限默认均为 `false`；发布者在客户端图库明确点击云朵“上传分享”，使用所选模型并上传；“使用模型”仅在本机显示。观看者无需开启自己的分享开关。本人已有服务器伪装时，须先解除服务器伪装，才能使用或分享私人模型。
 
 后台发现与动画更新使用独立频率，配置、默认值与边界集中在[性能配置](PERFORMANCE.md)。两端协商增量同步；未协商时发送完整状态。
+
+两个资源频道共享 `resource-protection` 的上下行、任务、内存与传输预算；服务器负载保护可暂停新增上传、下载或伪装。新字段缺失时采用默认值，无需覆盖已有配置。各项默认预算、超时、自动恢复及调优见 [服务器资源保护](SERVER_RESOURCE_PROTECTION.md)。
 
 ## 私人玩家上传与资源缓存
 
@@ -90,7 +92,7 @@ MPA 不自动把内置原模型复制到自己的 `models/` 目录。该目录�
 
 ## 部署排查与兼容
 
-1. 确认两端版本、ME 模型加载、白名单和观众许可；客户端检查 `/mpaclient status`，服务器检查 `/meplayeractions status`。
+1. 确认两端版本、ME 模型加载、白名单和观众许可；客户端检查 `/mpaclient status`，管理员检查 `/meplayeractions status` 与 `status player <玩家名>`。
 2. 接管数为 0、模型“加载中”时，查看服务器资产来源与原因，核对上面的完整原模型来源。默认推送路线无需排查 MPA 资源包索引。
 3. 服务端日志搜索“客户端模型资产”，关注 `missing`／`invalid`、模型 ID、来源与原因。缺失／无效覆盖文件、哈希不符和纹理解析失败分别按资产原因处理。
 4. 渲染成功但本人不可见时，按 F5 查看第三人称，检查“伪装显示”和服务器本人观看许可；玩家／装备显隐是不同选项。

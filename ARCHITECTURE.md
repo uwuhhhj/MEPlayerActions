@@ -1,6 +1,6 @@
 # MEPlayerActions 架构
 
-本文对应服务端和客户端 0.5.1。安装与命令见 [README](README.md)，开发流程见 [CONTRIBUTING](CONTRIBUTING.md)，消息字段与限制以 [协议](docs/CLIENT_PROTOCOL.md) 为准。
+本文对应服务端和客户端 0.6.0。安装与命令见 [README](README.md)，开发流程见 [CONTRIBUTING](CONTRIBUTING.md)，消息字段与限制以 [协议](docs/CLIENT_PROTOCOL.md) 为准。
 
 ## 职责
 
@@ -27,8 +27,9 @@
 | 动作会话 | [ActionController](src/main/java/com/simmc/meplayeractions/action/ActionController.java)；[action/](src/main/java/com/simmc/meplayeractions/action/) 中的姿态、移动、跳跃、交互、视觉历史与分批发现 |
 | ME 与观众 | [ModelEngineBridge](src/main/java/com/simmc/meplayeractions/me/ModelEngineBridge.java)、[ModelAudience](src/main/java/com/simmc/meplayeractions/me/ModelAudience.java)；创建或接管模型，按观众选择显示路径 |
 | 原版实体追踪 | [NativeEntityRelay](src/main/java/com/simmc/meplayeractions/me/NativeEntityRelay.java) 与 `NativeEntity*`；异步安装通道，保护授权玩家的原版追踪包及恢复配对 |
-| 通信与资产 | [ClientSyncService](src/main/java/com/simmc/meplayeractions/client/ClientSyncService.java)、[ModelAssets](src/main/java/com/simmc/meplayeractions/client/ModelAssets.java)、[RenderLeases](src/main/java/com/simmc/meplayeractions/client/RenderLeases.java)、[ConnectionLimits](src/main/java/com/simmc/meplayeractions/client/ConnectionLimits.java) |
+| 通信与资产 | [ClientSyncService](src/main/java/com/simmc/meplayeractions/client/ClientSyncService.java)、[ModelAssets](src/main/java/com/simmc/meplayeractions/client/ModelAssets.java)、[ServerTemplatePreparation](src/main/java/com/simmc/meplayeractions/me/ServerTemplatePreparation.java)、[RenderLeases](src/main/java/com/simmc/meplayeractions/client/RenderLeases.java)、[ConnectionLimits](src/main/java/com/simmc/meplayeractions/client/ConnectionLimits.java) |
 | 私人分享 | [PrivateModelSyncService](src/main/java/com/simmc/meplayeractions/client/PrivateModelSyncService.java)、[PrivateModelBundle](src/main/java/com/simmc/meplayeractions/client/PrivateModelBundle.java)、[PrivateModelStore](src/main/java/com/simmc/meplayeractions/client/PrivateModelStore.java)、[PrivateAudienceCache](src/main/java/com/simmc/meplayeractions/client/PrivateAudienceCache.java) |
+| 资源保护 | [ResourceProtection](src/main/java/com/simmc/meplayeractions/protection/ResourceProtection.java)、[ResourceSettings](src/main/java/com/simmc/meplayeractions/protection/ResourceSettings.java)、[ResourceError](src/main/java/com/simmc/meplayeractions/protection/ResourceError.java)；共享有界任务、内存／网络与关系预算、保护状态及轻量指标 |
 | 玩法与表达式 | [gameplay/](src/main/java/com/simmc/meplayeractions/gameplay/) 管理真实姿态、飞行与药水所有权；[expression/](src/main/java/com/simmc/meplayeractions/expression/) 与 [YsmAnimations](src/main/java/com/simmc/meplayeractions/me/YsmAnimations.java) 处理有界脚本及实例物理 |
 
 客户端源码位于 `client/src/main/java/com/simmc/meplayeractions/client/`：
@@ -80,6 +81,8 @@ flowchart LR
 - 所有客户端模型位置复用已追踪玩家的原版当帧渲染状态，不叠加位置缓冲。`followServerTimeline` 只选择服务器动画层与时间线；没有实体时不绘制幽灵模型。
 - 普通锚点为玩家脚底，原生床与 GSit 接触面分开处理；卧倒由作者动画负责，避免再叠加整模型姿态旋转。缩放和视觉延迟不改变真实碰撞或坐标。
 - Bukkit 模型、玩法和授权操作在主线程；资产校验使用后台工作。Netty 安装不阻塞主线程，完成结果必须重新核对连接、实例与权限。
+- 资源工作由共享固定线程池和有界队列执行，排队、运行与待主线程结果各自有数量／字节上限；拒绝不会在调用线程补跑。主线程先快检，后台读写、校验与准备不可变资源，回调再核对生命周期和授权。取消运行作业时，实际退出前保留其工作预留。
+- 两同步频道共用全服上下行、包数与传输额度，私人资源继续有自身子预算。保护状态按服务器与本插件压力分级，先减速，再暂停新增，紧急时分批清理自有实例；安全撤销、必要确认和退出处理继续。全局 `status` 读取运行指标快照，配置、恢复与 API 边界见 [资源保护](docs/SERVER_RESOURCE_PROTECTION.md)。
 - ME 渲染线程只读不可变偏移；Netty 处理器只读已发布实体集合。客户端绑定和 GPU 安装回到 Minecraft 主线程，绘制阶段只消费冻结几何；所有后台结果受生命周期标识约束。
 - 资源重载释放显示租约、恢复后端，再准备 GPU 和重新确认；磁盘缓存及持久用户配置不等于当前显示授权。
 - 服务器动作请求只操作本人且经过目录与权限校验。模型解释器不执行宿主代码、任意文件或网络；资源验证和限流不构成 DRM，已下发资产无法撤回。

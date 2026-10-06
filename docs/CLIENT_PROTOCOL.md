@@ -1,6 +1,6 @@
 # 客户端协议
 
-本文定义当前线格式、授权与限制。本地私人外观不上传模型；私人多人分享使用独立 `meplayeractions:private` protocol 1；服务器伪装使用 `meplayeractions:main` protocol 3。私人发布不是服务器伪装实例，两频道身份和权限不能混用。模块与生命周期见 [架构](../ARCHITECTURE.md)，部署见 [模型同步](MODEL_DELIVERY.md)，后台频率见 [性能说明](PERFORMANCE.md)。
+本文定义当前线格式、授权与限制。本地私人外观不上传模型；私人多人分享使用独立 `meplayeractions:private` protocol 1；服务器伪装使用 `meplayeractions:main` protocol 3。私人发布不是服务器伪装实例，两频道身份和权限不能混用。模块与生命周期见 [架构](../ARCHITECTURE.md)，部署见 [模型同步](MODEL_DELIVERY.md)，后台频率见 [性能说明](PERFORMANCE.md)，全服预算与降级见 [资源保护](SERVER_RESOURCE_PROTECTION.md)。
 
 频道 `meplayeractions:main`，严格 UTF-8 JSON，每包带整数 `protocol:3`、字符串 `type`。不兼容 v1/v2。所有消息保持分包顺序；不允许重复键、类型强制转换、非法 UTF-8、尾随内容；当前服务端还拒绝客户端请求中的额外字段。每包受 maxPayload（默认 16000 字节）限制；连接流量和下载预算见下文。客户端请求只操作自己，仍经过服务端权限校验。
 
@@ -16,7 +16,7 @@ v3 是玩家模型资产、动画状态及观众渲染接管协议。客户端�
 
 客户端发送：
 ```json
-{"protocol":3,"type":"hello","clientVersion":"0.5.1","capabilities":["local_render","server_push_models","incremental_state","server_model_catalog","disguise_results"]}
+{"protocol":3,"type":"hello","clientVersion":"0.6.0","capabilities":["local_render","server_push_models","incremental_state","server_model_catalog","disguise_results"]}
 ```
 `capabilities` 必须含 `local_render`，还可声明 `server_push_models`、`resource_pack_models`、`incremental_state`／`server_timeline`、`server_model_catalog` 和 `disguise_results`；不允许重复，其他 capability 拒绝。客户端默认声明增量、模型目录与伪装结果能力，显式启用 `followServerTimeline` 时另声明 `server_timeline`。`clientVersion` 可省略（最多 64 字符）。hello 两次接受之间至少相隔一个单调时钟秒；这一时间戳属于玩家连接，未知协议结束会话或重新 hello 都不能重置。新 hello 清理已有绑定并恢复其 ME 可见性，不授予渲染权限。
 
@@ -99,7 +99,7 @@ hello／hello_ack 双方确认 `server_model_catalog` 后，服务器主动发�
 
 资产按 hash 共享：offer 最初精确匹配一份绑定，在途期间同 hash 仍须至少被一份当前可见、授权绑定需要；无人再需要时取消。可见实例切换不允许客户端把旧 token 用于不同 hash，渲染就绪和 ACK 始终匹配各自 owner/instance/hash。选择同 hash 的其他模型别名不会重置服务器重试额度。
 
-每片最多 9000 GZIP 字节，小 maxPayload 进一步缩小（1024 字节负载时为 384 字节）；客户端分片上限 16384。每观众每 tick 最多 2 个 chunk，每连接最多 2 个排队或进行中的传输，服务端合计最多 32 个；主动推送与旧下载共享传输及带宽预算。
+每片最多 9000 GZIP 字节，小 maxPayload 进一步缩小（1024 字节负载时为 384 字节）；客户端分片上限 16384。每观众每 tick 最多 2 个 chunk；默认每连接最多 2 个活动传输和 2 个等待项，全服 32 个活动传输、128 个等待项。主动推送、旧下载与私人资源共享配置化传输及带宽预算。
 
 | 主动推送限制 | 当前值 |
 | --- | --- |
@@ -107,9 +107,9 @@ hello／hello_ack 双方确认 `server_model_catalog` 后，服务器主动发�
 | offer 发送间隔 / 同 hash 重试冷却 | 10 tick / 100 tick，跨新 hello 保留 |
 | 同 hash 当前授权实例集合的重试额度 | 最多 3 次；仍有相同实例时，换别名或初始 owner 不能绕过 |
 | 等待缓存反馈 | 100 tick（名义 5 秒） |
-| missing 排队与传输空闲 | 300 tick（名义 15 秒），成功 begin/chunk 刷新进度 |
-| 未完成 offer 总时限 | 自签发起 1200 tick（名义 60 秒） |
-| cached/delivered 等待 ready | 200 tick（名义 10 秒） |
+| missing 排队 / 传输空闲 | 默认 600 / 300 tick（名义 30 / 15 秒），成功 begin/chunk 刷新进度 |
+| 未完成 offer 总时限 | 默认自签发起 2400 tick（名义 120 秒） |
+| cached/delivered 等待 ready | 默认 300 tick（名义 15 秒） |
 | 客户端活动 offer / 空闲 / 总时限 | 4 / 15 秒 / 60 秒 |
 
 重试计数以同 hash 当前授权服务器实例集合的交集维护；全部实例实际更换、实际断开或成功 render_ack 才可重置对应失败计数，新 hello 不重置。已有相同 hash 的有效渲染租约不重复签发 offer。
@@ -128,14 +128,18 @@ hello／hello_ack 双方确认 `server_model_catalog` 后，服务器主动发�
 
 服务端在主线程按玩家连接保存预算；普通会话结束、未知协议、新 hello、同步配置禁用/恢复都不会重置流量、hello 时间、动作冷却或 hash 冷却。只有明确 quit 或实际离线清理才移除该连接预算。插件实例销毁和服务器重启不属于持久化限流。
 
-字节数按本频道实际 UTF-8 JSON 计算，包含 Base64、字段名和消息封装；秒窗口使用单调时钟的一秒固定窗口，tick 使用服务器 unsigned 32 位 tick。当前硬上限为：
+字节数按两个频道实际 UTF-8 JSON 计算，包含 Base64、字段名和消息封装。单连接使用单调时钟的一秒固定窗口；全局使用令牌桶控制速率与突发，tick 使用服务器 unsigned 32 位 tick。下表为 `resource-protection.network` 默认值：
 
 | 预算 | 单连接 | 服务端合计 |
 | --- | --- | --- |
-| 入站解析流量 | 48 包/秒且 256 KiB/秒 | 不另设入站合计额度 |
-| 全部出站消息 | 2 MiB/秒 | 512 KiB/tick |
-| 其中资产传输消息（push 与 legacy） | 512 KiB/秒 | 256 KiB/tick |
-| 排队或进行中的 transfer（共享） | 2 | 32 |
+| 入站解析流量 | 48 包/秒且 256 KiB/秒 | 4096 包/秒且 4 MiB/秒 |
+| 全部出站消息 | 48 包/秒且 2 MiB/秒 | 4096 包/秒且 8 MiB/秒、512 KiB/tick |
+| 其中资产传输消息（server/private/legacy） | 36 包/秒且 512 KiB/秒 | 3072 包/秒、全部出站字节速率一半（默认 4 MiB/秒）、256 KiB/tick |
+| 活动 transfer（共享） | 2 | 32 |
+| 等待 transfer（共享） | 2 | 128 |
+| 延后出站字节（共享） | 计入全服额度 | 16 MiB |
+
+入站与出站包数独立计量；资产包数由出站总包数减去向上取整的 25% 得出，为 ACK、撤权和清理消息保留余量。全局字节突发默认 8 MiB；突发仍受每 tick、单连接和子预算限制。外部线程入站回调也受数量与字节界限，不能无限追加 Bukkit 主线程任务。资源预算预检在分片拷贝／编码前执行，延后片保留当前内容和下标。支持真实通道探针的 ME 后端还会暂停向不可写连接追加资产；私人中继独立模式没有 Paper 公共 API 的通道可写性保证，仍由预算、等待字节、进展和总超时控制。各上限及保护倍率见 [资源保护](SERVER_RESOURCE_PROTECTION.md)。
 
 超出入站预算的包直接忽略，不解析或执行动作。出站包在扣减前同时核对所有适用预算，超限不消耗其他预算。发送结果分为 `SENT / DEFERRED / FAILED`：正常限流为 DEFERRED，保留绑定与显示接管，状态按 owner 合并最新待发包；unbind 等可延后的控制消息进入每会话最多 128 项有界队列，每次维护最多尝试 4 项，正常预算不足继续等待，身份失效、100 tick 到期、队列满或实际发送失败时清理，会话轮转。待发 unbind 若相同 instance 已重绑则跳过，成功发送 state 也取消相同 owner／instance 的待发解绑，不清理新绑定。render_ack 只走先预留预算的 ready 路径，不进入该队列。资产 begin/chunk/end 超限保留阶段和分片下标，后续 tick 继续；未发送的分片不会跳号，正常完成只在 end 成功发送后释放传输。每个资产包实时检查绑定、当前快照及可见性。实际发送失败或失去授权才取消传输、释放槽并按后端回退处理；持续拥堵仍受租约超时约束。
 
@@ -173,7 +177,7 @@ bindings 最多 64 项，owner 唯一。只续租已有且 instance/hash 完全�
 ```
 支持 play / stop / sit / crawl / reset。play 需要 1–128 位英文字母、数字、_ . : / - 的 argument，其他动作无参数。原始模型/动作命令校验与权限仍以服务器为准；不能携带 owner/target/command 或改写他人状态。play/sit/crawl 与手动快照共享请求冷却；stop/reset 即刻执行且不占用冷却，仍受每秒流量限制。资产/ready/续租独立于动作冷却。
 
-`error {code}` 向已握手观众反馈：invalid_payload、unsupported_protocol、request_cooldown、action_failed、asset_server_push_mode、asset_resource_pack_mode、asset_status_wrong_mode、asset_not_authorized、asset_cooldown、asset_queue_full、asset_unavailable、render_not_authorized、render_unavailable。`asset_queue_full` 同时覆盖连接和全局并发上限。渲染拒绝的 error 会额外携带 owner/instance/hash，客户端据精确绑定退避。未知协议结束该观众会话并恢复 ME，连接预算保留；超流量包不保证收到 error。
+`error {code}` 向已握手观众反馈协议、权限、动作或资源失败。资源保护类还提供 `stage`、`retryable`、`retryAfter`（秒），能关联时携带请求／transfer／offer 身份；旧客户端可忽略新增字段。`asset_queue_full` 可覆盖连接、全局传输或后台队列容量，`tps_protection` 表示暂停新增视觉负载；上传、下载、ready 与后台校验超时分别归因，不返回私有文件路径。渲染拒绝会携带 owner/instance/hash，客户端据精确绑定退避。未知协议结束该观众会话并恢复 ME，连接预算保留；超流量包不保证收到 error。代码与阶段仅用于诊断，不改变原授权检查；实现枚举以两端错误处理为准。
 
 `state.foodLevel` 范围 0–20，缺省 20，用于远端 YSM 条件动画。脚本物理只影响模型绘制，不修改真实玩家碰撞或坐标。
 
@@ -189,7 +193,7 @@ bindings 最多 64 项，owner 唯一。只续租已有且 instance/hash 完全�
 
 ### 独立协商与上传
 
-客户端发送 `hello {capabilities:["private_models_v1","private_upload_catalog_v1"]}`；服务端 `hello_ack` 返回 `capabilities`、`allowedUpload`、`allowedView`、`maxPayload`、`maxBundleBytes`、`heartbeatTicks:20`、`leaseTicks:100`。只有双方声明才确认目录扩展；不支持扩展的旧服务器最多重试一次基础能力。maxBundleBytes 是 `min(config.max-bundle-bytes,chunkBytes×1100)` 的当次有效容量，以每 tick 一片计算最多 55 秒，保留固定 60 秒总时限；默认 8192 字节分片仍允许完整 8 MiB，maxPayload=1024 时有效容量为 422400 字节。客户端必须按 ACK 容量预检，超过容量继续仅在本机使用。能力握手成功不等于取得发布/观看权限，须检查两个 allowed 字段。未知字段、重复 JSON 键、类型强制转换、非有限数、深度超过 64、尾随内容和非规范 UUID/hash 均拒绝。
+客户端发送 `hello {capabilities:["private_models_v1","private_upload_catalog_v1","private_upload_credit_v1"]}`；服务端 `hello_ack` 返回 `capabilities`、`allowedUpload`、`allowedView`、`maxPayload`、`maxBundleBytes`、`heartbeatTicks:20`、`leaseTicks:100`。目录与上传额度各需双方确认；严格旧服务器拒绝扩展时，依次去掉额度能力、再去掉目录能力，每级最多一次，不循环切换。`maxBundleBytes` 仍按归档／分片容量约束协商，默认 8192 字节分片允许完整 8 MiB，maxPayload=1024 时有效容量为 422400 字节；客户端必须按 ACK 预检，超过容量继续仅在本机使用。新服务器可提供 `transferTotalTicks`、`transferIdleTicks`、`validationTimeoutTicks`，客户端按 50 ms/tick 折算总上传、分片无进展与已发送 end 后的校验等待，避免用接收空闲误判后台校验；缺省总等待为 90 秒。能力握手成功不等于取得发布/观看权限，须检查两个 allowed 字段。未知字段、重复 JSON 键、类型强制转换、非有限数、深度超过 64、尾随内容和非规范 UUID/hash 均拒绝。
 
 客户端明确选择同步后发送：
 
@@ -199,9 +203,11 @@ bindings 最多 64 项，owner 唯一。只续租已有且 instance/hash 完全�
 
 generation 为客户端新生成的标准小写 UUID，每次新模型发布使用新代次；hash 是整个完整 ZIP 原始字节的 SHA-256 小写 64 位 hex。server 先在同一 owner 的私人磁盘缓存中查验 hash、kind、长度与完整资源；合法命中可直接返回 `upload_committed {generation,hash}`，不要求再次发送字节。未命中或缓存无效时签发 `upload_accept {uploadId,generation,hash,chunkBytes}`，客户端按连续 index 从 0 发送 `upload_chunk {uploadId,index,data}`，data 为标准 Base64 编码的 ZIP 字节，最后发送 `upload_end {uploadId}`。不叠加 GZIP。每片 `min(8192,floor((maxPayload-512)*3/4))`，1024 字节 maxPayload 时为 384；建议客户端每 tick 至多发送一个片段，避免触及两个频道共享的入站预算。
 
-publisher 未收到 accept／committed 时按一秒间隔重试同一 upload_offer；发完分片后保留 uploadId，按一秒间隔重试 upload_end 直到 committed。相同 upload_accept 的 uploadId／chunkBytes 不重置已发送下标。server 对在途同 generation/hash/bytes/kind offer 幂等处理，可重发 accept，但不重置接收下标、不另启缓存／资源校验作业、不延长原始 deadline。客户端发布总等待上限为 90 秒，服务端接收／校验时限仍按下文计算。
+确认 `private_upload_credit_v1` 时，`upload_accept` 不授予分片发送额度。服务器先预扣单连接及全局入站包／字节预算，再发送 `upload_credit {uploadId,nextIndex}`；`nextIndex` 是可发送连续下标的**排他上界**，最多领先接收进度 2 片。客户端只能发送 `index < nextIndex` 的片段，重复或旧 grant 不回退进度、不重复发送。额度保守按 maxPayload 预留，实际收包消费对应一次信用；普通控制包仍独立扣预算。授予时预算不足延后发送，保护状态停止新 grant；unused credit 清理不会返还流量额度或重置窗口。未协商的旧客户端仍每 tick 至多一片，超出共享入站预算可能被忽略并最终超时，不能绕过全局上限。
 
-服务端要求实际长度与声明完全一致，验证 SHA-256，并异步进行 ZIP/资源有界检查；成功返回 `upload_committed {generation,hash}`。收到 accept、发完分片或本地缓存命中均不等于发布成功。缓存查验与上传共用全服务器最多两个作业、单连接最多一份和内存预留；同连接新上传至少相隔 200 tick，冷却不因重新 hello 重置。接收/验证总时限 1200 tick，空闲时限 300 tick。校验中的作业即使被新握手取消，也继续占用全局内存预留直至该作业返回，不能通过换代次绕过预算。连接断开、owner clear、发布者失去权限或租约到期撤销当前发布，已验证磁盘缓存按独立预算保留。
+publisher 未收到 accept／committed 时按一秒间隔重试同一 upload_offer；发完分片后保留 uploadId，按一秒间隔重试 upload_end 直到 committed。相同 upload_accept 的 uploadId／chunkBytes 不重置已发送下标。server 对在途同 generation/hash/bytes/kind offer 幂等处理，可重发 accept，但不重置接收下标、不另启缓存／资源校验作业、不延长原始 deadline。客户端采用 ACK 协商的上传时限；可重试的失败按 retryAfter 退避，同一来源自动失败最多 3 次、总自动重试窗口最多 5 分钟，随后须用户调整模型或重新开启分享。不可重试失败直接暂停该来源的自动发布。
+
+服务端要求实际长度与声明完全一致，验证 SHA-256，并异步进行 ZIP/资源有界检查；成功返回 `upload_committed {generation,hash}`。收到 accept、发完分片或本地缓存命中均不等于发布成功。缓存查验与上传保留全服最多两份私人接收／验证作业、单连接一份和私人内存预留，并另外计入共享后台队列与字节预算；同连接新上传至少相隔 200 tick，冷却不因重新 hello 重置。接收总时限默认 2400 tick、空闲 300 tick，仅在接收分片阶段核对上传空闲；后台排队、无进展和总时限独立配置并按单调时钟执行。校验中的作业即使被新握手取消，也继续占用预留直到实际工作线程退出，不能通过换代次绕过预算。连接断开、owner clear、发布者失去权限或租约到期撤销当前发布，撤权错误不可自动重试，已验证磁盘缓存按独立预算保留。
 
 `upload_committed` 的出站预算不足时保留待发确认；重发当前已发布的同 generation/hash/bytes/kind offer 可重新确认，不重复发布或重置代次。同 generation 改写资源身份返回 `private_generation_reused`。任何确认仍须当前连接、发布身份及上传权限合法。
 
@@ -223,7 +229,7 @@ ACK 在协商目录扩展时还提供本次握手 UUID `uploadCatalogToken`。C2
 
 ZIP 根必须含 `manifest.json`，最大 4096 字节，且只有 `{format:1,kind:"bbmodel"|"ysm",entry:"model.bbmodel"|"ysm.json"}` 三个字段。BBModel 内保留原完整 `model.bbmodel`、内嵌 PNG 和声明的包内 PNG 伴随资源；观看端与发布者走同一固定 Sparkle 导入／装配链。YSM 保留 `ysm.json`、原始 geometry、controller、animations、functions、lang、sounds、纹理及必要引用资源，不能只上传转换后的主 BBModel 丢失 profile/components/作者函数。公开原格式 `.ysm` 由客户端读入后导出完整原生资源；wire 不传未验证的 opaque 二进制。`ysm.json.mpa_native_format` 保留原格式代次，`ysm_baked_faces` 保存公开原文件的面几何，服务器只验证资源，不解释动画脚本。
 
-ZIP 原始上限与所有条目展开总量各 8 MiB，扫描条目（含目录）最多 256；可由服务器进一步缩小 ZIP 原始上限。只允许 json/bbmodel/png/bmp/jpg/jpeg/webp/ogg/molang 文件。拒绝 absolute/path traversal/点段/空段/反斜杠/冒号/控制符、casefold 重名、符号链接、加密、分卷和 ZIP64，逐条目检查 CRC，目录不得携带数据，不落盘解压。JSON 节点最多 200000、深度最多 64，重复字段和非有限数拒绝；图片以格式头检查维度（最多 8192）与全部外部纹理总像素（最多 16777216），服务器不执行图片解码器；BBModel 最大 4096 elements、16 项纹理声明；内嵌 PNG 与包内伴随纹理的像素按联合预算校验。伴随 PNG 按固定来源的 name／name+.png／relative_path 文件名匹配，不访问编辑器记录的绝对 path，重名歧义或缺失资源拒绝。ogg 检查 OggS 头，molang 检查 UTF-8。模型资源字段中的 HTTP/file URL 拒绝。客户端还必须独立完成 bundle、模型解析、图片解码和 GPU 校验，服务器接收不能替代本地验证。原始传输与展开仍受 8 MiB 约束；BBModel mesh／曲线转换派生资产独立限 64 MiB，不扩大网络容量。
+ZIP 原始上限与所有条目展开总量各 8 MiB，扫描条目（含目录）最多 256；可由服务器进一步缩小 ZIP 原始上限及 `resource-protection.complexity` 的各项预算。只允许 json/bbmodel/png/bmp/jpg/jpeg/webp/ogg/molang 文件。拒绝 absolute/path traversal/点段/空段/反斜杠/冒号/控制符、casefold 重名、符号链接、加密、分卷和 ZIP64，逐条目检查 CRC，目录不得携带数据，不落盘解压。JSON 节点最多 200000、深度最多 64，重复字段和非有限数拒绝；图片以格式头检查维度（最多 8192）与全部外部纹理总像素（最多 16777216），服务器不执行图片解码器；BBModel 最大 4096 elements、16 项纹理声明；内嵌 PNG 与包内伴随纹理的像素按联合预算校验。整体默认预算还有骨骼 4096、动画 1024、关键帧 65536、表达式 32768 条／2097152 个字符；多个文档与 molang 文件合计核对，不能靠拆文件绕过。伴随 PNG 按固定来源的 name／name+.png／relative_path 文件名匹配，不访问编辑器记录的绝对 path，重名歧义或缺失资源拒绝。ogg 检查 OggS 头，molang 检查 UTF-8。模型资源字段中的 HTTP/file URL 拒绝。客户端还必须独立完成 bundle、模型解析、图片解码和 GPU 校验，服务器接收不能替代本地验证。原始传输与展开仍受 8 MiB 约束；BBModel mesh／曲线转换派生资产独立限 64 MiB，不扩大网络容量。
 
 默认全服务器内存资源预算 32 MiB，包含已发布 ZIP、接收中的 ZIP及每个校验作业预留的最多 8 MiB 展开资源。私人磁盘缓存默认启用，目录 `plugins/MEPlayerActions/private-models/`，扁平文件名 `<ownerUUID>_<hash>.zip`；默认最多 128 MiB、512 条、同 owner 4 条，后台访问时按最近使用裁剪。设置为 `client-sync.private-models.cache-enabled`、`max-cache-bytes`、`max-cache-models`、`max-cache-models-per-player`。设 cache-enabled=false 不读写既有缓存。异步写入只接收整份校验成功的 bundle，cache 命中重新验证后才发布；缓存不可作为跨 owner 模型查询入口。文件保留不恢复此前的 publication、generation、offer 或租约。服务端不把客户传来的字符串作为服务器模型 ID、任意文件路径或 URL。
 
@@ -253,7 +259,7 @@ owner 可以发送 `private_state {generation,hash,appearance,extra:{id,loop,loc
 
 成熟作者 `ysm.sync` 使用独立 `private_event {generation,hash,args:[...]}`，最多 16 个有限数。server 必须匹配本连接的已接收私人发布，随后返回带 owner/generation/hash/独立事件 sequence 的同名 private_event 给 publisher 和当前 ready 合法观看者。联网 listener 生效时作者 sync 是 relay-only，本机也只在服务器回显时执行一次 @sync，收包执行不会再次发送。服务器不执行函数、动画或脚本，不允许为其他 owner 发送事件。owner被服务器伪装遮盖时不转发事件。
 
-每连接配置更新与作者事件分别最多 8 次/秒，窗口不因重新 hello 重置；仍计入两频道合计的入站 48 包/秒、256 KiB/秒。合计出站 2 MiB/秒，其中资产 512 KiB/秒；全服务器每 tick 出站 512 KiB，其中资产 256 KiB。上传、私人下载、v3下载共享每连接 2 个、全服务器 32 个 transfer 槽。超出预算的控制状态可能延后或触发租约恢复，接收到的资源无法因解绑撤回，权限检查授予观看使用权而不构成 DRM。
+每连接配置更新与作者事件分别最多 8 次/秒，窗口不因重新 hello 重置；仍计入两个频道共用的连接及全局网络预算。上传、私人下载、v3 下载共享活动／等待传输槽，当前默认值与配置化额度见上面的[连接预算](#连接预算)。超出预算的控制状态可能延后或触发租约恢复，接收到的资源无法因解绑撤回，权限检查授予观看使用权而不构成 DRM。
 
 ### 服务器确认的飞行状态
 
