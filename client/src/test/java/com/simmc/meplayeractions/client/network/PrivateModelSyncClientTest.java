@@ -20,6 +20,30 @@ import static org.junit.jupiter.api.Assertions.*;
 /** Real bundle decoding with a deterministic host clock; no game, network or sleeps. */
 class PrivateModelSyncClientTest {
     private static final long NOW=10_000_000_000L,SECOND=1_000_000_000L;
+    @Test void negotiatedUploadWindowWaitsForMatchingAbsoluteCreditAndDuplicateGrantsCannotSendAhead() throws Exception {
+        Rig rig=new Rig();rig.acknowledge(true,false,false,true);rig.host.explicitLocal=true;rig.client.tick(NOW);rig.host.drain();
+        JsonObject offer=rig.host.sent("upload_offer").getLast();JsonObject accept=publicationNotice("upload_accept",rig.host.local.owner(),offer);
+        UUID upload=UUID.randomUUID();accept.addProperty("uploadId",upload.toString());accept.addProperty("chunkBytes",128);rig.receive(accept,NOW);rig.client.tick(NOW);
+        assertTrue(rig.host.sent("upload_chunk").isEmpty());
+        JsonObject credit=PrivateModelSyncClient.envelope("upload_credit");credit.addProperty("uploadId",UUID.randomUUID().toString());credit.addProperty("nextIndex",2);
+        rig.receive(credit,NOW);rig.client.tick(NOW);assertTrue(rig.host.sent("upload_chunk").isEmpty());
+        credit.addProperty("uploadId",upload.toString());rig.receive(credit,NOW);rig.client.tick(NOW);rig.client.tick(NOW);
+        assertEquals(2,rig.host.sent("upload_chunk").size());rig.receive(credit,NOW);rig.client.tick(NOW);assertEquals(2,rig.host.sent("upload_chunk").size());
+        credit.addProperty("nextIndex",3);rig.receive(credit,NOW);rig.client.tick(NOW);assertEquals(3,rig.host.sent("upload_chunk").size());
+        assertEquals(2,rig.host.sent("upload_chunk").getLast().get("index").getAsInt());
+    }
+    @Test void structuredTerminalErrorsDoNotRetryAndBusyRetryStopsAfterThreeFailures() throws Exception {
+        Rig terminal=new Rig();terminal.acknowledge(true,false);terminal.host.explicitLocal=true;terminal.client.tick(NOW);terminal.host.drain();
+        JsonObject invalid=PrivateModelSyncClient.envelope("error");invalid.addProperty("code","model_complexity_limit");invalid.addProperty("stage","validation");invalid.addProperty("retryable",false);invalid.addProperty("retryAfter",0);
+        terminal.receive(invalid,NOW);terminal.receive(heartbeat(),NOW+30*SECOND);terminal.client.tick(NOW+30*SECOND);assertEquals(1,terminal.host.bundleReads);
+        terminal.client.stopPublishing();terminal.client.tick(NOW+30*SECOND);terminal.host.drain();assertEquals(2,terminal.host.bundleReads);
+        Rig busy=new Rig();busy.acknowledge(true,false);busy.host.explicitLocal=true;
+        JsonObject rejected=PrivateModelSyncClient.envelope("error");rejected.addProperty("code","asset_queue_full");rejected.addProperty("stage","upload");rejected.addProperty("retryable",true);rejected.addProperty("retryAfter",2);
+        for(int attempt=0;attempt<3;attempt++) {
+            long now=NOW+attempt*3*SECOND;busy.receive(heartbeat(),now);busy.client.tick(now);busy.host.drain();busy.receive(rejected,now);
+        }
+        busy.receive(heartbeat(),NOW+30*SECOND);busy.client.tick(NOW+30*SECOND);busy.host.drain();assertEquals(3,busy.host.bundleReads);
+    }
 
     @Test void serverFlightStateWorksWithCachedAssetsAndChangesWithoutReplacingTheRemoteOrExtraAction() throws Exception {
         Rig rig=new Rig();rig.acknowledge(false,true);rig.host.cached=CompletableFuture.completedFuture(rig.bundle);Offer offer=rig.offer();
@@ -203,7 +227,11 @@ class PrivateModelSyncClientTest {
         JsonObject accept=publicationNotice("upload_accept",rig.host.local.owner(),upload);accept.addProperty("uploadId",UUID.randomUUID().toString());accept.addProperty("chunkBytes",128);rig.receive(accept,NOW);
         rig.client.tick(NOW);assertEquals(128,rig.client.uploadedBytes());assertTrue(rig.client.status().contains("%"));
         JsonObject error=PrivateModelSyncClient.envelope("error");error.addProperty("code","private_upload_denied");rig.receive(error,NOW);
-        assertEquals("没有私人模型上传权限",rig.client.status());assertTrue(rig.host.explicitLocal);assertEquals(0,rig.client.publicationBytes());
+        assertTrue(rig.client.status().startsWith("没有私人模型上传权限"));assertTrue(rig.client.status().contains("重新开启分享"));
+        assertTrue(rig.host.explicitLocal);assertEquals(0,rig.client.publicationBytes());
+        rig.receive(heartbeat(),NOW+30*SECOND);rig.client.tick(NOW+30*SECOND);rig.host.drain();
+        assertEquals(1,rig.host.bundleReads,"A terminal denial preserves explicit sharing but does not archive/retry the same model automatically");
+        assertTrue(rig.host.explicitLocal);
     }
 
     @Test void bytesWithTheWrongChecksumAbortTheOfferAndNeverReachTheDecoder() throws Exception {
@@ -466,9 +494,10 @@ class PrivateModelSyncClientTest {
         assertTrue(rig.client.uploadedModelIds().isEmpty());assertEquals(1,rig.host.bundleReads);assertTrue(rig.host.sent("upload_offer").isEmpty());
     }
     @Test void extendedHelloFallsBackOnceForLegacyServersAndNeverSendsUnnegotiatedSourceIds() throws Exception {
-        Rig rig=new Rig();rig.client.tick(NOW);JsonArray caps=rig.host.sent("hello").getLast().getAsJsonArray("capabilities");assertEquals(2,caps.size());
+        Rig rig=new Rig();rig.client.tick(NOW);JsonArray caps=rig.host.sent("hello").getLast().getAsJsonArray("capabilities");assertEquals(3,caps.size());
         JsonObject denied=PrivateModelSyncClient.envelope("error");denied.addProperty("code","invalid_private_payload");rig.receive(denied,NOW);rig.client.tick(NOW+1);
-        assertEquals(1,rig.host.sent("hello").getLast().getAsJsonArray("capabilities").size());rig.receive(denied,NOW+1);rig.client.tick(NOW+2);assertEquals(2,rig.host.sent("hello").size());
+        assertEquals(2,rig.host.sent("hello").getLast().getAsJsonArray("capabilities").size());rig.receive(denied,NOW+1);rig.client.tick(NOW+2);assertEquals(3,rig.host.sent("hello").size());
+        assertEquals(1,rig.host.sent("hello").getLast().getAsJsonArray("capabilities").size());rig.receive(denied,NOW+2);rig.client.tick(NOW+3);assertEquals(3,rig.host.sent("hello").size());
         rig.acknowledge(true,false);rig.host.explicitLocal=true;rig.client.tick(NOW);rig.host.drain();JsonObject offer=rig.host.sent("upload_offer").getLast();
         assertFalse(offer.has("modelId"));rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),offer),NOW);
         assertEquals(PrivateModelSyncClient.UploadPhase.PUBLISHED,rig.client.uploadState(rig.host.local.modelId()).phase());assertTrue(rig.client.uploadedModelIds().isEmpty());
@@ -577,8 +606,10 @@ class PrivateModelSyncClientTest {
             rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),offer),NOW);assertFalse(rig.client.committed(),code);
             rig.client.tick(NOW+1);assertTrue(rig.host.sent("upload_chunk").isEmpty(),code);
             rig.receive(heartbeat(),NOW+9*SECOND);rig.client.tick(NOW+9*SECOND);assertEquals(1,rig.host.bundleReads,code);
-            rig.receive(heartbeat(),NOW+11*SECOND);rig.client.tick(NOW+11*SECOND);rig.host.drain();assertEquals(2,rig.host.bundleReads,code);
-            assertNotEquals(offer.get("generation"),rig.host.sent("upload_offer").getLast().get("generation"),code);
+            rig.receive(heartbeat(),NOW+11*SECOND);rig.client.tick(NOW+11*SECOND);rig.host.drain();
+            boolean retry=code.contains("busy")||code.contains("cooldown")||code.contains("expired")||code.contains("unavailable");
+            assertEquals(retry?2:1,rig.host.bundleReads,code);
+            if(retry)assertNotEquals(offer.get("generation"),rig.host.sent("upload_offer").getLast().get("generation"),code);
         }
     }
 
@@ -638,8 +669,12 @@ class PrivateModelSyncClientTest {
         }
         void acknowledgeCatalog(){acknowledge(true,true,true);}
         void acknowledge(boolean upload,boolean view,boolean catalogue) {
+            acknowledge(upload,view,catalogue,false);
+        }
+        void acknowledge(boolean upload,boolean view,boolean catalogue,boolean credit) {
             JsonObject packet=PrivateModelSyncClient.envelope("hello_ack");JsonArray caps=new JsonArray();caps.add("private_models_v1");packet.add("capabilities",caps);
             if(catalogue){caps.add(PrivateUploadCatalogSnapshot.CAPABILITY);packet.addProperty("uploadCatalogToken",UUID.randomUUID().toString());}
+            if(credit)caps.add(PrivateModelSyncClient.UPLOAD_CREDIT);
             packet.addProperty("allowedUpload",upload);packet.addProperty("allowedView",view);packet.addProperty("maxPayload",16000);
             packet.addProperty("maxBundleBytes",AssetTransfer.MAX_RAW);packet.addProperty("leaseTicks",20);receive(packet,NOW);
         }

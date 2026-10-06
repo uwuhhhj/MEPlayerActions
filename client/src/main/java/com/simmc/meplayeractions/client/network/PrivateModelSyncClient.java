@@ -13,6 +13,7 @@ import java.util.concurrent.CompletionException;
 /** Optional server-mediated native model sharing. Offers authorize bytes, leases authorize display. */
 public final class PrivateModelSyncClient {
     public static final int PROTOCOL = 1;
+    public static final String UPLOAD_CREDIT = "private_upload_credit_v1";
     private static final long SECOND = 1_000_000_000L;
     private static final long DELETE_TIMEOUT = 90*SECOND;
     private static final int MAX_REMOTES = 16;
@@ -69,7 +70,7 @@ public final class PrivateModelSyncClient {
             this.appearance=appearance;this.extra=extra;this.sequence=sequence;this.flying=flying;
         }
     }
-    private record Archive(byte[] bytes,String kind) { }
+    private record Archive(byte[] bytes,String kind,String hash) { }
     public record SourceIdentity(String hash,String kind,int bytes) { }
     private final Host host;
     private final Map<UUID,Remote> remotes=new LinkedHashMap<>();
@@ -78,7 +79,8 @@ public final class PrivateModelSyncClient {
     private final Map<String,SourceIdentity> sourceIdentities=new HashMap<>();
     private final ArrayDeque<String> sourceChecks=new ArrayDeque<>();
     private long sourceRevision;
-    private boolean catalogueNegotiated,legacyHello,sourceChecking;
+    private boolean catalogueNegotiated,creditNegotiated,sourceChecking;
+    private int helloFallback;
     private JsonObject deleteRequest;
     private String deletingId="",deletingHash="";
     private UUID deletePublicationGeneration;
@@ -99,6 +101,10 @@ public final class PrivateModelSyncClient {
     private JsonObject outgoingOffer;
     private long lastUploadOfferAttempt=-1,lastUploadEndAttempt=-1;
     private boolean uploadEndSent;
+    private int uploadCreditLimit,retryCount;
+    private long uploadLastProgress,uploadTotalNanos=90*SECOND,uploadIdleNanos=30*SECOND,uploadValidationNanos=90*SECOND,uploadValidationStarted,retryStarted;
+    private String retrySource="",blockedSource="";
+    private JsonObject pendingUploadPart;
     private final ArrayDeque<Long> controlWindow=new ArrayDeque<>();
     private double controlTokens=8;
     private long controlRefill=-1;
@@ -107,11 +113,13 @@ public final class PrivateModelSyncClient {
     public void reset() {
         epoch++;publishRevision++;remotes.values().forEach(r->host.remove(r.owner,r.generation));remotes.clear();
         acknowledged=allowedUpload=allowedView=building=committed=false;sessionUploads.clear();
-        catalogueNegotiated=legacyHello=sourceChecking=false;sourceRevision++;uploadCatalog.reset();sourceIdentities.clear();sourceChecks.clear();
+        catalogueNegotiated=creditNegotiated=sourceChecking=false;helloFallback=0;sourceRevision++;uploadCatalog.reset();sourceIdentities.clear();sourceChecks.clear();
         clearDelete();uploadCatalogToken=null;deleteSequence=publicationSerial=0;deleteStatuses.clear();lateDeletes.clear();
         sourceId=ownHash=kind=sentState="";outgoing=null;ownOwner=ownGeneration=uploadId=null;uploadIndex=0;
         publicationBytes=uploadedBytes=0;
         outgoingOffer=null;lastUploadOfferAttempt=lastUploadEndAttempt=-1;uploadEndSent=false;
+        pendingUploadPart=null;uploadCreditLimit=retryCount=0;uploadLastProgress=retryStarted=0;retrySource=blockedSource="";
+        uploadTotalNanos=uploadValidationNanos=90*SECOND;uploadIdleNanos=30*SECOND;uploadValidationStarted=0;
         controlWindow.clear();controlTokens=8;controlRefill=-1;controlRotation=0;
         lastHello=lastReceived=lastHeartbeat=lastState=lastEvent=uploadStarted=retryAfter=0;
         ownEventSequence=-1;status="未协商私人同步";
@@ -234,6 +242,9 @@ public final class PrivateModelSyncClient {
         status(remote.offerId,remote.hash,"rejected");remove(remote);return true;
     }
     public void stopPublishing() {
+        stopPublishing(true);
+    }
+    private void stopPublishing(boolean resetRetries) {
         if(ownGeneration!=null) {
             sessionUploads.remove(sourceId);
         }
@@ -241,18 +252,28 @@ public final class PrivateModelSyncClient {
         publishRevision++;building=committed=false;ownOwner=ownGeneration=uploadId=null;sourceId=ownHash=sentState="";outgoing=null;ownEventSequence=-1;
         publicationBytes=uploadedBytes=0;
         outgoingOffer=null;lastUploadOfferAttempt=lastUploadEndAttempt=-1;uploadEndSent=false;
+        pendingUploadPart=null;uploadCreditLimit=0;
+        if(resetRetries){retryCount=0;retryStarted=0;retrySource=blockedSource="";}
         status=acknowledged?"私人模型仅自己可见":"未协商私人同步";
     }
     private void failPublishing(String message) {
         UploadState failure=new UploadState(sourceId,UploadPhase.FAILED,ownHash,publicationBytes,uploadedBytes,false,message);
-        stopPublishing();if(!failure.modelId().isEmpty())rememberUploadState(failure);status=message;
+        stopPublishing(false);if(!failure.modelId().isEmpty())rememberUploadState(failure);status=message;
+    }
+    private void publicationFailure(String message,boolean retryable,long delay,long now) {
+        String failedSource=sourceId;
+        if(!failedSource.equals(retrySource)){retrySource=failedSource;retryCount=0;retryStarted=now;}
+        retryCount++;failPublishing(message);retryAfter=now+Math.max(SECOND,delay);
+        if(!retryable||retryCount>=3||now-retryStarted>=5*60*SECOND) {
+            blockedSource=failedSource;status=message+"；请调整模型或重新开启分享后重试";
+        }
     }
     public void tick(long now) {
         clockNow=now;
         if(!host.channelAvailable()) { if(acknowledged||ownGeneration!=null||!remotes.isEmpty())reset();return; }
         if(acknowledged&&now-lastReceived>leaseTicks*50_000_000L)reset();
         if(!acknowledged&&now-lastHello>3*SECOND) {
-            JsonObject hello=envelope("hello");JsonArray caps=new JsonArray();caps.add("private_models_v1");if(!legacyHello)caps.add(PrivateUploadCatalogSnapshot.CAPABILITY);hello.add("capabilities",caps);
+            JsonObject hello=envelope("hello");JsonArray caps=new JsonArray();caps.add("private_models_v1");if(helloFallback<2)caps.add(PrivateUploadCatalogSnapshot.CAPABILITY);if(helloFallback==0)caps.add(UPLOAD_CREDIT);hello.add("capabilities",caps);
             if(send(hello))lastHello=now;
         }
         if(!acknowledged)return;
@@ -265,21 +286,23 @@ public final class PrivateModelSyncClient {
             if(now-remote.lastLease>timeout)remove(remote);
         }
         Local local=host.local();
-        if(local==null||!allowedUpload) { if(ownGeneration!=null)stopPublishing(); }
-        else if(!sourceId.equals(local.modelId())&&!building&&now>=retryAfter&&(!deletingUploadedModel(local.modelId())))beginPublish(local,now);
+        if(local==null||!allowedUpload) { if(ownGeneration!=null)stopPublishing();if(local==null){retryCount=0;retryStarted=0;retrySource=blockedSource="";} }
+        else if(!sourceId.equals(local.modelId())&&!blockedSource.equals(local.modelId())&&!building&&now>=retryAfter&&(!deletingUploadedModel(local.modelId())))beginPublish(local,now);
         if(outgoing!=null&&!committed) {
             if(uploadId==null&&outgoingOffer!=null) {
                 if(lastUploadOfferAttempt<0||now-lastUploadOfferAttempt>=SECOND){Boolean sent=sendControl(outgoingOffer,now);if(sent!=null)lastUploadOfferAttempt=now;}
             } else if(uploadId!=null) {
                 int from=uploadIndex*chunkBytes;
-                if(from<outgoing.length) {
-                    JsonObject part=envelope("upload_chunk");part.addProperty("uploadId",uploadId.toString());part.addProperty("index",uploadIndex);
-                    part.addProperty("data",Base64.getEncoder().encodeToString(Arrays.copyOfRange(outgoing,from,Math.min(outgoing.length,from+chunkBytes))));
-                    if(send(part)){uploadIndex++;uploadedBytes=Math.min(outgoing.length,uploadIndex*chunkBytes);}
-                } else if(lastUploadEndAttempt<0||now-lastUploadEndAttempt>=SECOND) {
+                if(from<outgoing.length&&(!creditNegotiated||uploadIndex<uploadCreditLimit)) {
+                    if(pendingUploadPart==null) {
+                        pendingUploadPart=envelope("upload_chunk");pendingUploadPart.addProperty("uploadId",uploadId.toString());pendingUploadPart.addProperty("index",uploadIndex);
+                        pendingUploadPart.addProperty("data",Base64.getEncoder().encodeToString(Arrays.copyOfRange(outgoing,from,Math.min(outgoing.length,from+chunkBytes))));
+                    }
+                    if(send(pendingUploadPart)){pendingUploadPart=null;uploadIndex++;uploadedBytes=Math.min(outgoing.length,uploadIndex*chunkBytes);uploadLastProgress=now;}
+                } else if(from>=outgoing.length&&(lastUploadEndAttempt<0||now-lastUploadEndAttempt>=SECOND)) {
                     JsonObject end=envelope("upload_end");end.addProperty("uploadId",uploadId.toString());
                     Boolean sent=sendControl(end,now);
-                    if(sent!=null){lastUploadEndAttempt=now;if(sent){uploadEndSent=true;status="上传结束，等待服务器校验 · "+size(publicationBytes);}}
+                    if(sent!=null){lastUploadEndAttempt=now;if(sent){if(!uploadEndSent)uploadValidationStarted=now;uploadEndSent=true;status="上传结束，等待服务器校验 · "+size(publicationBytes);}}
                 }
             }
         }
@@ -288,8 +311,10 @@ public final class PrivateModelSyncClient {
             int start=controlRotation%controls.size();controlRotation=(start+1)%controls.size();
             for(int i=0;i<controls.size();i++)flushControl(controls.get((start+i)%controls.size()),now);
         }
-        if(ownGeneration!=null&&!committed&&now-uploadStarted>90*SECOND) {
-            failPublishing("私人模型同步超时");retryAfter=now+10*SECOND;
+        if(ownGeneration!=null&&!committed&&(now-uploadStarted>uploadTotalNanos
+                ||uploadEndSent&&now-uploadValidationStarted>uploadValidationNanos
+                ||uploadId!=null&&!uploadEndSent&&now-uploadLastProgress>uploadIdleNanos)) {
+            publicationFailure("私人模型同步超时",true,10*SECOND,now);
         }
         if(committed&&local!=null&&now-lastState>=SECOND/8) {
             String signature=local.appearance().toString()+local.extra();
@@ -318,21 +343,22 @@ public final class PrivateModelSyncClient {
         controlTokens--;controlWindow.addLast(now);return send(packet);
     }
     private void beginPublish(Local local,long now) {
-        stopPublishing();publicationSerial++;building=true;sourceId=local.modelId();ownOwner=local.owner();ownGeneration=UUID.randomUUID();uploadStarted=now;status="正在归档私人模型";
+        stopPublishing(false);publicationSerial++;building=true;sourceId=local.modelId();ownOwner=local.owner();ownGeneration=UUID.randomUUID();uploadStarted=uploadLastProgress=now;status="正在归档私人模型";
+        if(!retrySource.equals(sourceId)){retrySource=sourceId;retryCount=0;retryStarted=now;blockedSource="";}
         sessionUploads.remove(sourceId);
         long revision=publishRevision;UUID generation=ownGeneration;
         host.bundle(local.modelId()).thenApply(bytes -> {
-            try{return new Archive(bytes,NativeModelBundle.validate(bytes).kind());}
+            try{return new Archive(bytes,NativeModelBundle.validate(bytes).kind(),AssetTransfer.hash(bytes));}
             catch(IOException invalid){throw new CompletionException(invalid);}
         }).whenComplete((archive,error)->host.dispatch(()->{
             if(revision!=publishRevision||!generation.equals(ownGeneration))return;
             building=false;
             Local current=host.local();
-            if(error!=null||current==null||!current.modelId().equals(sourceId)) { failPublishing("私人模型归档不可用");retryAfter=clockNow+10*SECOND;return; }
+            if(error!=null||current==null||!current.modelId().equals(sourceId)) { publicationFailure("私人模型归档不可用",false,10*SECOND,clockNow);return; }
             try {
                 byte[] bundle=archive.bytes();
                 if(bundle.length<1||bundle.length>maxBundleBytes)throw new IOException("Bundle size");
-                kind=archive.kind();ownHash=AssetTransfer.hash(bundle);outgoing=bundle;uploadIndex=0;publicationBytes=bundle.length;uploadedBytes=0;
+                kind=archive.kind();ownHash=archive.hash();outgoing=bundle;uploadIndex=0;publicationBytes=bundle.length;uploadedBytes=0;
                 rememberSource(sourceId,new SourceIdentity(ownHash,kind,publicationBytes));
                 JsonObject offer=identity("upload_offer");offer.addProperty("bytes",bundle.length);offer.addProperty("kind",kind);
                 if(catalogueNegotiated)offer.addProperty("modelId",sourceId);
@@ -340,7 +366,7 @@ public final class PrivateModelSyncClient {
                 if(offer.toString().getBytes(StandardCharsets.UTF_8).length>maxPayload)throw new IOException("Appearance payload size");
                 outgoingOffer=offer;Boolean sent=sendControl(offer,clockNow);if(sent!=null)lastUploadOfferAttempt=clockNow;
                 status="等待服务器授权上传 · "+size(publicationBytes);
-            }catch(Exception invalid){failPublishing("私人模型不可上传：归档无效或模型、参数超过服务器限制");retryAfter=clockNow+10*SECOND;}
+            }catch(Exception invalid){publicationFailure("私人模型不可上传：归档无效或模型、参数超过服务器限制",false,10*SECOND,clockNow);}
         }));
     }
     public void event(List<Double> args,long now) {
@@ -361,11 +387,16 @@ public final class PrivateModelSyncClient {
                 int bundle=(int)WireJson.integer(packet,"maxBundleBytes",1,AssetTransfer.MAX_RAW);
                 int lease=(int)WireJson.integer(packet,"leaseTicks",20,1200);
                 boolean catalogue=caps.asList().stream().anyMatch(v->v.isJsonPrimitive()&&v.getAsString().equals(PrivateUploadCatalogSnapshot.CAPABILITY));
+                boolean credit=caps.asList().stream().anyMatch(v->v.isJsonPrimitive()&&v.getAsString().equals(UPLOAD_CREDIT));
                 UUID catalogToken=catalogue?uuid(packet,"uploadCatalogToken"):null;
                 if(acknowledged)reset();acknowledged=true;allowedUpload=upload;allowedView=view;maxPayload=payload;maxBundleBytes=bundle;leaseTicks=lease;catalogueNegotiated=catalogue;uploadCatalogToken=catalogToken;
+                creditNegotiated=credit;
+                if(packet.has("transferTotalTicks"))uploadTotalNanos=WireJson.integer(packet,"transferTotalTicks",20,72000)*50_000_000L;
+                if(packet.has("transferIdleTicks"))uploadIdleNanos=WireJson.integer(packet,"transferIdleTicks",20,72000)*50_000_000L;
+                if(packet.has("validationTimeoutTicks"))uploadValidationNanos=WireJson.integer(packet,"validationTimeoutTicks",20,72000)*50_000_000L;
                 status=upload?"可分享私人模型；需要主动开启分享":"没有私人模型上传权限";
             } else if(!acknowledged) {
-                if(type.equals("error")&&!legacyHello&&WireJson.string(packet,"code",128).equals("invalid_private_payload")){legacyHello=true;lastHello=0;}
+                if(type.equals("error")&&helloFallback<2&&WireJson.string(packet,"code",128).equals("invalid_private_payload")){helloFallback++;lastHello=0;}
                 return;
             }
             else switch(type) {
@@ -396,7 +427,13 @@ public final class PrivateModelSyncClient {
                     UUID id=uuid(packet,"uploadId");int size=(int)WireJson.integer(packet,"chunkBytes",1,8192);
                     if(size*4L/3+512>maxPayload)throw new IOException("Upload chunk budget");
                     if(uploadId!=null){if(!uploadId.equals(id)||chunkBytes!=size)throw new IOException("Conflicting upload accept");break;}
-                    uploadId=id;chunkBytes=size;uploadIndex=0;
+                    uploadId=id;chunkBytes=size;uploadIndex=uploadCreditLimit=0;uploadLastProgress=now;
+                }
+                case "upload_credit" -> {
+                    if(!creditNegotiated||uploadId==null||outgoing==null||!uploadId.equals(uuid(packet,"uploadId")))break;
+                    int next=(int)WireJson.integer(packet,"nextIndex",0,(outgoing.length+chunkBytes-1)/chunkBytes);
+                    if(next>uploadIndex+2)throw new IOException("Upload credit window");
+                    if(next>uploadCreditLimit){uploadCreditLimit=next;uploadLastProgress=now;}
                 }
                 case "upload_committed" -> {if(matchesOwn(packet)){committed=true;outgoing=null;outgoingOffer=null;uploadId=null;status="私人模型已分享 · "+(uploadedBytes==0?"复用服务器缓存 · ":"")+size(publicationBytes);
                     // A publication ACK is separate from a durable, owner-scoped directory entry.
@@ -425,7 +462,9 @@ public final class PrivateModelSyncClient {
                 case "private_remove" -> {
                     UUID owner=uuid(packet,"owner"),generation=uuid(packet,"generation");String hash=WireJson.hash(packet,"hash");
                     if(owner.equals(ownOwner)&&generation.equals(ownGeneration)&&hash.equals(ownHash)){
-                        stopPublishing();retryAfter=now+10*SECOND;status="私人发布已由服务器撤销";
+                        String reason=packet.has("reason")?WireJson.string(packet,"reason",64):"";
+                        publicationFailure("私人发布已由服务器撤销",!Set.of("private_upload_denied","permission_revoked").contains(reason),
+                                (reason.equals("tps_protection")?30:10)*SECOND,now);
                     }
                     Remote remote=remotes.get(owner);
                     if(remote!=null&&remote.generation.equals(generation)&&remote.hash.equals(hash))remove(remote);
@@ -449,11 +488,18 @@ public final class PrivateModelSyncClient {
                 }
                 case "error" -> {
                     String code=WireJson.string(packet,"code",128);
+                    if(packet.has("generation")&&(ownGeneration==null||!ownGeneration.equals(uuid(packet,"generation"))))break;
+                    if(packet.has("hash")&&!ownHash.equals(WireJson.hash(packet,"hash")))break;
                     boolean publicationFailure=code.startsWith("upload")||code.startsWith("private_upload")
                             ||Set.of("not_allowed","server_model_priority","private_generation_reused","private_storage_busy",
                                 "private_bundle_invalid","private_sync_disabled","private_state_not_authorized","private_event_not_authorized").contains(code)
                             ||code.equals("private_appearance_size")&&!committed;
-                    if(publicationFailure&&ownGeneration!=null){failPublishing(errorStatus(code));retryAfter=now+10*SECOND;}
+                    String stage=packet.has("stage")?WireJson.string(packet,"stage",64):"";
+                    publicationFailure|=Set.of("upload","validation").contains(stage)||Set.of("tps_protection","asset_queue_full","publication_limit","memory_budget","disk_budget","disk_space","model_complexity_limit").contains(code)&&ownGeneration!=null&&!committed;
+                    boolean retryable=packet.has("retryable")?WireJson.bool(packet,"retryable"):
+                            code.contains("busy")||code.contains("cooldown")||code.contains("expired")||code.contains("unavailable");
+                    long wait=packet.has("retryAfter")?WireJson.integer(packet,"retryAfter",0,3600)*SECOND:10*SECOND;
+                    if(publicationFailure&&ownGeneration!=null)publicationFailure(errorStatus(code),retryable,wait,now);
                     else status=errorStatus(code);
                 }
                 default -> throw new IOException("Unknown private message");
@@ -536,6 +582,12 @@ public final class PrivateModelSyncClient {
             case "private_upload_denied","not_allowed" -> "没有私人模型上传权限";
             case "server_model_priority" -> "服务器伪装期间，私人模型仅自己可见";
             case "private_upload_busy","private_storage_busy","private_transfer_busy" -> "服务器模型传输繁忙，稍后重试";
+            case "asset_queue_full","server_busy","publication_limit" -> "服务器资源任务已满，稍后重试";
+            case "tps_protection" -> "服务器正在保护运行性能，模型传输暂缓";
+            case "upload_timeout","validation_timeout","task_timeout" -> "上传或模型校验超时";
+            case "model_complexity_limit" -> "模型复杂度超过服务器允许的范围";
+            case "memory_budget","memory_limit","disk_budget","disk_space","disk_space_low","disk_unavailable" -> "服务器资源空间不足，暂时无法保存模型";
+            case "permission_revoked" -> "上传权限已撤销，私人模型仅自己可见";
             case "private_upload_cooldown" -> "上传过于频繁，等待后重试";
             case "private_upload_integrity","private_bundle_invalid","private_upload_invalid" -> "服务器拒绝模型：文件不完整或格式无效";
             case "private_upload_expired" -> "上传超时，稍后重新上传";
