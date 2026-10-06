@@ -21,16 +21,34 @@ class PrivateModelProtocolTest {
     }
     @Test void handshakeRequiresTheExactIndependentCapabilityAndNeverAllowsAssetSelection() throws IOException {
         assertEquals("hello",decode("{\"protocol\":1,\"type\":\"hello\",\"capabilities\":[\"private_models_v1\"]}").get("type").getAsString());
+        assertEquals(2,decode("{\"protocol\":1,\"type\":\"hello\",\"capabilities\":[\"private_models_v1\",\"private_upload_catalog_v1\"]}").getAsJsonArray("capabilities").size());
         for(String invalid:List.of("{\"protocol\":1,\"type\":\"hello\",\"capabilities\":[]}",
                 "{\"protocol\":1,\"type\":\"hello\",\"capabilities\":[\"private_models_v1\",\"private_models_v1\"]}",
+                "{\"protocol\":1,\"type\":\"hello\",\"capabilities\":[\"private_upload_catalog_v1\"]}",
+                "{\"protocol\":1,\"type\":\"hello\",\"capabilities\":[\"private_models_v1\",\"unknown\"]}",
                 "{\"protocol\":1,\"type\":\"asset_request\",\"modelId\":\"server_secret\"}"))assertThrows(IOException.class,()->decode(invalid));
     }
     @Test void uploadOfferRequiresAppearanceAndAnExactTypedGenerationHashSizeAndKind() throws IOException {
         String offer="{\"protocol\":1,\"type\":\"upload_offer\",\"generation\":\""+GENERATION+"\",\"hash\":\""+HASH+"\",\"bytes\":2048,\"kind\":\"ysm\",\"appearance\":{}}";
         assertEquals("ysm",decode(offer).get("kind").getAsString());
+        assertEquals("ysm:鲸鱼娘.ysm",decode(offer.replace("\"appearance\":{}","\"appearance\":{},\"modelId\":\"ysm:鲸鱼娘.ysm\"")).get("modelId").getAsString());
         for(String invalid:List.of(offer.replace("2048","2048.5"),offer.replace("2048","\"2048\""),offer.replace(GENERATION,"0-0-0-0-11"),
                 offer.replace(HASH,HASH.toUpperCase(Locale.ROOT)),offer.replace("\"ysm\"","\"gltf\""),offer.replace("2048","8388609"),
                 offer.replace("\"appearance\":{}","\"appearance\":{},\"modelId\":\"server_secret\"")))assertThrows(IOException.class,()->decode(invalid));
+    }
+    @Test void deletionRequiresExactSavedIdentityAndHandshakeReplayProtectionWithoutResourceSelection() throws IOException {
+        String request="{\"protocol\":1,\"type\":\"upload_delete\",\"requestId\":\""+GENERATION+"\",\"catalogToken\":\""+GENERATION+"\",\"requestSequence\":1,\"modelId\":\"ysm:鲸鱼娘.ysm\",\"hash\":\""+HASH+"\",\"kind\":\"ysm\",\"bytes\":2048}";
+        assertEquals("upload_delete",decode(request).get("type").getAsString());
+        for(String invalid:List.of(request.replace("\"requestSequence\":1","\"requestSequence\":0"),
+                request.replace("\"requestSequence\":1","\"requestSequence\":1.5"),
+                request.replace("\"requestSequence\":1","\"requestSequence\":\"1\""),
+                request.replace("\"requestSequence\":1","\"requestSequence\":9007199254740992"),
+                request.replace("\"catalogToken\":\""+GENERATION+"\",",""),
+                request.replace("ysm:鲸鱼娘.ysm","ysm:../other.ysm"),
+                request.replace(HASH,HASH.toUpperCase(Locale.ROOT)),request.replace("2048","21"),
+                request.replace("}",",\"owner\":\""+GENERATION+"\"}"),
+                request.replace("}",",\"url\":\"https://example.com/model.zip\"}")))
+            assertThrows(IOException.class,()->decode(invalid));
     }
     @Test void normalizesBoundedDefaultsAndRetainsAuthorRoamingConfiguration() throws IOException {
         JsonObject source=JsonParser.parseString("{\"variables\":{\"variable.服装\":1,\"variable.roaming.red_bow_headdress\":9},\"radioSelections\":{\"衣服\":2},\"offsetY\":-1}").getAsJsonObject();

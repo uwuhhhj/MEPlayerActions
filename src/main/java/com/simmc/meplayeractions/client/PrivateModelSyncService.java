@@ -35,6 +35,10 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
     private final PrivateAudienceCache audiences = new PrivateAudienceCache();
     private final LinkedHashSet<Offer> pendingTransfers = new LinkedHashSet<>(), activeTransfers = new LinkedHashSet<>();
     private final LinkedHashSet<UUID> pendingControls=new LinkedHashSet<>();
+    private final LinkedHashSet<UUID> pendingCatalogs=new LinkedHashSet<>();
+    private final LinkedHashSet<UUID> pendingDeleteReplies=new LinkedHashSet<>();
+    private final Set<OwnerHash> deleting=new HashSet<>();
+    private final Set<OwnerSource> deletingSources=new HashSet<>();
     private Policy policy = Policy.disabled();
     private BukkitTask maintenance;
     private boolean running;
@@ -45,6 +49,9 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
     private boolean cacheWarning;
     private long lastMaintenanceTick;
     private boolean maintenanceInitialized;
+    private boolean catalogRefreshInitialized;
+    private volatile boolean catalogRefreshing;
+    private long lastCatalogRefreshTick;
 
     /** Policy defaults never grant private asset publishing or viewing. Permissions are independent. */
     public record Policy(boolean enabled, int maxPayload, int maxBundleBytes, long maxStoredBytes,
@@ -143,12 +150,15 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         if(type.equals("hello")) {
             if(!rates.computeIfAbsent(owner,unused->new Rates()).hello.take(System.nanoTime()))return;
             Session previous=sessions.remove(owner);if(previous!=null)endSession(owner,previous,"new_handshake");
-            Session session=new Session(owner);sessions.put(owner,session);
+            Session session=new Session(owner);session.uploadCatalog=packet.getAsJsonArray("capabilities").asList().stream().anyMatch(value->value.getAsString().equals(PrivateUploadCatalog.CAPABILITY));sessions.put(owner,session);
             JsonObject ack=envelope("hello_ack");JsonArray capabilities=new JsonArray();capabilities.add(CAPABILITY);ack.add("capabilities",capabilities);
+            if(session.uploadCatalog){capabilities.add(PrivateUploadCatalog.CAPABILITY);ack.addProperty("uploadCatalogToken",session.uploadCatalogToken.toString());}
             ack.addProperty("allowedUpload",canUpload(player));ack.addProperty("allowedView",canView(player));
             ack.addProperty("maxPayload",policy.maxPayload());ack.addProperty("maxBundleBytes",effectiveBundleLimit(policy));
             ack.addProperty("heartbeatTicks",HEARTBEAT_TICKS);ack.addProperty("leaseTicks",LEASE_TICKS);
-            if(!send(player,ack,false))sessions.remove(owner);return;
+            if(!send(player,ack,false))sessions.remove(owner);
+            else if(session.uploadCatalog){updateCatalog(player,session);pumpCatalogs(tick);}
+            return;
         }
         Session session=sessions.get(owner);if(session==null)return;
         if(type.equals("clear")){cancelUpload(session);removePublication(owner,"owner_cleared");return;}
@@ -163,6 +173,7 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
                 case "private_heartbeat" -> heartbeat(player,session,packet,tick);
                 case "private_state" -> updateState(player,packet,tick);
                 case "private_event" -> event(player,packet,tick);
+                case "upload_delete" -> deleteUpload(player,session,packet);
                 default -> throw new IOException("unknown_private_message");
             }
         } catch(IOException | RuntimeException malformed) {error(player,"invalid_private_payload");}
@@ -181,19 +192,22 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         if(serverDisguised().contains(player.getUniqueId())){error(player,"server_model_priority");return;}
         int bytes=(int)PrivateModelBundle.integer(packet,"bytes",1,effectiveBundleLimit(policy));
         String hash=PrivateModelBundle.string(packet,"hash",64),kind=PrivateModelBundle.string(packet,"kind",16);
+        String sourceId=packet.has("modelId")?PrivateModelBundle.string(packet,"modelId",128):"";
+        if(packet.has("modelId")&&!session.uploadCatalog){error(player,"invalid_private_payload");return;}
         UUID generation=uuid(packet,"generation");Publication current=publications.get(player.getUniqueId());
         if(current!=null && current.generation.equals(generation)) {
-            if(current.hash.equals(hash) && current.kind.equals(kind) && current.bytes.length==bytes)sendCommitted(player,session,current);
+            if(current.hash.equals(hash) && current.kind.equals(kind) && current.bytes.length==bytes && current.sourceId.equals(sourceId))sendCommitted(player,session,current);
             else error(player,"private_generation_reused");return;
         }
         if(session.upload!=null) {
             Upload pending=session.upload;
-            if(pending.generation.equals(generation) && pending.hash.equals(hash) && pending.kind.equals(kind) && pending.expectedBytes==bytes) {
+            if(pending.generation.equals(generation) && pending.hash.equals(hash) && pending.kind.equals(kind) && pending.expectedBytes==bytes && pending.sourceId.equals(sourceId)) {
                 if(!pending.validating)acceptUpload(player,session,pending);return;
             }
             error(player,"private_upload_busy");return;
         }
-        if(uploads>=2){error(player,"private_upload_busy");return;}
+        if(uploads+deleting.size()>=2||deleting.contains(new OwnerHash(player.getUniqueId(),hash))
+                ||deletingSources.contains(new OwnerSource(player.getUniqueId(),sourceId))){error(player,"private_upload_busy");return;}
         long reservation=bytes+(long)PrivateModelBundle.MAX_BYTES;
         if(storedBytes+reservedBytes+reservation>policy.maxStoredBytes()){error(player,"private_storage_busy");return;}
         if(!limits.allowRequest(player.getUniqueId(),"private_upload","",tick,200) || !limits.allowAsset(player.getUniqueId(),hash,tick))
@@ -203,6 +217,7 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         if(!fitsAppearance(appearance,new JsonObject())){limits.releaseTransfer(player.getUniqueId());error(player,"private_appearance_size");return;}
         boolean probe=store!=null && store.enabled();
         Upload upload=new Upload(player.getUniqueId(),UUID.randomUUID(),generation,hash,kind,bytes,appearance,tick,reservation,!probe);
+        upload.sourceId=sourceId;
         session.upload=upload;reservedBytes+=reservation;uploads++;
         if(probe){probeCache(player,session,upload);return;}
         acceptUpload(player,session,upload);
@@ -214,11 +229,89 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         // Repeating accept never reallocates bytes or resets the upload's offset or total deadline.
         send(player,accepted,false);
     }
+    private void deleteUpload(Player player,Session session,JsonObject packet) throws IOException {
+        UUID request=uuid(packet,"requestId");String source=PrivateModelBundle.string(packet,"modelId",128),hash=PrivateModelBundle.string(packet,"hash",64),kind=PrivateModelBundle.string(packet,"kind",16);
+        int bytes=(int)PrivateModelBundle.integer(packet,"bytes",22,PrivateModelBundle.MAX_BYTES);
+        long sequence=PrivateModelBundle.integer(packet,"requestSequence",1,MAX_SEQUENCE);
+        if(!session.uploadCatalog){deleteFailed(player,session,new Delete(request,source,hash,kind,bytes,sequence),"private_delete_denied");return;}
+        if(!uuid(packet,"catalogToken").equals(session.uploadCatalogToken)) {
+            JsonObject failed=envelope("upload_delete_failed");failed.addProperty("requestId",request.toString());failed.addProperty("code","private_delete_stale");queueDeleteReply(player,session,failed);return;
+        }
+        Delete previous=session.deletes.get(request);
+        if(previous!=null) {
+            if(!previous.sourceId.equals(source)||!previous.hash.equals(hash)||!previous.kind.equals(kind)||previous.bytes!=bytes||previous.sequence!=sequence)throw new IOException("delete_request_reused");
+            if(previous.reply!=null)queueDeleteReply(player,session,previous.reply);return;
+        }
+        Delete operation=new Delete(request,source,hash,kind,bytes,sequence);
+        if(sequence<=session.lastDeleteSequence){deleteFailed(player,session,operation,"private_delete_stale");return;}
+        session.lastDeleteSequence=sequence;
+        if(!session.uploadCatalog||!canUpload(player)||store==null||!store.enabled()){deleteFailed(player,session,operation,"private_delete_denied");return;}
+        boolean exact=store.listUploaded(session.owner).stream().anyMatch(model->model.sourceId().equals(source)&&model.hash().equals(hash)&&model.kind().equals(kind)&&model.bytes()==bytes);
+        if(!exact){deleteFailed(player,session,operation,"private_delete_not_found");return;}
+        OwnerHash identity=new OwnerHash(session.owner,hash);OwnerSource sourceIdentity=new OwnerSource(session.owner,source);
+        boolean receiving=sessions.values().stream().anyMatch(active->active.upload!=null&&active.upload.owner.equals(session.owner)
+                &&(active.upload.hash.equals(hash)||active.upload.sourceId.equals(source)));
+        boolean validating=validations.stream().anyMatch(active->active.owner.equals(session.owner)&&(active.hash.equals(hash)||active.sourceId.equals(source)));
+        boolean full=session.deletes.size()>=16&&session.deletes.entrySet().stream().noneMatch(entry->entry.getValue().reply!=null&&!session.deleteReplies.containsKey(entry.getKey()));
+        if(full||receiving||validating||uploads+deleting.size()>=2||session.deletes.values().stream().anyMatch(active->active.reply==null)
+                ||deleting.contains(identity)||deletingSources.contains(sourceIdentity)) {
+            deleteFailed(player,session,operation,"private_delete_busy");return;
+        }
+        deleting.add(identity);deletingSources.add(sourceIdentity);
+        Publication deletingPublication=publications.get(session.owner);
+        if(deletingPublication!=null&&!deletingPublication.sourceId.equals(source))deletingPublication=null;
+        Publication publicationToRemove=deletingPublication;
+        rememberDelete(session,operation);PrivateModelStore current=store;
+        try {plugin.getServer().getScheduler().runTaskAsynchronously(plugin,()->{
+            boolean removed=false;String failure=null;
+            try {removed=current.deleteValidated(session.owner,source,hash,kind,bytes);}
+            catch(IOException invalid){
+                failure="cache_delete_pending_validation".equals(invalid.getMessage())?"private_delete_busy":"private_delete_failed";
+                if(!failure.equals("private_delete_busy"))cacheFailure(invalid);
+            }catch(RuntimeException invalid){failure="private_delete_failed";cacheFailure(invalid);}
+            boolean result=removed;String rejected=failure;
+            if(plugin.isEnabled())plugin.getServer().getScheduler().runTask(plugin,()->{
+                deleting.remove(identity);deletingSources.remove(sourceIdentity);
+                if(!running)return;
+                if(result&&publicationToRemove!=null&&publications.get(session.owner)==publicationToRemove)removePublication(session.owner,"upload_deleted");
+                Session active=sessions.get(session.owner);Player owner=Bukkit.getPlayer(session.owner);
+                if(active!=session||owner==null||!owner.isOnline())return;
+                if(!result){deleteFailed(owner,session,operation,rejected==null?"private_delete_not_found":rejected);return;}
+                JsonObject reply=envelope("upload_deleted");reply.addProperty("requestId",request.toString());reply.addProperty("modelId",source);reply.addProperty("hash",hash);operation.reply=reply;
+                queueDeleteReply(owner,session,reply);updateCatalog(owner,session);
+            });
+        });}catch(RuntimeException unavailable){deleting.remove(identity);deletingSources.remove(sourceIdentity);deleteFailed(player,session,operation,"private_delete_failed");}
+    }
+    private void rememberDelete(Session session,Delete operation) {
+        while(session.deletes.size()>=16) {
+            UUID terminal=session.deletes.entrySet().stream().filter(entry->entry.getValue().reply!=null&&!session.deleteReplies.containsKey(entry.getKey())).map(Map.Entry::getKey).findFirst().orElse(null);
+            if(terminal==null)break;session.deletes.remove(terminal);
+        }
+        if(session.deletes.size()<16)session.deletes.put(operation.request,operation);
+    }
+    private void deleteFailed(Player owner,Session session,Delete operation,String code) {
+        JsonObject reply=envelope("upload_delete_failed");reply.addProperty("requestId",operation.request.toString());reply.addProperty("code",code);operation.reply=reply;
+        rememberDelete(session,operation);queueDeleteReply(owner,session,reply);
+    }
+    private void queueDeleteReply(Player owner,Session session,JsonObject reply) {
+        UUID id=UUID.fromString(reply.get("requestId").getAsString());
+        if(send(owner,reply,false))session.deleteReplies.remove(id);
+        else if(session.deleteReplies.size()<16||session.deleteReplies.containsKey(id)){session.deleteReplies.put(id,reply);pendingDeleteReplies.add(session.owner);}
+    }
+    private void pumpDeleteReplies() {
+        for(UUID id:List.copyOf(pendingDeleteReplies)) {
+            Session session=sessions.get(id);Player owner=Bukkit.getPlayer(id);
+            if(session==null||owner==null||!owner.isOnline()){pendingDeleteReplies.remove(id);continue;}
+            if(!session.deleteReplies.isEmpty())queueDeleteReply(owner,session,session.deleteReplies.values().iterator().next());
+            if(session.deleteReplies.isEmpty())pendingDeleteReplies.remove(id);
+        }
+    }
     private void probeCache(Player player,Session session,Upload upload) {
         upload.validating=true;validations.add(upload);
         try {plugin.getServer().getScheduler().runTaskAsynchronously(plugin,()->{
             byte[] cached=null;
-            try {cached=store.load(upload.owner,upload.hash,upload.kind,upload.expectedBytes);}
+            try {cached=store.load(upload.owner,upload.hash,upload.kind,upload.expectedBytes);
+                if(cached!=null&&!upload.sourceId.isEmpty())store.recordValidatedIdentity(upload.owner,upload.sourceId,upload.hash,upload.kind,cached.length);}
             catch(IOException | RuntimeException failure){cacheFailure(failure);}
             byte[] result=cached;
             if(plugin.isEnabled())plugin.getServer().getScheduler().runTask(plugin,()->{
@@ -266,7 +359,10 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
                 if(!PrivateModelBundle.hash(upload.bytes).equals(upload.hash))failure="private_upload_integrity";
                 else {
                     PrivateModelBundle.validate(upload.bytes,upload.kind);
-                    if(store!=null && store.enabled())try{store.saveValidated(upload.owner,upload.hash,upload.bytes);}
+                    if(store!=null && store.enabled())try{
+                        if(upload.sourceId.isEmpty())store.saveValidated(upload.owner,upload.hash,upload.bytes);
+                        else store.saveValidated(upload.owner,upload.sourceId,upload.hash,upload.kind,upload.bytes);
+                    }
                     catch(IOException | RuntimeException cacheFailed){cacheFailure(cacheFailed);}
                 }
             }catch(IOException | RuntimeException invalid){failure="private_bundle_invalid";}
@@ -283,10 +379,12 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         if(isServerDisguised(player.getUniqueId())){error(player,"server_model_priority");return;}
         removePublication(player.getUniqueId(),"model_changed");
         Publication publication=new Publication(player.getUniqueId(),upload.generation,upload.hash,upload.kind,upload.bytes,upload.appearance,tick());
+        publication.sourceId=upload.sourceId;
         publication.flying=player.isFlying();
         publications.put(player.getUniqueId(),publication);storedBytes+=upload.bytes.length;
         session.committedUploadId=upload.id;session.committedPublication=publication;
         sendCommitted(player,session,publication);
+        updateCatalog(player,session);
     }
     private void sendCommitted(Player player,Session session,Publication publication) {
         JsonObject committed=envelope("upload_committed");committed.addProperty("generation",publication.generation.toString());committed.addProperty("hash",publication.hash);
@@ -390,6 +488,7 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
     private void maintain() {
         if(!running || !policy.enabled() && sessions.isEmpty() && publications.isEmpty() && uploads==0)return;
         long tick=tick();boolean validate=!maintenanceInitialized || distance(tick,lastMaintenanceTick)>=validationTicks;
+        refreshCatalog(tick);
         if(validate) {
             maintenanceInitialized=true;lastMaintenanceTick=tick;
             limits.pruneOffline(id->{Player player=Bukkit.getPlayer(id);return player!=null && player.isOnline();});
@@ -401,12 +500,14 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
             for(Session session:List.copyOf(sessions.values())) {
                 Player viewer=Bukkit.getPlayer(session.owner);
                 if(viewer==null || !viewer.isOnline()){sessions.remove(session.owner);endSession(session.owner,session,"offline");rates.remove(session.owner);continue;}
+                updateCatalog(viewer,session);
                 Upload upload=session.upload;
                 if(upload!=null && (distance(tick,upload.created)>=TRANSFER_TIMEOUT || distance(tick,upload.lastProgress)>=300 || !canUpload(viewer))) {
                     cancelUpload(session);error(viewer,"private_upload_expired");
                 }
             }
         }
+        pumpDeleteReplies();pumpCatalogs(tick);
         // A disabled/private-idle relay never asks the ModelEngine backend for its owners.
         if(!policy.enabled() || publications.isEmpty())return;
         for(Publication publication:publications.values()) {
@@ -551,11 +652,48 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         cancelUpload(session);removePublication(owner,reason);
         for(Offer offer:List.copyOf(session.offers.values()))removeOffer(Bukkit.getPlayer(owner),session,offer,reason);
         pendingControls.remove(owner);
+        pendingCatalogs.remove(owner);
+        pendingDeleteReplies.remove(owner);
         audiences.removeViewer(owner);
     }
     private void clearSessions(String reason) {
         for(var entry:List.copyOf(sessions.entrySet()))endSession(entry.getKey(),entry.getValue(),reason);
-        sessions.clear();publications.clear();storedBytes=0;audiences.clear();pendingTransfers.clear();activeTransfers.clear();pendingControls.clear();maintenanceInitialized=false;
+        sessions.clear();publications.clear();storedBytes=0;audiences.clear();pendingTransfers.clear();activeTransfers.clear();pendingControls.clear();pendingCatalogs.clear();pendingDeleteReplies.clear();maintenanceInitialized=false;
+    }
+    /** One shared worker refresh, not one disk scan for each player or game tick. */
+    private void refreshCatalog(long tick) {
+        if(store==null||!store.enabled()||!policy.enabled()||catalogRefreshing
+                ||catalogRefreshInitialized&&distance(tick,lastCatalogRefreshTick)<PrivateUploadCatalog.REFRESH_TICKS)return;
+        catalogRefreshInitialized=true;lastCatalogRefreshTick=tick;catalogRefreshing=true;PrivateModelStore current=store;
+        try {plugin.getServer().getScheduler().runTaskAsynchronously(plugin,()->{
+            try {current.refreshCatalog();}catch(IOException|RuntimeException failure){cacheFailure(failure);}
+            finally {catalogRefreshing=false;}
+        });}catch(RuntimeException unavailable){catalogRefreshing=false;cacheFailure(unavailable);}
+    }
+    private void updateCatalog(Player owner,Session session) {
+        if(!session.uploadCatalog)return;
+        boolean available=owner!=null&&owner.isOnline()&&canUpload(owner)&&store!=null&&store.enabled();
+        List<PrivateModelStore.UploadedModel> models=available?store.listUploaded(session.owner):List.of();
+        if(session.catalogInitialized&&session.catalogAvailable==available&&session.catalogModels.equals(models))return;
+        session.catalogInitialized=true;session.catalogAvailable=available;session.catalogModels=models;
+        session.catalogPackets=PrivateUploadCatalog.packets(models,available,policy.maxPayload(),++session.catalogRevision);
+        session.catalogIndex=0;pendingCatalogs.add(session.owner);
+    }
+    /** Metadata uses the existing connection/global budget and sends at most one fragment per tick. */
+    private void pumpCatalogs(long tick) {
+        List<UUID> rotation=List.copyOf(pendingCatalogs);
+        for(UUID id:rotation) {
+            Session session=sessions.get(id);Player owner=Bukkit.getPlayer(id);
+            if(session==null||owner==null||!owner.isOnline()){pendingCatalogs.remove(id);continue;}
+            updateCatalog(owner,session); // Revoke permission even while a multipart snapshot is pending.
+            if(session.lastCatalogSendTick==tick)continue;
+            if(session.catalogIndex>=session.catalogPackets.size()){pendingCatalogs.remove(id);continue;}
+            if(send(owner,session.catalogPackets.get(session.catalogIndex),false)) {
+                session.catalogIndex++;session.lastCatalogSendTick=tick;
+                if(session.catalogIndex==session.catalogPackets.size())pendingCatalogs.remove(id);
+            }
+        }
+        if(!rotation.isEmpty()&&pendingCatalogs.remove(rotation.getFirst()))pendingCatalogs.add(rotation.getFirst());
     }
     private void sendState(Player player,Publication publication) {
         if(player==null)return;Session session=sessions.get(player.getUniqueId());if(session==null)return;
@@ -613,15 +751,25 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         switch(type) {
             case "hello" -> {
                 keys.add("capabilities");JsonElement element=packet.get("capabilities");
-                if(element==null || !element.isJsonArray() || element.getAsJsonArray().size()!=1 || !element.getAsJsonArray().get(0).isJsonPrimitive()
-                        || !element.getAsJsonArray().get(0).getAsJsonPrimitive().isString() || !CAPABILITY.equals(element.getAsJsonArray().get(0).getAsString()))throw new IOException("capabilities");
+                if(element==null || !element.isJsonArray() || element.getAsJsonArray().size()<1 || element.getAsJsonArray().size()>2)throw new IOException("capabilities");
+                Set<String> seen=new HashSet<>();for(JsonElement capability:element.getAsJsonArray()) {
+                    if(!capability.isJsonPrimitive()||!capability.getAsJsonPrimitive().isString())throw new IOException("capabilities");
+                    String name=capability.getAsString();if(!Set.of(CAPABILITY,PrivateUploadCatalog.CAPABILITY).contains(name)||!seen.add(name))throw new IOException("capabilities");
+                }
+                if(!seen.contains(CAPABILITY))throw new IOException("capabilities");
             }
             case "upload_offer" -> {
                 keys.addAll(Set.of("generation","hash","bytes","kind","appearance"));uuid(packet,"generation");hash(packet);PrivateModelBundle.integer(packet,"bytes",1,PrivateModelBundle.MAX_BYTES);
                 if(!Set.of("bbmodel","ysm").contains(PrivateModelBundle.string(packet,"kind",16)))throw new IOException("kind");appearance(packet.get("appearance"));
+                if(packet.has("modelId")){keys.add("modelId");if(!PrivateModelStore.validSourceId(PrivateModelBundle.string(packet,"modelId",128)))throw new IOException("model_source");}
             }
             case "upload_chunk" -> {keys.addAll(Set.of("uploadId","index","data"));uuid(packet,"uploadId");PrivateModelBundle.integer(packet,"index",0,16383);PrivateModelBundle.string(packet,"data",16000);}
             case "upload_end" -> {keys.add("uploadId");uuid(packet,"uploadId");}
+            case "upload_delete" -> {
+                keys.addAll(Set.of("requestId","catalogToken","requestSequence","modelId","hash","kind","bytes"));uuid(packet,"requestId");uuid(packet,"catalogToken");PrivateModelBundle.integer(packet,"requestSequence",1,MAX_SEQUENCE);hash(packet);
+                if(!PrivateModelStore.validSourceId(PrivateModelBundle.string(packet,"modelId",128))||!Set.of("ysm","bbmodel").contains(PrivateModelBundle.string(packet,"kind",16)))throw new IOException("delete_identity");
+                PrivateModelBundle.integer(packet,"bytes",22,PrivateModelBundle.MAX_BYTES);
+            }
             case "private_status" -> {keys.addAll(Set.of("offerId","hash","status"));uuid(packet,"offerId");hash(packet);if(!Set.of("cached","missing","rejected").contains(PrivateModelBundle.string(packet,"status",16)))throw new IOException("status");}
             case "private_ready" -> {keys.addAll(Set.of("owner","generation","hash"));uuid(packet,"owner");uuid(packet,"generation");hash(packet);}
             case "private_heartbeat" -> {
@@ -686,17 +834,23 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
     private static final class Session {
         final UUID owner;final Map<UUID,Offer> offers=new LinkedHashMap<>();final Map<UUID,UUID> rejected=new LinkedHashMap<>();
         final Map<UUID,Publication> pendingStates=new LinkedHashMap<>();Publication pendingCommit,committedPublication;UUID committedUploadId;Upload upload;
+        boolean uploadCatalog,catalogAvailable,catalogInitialized;long catalogRevision,lastCatalogSendTick=-1;
+        final UUID uploadCatalogToken=UUID.randomUUID();long lastDeleteSequence;
+        List<PrivateModelStore.UploadedModel> catalogModels=List.of();List<JsonObject> catalogPackets=List.of();int catalogIndex;
+        final Map<UUID,Delete> deletes=new LinkedHashMap<>();final Map<UUID,JsonObject> deleteReplies=new LinkedHashMap<>();
         Session(UUID owner){this.owner=owner;}
     }
     private static final class Upload {
         final UUID owner,id,generation;final String hash,kind;byte[] bytes;final int expectedBytes;final JsonObject appearance;final long created,reservation;
         int offset,index;long lastProgress;boolean validating,released,transferReserved=true;
+        String sourceId="";
         Upload(UUID owner,UUID id,UUID generation,String hash,String kind,int bytes,JsonObject appearance,long tick,long reservation,boolean allocate){this.owner=owner;this.id=id;this.generation=generation;this.hash=hash;this.kind=kind;expectedBytes=bytes;this.bytes=allocate?new byte[bytes]:null;this.appearance=appearance;created=lastProgress=tick;this.reservation=reservation;}
     }
     private static final class Publication {
         final UUID owner,generation;final String hash,kind;final byte[] bytes;JsonObject appearance,extra;
         final Set<UUID> offeredViewers=new HashSet<>();
         long sequence,eventSequence,lease;boolean flying;
+        String sourceId="";
         Publication(UUID owner,UUID generation,String hash,String kind,byte[] bytes,JsonObject appearance,long tick){this.owner=owner;this.generation=generation;this.hash=hash;this.kind=kind;this.bytes=bytes;this.appearance=appearance;lease=tick;
             extra=new JsonObject();extra.addProperty("id","");extra.addProperty("loop","ONCE");extra.addProperty("locked",false);extra.addProperty("sequence",0);}
     }
@@ -706,6 +860,12 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         Offer(UUID viewer,Publication publication,long tick){this.viewer=viewer;this.publication=publication;created=lastProgress=tick;}
     }
     private record AudienceCandidate(UUID viewer,double distance) {}
+    private record OwnerHash(UUID owner,String hash) {}
+    private record OwnerSource(UUID owner,String sourceId) {}
+    private static final class Delete {
+        final UUID request;final String sourceId,hash,kind;final int bytes;final long sequence;JsonObject reply;
+        Delete(UUID request,String sourceId,String hash,String kind,int bytes,long sequence){this.request=request;this.sourceId=sourceId;this.hash=hash;this.kind=kind;this.bytes=bytes;this.sequence=sequence;}
+    }
     private static final class Rates {final Rate state=new Rate(),event=new Rate();final HelloRate hello=new HelloRate();}
     private static final class HelloRate {
         long last;boolean initialized;
