@@ -27,24 +27,20 @@ import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Resource-pack and offline delivery retain the same author interpretation as the asset reader. */
-class SharedBbModelDeliveryTest
-{
+class SharedBbModelDeliveryTest {
     @TempDir
     Path temporary;
 
     @Test
-    void resourcePackRetainsAuthorProfileAndWireHashAfterNativeConversion() throws Exception
-    {
+    void resourcePackRetainsAuthorProfileAndWireHashAfterNativeConversion() throws Exception {
         JsonObject source = author();
         byte[] raw = bytes(source);
         String hash = AssetTransfer.hash(raw);
         BbModelAsset.Decoded decoded = BbModelAsset.read(raw);
         Map<String, byte[]> resources = pack(source, hash);
-        LocalModelLibrary.Loaded loaded = PackModelLibrary.load((id, maximum) ->
-        {
+        LocalModelLibrary.Loaded loaded = PackModelLibrary.load((id, maximum) -> {
             byte[] data = resources.get(id);
-            if (data == null || data.length > maximum)
-            {
+            if (data == null || data.length > maximum) {
                 throw new IOException("Missing resource");
             }
 
@@ -61,8 +57,7 @@ class SharedBbModelDeliveryTest
     }
 
     @Test
-    void offlineCatalogUsesTheSameImporterWithoutRewritingOriginalCachedBytes() throws Exception
-    {
+    void offlineCatalogUsesTheSameImporterWithoutRewritingOriginalCachedBytes() throws Exception {
         byte[] raw = bytes(author());
         String hash = AssetTransfer.hash(raw);
         ServerModelCache cache = new ServerModelCache(this.temporary);
@@ -80,34 +75,26 @@ class SharedBbModelDeliveryTest
     }
 
     @Test
-    void commonAssetReaderRetainsEditorFaceCornersThroughNativeRuntimeBaking() throws Exception
-    {
+    void commonAssetReaderRetainsEditorFaceCornersThroughNativeRuntimeBaking() throws Exception {
         List<BbModel.Vertex> vertices = BbModelAsset.read(bytes(author())).model().basisVertices();
         // Official north face: texture TL, BL, BR, TR at (+X,+Y,-Z),
         // (+X,-Y,-Z), (-X,-Y,-Z), (-X,+Y,-Z). A nonzero bone pivot
         // must not change either the authored position or its texture corner.
         assertEquals(4, vertices.size(), "Missing faces must not acquire geometry during either conversion step");
-        float[][] expected =
-        {
-                { 1, 2, 0, 0, 0 },
-                { 1, 0, 0, 0, 1 },
-                { 0, 0, 0, 1, 1 },
-                { 0, 2, 0, 1, 0 } };
-        for (int i = 0; i < expected.length; i++)
-        {
+        float[][] expected = { { 1, 2, 0, 0, 0 }, { 1, 0, 0, 0, 1 }, { 0, 0, 0, 1, 1 }, { 0, 2, 0, 1, 0 } };
+        for (int i = 0; i < expected.length; i++) {
             BbModel.Vertex vertex = vertices.get(i);
-            assertArrayEquals(new float[]
-            { expected[i][0] / 16, expected[i][1] / 16, expected[i][2] / 16, expected[i][3], expected[i][4], 0, 0, -1 },
-                    new float[]
-                    { vertex.x(), vertex.y(), vertex.z(), vertex.u(), vertex.v(), vertex.nx(), vertex.ny(),
+            assertArrayEquals(
+                    new float[] { expected[i][0] / 16, expected[i][1] / 16, expected[i][2] / 16, expected[i][3],
+                            expected[i][4], 0, 0, -1 },
+                    new float[] { vertex.x(), vertex.y(), vertex.z(), vertex.u(), vertex.v(), vertex.nx(), vertex.ny(),
                             vertex.nz() },
                     1e-6f);
         }
     }
 
     @Test
-    void missingExternalTextureDoesNotBecomeAnOfflineUsableServerAsset() throws Exception
-    {
+    void missingExternalTextureDoesNotBecomeAnOfflineUsableServerAsset() throws Exception {
         JsonObject source = author();
         JsonObject texture = source.getAsJsonArray("textures").get(0).getAsJsonObject();
         texture.addProperty("source", "");
@@ -121,8 +108,7 @@ class SharedBbModelDeliveryTest
         assertArrayEquals(raw, Files.readAllBytes(this.temporary.resolve(hash + ".bbmodel")));
     }
 
-    private static JsonObject author() throws IOException
-    {
+    private static JsonObject author() throws IOException {
         JsonObject source = JsonParser.parseString("""
                 {"meta":{"format_version":"4.10"},"name":"author","resolution":{"width":1,"height":1},
                  "elements":[
@@ -143,8 +129,7 @@ class SharedBbModelDeliveryTest
         return source;
     }
 
-    private static Map<String, byte[]> pack(JsonObject source, String hash)
-    {
+    private static Map<String, byte[]> pack(JsonObject source, String hash) {
         Map<String, byte[]> resources = new HashMap<>();
         JsonObject shared = source.deepCopy();
         JsonObject texture = shared.getAsJsonArray("textures").get(0).getAsJsonObject();
@@ -160,8 +145,7 @@ class SharedBbModelDeliveryTest
         return resources;
     }
 
-    private static byte[] bytes(JsonObject source)
-    {
+    private static byte[] bytes(JsonObject source) {
         return source.toString().getBytes(StandardCharsets.UTF_8);
     }
 }

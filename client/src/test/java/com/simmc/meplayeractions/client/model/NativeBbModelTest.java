@@ -23,14 +23,12 @@ import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NativeBbModelTest
-{
+class NativeBbModelTest {
     @TempDir
     Path directory;
 
     @Test
-    void matureConverterImportsSeparateGroupsMeshAndDeclaredLocatorsIntoNativeRuntime() throws Exception
-    {
+    void matureConverterImportsSeparateGroupsMeshAndDeclaredLocatorsIntoNativeRuntime() throws Exception {
         JsonObject source = source();
         RawYsmModel raw = BBToRawConverter.convert(BBModelParser.parse(source.toString()));
         assertTrue(raw.mainEntity.mainModel.bones.stream().anyMatch(bone -> bone.name.equals("Body")));
@@ -53,8 +51,7 @@ class NativeBbModelTest
     }
 
     @Test
-    void numericBezierBakingPreservesAuthorCurveInsteadOfDroppingOrUsingAnEndpointLine() throws Exception
-    {
+    void numericBezierBakingPreservesAuthorCurveInsteadOfDroppingOrUsingAnEndpointLine() throws Exception {
         RawYsmModel raw = BBToRawConverter.convert(BBModelParser.parse(source().toString()));
         RawYsmModel.RawAnimation authored = raw.mainEntity.animationFiles.get("animation-main").animations
                 .get("authored");
@@ -67,8 +64,7 @@ class NativeBbModelTest
     }
 
     @Test
-    void standardControllerAndTimelineSourcesSurviveTheExistingNativeProfileAdapter() throws Exception
-    {
+    void standardControllerAndTimelineSourcesSurviveTheExistingNativeProfileAdapter() throws Exception {
         JsonObject source = source();
         RawYsmModel raw = BBToRawConverter.convert(BBModelParser.parse(source.toString()));
         RawYsmModel.RawAnimationController controller = raw.mainEntity.animationControllerFiles.getFirst().controllers
@@ -87,8 +83,7 @@ class NativeBbModelTest
     }
 
     @Test
-    void localSelectionAndPassivePrivateDecodeUseIdenticalMatureConversion() throws Exception
-    {
+    void localSelectionAndPassivePrivateDecodeUseIdenticalMatureConversion() throws Exception {
         Path file = this.directory.resolve("author.bbmodel");
         Files.write(file, bytes(source()));
         LocalModelLibrary library = new LocalModelLibrary(this.directory);
@@ -102,8 +97,7 @@ class NativeBbModelTest
     }
 
     @Test
-    void declaredCompanionPngCanBeSharedWithoutServerPathsOrASecondFilesystemLookup() throws Exception
-    {
+    void declaredCompanionPngCanBeSharedWithoutServerPathsOrASecondFilesystemLookup() throws Exception {
         JsonObject source = source();
         JsonObject texture = source.getAsJsonArray("textures").get(0).getAsJsonObject();
         texture.addProperty("source", "");
@@ -119,8 +113,7 @@ class NativeBbModelTest
     }
 
     @Test
-    void escapedCompanionPathsAndDuplicateJsonAreRejectedBeforeSourceConversion() throws Exception
-    {
+    void escapedCompanionPathsAndDuplicateJsonAreRejectedBeforeSourceConversion() throws Exception {
         JsonObject source = source();
         JsonObject texture = source.getAsJsonArray("textures").get(0).getAsJsonObject();
         texture.addProperty("source", "");
@@ -133,16 +126,14 @@ class NativeBbModelTest
     }
 
     @Test
-    void internalRuntimeExportsRemainIdenticalRatherThanBeingConvertedTwice() throws Exception
-    {
+    void internalRuntimeExportsRemainIdenticalRatherThanBeingConvertedTwice() throws Exception {
         byte[] bytes = YsmFolderModel.bundledDefault();
         YsmFolderModel.Imported imported = NativeBbModel.read(bytes, Map.of("model.bbmodel", bytes), null);
         assertArrayEquals(bytes, imported.raw());
     }
 
     @Test
-    void unnamedEmbeddedTextureRemainsUsableAndHasStableDerivedIdentity() throws Exception
-    {
+    void unnamedEmbeddedTextureRemainsUsableAndHasStableDerivedIdentity() throws Exception {
         JsonObject source = source();
         JsonObject texture = source.getAsJsonArray("textures").get(0).getAsJsonObject();
         texture.remove("name");
@@ -157,8 +148,7 @@ class NativeBbModelTest
     }
 
     @Test
-    void unnamedTextureMetadataDoesNotCollapseOrReplaceAnotherDeclaredTexture() throws Exception
-    {
+    void unnamedTextureMetadataDoesNotCollapseOrReplaceAnotherDeclaredTexture() throws Exception {
         JsonObject source = source();
         JsonObject first = source.getAsJsonArray("textures").get(0).getAsJsonObject();
         JsonObject second = first.deepCopy();
@@ -176,8 +166,7 @@ class NativeBbModelTest
                 .anyMatch(texture -> texture.path().endsWith("mpa_embedded_0.png")));
     }
 
-    static JsonObject source() throws IOException
-    {
+    static JsonObject source() throws IOException {
         JsonObject model = JsonParser
                 .parseString(
                         """
@@ -206,13 +195,11 @@ class NativeBbModelTest
         return model;
     }
 
-    private static byte[] bytes(JsonObject value)
-    {
+    private static byte[] bytes(JsonObject value) {
         return value.toString().getBytes(StandardCharsets.UTF_8);
     }
 
-    private static byte[] png() throws IOException
-    {
+    private static byte[] png() throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         ImageIO.write(new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB), "png", bytes);
         return bytes.toByteArray();

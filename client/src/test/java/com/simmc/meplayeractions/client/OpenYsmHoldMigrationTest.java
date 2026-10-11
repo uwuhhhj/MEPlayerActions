@@ -16,21 +16,16 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Regressions for the original predicate/format/request semantics, including the actual bundled arm clip. */
-class OpenYsmHoldMigrationTest
-{
+class OpenYsmHoldMigrationTest {
     private static final String MAIN = "player.hold_mainhand", OFF = "player.hold_offhand";
     private static final LocalMotionPolicy POLICY = new LocalMotionPolicy(Set.of("swing"), Map.of(), 17, 8, .02, true,
             true, false, "", "", "", 0, 0, 0, 0);
 
     @Test
-    void modernAndPrimaryAnimationsKeepTheirAuthoredLoopWhileOldSecondaryKeepsPredicateFallback()
-    {
-        for (String loop : List.of("ONCE", "HOLD", "LOOP"))
-        {
-            for (int version : List.of(18, 19, 65535))
-            {
-                for (boolean primary : List.of(false, true))
-                {
+    void modernAndPrimaryAnimationsKeepTheirAuthoredLoopWhileOldSecondaryKeepsPredicateFallback() {
+        for (String loop : List.of("ONCE", "HOLD", "LOOP")) {
+            for (int version : List.of(18, 19, 65535)) {
+                for (boolean primary : List.of(false, true)) {
                     Catalog catalog = catalog(version, primary, Map.of("hold_mainhand:sword", loop,
                             "hold_offhand:shield", loop, "use_offhand:block", loop, "swing:sword", loop));
                     boolean authored = version >= 19 || primary;
@@ -49,8 +44,7 @@ class OpenYsmHoldMigrationTest
     }
 
     @Test
-    void rawFolderUsesInternalVersion65535AndActualDefaultSwordRetainsItsAuthoredHold() throws Exception
-    {
+    void rawFolderUsesInternalVersion65535AndActualDefaultSwordRetainsItsAuthoredHold() throws Exception {
         BbModel model = BbModel.parse(YsmFolderModel.bundledDefault());
         assertEquals(65535, model.animationFormatVersion());
         assertTrue(model.animationFromPrimaryAssembly("hold_mainhand:sword"));
@@ -63,21 +57,18 @@ class OpenYsmHoldMigrationTest
     }
 
     @Test
-    void realBundledSwordKeepsAuthoredFinalPosePastMultipleLengthsWithoutRestarting() throws Exception
-    {
+    void realBundledSwordKeepsAuthoredFinalPosePastMultipleLengthsWithoutRestarting() throws Exception {
         BbModel model = BbModel.parse(YsmFolderModel.bundledDefault());
         EntityAnimationController motion = new EntityAnimationController();
         AnimationPlayer player = new AnimationPlayer(model);
         Matrix4f finalArm = null;
         long started = -1;
         int finalTick = 100 + (int) Math.ceil(model.animationLengthTicks("hold_mainhand:sword")) + 5;
-        for (int tick = 100; tick <= finalTick + 40; tick++)
-        {
+        for (int tick = 100; tick <= finalTick + 40; tick++) {
             motion.update(tick, sample(state(sword(1), ItemState.EMPTY, Hand.NONE, Hand.NONE)), POLICY, List.of(),
                     model.animationCatalog());
             Layer held = hold(motion, MAIN);
-            if (tick == 100)
-            {
+            if (tick == 100) {
                 started = held.startedAtTick();
             }
 
@@ -87,13 +78,11 @@ class OpenYsmHoldMigrationTest
             // Parent-relative arm matrices isolate the actual hold from unrelated body/physics controllers.
             Matrix4f arm = new Matrix4f(player.boneTransform("Arm").orElseThrow()).invert()
                     .mul(player.boneTransform("RightArm").orElseThrow());
-            if (tick == finalTick)
-            {
+            if (tick == finalTick) {
                 finalArm = arm;
             }
 
-            if (tick > finalTick)
-            {
+            if (tick > finalTick) {
                 assertTrue(finalArm.equals(arm, 1e-4f), "Authored last arm pose rewound at tick " + tick);
             }
 
@@ -101,14 +90,12 @@ class OpenYsmHoldMigrationTest
     }
 
     @Test
-    void sameItemRequestsAndPauseKeepTheStartButAnActualWeaponSwitchRestartsExactlyOnce()
-    {
+    void sameItemRequestsAndPauseKeepTheStartButAnActualWeaponSwitchRestartsExactlyOnce() {
         Catalog catalog = catalog(65535, true, Map.of("hold_mainhand:sword", "HOLD", "hold_mainhand:empty", "LOOP"));
         EntityAnimationController motion = new EntityAnimationController();
         update(motion, 100, state(sword(1), ItemState.EMPTY, Hand.NONE, Hand.NONE), catalog);
         Layer first = hold(motion, MAIN);
-        for (int tick = 101; tick < 130; tick++)
-        {
+        for (int tick = 101; tick < 130; tick++) {
             update(motion, tick, state(sword(1), ItemState.EMPTY, Hand.NONE, tick == 104 ? Hand.MAIN : Hand.NONE),
                     catalog);
             assertEquals(first, hold(motion, MAIN));
@@ -118,24 +105,21 @@ class OpenYsmHoldMigrationTest
         update(motion, 131, state(sword(2), ItemState.EMPTY, Hand.NONE, Hand.NONE), catalog);
         Layer switched = hold(motion, MAIN);
         assertEquals(131, switched.startedAtTick());
-        for (int tick = 132; tick < 155; tick++)
-        {
+        for (int tick = 132; tick < 155; tick++) {
             update(motion, tick, state(sword(2), ItemState.EMPTY, Hand.NONE, Hand.NONE), catalog);
             assertEquals(switched, hold(motion, MAIN));
         }
     }
 
     @Test
-    void damagedTrackedWeaponsIgnoreComponentChangesButDifferentItemTypesStillRestart()
-    {
+    void damagedTrackedWeaponsIgnoreComponentChangesButDifferentItemTypesStillRestart() {
         Catalog catalog = catalog(65535, true, Map.of("hold_mainhand:sword", "HOLD"));
         EntityAnimationController motion = new EntityAnimationController();
         ItemState damaged = new ItemState("minecraft:diamond_sword", Set.of(), "sword", "none", false, false, 1, true,
                 "damage-1");
         update(motion, 100, state(damaged, ItemState.EMPTY, Hand.NONE, Hand.NONE), catalog);
         Layer first = hold(motion, MAIN);
-        for (int tick = 101; tick < 130; tick++)
-        {
+        for (int tick = 101; tick < 130; tick++) {
             ItemState wear = new ItemState("minecraft:diamond_sword", Set.of(), "sword", "none", false, false, tick,
                     true, "damage-" + tick);
             update(motion, tick, state(wear, ItemState.EMPTY, Hand.NONE, Hand.NONE), catalog);
@@ -148,12 +132,10 @@ class OpenYsmHoldMigrationTest
     }
 
     @Test
-    void intactComponentAndCountChangesRestartEvenWhenTheirDiagnosticHashesCollide()
-    {
+    void intactComponentAndCountChangesRestartEvenWhenTheirDiagnosticHashesCollide() {
         Catalog catalog = catalog(65535, true, Map.of("hold_mainhand:sword", "HOLD"));
         EntityAnimationController motion = new EntityAnimationController();
-        for (int tick = 100; tick <= 102; tick++)
-        {
+        for (int tick = 100; tick <= 102; tick++) {
             // The production key compares native stacks; this equal-hash fixture protects that boundary.
             ItemState item = new ItemState("minecraft:diamond_sword", Set.of(), "sword", "none", false, false, 7, false,
                     tick == 100 ? List.of("normal", 1) : List.of("enchanted", 2));
@@ -163,40 +145,33 @@ class OpenYsmHoldMigrationTest
     }
 
     @Test
-    void firstDurabilityChangeReadsThePreviouslyTrackedNativeStackDamageWithoutRestarting()
-    {
+    void firstDurabilityChangeReadsThePreviouslyTrackedNativeStackDamageWithoutRestarting() {
         Catalog catalog = catalog(65535, true, Map.of("hold_mainhand:sword", "HOLD"));
         EntityAnimationController motion = new EntityAnimationController();
-        final class NativeStackKey implements TrackedItemComparison
-        {
+        final class NativeStackKey implements TrackedItemComparison {
             final String snapshot;
             final boolean[] liveDamage;
 
-            NativeStackKey(String snapshot, boolean[] liveDamage)
-            {
+            NativeStackKey(String snapshot, boolean[] liveDamage) {
                 this.snapshot = snapshot;
                 this.liveDamage = liveDamage;
             }
 
-            public boolean isDamaged()
-            {
+            public boolean isDamaged() {
                 return this.liveDamage[0];
             }
 
             @Override
-            public boolean equals(Object other)
-            {
+            public boolean equals(Object other) {
                 return other instanceof NativeStackKey key && this.snapshot.equals(key.snapshot);
             }
 
             @Override
-            public int hashCode()
-            {
+            public int hashCode() {
                 return this.snapshot.hashCode();
             }
         }
-        boolean[] liveDamage =
-        { false };
+        boolean[] liveDamage = { false };
         ItemState fresh = new ItemState("minecraft:diamond_sword", Set.of(), "sword", "none", false, false, 1, false,
                 new NativeStackKey("damage-0", liveDamage));
         update(motion, 100, state(fresh, ItemState.EMPTY, Hand.NONE, Hand.NONE), catalog);
@@ -209,55 +184,45 @@ class OpenYsmHoldMigrationTest
         // A separate intact tracked stack still uses its full native state for future comparisons.
         update(motion, 102, state(ItemState.EMPTY, ItemState.EMPTY, Hand.NONE, Hand.NONE), catalog);
         ItemState replacement = new ItemState("minecraft:diamond_sword", Set.of(), "sword", "none", false, false, 3,
-                false, new NativeStackKey("replacement", new boolean[]
-                { false }));
+                false, new NativeStackKey("replacement", new boolean[] { false }));
         update(motion, 103, state(replacement, ItemState.EMPTY, Hand.NONE, Hand.NONE), catalog);
         assertEquals(103, hold(motion, MAIN).startedAtTick());
         ItemState enchanted = new ItemState("minecraft:diamond_sword", Set.of(), "sword", "none", false, false, 4,
-                false, new NativeStackKey("replacement-enchanted", new boolean[]
-                { false }));
+                false, new NativeStackKey("replacement-enchanted", new boolean[] { false }));
         update(motion, 104, state(enchanted, ItemState.EMPTY, Hand.NONE, Hand.NONE), catalog);
         assertEquals(104, hold(motion, MAIN).startedAtTick());
     }
 
     @Test
-    void inPlaceTrackedStackChangesDoNotRestartButReplacementStacksWithDifferentComponentsDo()
-    {
-        final class NativeStack
-        {
+    void inPlaceTrackedStackChangesDoNotRestartButReplacementStacksWithDifferentComponentsDo() {
+        final class NativeStack {
             String components;
             int count;
 
-            NativeStack(String components, int count)
-            {
+            NativeStack(String components, int count) {
                 this.components = components;
                 this.count = count;
             }
         }
-        final class Comparison implements TrackedItemComparison
-        {
+        final class Comparison implements TrackedItemComparison {
             final NativeStack tracked;
 
-            Comparison(NativeStack tracked)
-            {
+            Comparison(NativeStack tracked) {
                 this.tracked = tracked;
             }
 
-            public boolean isDamaged()
-            {
+            public boolean isDamaged() {
                 return false;
             }
 
             @Override
-            public boolean equals(Object other)
-            {
+            public boolean equals(Object other) {
                 return other instanceof Comparison key && this.tracked.count == key.tracked.count
                         && this.tracked.components.equals(key.tracked.components);
             }
 
             @Override
-            public int hashCode()
-            {
+            public int hashCode() {
                 return Objects.hash(this.tracked.components, this.tracked.count);
             }
         }
@@ -283,16 +248,13 @@ class OpenYsmHoldMigrationTest
     }
 
     @Test
-    void authoredOnceDoesNotRestartAfterFinishingAndChangedRequestedLoopStartsANewRequest() throws Exception
-    {
+    void authoredOnceDoesNotRestartAfterFinishingAndChangedRequestedLoopStartsANewRequest() throws Exception {
         // Exercise the actual converted skeleton/track with an authored ONCE variant and an observable start timeline.
         JsonObject raw = JsonParser.parseString(new String(YsmFolderModel.bundledDefault(), StandardCharsets.UTF_8))
                 .getAsJsonObject();
-        for (JsonElement element : raw.getAsJsonArray("animations"))
-        {
+        for (JsonElement element : raw.getAsJsonArray("animations")) {
             JsonObject clip = element.getAsJsonObject();
-            if (clip.get("name").getAsString().equals("hold_mainhand:sword"))
-            {
+            if (clip.get("name").getAsString().equals("hold_mainhand:sword")) {
                 clip.addProperty("loop", "ONCE");
                 clip.getAsJsonObject("animators").add("hold-start-proof", JsonParser.parseString("""
                         {"type":"effect","keyframes":[{"channel":"timeline","time":0,
@@ -304,8 +266,7 @@ class OpenYsmHoldMigrationTest
         EntityAnimationController motion = new EntityAnimationController();
         AnimationPlayer player = new AnimationPlayer(model);
         Catalog once = model.animationCatalog();
-        for (int tick = 100; tick < 160; tick++)
-        {
+        for (int tick = 100; tick < 160; tick++) {
             update(motion, tick, state(sword(1), ItemState.EMPTY, Hand.NONE, Hand.NONE), once);
             assertEquals(100, hold(motion, MAIN).startedAtTick());
             assertEquals("ONCE", hold(motion, MAIN).loop());
@@ -318,31 +279,25 @@ class OpenYsmHoldMigrationTest
     }
 
     @Test
-    void chargedAndFishingSpecialPredicatesDoNotResetForItemComponentsAndBothHandsUseTheSharedClock()
-    {
+    void chargedAndFishingSpecialPredicatesDoNotResetForItemComponentsAndBothHandsUseTheSharedClock() {
         Catalog catalog = catalog(65535, true, Map.of("hold_mainhand:charged_crossbow", "HOLD",
                 "hold_offhand:charged_crossbow", "ONCE", "hold_mainhand:fishing", "LOOP"));
         VanillaYsmAnimations.HandPlayback body = new HandPlayback();
         VanillaYsmAnimations.HandPlayback firstPerson = new HandPlayback();
-        for (int tick = 100; tick < 130; tick++)
-        {
+        for (int tick = 100; tick < 130; tick++) {
             ItemState crossbow = new ItemState("minecraft:crossbow", Set.of(), "crossbow", "crossbow", false, true,
                     tick);
             VanillaState state = state(crossbow, crossbow, Hand.NONE, Hand.NONE);
             for (Map.Entry<String, VanillaYsmAnimations.Selection> entry : VanillaYsmAnimations.select(state, catalog)
-                    .slots().entrySet())
-
-            {
-                if (entry.getValue().directive() == Directive.PLAY)
-                {
+                    .slots().entrySet()) {
+                if (entry.getValue().directive() == Directive.PLAY) {
                     assertEquals(100, body.start(entry.getKey(), entry.getValue(), state, tick));
                     assertEquals(100, firstPerson.start(entry.getKey(), entry.getValue(), state, tick));
                 }
             }
 
         }
-        for (int tick = 130; tick < 140; tick++)
-        {
+        for (int tick = 130; tick < 140; tick++) {
             ItemState rod = new ItemState("minecraft:fishing_rod", Set.of(), "fishing_rod", "none", false, false, tick);
             VanillaState state = new VanillaState(false, 0, false, false, false, rod, ItemState.EMPTY, Hand.NONE, 0,
                     Hand.NONE, 0, true, "", Set.of(), false, false);
@@ -353,8 +308,7 @@ class OpenYsmHoldMigrationTest
     }
 
     @Test
-    void metadataInventoriesRejectUnknownOriginsMissingLoopsAndInvalidVersions()
-    {
+    void metadataInventoriesRejectUnknownOriginsMissingLoopsAndInvalidVersions() {
         assertThrows(IllegalArgumentException.class,
                 () -> new Catalog(List.of("a"), 65536, Map.of("a", "HOLD"), Set.of()));
         assertThrows(IllegalArgumentException.class, () -> new Catalog(List.of("a"), 19, Map.of(), Set.of()));
@@ -365,40 +319,33 @@ class OpenYsmHoldMigrationTest
                 new Catalog(List.of("hold_mainhand:sword"))).slots().get(MAIN).loop());
     }
 
-    private static Catalog catalog(int version, boolean primary, Map<String, String> loops)
-    {
+    private static Catalog catalog(int version, boolean primary, Map<String, String> loops) {
         return new Catalog(loops.keySet(), version, loops, primary ? loops.keySet() : Set.of());
     }
 
-    private static ItemState sword(long revision)
-    {
+    private static ItemState sword(long revision) {
         return new ItemState("minecraft:diamond_sword", Set.of(), "sword", "none", false, false, revision);
     }
 
-    private static ItemState shield(long revision)
-    {
+    private static ItemState shield(long revision) {
         return new ItemState("minecraft:shield", Set.of(), "shield", "block", false, false, revision);
     }
 
-    private static VanillaState state(ItemState main, ItemState off, Hand using, Hand swinging)
-    {
+    private static VanillaState state(ItemState main, ItemState off, Hand using, Hand swinging) {
         return new VanillaState(false, 0, false, false, false, main, off, using, using == Hand.NONE ? 0 : 1, swinging,
                 0, false, "", Set.of(), false, false);
     }
 
-    private static EntityAnimationController.Sample sample(VanillaState state)
-    {
+    private static EntityAnimationController.Sample sample(VanillaState state) {
         return new EntityAnimationController.Sample(0, 64, 0, true, false, false, false, false, false, false, false, "",
                 false, 0, false, false, true, false, state);
     }
 
-    private static Layer hold(EntityAnimationController controller, String slot)
-    {
+    private static Layer hold(EntityAnimationController controller, String slot) {
         return controller.layers().stream().filter(layer -> layer.layer().equals(slot)).findFirst().orElseThrow();
     }
 
-    private static void update(EntityAnimationController controller, long tick, VanillaState state, Catalog catalog)
-    {
+    private static void update(EntityAnimationController controller, long tick, VanillaState state, Catalog catalog) {
         controller.update(tick, sample(state), POLICY, List.of(), catalog);
     }
 }

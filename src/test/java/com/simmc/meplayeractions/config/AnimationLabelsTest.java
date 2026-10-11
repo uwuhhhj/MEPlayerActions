@@ -12,27 +12,22 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import java.util.List;
 
-class AnimationLabelsTest
-{
-    private YamlConfiguration config()
-    {
+class AnimationLabelsTest {
+    private YamlConfiguration config() {
         return YamlConfiguration.loadConfiguration(
                 new InputStreamReader(getClass().getResourceAsStream("/config.yml"), StandardCharsets.UTF_8));
     }
 
     @Test
-    void everyBundledPlayerAndNpcAnimationHasChineseFallbackWithoutConfigEdits() throws Exception
-    {
+    void everyBundledPlayerAndNpcAnimationHasChineseFallbackWithoutConfigEdits() throws Exception {
         YamlConfiguration c = config();
         c.set("menu", null);
         Settings settings = Settings.load(c);
-        for (String model : List.of("ysm_02_jk", "ysm_01_jk"))
-        {
+        for (String model : List.of("ysm_02_jk", "ysm_01_jk")) {
             JsonObject root = JsonParser
                     .parseString(Files.readString(Path.of("examples/blueprints/" + model + ".bbmodel")))
                     .getAsJsonObject();
-            for (JsonElement element : root.getAsJsonArray("animations"))
-            {
+            for (JsonElement element : root.getAsJsonArray("animations")) {
                 String id = element.getAsJsonObject().get("name").getAsString();
                 String label = settings.animationLabel(id);
                 assertNotEquals("自定义动作", label, id);
@@ -43,8 +38,7 @@ class AnimationLabelsTest
     }
 
     @Test
-    void configuredLabelsAndCustomActionLabelsRetainTheirOwnPrecedence()
-    {
+    void configuredLabelsAndCustomActionLabelsRetainTheirOwnPrecedence() {
         YamlConfiguration c = config();
         c.set("menu.animation-labels.idle", "安静站立");
         c.set("menu.animation-labels.custom_clip", "自定义舞蹈");

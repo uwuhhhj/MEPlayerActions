@@ -5,11 +5,9 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
-class ServerMessagesTest
-{
+class ServerMessagesTest {
     @Test
-    void disguiseMessageSeparatesBlueprintOptionsAndCommandsIntoShortLines()
-    {
+    void disguiseMessageSeparatesBlueprintOptionsAndCommandsIntoShortLines() {
         DisguiseOptions options = new DisguiseOptions("dragon", .8, true, 2, true, 8, 10,
                 List.of(new DisguiseOptions.Effect("slowness", 1, 0)));
         List<String> lines = ServerMessages.disguise(options);
@@ -21,8 +19,7 @@ class ServerMessagesTest
     }
 
     @Test
-    void readyResourceDoesNotClaimAnyViewerHasConfirmedTakeover()
-    {
+    void readyResourceDoesNotClaimAnyViewerHasConfirmedTakeover() {
         String text = String.join("\n", ServerMessages.modelResource("dragon", "ready", "own", "prepared", true));
         assertTrue(text.contains("MPA models/"));
         assertTrue(text.contains("取得并验证资源后"));
@@ -31,8 +28,7 @@ class ServerMessagesTest
     }
 
     @Test
-    void missingPublicationExplainsExplicitResourcePolicyWithoutBlockingMeDisguise()
-    {
+    void missingPublicationExplainsExplicitResourcePolicyWithoutBlockingMeDisguise() {
         String text = String.join("\n",
                 ServerMessages.modelResource("azriel", "missing", "own", "not published", true));
         assertTrue(text.contains("MPA models/ 未发布"));
@@ -43,10 +39,8 @@ class ServerMessagesTest
     }
 
     @Test
-    void missingPendingAndInvalidResourcesExplainMeRenderingContinues()
-    {
-        for (String state : List.of("pending", "missing", "invalid", "memory_limit"))
-        {
+    void missingPendingAndInvalidResourcesExplainMeRenderingContinues() {
+        for (String state : List.of("pending", "missing", "invalid", "memory_limit")) {
             String text = String.join("\n", ServerMessages.modelResource("dragon", state, "none", "详细原因", true));
             assertTrue(text.contains("ModelEngine 伪装照常显示"), state);
         }
@@ -56,22 +50,19 @@ class ServerMessagesTest
     }
 
     @Test
-    void instanceEligibilityCannotBeOverriddenByResourceReadiness()
-    {
+    void instanceEligibilityCannotBeOverriddenByResourceReadiness() {
         String text = String.join("\n", ServerMessages.modelResource("dragon", "ready", "jar", "prepared", false));
         assertTrue(text.contains("不允许客户端接管"));
         assertFalse(text.contains("取得并验证资源后"));
     }
 
     @Test
-    void modelAndAnimationListsWrapWithoutLosingDistinctIds()
-    {
+    void modelAndAnimationListsWrapWithoutLosingDistinctIds() {
         List<String> entries = List.of("a".repeat(40), "b".repeat(40), "mounted_ing", "idle_flight", "jumpattack");
         List<String> lines = ServerMessages.list("模型", entries);
         assertTrue(lines.size() > 2);
         String text = String.join("\n", lines);
-        for (String entry : entries)
-        {
+        for (String entry : entries) {
             assertTrue(text.contains(entry));
         }
 
@@ -80,8 +71,7 @@ class ServerMessagesTest
     }
 
     @Test
-    void wrappedMessagesKeepSupplementaryUnicodeCharactersIntact()
-    {
+    void wrappedMessagesKeepSupplementaryUnicodeCharactersIntact() {
         String value = "a".repeat(63) + "😀" + "b";
         List<String> lines = ServerMessages.wrapped("", value);
         assertEquals(2, lines.size());

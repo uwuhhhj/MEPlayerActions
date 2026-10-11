@@ -74,8 +74,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 /** Deliberately inert in ordinary launches. Uses only Minecraft APIs in an isolated runDir. */
-public final class E2EHarness
-{
+public final class E2EHarness {
     private static final Logger LOGGER = LoggerFactory.getLogger("MEPlayerActions/E2E");
     private static final String PLAYER = "MPATest";
     private static final UUID OTHER = UUID
@@ -215,15 +214,12 @@ public final class E2EHarness
     private static final LocalAppearanceSettings LOCAL_PROFILE = new LocalAppearanceSettings(true, "openysm_default",
             .65f, .25, .35, -.2);
 
-    private E2EHarness(ClientRuntime runtime)
-    {
+    private E2EHarness(ClientRuntime runtime) {
         this.runtime = runtime;
     }
 
-    public static void register(ClientRuntime runtime)
-    {
-        if (System.getProperty("meplayeractions.e2e.focus", "").equals("standalone"))
-        {
+    public static void register(ClientRuntime runtime) {
+        if (System.getProperty("meplayeractions.e2e.focus", "").equals("standalone")) {
             LocalAppearanceHarness.register(runtime);
             return;
         }
@@ -232,39 +228,31 @@ public final class E2EHarness
         LOGGER.info("Isolated E2E harness enabled; outputs {}", harness.output);
     }
 
-    private void tick(MinecraftClient client)
-    {
-        if (this.finished)
-        {
+    private void tick(MinecraftClient client) {
+        if (this.finished) {
             return;
         }
 
-        if (this.finishing)
-        {
+        if (this.finishing) {
             finish(client);
             return;
         }
         this.ticks++;
-        try
-        {
-            if (System.nanoTime() - this.started > 420_000_000_000L)
-            {
+        try {
+            if (System.nanoTime() - this.started > 420_000_000_000L) {
                 check("completion", false, "420 second timeout; screen="
                         + (client.currentScreen == null ? "world" : client.currentScreen.getClass().getSimpleName()));
                 finish(client);
                 return;
             }
-            if (!this.connected)
-            {
-                if (client.currentScreen instanceof TitleScreen && client.getOverlay() == null && this.ticks > 40)
-                {
+            if (!this.connected) {
+                if (client.currentScreen instanceof TitleScreen && client.getOverlay() == null && this.ticks > 40) {
                     check("titleSmoke", true, "Minecraft title screen initialized with all required mixins");
                     check("productionJarLoaded", Boolean.TRUE.equals(this.proof.get("clientFromJar")),
                             this.proof.toString());
                     screenshot(client, "00-title");
                     String address = System.getProperty("meplayeractions.e2e.server", "127.0.0.1:25591");
-                    if (address.equals("title-only"))
-                    {
+                    if (address.equals("title-only")) {
                         finish(client);
                         return;
                     }
@@ -275,15 +263,12 @@ public final class E2EHarness
                 }
                 return;
             }
-            if (this.stage >= 0 && STAGES.get(this.stage).equals("push-cache-reconnect"))
-            {
+            if (this.stage >= 0 && STAGES.get(this.stage).equals("push-cache-reconnect")) {
                 pushReconnectTick(client);
                 return;
             }
-            if (client.world == null || client.player == null || client.getNetworkHandler() == null)
-            {
-                if (++this.connectionTicks > 900)
-                {
+            if (client.world == null || client.player == null || client.getNetworkHandler() == null) {
+                if (++this.connectionTicks > 900) {
                     check("realMultiplayer", false, "Did not join isolated Paper server");
                     finish(client);
                 }
@@ -292,43 +277,35 @@ public final class E2EHarness
             this.clearWorldTicks = client.getOverlay() == null && client.currentScreen == null
                     ? this.clearWorldTicks + 1
                     : 0;
-            if (!this.handshakeChecked)
-            {
+            if (!this.handshakeChecked) {
                 this.connectionTicks++;
-                if (!this.worldConfigured)
-                {
+                if (!this.worldConfigured) {
                     this.worldConfigured = true;
-                    if (!this.runtime.options.enabled)
-                    {
+                    if (!this.runtime.options.enabled) {
                         this.runtime.toggleEnabled();
                     }
 
                     this.runtime.options.showSelf = true;
                     this.runtime.options.followServerTimeline = false;
-                    if (INTERACTIONS)
-                    {
+                    if (INTERACTIONS) {
                         command(client, "meplayeractions undisguise");
                     }
 
-                    else
-                    {
+                    else {
                         this.runtime.disableLocalAppearance();
                     }
 
                     client.options.setPerspective(Perspective.THIRD_PERSON_FRONT);
                     client.options.getGamma().setValue(1.0);
                     client.player.getAbilities().flying = false;
-                    if (!INTERACTIONS)
-                    {
+                    if (!INTERACTIONS) {
                         command(client, "mpatest " + PLAYER + " disguise ysm_01_jk");
                     }
 
                 }
-                if (INTERACTIONS && !this.initialServerDisguiseIssued)
-                {
+                if (INTERACTIONS && !this.initialServerDisguiseIssued) {
                     if (!this.initialPrivateProfileApplied && !this.runtime.hasOwnServerDisguise()
-                            && this.runtime.canEditLocalAppearance())
-                    {
+                            && this.runtime.canEditLocalAppearance()) {
                         this.runtime.updateLocalAppearance(LOCAL_PROFILE);
                         this.initialPrivateProfileApplied = LOCAL_PROFILE.equals(this.runtime.localAppearance());
                     }
@@ -338,8 +315,7 @@ public final class E2EHarness
                             && this.runtime.privateAppearanceActive()
                             && visibleModel(ModelRenderer.diagnostics(), privateBinding);
                     this.initialPrivateReadyTicks = privateReady ? this.initialPrivateReadyTicks + 1 : 0;
-                    if (this.initialPrivateReadyTicks >= 3)
-                    {
+                    if (this.initialPrivateReadyTicks >= 3) {
                         this.savedPrivateHash = privateBinding.assetHash();
                         this.savedPrivateDiskProfile = diskPrivateProfile();
                         check("savedPrivateAppearanceVisibleBeforeServerDisguise",
@@ -349,9 +325,7 @@ public final class E2EHarness
                                         + privateBinding);
                         command(client, "mpatest " + PLAYER + " disguise ysm_01_jk");
                         this.initialServerDisguiseIssued = true;
-                    }
-                    else if (this.connectionTicks > 500)
-                    {
+                    } else if (this.connectionTicks > 500) {
                         check("savedPrivateAppearanceVisibleBeforeServerDisguise", false,
                                 this.runtime.localAppearanceStatus());
                         finish(client);
@@ -360,10 +334,8 @@ public final class E2EHarness
                 }
                 if (own(client).isEmpty() || this.clearWorldTicks < 10
                         || INTERACTIONS && (!this.runtime.serverOwnModelReady() || own(client).stream()
-                                .anyMatch(binding -> binding.instance().startsWith("local-self:"))))
-                {
-                    if (this.connectionTicks > 500)
-                    {
+                                .anyMatch(binding -> binding.instance().startsWith("local-self:")))) {
+                    if (this.connectionTicks > 500) {
                         check("realMultiplayer", false, "No acknowledged local binding: " + this.runtime.status());
                         finish(client);
                     }
@@ -378,116 +350,91 @@ public final class E2EHarness
             }
             this.stageTicks++;
             String name = STAGES.get(this.stage);
-            if (INTERACTIONS)
-            {
-                if (this.stageTicks % 5 == 0)
-                {
+            if (INTERACTIONS) {
+                if (this.stageTicks % 5 == 0) {
                     phase(client, name);
                 }
 
                 interactionTick(client, name);
                 return;
             }
-            if (name.equals("push-first-download"))
-            {
-                if (this.stageTicks % 10 == 0)
-                {
+            if (name.equals("push-first-download")) {
+                if (this.stageTicks % 10 == 0) {
                     command(client, "mpatest " + PLAYER + " status");
                 }
 
-                if (this.stageTicks % 5 == 0)
-                {
+                if (this.stageTicks % 5 == 0) {
                     JsonObject status = readPackAuthority(client);
-                    if (status != null)
-                    {
+                    if (status != null) {
                         this.packAuthority = status;
                     }
 
                 }
             }
-            if (name.equals("native-follow") || name.equals("server-trailing"))
-            {
+            if (name.equals("native-follow") || name.equals("server-trailing")) {
                 client.options.forwardKey.setPressed(this.stageTicks >= 15 && this.stageTicks < 40);
-                if (name.equals("native-follow") && this.stageTicks >= 17 && this.stageTicks < 40)
-                {
+                if (name.equals("native-follow") && this.stageTicks >= 17 && this.stageTicks < 40) {
                     measureFollow(client, client.player);
                 }
 
             }
-            if (name.equals("other-native-follow") && this.stageTicks >= 17 && this.stageTicks < 40)
-            {
+            if (name.equals("other-native-follow") && this.stageTicks >= 17 && this.stageTicks < 40) {
                 measureFollow(client, otherPlayer(client));
             }
 
-            if (name.equals("jump"))
-            {
+            if (name.equals("jump")) {
                 prepareNativeJump(client);
             }
 
-            if (this.stageTicks % 5 == 0)
-            {
+            if (this.stageTicks % 5 == 0) {
                 phase(client, name);
             }
 
-            if (this.stageTicks == 5)
-            {
-                if (name.equals("gsit-sit"))
-                {
+            if (this.stageTicks == 5) {
+                if (name.equals("gsit-sit")) {
                     command(client, "meplayeractions pose sit");
                 }
 
-                if (name.equals("gsit-crawl"))
-                {
+                if (name.equals("gsit-crawl")) {
                     command(client, "meplayeractions pose crawl");
                 }
 
-                if (name.equals("gsit-lay"))
-                {
+                if (name.equals("gsit-lay")) {
                     command(client, "lay");
                 }
 
             }
             if (name.equals("gsit-sit") || name.equals("gsit-crawl") || name.equals("gsit-lay")
-                    || name.equals("gsit-undisguise") || name.equals("gsit-redisguise"))
-            {
-                if (this.stageTicks == 10)
-                {
+                    || name.equals("gsit-undisguise") || name.equals("gsit-redisguise")) {
+                if (this.stageTicks == 10) {
                     this.gsitCamera = client.getCameraEntity();
                     this.gsitNaturalCamera = Map.of("focused",
                             this.gsitCamera == null ? "" : this.gsitCamera.getUuidAsString(), "localPlayer",
                             client.player.getUuidAsString(), "perspective", client.options.getPerspective().name());
                     this.sideCamera = sideCamera(client);
                 }
-                if (this.stageTicks >= 10 && this.sideCamera != null)
-                {
+                if (this.stageTicks >= 10 && this.sideCamera != null) {
                     client.setCameraEntity(this.sideCamera);
                     client.options.setPerspective(Perspective.THIRD_PERSON_BACK);
                 }
             }
-            if (name.startsWith("other-"))
-            {
+            if (name.startsWith("other-")) {
                 PlayerEntity other = otherPlayer(client);
                 List<ClientRuntime.RenderBinding> remote = otherBindings(client);
-                if (!remote.isEmpty())
-                {
+                if (!remote.isEmpty()) {
                     aim(client, remote.get(0));
                 }
 
-                else if (other != null)
-                {
+                else if (other != null) {
                     aim(client, other.getX(), other.getY() + .6, other.getZ());
                 }
 
-                if (name.equals("other-jump"))
-                {
-                    if (other != null && this.stageTicks >= 10)
-                    {
+                if (name.equals("other-jump")) {
+                    if (other != null && this.stageTicks >= 10) {
                         this.otherJumpMaxRise = Math.max(this.otherJumpMaxRise, other.getY() + 60);
-                        if (!other.isOnGround() && other.getY() > -59.88)
-                        {
+                        if (!other.isOnGround() && other.getY() > -59.88) {
                             this.otherNativeTakeoff = true;
-                            if (this.otherTakeoffAt < 0)
-                            {
+                            if (this.otherTakeoffAt < 0) {
                                 this.otherTakeoffAt = this.stageTicks;
                             }
 
@@ -496,172 +443,137 @@ public final class E2EHarness
                     boolean jumping = otherBindings(client).stream().flatMap(binding -> binding.layers().stream())
                             .anyMatch(layer -> layer.animation().equals("player_jump")
                                     || layer.animation().equals("jump"));
-                    if (jumping)
-                    {
+                    if (jumping) {
                         this.otherJumpSeen = true;
                         this.otherJumpFrames++;
                         if (this.otherNativeTakeoff && (other != null ? other.isOnGround()
-                                : remote.stream().anyMatch(binding -> binding.y() <= -59.98)))
-                        {
+                                : remote.stream().anyMatch(binding -> binding.y() <= -59.98))) {
                             this.otherJumpAfterGround = true;
                         }
 
                     }
                     recordJumpFrame(client, name, other, remote);
-                    if (!this.captured && jumping && this.stageTicks >= 5)
-                    {
+                    if (!this.captured && jumping && this.stageTicks >= 5) {
                         capture(client, name);
                     }
 
                 }
             }
-            if (name.equals("jump"))
-            {
-                if (this.jumpPressedAt >= 0)
-                {
+            if (name.equals("jump")) {
+                if (this.jumpPressedAt >= 0) {
                     this.jumpMaxRise = Math.max(this.jumpMaxRise, client.player.getY() - this.jumpGroundY);
-                    if (!client.player.isOnGround() && this.jumpMaxRise > .12)
-                    {
+                    if (!client.player.isOnGround() && this.jumpMaxRise > .12) {
                         this.jumpNativeTakeoff = true;
                     }
 
                 }
                 boolean jumping = own(client).stream().flatMap(binding -> binding.layers().stream())
                         .anyMatch(layer -> layer.animation().equals("player_jump") || layer.animation().equals("jump"));
-                if (jumping)
-                {
+                if (jumping) {
                     this.jumpSeen = true;
                     this.jumpFrames++;
-                    if (this.jumpNativeTakeoff && client.player.isOnGround())
-                    {
+                    if (this.jumpNativeTakeoff && client.player.isOnGround()) {
                         this.jumpSeenAfterGround = true;
                     }
 
                 }
                 recordJumpFrame(client, name, client.player, own(client));
-                if (!this.captured && jumping && this.stageTicks >= 5)
-                {
+                if (!this.captured && jumping && this.stageTicks >= 5) {
                     capture(client, name);
                 }
 
             }
-            if (name.startsWith("other-item-"))
-            {
+            if (name.startsWith("other-item-")) {
                 itemDrawTick(client, name);
                 return;
             }
-            if (name.equals("resource-reload"))
-            {
+            if (name.equals("resource-reload")) {
                 resourceReloadTick(client);
                 return;
             }
-            if (name.equals("push-asset-failed") || name.equals("push-asset-recovered"))
-            {
+            if (name.equals("push-asset-failed") || name.equals("push-asset-recovered")) {
                 pushFaultTick(client, name);
                 return;
             }
-            if (name.equals("pack-disabled") || name.equals("pack-restored"))
-            {
+            if (name.equals("pack-disabled") || name.equals("pack-restored")) {
                 packReloadTick(client, name);
                 return;
             }
-            if (name.equals("other-extra0"))
-            {
+            if (name.equals("other-extra0")) {
                 remoteAccessoryTick(client);
                 return;
             }
-            if (name.equals("own-second-model"))
-            {
+            if (name.equals("own-second-model")) {
                 ownSecondModelTick(client);
                 return;
             }
-            if (name.equals("firstperson-extra0") || name.equals("self-hidden-extra0"))
-            {
+            if (name.equals("firstperson-extra0") || name.equals("self-hidden-extra0")) {
                 ownAccessoryTick(client, name);
                 return;
             }
-            if (name.startsWith("local-appearance-") && !name.equals("local-appearance-server-base"))
-            {
+            if (name.startsWith("local-appearance-") && !name.equals("local-appearance-server-base")) {
                 localAppearanceTick(client, name);
                 return;
             }
-            if (name.equals("server-reload") && this.stageTicks == 30)
-            {
+            if (name.equals("server-reload") && this.stageTicks == 30) {
                 command(client, "mpatest " + PLAYER + " disguise ysm_02_jk");
             }
 
             if ((name.equals("local-on") || name.equals("npc") || name.equals("server-reload") || name.equals("preview")
-                    || name.equals("gsit-redisguise") || name.equals("own-first-model")) && own(client).isEmpty())
-            {
-                if (this.stageTicks > 400)
-                {
+                    || name.equals("gsit-redisguise") || name.equals("own-first-model")) && own(client).isEmpty()) {
+                if (this.stageTicks > 400) {
                     check(name, false, "No model returned after lifecycle operation");
                     next(client);
                 }
                 return;
             }
             if ((name.equals("other-idle") || name.equals("other-range-in") || name.equals("other-redisguise")
-                    || name.equals("other-first-model")) && otherBindings(client).isEmpty())
-            {
-                if (this.stageTicks > 200)
-                {
+                    || name.equals("other-first-model")) && otherBindings(client).isEmpty()) {
+                if (this.stageTicks > 200) {
                     check(name, false, "Other player binding unavailable");
                     next(client);
                 }
                 return;
             }
-            if (this.stageTicks == 20)
-            {
+            if (this.stageTicks == 20) {
                 client.inGameHud.getChatHud().clear(false);
                 client.getToastManager().clear();
             }
-            if (!this.captured && this.stageTicks >= (name.equals("resource-reload") ? 45 : 30))
-            {
+            if (!this.captured && this.stageTicks >= (name.equals("resource-reload") ? 45 : 30)) {
                 capture(client, name);
             }
 
-            if (name.equals("jump"))
-            {
-                if ((this.jumpPressedAt >= 0 && this.stageTicks >= this.jumpPressedAt + 80) || this.stageTicks > 200)
-                {
+            if (name.equals("jump")) {
+                if ((this.jumpPressedAt >= 0 && this.stageTicks >= this.jumpPressedAt + 80) || this.stageTicks > 200) {
                     next(client);
                 }
 
-            }
-            else if (name.equals("other-jump"))
-            {
-                if ((this.otherTakeoffAt >= 0 && this.stageTicks >= this.otherTakeoffAt + 80) || this.stageTicks > 200)
-                {
+            } else if (name.equals("other-jump")) {
+                if ((this.otherTakeoffAt >= 0 && this.stageTicks >= this.otherTakeoffAt + 80)
+                        || this.stageTicks > 200) {
                     next(client);
                 }
 
-            }
-            else if (this.stageTicks >= 60)
-            {
+            } else if (this.stageTicks >= 60) {
                 next(client);
             }
 
-        }
-        catch (Exception failure)
-        {
+        } catch (Exception failure) {
             check("harness", false, failure.toString());
             LOGGER.error("E2E harness failed", failure);
             finish(client);
         }
     }
 
-    private void next(MinecraftClient client)
-    {
-        if (this.stage >= 0 && STAGES.get(this.stage).equals("other-item-02-use"))
-        {
+    private void next(MinecraftClient client) {
+        if (this.stage >= 0 && STAGES.get(this.stage).equals("other-item-02-use")) {
             command(client, "mpatest MPAObserver hands-restore");
             this.handsCleanupPending = false;
         }
         client.options.forwardKey.setPressed(false);
         client.options.jumpKey.setPressed(false);
         if (this.stage >= 0 && (STAGES.get(this.stage).equals("native-follow")
-                || STAGES.get(this.stage).equals("other-native-follow")))
-        {
+                || STAGES.get(this.stage).equals("other-native-follow"))) {
             String label = STAGES.get(this.stage).equals("native-follow") ? "own" : "remote";
             check(label + "NativeEntityFollow", this.followSamples >= 10 && this.maxFollowError < .000001,
                     "Samples=" + this.followSamples + "; worst pivot error=" + this.maxFollowError
@@ -671,8 +583,7 @@ public final class E2EHarness
             check(label + "NativeWalkStartsLocally", this.followWalking >= 5,
                     "Native walking observations=" + this.followWalking);
         }
-        if (this.stage >= 0 && STAGES.get(this.stage).equals("jump"))
-        {
+        if (this.stage >= 0 && STAGES.get(this.stage).equals("jump")) {
             check("jumpNativeTakeoff", this.jumpPressedAt >= 0 && this.jumpNativeTakeoff,
                     "Single native jump key after stable standing; pressedAt=" + this.jumpPressedAt + "; maxRise="
                             + this.jumpMaxRise);
@@ -680,8 +591,7 @@ public final class E2EHarness
             check("jumpFinishesAfterGround", this.jumpSeenAfterGround,
                     "Observed jump animation after real player landed");
         }
-        if (this.stage >= 0 && STAGES.get(this.stage).equals("other-jump"))
-        {
+        if (this.stage >= 0 && STAGES.get(this.stage).equals("other-jump")) {
             check("otherJumpNativeTakeoff", this.otherNativeTakeoff,
                     "Unmodded B uses its native jump key after stable standing; takeoffAt=" + this.otherTakeoffAt
                             + "; maxRise=" + this.otherJumpMaxRise);
@@ -697,8 +607,7 @@ public final class E2EHarness
         this.followWalking = 0;
         this.maxFollowError = 0;
         this.maxServerGap = 0;
-        if (this.stage >= STAGES.size())
-        {
+        if (this.stage >= STAGES.size()) {
             finish(client);
             return;
         }
@@ -711,25 +620,20 @@ public final class E2EHarness
                         : Perspective.THIRD_PERSON_FRONT);
         LOGGER.info("E2E stage {}", name);
         phase(client, name);
-        if (INTERACTIONS)
-        {
+        if (INTERACTIONS) {
             beginInteraction(client, name);
             return;
         }
-        if (!name.equals("bed"))
-        {
+        if (!name.equals("bed")) {
             command(client, "time set day");
         }
 
-        if (name.startsWith("other-item-"))
-        {
+        if (name.startsWith("other-item-")) {
             beginItemDraw(client, name);
         }
 
-        switch (name)
-        {
-        case "push-first-download" ->
-        {
+        switch (name) {
+        case "push-first-download" -> {
             this.packExpectedInstance = own(client).getFirst().instance();
             this.packReloadCompletedAtMillis = System.currentTimeMillis();
             this.packAuthority = null;
@@ -738,59 +642,49 @@ public final class E2EHarness
         case "push-cache-reconnect" -> beginPushReconnect(client);
         case "push-asset-failed", "push-asset-recovered" -> beginPushFault(client, name);
         case "idle" -> command(client, "mpatest " + PLAYER + " reset");
-        case "local-appearance-server-base" ->
-        {
+        case "local-appearance-server-base" -> {
             this.runtime.disableLocalAppearance();
             command(client, "mpatest " + PLAYER + " reset");
         }
-        case "local-appearance-own" ->
-        {
+        case "local-appearance-own" -> {
             this.localRequestBaseline = this.runtime.requestPacketsSent();
             this.localAppearanceReadyAt = -1;
             this.runtime.selectLocalModel("openysm_default");
             this.runtime.updateLocalAppearance(LOCAL_PROFILE);
         }
-        case "local-appearance-action" ->
-        {
+        case "local-appearance-action" -> {
             this.localAppearanceReadyAt = -1;
             check("localAppearanceActionAccepted", this.runtime.playLocal("extra1"),
                     "Explicit local action starts without a server request");
         }
-        case "local-appearance-off" ->
-        {
+        case "local-appearance-off" -> {
             this.localAppearanceReadyAt = -1;
             this.runtime.disableLocalAppearance();
         }
-        case "native-follow" ->
-        {
+        case "native-follow" -> {
             command(client, "mpatest " + PLAYER + " reset");
             command(client, "mpatest " + PLAYER + " delayed ysm_01_jk");
         }
-        case "server-trailing" ->
-        {
+        case "server-trailing" -> {
             this.runtime.options.followServerTimeline = true;
             command(client, "mpatest " + PLAYER + " reset");
         }
-        case "wave" ->
-        {
+        case "wave" -> {
             this.runtime.options.followServerTimeline = false;
             command(client, "mpatest " + PLAYER + " reset");
             command(client, "mpatest " + PLAYER + " wave");
         }
         case "crawl", "npc-crawl" -> command(client, "mpatest " + PLAYER + " crawl");
-        case "crawl-side", "npc-crawl-side" ->
-        {
+        case "crawl-side", "npc-crawl-side" -> {
             client.setCameraEntity(sideCamera(client));
             client.options.setPerspective(Perspective.THIRD_PERSON_BACK);
         }
-        case "bed" ->
-        {
+        case "bed" -> {
             command(client, "time set night");
             command(client, "mpatest " + PLAYER + " bed");
         }
         case "ride" -> command(client, "mpatest " + PLAYER + " ride");
-        case "jump" ->
-        {
+        case "jump" -> {
             this.jumpGroundedTicks = 0;
             this.jumpPressedAt = -1;
             this.jumpNativeTakeoff = false;
@@ -801,39 +695,33 @@ public final class E2EHarness
             // Reset/teleport is a separate preparation step, never the takeoff itself.
             command(client, "mpatest " + PLAYER + " reset");
         }
-        case "firstperson" ->
-        {
+        case "firstperson" -> {
             command(client, "mpatest " + PLAYER + " reset");
             client.options.setPerspective(Perspective.FIRST_PERSON);
         }
         case "firstperson-extra0" -> beginOwnAccessory(client, name);
-        case "gsit-sit" ->
-        {
+        case "gsit-sit" -> {
             command(client, "mpatest " + PLAYER + " reset");
             command(client, "item replace entity " + PLAYER + " armor.chest with minecraft:elytra");
         }
         case "gsit-crawl", "gsit-lay" -> command(client, "meplayeractions reset");
-        case "gsit-firstperson" ->
-        {
+        case "gsit-firstperson" -> {
             client.setCameraEntity(this.gsitCamera == null ? client.player : this.gsitCamera);
             client.options.setPerspective(Perspective.FIRST_PERSON);
         }
-        case "gsit-thirdperson" ->
-        {
+        case "gsit-thirdperson" -> {
             client.setCameraEntity(
                     this.gsitCamera == null || this.gsitCamera.isRemoved() ? client.player : this.gsitCamera);
             client.options.setPerspective(Perspective.THIRD_PERSON_BACK);
         }
         case "gsit-undisguise" -> command(client, "meplayeractions undisguise");
         case "gsit-redisguise" -> command(client, "mpatest " + PLAYER + " disguise ysm_01_jk");
-        case "gsit-reset" ->
-        {
+        case "gsit-reset" -> {
             command(client, "lay");
             command(client, "meplayeractions reset");
             command(client, "mpatest " + PLAYER + " reset");
         }
-        case "resource-reload" ->
-        {
+        case "resource-reload" -> {
             this.reloadReadyAt = -1;
             this.reloadVisibleTicks = 0;
             command(client, "item replace entity " + PLAYER + " armor.chest with minecraft:air");
@@ -841,18 +729,15 @@ public final class E2EHarness
             this.reload = client.reloadResources();
         }
         case "pack-disabled" -> beginPackDisable(client);
-        case "pack-restored" ->
-        {
+        case "pack-restored" -> {
             client.getResourcePackManager().setEnabledProfiles(this.originalPackProfiles);
             beginPackReload(client);
         }
-        case "local-off" ->
-        {
+        case "local-off" -> {
             this.runtime.toggleEnabled();
             command(client, "mpatest " + PLAYER + " status");
         }
-        case "local-on" ->
-        {
+        case "local-on" -> {
             this.runtime.toggleEnabled();
             command(client, "mpatest " + PLAYER + " status");
         }
@@ -860,8 +745,7 @@ public final class E2EHarness
         case "extra" -> command(client, "mpatest " + PLAYER + " extra");
         case "hunger" -> command(client, "mpatest " + PLAYER + " hunger");
         case "npc" -> command(client, "mpatest " + PLAYER + " disguise ysm_02_jk");
-        case "menu" ->
-        {
+        case "menu" -> {
             command(client, "mpatest " + PLAYER + " reset");
             this.runtime.preview("openysm_default");
             client.setScreen(new PlayerModelScreen(this.runtime));
@@ -869,33 +753,28 @@ public final class E2EHarness
         case "self-hidden" -> this.runtime.options.showSelf = false;
         case "self-hidden-extra0" -> beginOwnAccessory(client, name);
         case "self-restored" -> this.runtime.options.showSelf = true;
-        case "server-reload" ->
-        {
+        case "server-reload" -> {
             command(client, "mpatest " + PLAYER + " reset");
             command(client, "mpatest " + PLAYER + " reload");
             // Plugin reload removes its disguise, so create a new instance after reload.
             command(client, "mpatest " + PLAYER + " disguise ysm_02_jk");
         }
-        case "other-idle" ->
-        {
+        case "other-idle" -> {
             command(client, "mpatest " + PLAYER + " reset");
             command(client, "mpatest MPAObserver reset");
             command(client, "mpatest MPAObserver disguise ysm_01_jk");
         }
-        case "other-native-follow" ->
-        {
+        case "other-native-follow" -> {
             command(client, "mpatest MPAObserver delayed ysm_01_jk");
             command(client, "mpatest MPAObserver walk");
         }
         case "other-crawl" -> command(client, "mpatest MPAObserver crawl");
-        case "other-bed" ->
-        {
+        case "other-bed" -> {
             command(client, "time set night");
             command(client, "mpatest MPAObserver bed");
         }
         case "other-ride" -> command(client, "mpatest MPAObserver ride");
-        case "other-jump" ->
-        {
+        case "other-jump" -> {
             this.otherNativeTakeoff = false;
             this.otherTakeoffAt = -1;
             this.otherJumpMaxRise = 0;
@@ -905,8 +784,7 @@ public final class E2EHarness
             command(client, "mpatest MPAObserver reset");
             // B's independent fixture presses the native jump key after this reset settles.
         }
-        case "other-extra0" ->
-        {
+        case "other-extra0" -> {
             this.remotePreviousInstance = otherBindings(client).stream().map(ClientRuntime.RenderBinding::instance)
                     .findFirst().orElse("");
             this.remoteExtraInstance = "";
@@ -920,8 +798,7 @@ public final class E2EHarness
             this.remoteExtraFirstChangedAge = Double.NaN;
             command(client, "mpatest MPAObserver disguise ysm_02_jk");
         }
-        case "other-range-out" ->
-        {
+        case "other-range-out" -> {
             command(client, "mpatest MPAObserver reset");
             command(client, "tp MPAObserver 8.5 -60 0.5");
         }
@@ -929,8 +806,7 @@ public final class E2EHarness
         // B's independent observer fixture issues undisguise as the actual unmodded player.
         case "other-undisguise", "other-undisguise-again", "other-second-undisguise" ->
             command(client, "mpatest MPAObserver reset");
-        case "other-native-move" ->
-        {
+        case "other-native-move" -> {
             PlayerEntity other = otherPlayer(client);
             this.restoredPlayerX = other == null ? Double.NaN : other.getX();
             command(client, "mpatest MPAObserver walk");
@@ -938,8 +814,7 @@ public final class E2EHarness
         case "other-redisguise" -> command(client, "mpatest MPAObserver disguise ysm_01_jk");
         case "other-second-model" -> command(client, "mpatest MPAObserver disguise ysm_02_jk");
         case "other-first-model" -> command(client, "mpatest MPAObserver disguise ysm_01_jk");
-        case "own-second-model" ->
-        {
+        case "own-second-model" -> {
             ClientRuntime.RenderBinding current = own(client).stream().findFirst().orElse(null);
             this.ownSecondInitialInstance = current == null ? "" : current.instance();
             this.ownSecondInitialHash = current == null ? "" : current.assetHash();
@@ -956,14 +831,12 @@ public final class E2EHarness
         case "undisguise" -> command(client, "meplayeractions undisguise");
         case "preview" -> this.runtime.preview("openysm_default");
         case "preview-end" -> this.runtime.preview("off");
-        default ->
-            {
-            }
+        default -> {
+        }
         }
     }
 
-    private void capture(MinecraftClient client, String name)
-    {
+    private void capture(MinecraftClient client, String name) {
         this.captured = true;
         Map<String, Object> diagnostic = ModelRenderer.diagnostics();
         List<ClientRuntime.RenderBinding> bindings = own(client);
@@ -978,8 +851,7 @@ public final class E2EHarness
         observation.put("nativePose", client.player.getPose().name());
         observation.put("onGround", client.player.isOnGround());
         observation.put("vehicle", client.player.hasVehicle());
-        if (name.startsWith("gsit-"))
-        {
+        if (name.startsWith("gsit-")) {
             observation.put("naturalCameraBeforeTestOverride", this.gsitNaturalCamera);
         }
 
@@ -995,34 +867,28 @@ public final class E2EHarness
         Map<String, Object> push = this.runtime.serverPushDiagnostics();
         observation.put("serverPush", push);
         observation.put("resourcePackIndexPresent", packIndexPresent(client));
-        if (name.equals("push-cache-reconnect"))
-        {
+        if (name.equals("push-cache-reconnect")) {
             observation.put("reconnect", Map.of("actualDisconnectObserved", this.pushReconnectDisconnected, "before",
                     this.pushReconnectBaseline, "previousInstance", this.pushReconnectPreviousInstance, "expectedHash",
                     this.pushReconnectHash, "ticks", this.pushReconnectTicks, "readyAt", this.pushReconnectReadyAt));
         }
 
-        if (name.equals("push-asset-failed") || name.equals("push-asset-recovered"))
-
-        {
+        if (name.equals("push-asset-failed") || name.equals("push-asset-recovered")) {
             observation.put("assetFault", pushFaultEvidence(client, name));
         }
 
-        if (name.equals("own-second-model"))
-        {
+        if (name.equals("own-second-model")) {
             observation.put("modelChangeSource", this.ownSecondSourceProof);
         }
 
         check(name + "NoAssetRequest", pushCount(push, "assetRequestPacketsSent") == 0,
                 "Real successful send counter for asset_request=" + pushCount(push, "assetRequestPacketsSent"));
         checkPushLifecycle(client, name, push);
-        if (name.equals("pack-disabled") || name.equals("pack-restored"))
-        {
+        if (name.equals("pack-disabled") || name.equals("pack-restored")) {
             observation.put("packLifecycle", packEvidence(client, name, diagnostic));
         }
 
-        if (name.startsWith("local-appearance-"))
-        {
+        if (name.startsWith("local-appearance-")) {
             observation.put("localAppearance", this.runtime.localAppearance());
             observation.put("requestPacketsSent", this.runtime.requestPacketsSent());
         }
@@ -1044,8 +910,7 @@ public final class E2EHarness
                                         binding.assetHash(), "tick", binding.serverTick(), "layers", binding.layers()))
                                 .toList());
         observation.put("otherAccessoryAuthority", this.runtime.accessoryState(OTHER));
-        if (name.equals("other-extra0"))
-        {
+        if (name.equals("other-extra0")) {
             observation.put("remoteAccessoryFixture",
                     Map.of("startedAtTick", this.remoteExtraStartedAt, "lengthTicks", this.remoteExtraLengthTicks,
                             "firstChangedAge",
@@ -1054,8 +919,7 @@ public final class E2EHarness
         }
 
         observation.put("otherNativeEntityPresent", other != null);
-        if (other != null)
-        {
+        if (other != null) {
             observation.put("otherNative",
                     Map.of("pose", other.getPose().name(), "onGround", other.isOnGround(), "sleeping",
                             other.isSleeping(), "vehicle", other.hasVehicle(), "x", other.getX(), "y", other.getY(),
@@ -1063,10 +927,8 @@ public final class E2EHarness
         }
 
         command(client, "mpatest " + (name.startsWith("other-") ? "MPAObserver" : PLAYER) + " status");
-        switch (name)
-        {
-        case "push-first-download" ->
-        {
+        switch (name) {
+        case "push-first-download" -> {
             check("serverPushNegotiated", pushNegotiated(push), "Actual hello_ack mode/capabilities=" + push);
             check("serverPushPlainMePack",
                     !packIndexPresent(client) && client.getResourcePackManager().getEnabledIds().stream()
@@ -1090,8 +952,7 @@ public final class E2EHarness
                             + this.packAuthority);
             observation.put("serverAuthority", this.packAuthority);
         }
-        case "server-trailing" ->
-        {
+        case "server-trailing" -> {
             ClientRuntime.RenderBinding binding = bindings.stream().findFirst().orElse(null);
             check("explicitTrailingMode", binding != null && binding.motionSource().equals("server-timeline"),
                     this.runtime.status().toString());
@@ -1101,13 +962,11 @@ public final class E2EHarness
         case "hunger" -> check("hungerExpressionRuntime",
                 height > 0 && !bindings.isEmpty() && bindings.getFirst().model().ysmPhysics(),
                 "Original scripts enabled with low food level");
-        case "idle" ->
-        {
+        case "idle" -> {
             this.idleHeight = height;
             check("modelIdle", height > 0 && (long) diagnostic.get("drawnBatches") > 0, "height=" + height);
         }
-        case "local-appearance-server-base" ->
-        {
+        case "local-appearance-server-base" -> {
             this.localServerBaseline = bindings.stream().findFirst().orElse(null);
             this.localRemoteBaseline = otherBindings;
             check("localAppearanceServerBaseline",
@@ -1115,8 +974,7 @@ public final class E2EHarness
                             && !this.localServerBaseline.instance().startsWith("local-self:"),
                     "Server-owned local renderer binding before private override=" + this.localServerBaseline);
         }
-        case "local-appearance-own", "local-appearance-action" ->
-        {
+        case "local-appearance-own", "local-appearance-action" -> {
             ClientRuntime.RenderBinding local = bindings.stream().findFirst().orElse(null);
             Vec3d nativePos = client.player.getLerpedPos(client.getRenderTickCounter().getTickProgress(false));
             check(name + "PrivateModelAndTransform",
@@ -1133,14 +991,12 @@ public final class E2EHarness
             check(name + "NoServerRequest", this.runtime.requestPacketsSent() == this.localRequestBaseline,
                     "C2S action requests before=" + this.localRequestBaseline + "; current="
                             + this.runtime.requestPacketsSent());
-            if (name.equals("local-appearance-action"))
-            {
+            if (name.equals("local-appearance-action")) {
                 check("localAppearanceLocalActionLayer", layers.contains("extra1"), layers);
             }
 
         }
-        case "local-appearance-off" ->
-        {
+        case "local-appearance-off" -> {
             ClientRuntime.RenderBinding restored = bindings.stream().findFirst().orElse(null);
             check("localAppearanceRestoresServerBinding",
                     restored != null && height > 0 && this.localServerBaseline != null
@@ -1156,23 +1012,20 @@ public final class E2EHarness
                     this.runtime.requestPacketsSent() == this.localRequestBaseline,
                     "C2S requests=" + this.runtime.requestPacketsSent() + "; baseline=" + this.localRequestBaseline);
         }
-        case "crawl" ->
-        {
+        case "crawl" -> {
             check("authoritativeCrawlState", (layers.contains("climb") || layers.contains("crawl")),
                     "server layer=" + layers + "; client recalculated pose=" + client.player.getPose());
             check("crawlGeometry", height > 0 && height < this.idleHeight * 0.8,
                     "idle=" + this.idleHeight + "; crawl=" + height);
         }
-        case "bed" ->
-        {
+        case "bed" -> {
             check("bedState", client.player.isSleeping() && layers.contains("bed_sleep"), layers);
             bedGeometry(client, models, client.player.getUuid(), 2, 2, "ownBed");
         }
         case "gsit-sit" -> check("gsitRealSit", height > 0 && layers.contains("sit"), layers);
         case "gsit-crawl" ->
             check("gsitRealCrawl", height > 0 && (layers.contains("climb") || layers.contains("crawl")), layers);
-        case "gsit-lay" ->
-        {
+        case "gsit-lay" -> {
             check("gsitLayMapped", height > 0 && layers.contains("bed_sleep"), "GSit floor anchor; " + layers);
             ModelRenderer.FrameModel ownMesh = models.stream().filter(ModelRenderer.FrameModel.class::isInstance)
                     .map(ModelRenderer.FrameModel.class::cast)
@@ -1191,8 +1044,7 @@ public final class E2EHarness
         case "ride" -> check("rideState", client.player.hasVehicle() && layers.contains("minecart"), layers);
         case "firstperson" -> check("firstPersonOwnModelHidden",
                 height == 0 && (int) diagnostic.get("firstPersonSelfSkipped") > 0, diagnostic.toString());
-        case "firstperson-extra0" ->
-        {
+        case "firstperson-extra0" -> {
             Map<String, Double> variables = ModelRenderer.expressionVariables(client.player.getUuid());
             check("firstPersonAccessoryTimelineRuns",
                     height == 0 && (int) diagnostic.get("firstPersonSelfSkipped") > 0
@@ -1200,8 +1052,7 @@ public final class E2EHarness
                             && variables.getOrDefault("variable.roaming.b", 0d) == 1,
                     "Hidden source extra0 commits its 1.2083/1.25 s accessory events; variables=" + variables);
         }
-        case "extra0-restored" ->
-        {
+        case "extra0-restored" -> {
             Map<String, Double> variables = ModelRenderer.expressionVariables(client.player.getUuid());
             check("thirdPersonAccessoryStatePersists",
                     height > 0 && !layers.contains("extra0") && variables.getOrDefault("variable.roaming.a", 0d) == 1
@@ -1211,8 +1062,7 @@ public final class E2EHarness
         case "gsit-firstperson" ->
             check("gsitFirstPersonOwnModelHidden", height == 0 && (int) diagnostic.get("firstPersonSelfSkipped") > 0,
                     "naturalCamera=" + this.gsitNaturalCamera + "; renderer=" + diagnostic);
-        case "gsit-thirdperson" ->
-        {
+        case "gsit-thirdperson" -> {
             @SuppressWarnings("unchecked")
             Map<String, Object> camera = (Map<String, Object>) diagnostic.get("camera");
             ClientRuntime.RenderBinding binding = bindings.stream().findFirst().orElse(null);
@@ -1231,8 +1081,7 @@ public final class E2EHarness
                     this.runtime.status().toString());
         case "local-on" ->
             check("localOnReacquired", !bindings.isEmpty() && height > 0, this.runtime.status().toString());
-        case "npc" ->
-        {
+        case "npc" -> {
             this.npcIdleHeight = height;
             check("secondModelGpu", height > 0 && !bindings.isEmpty(), "npc height=" + height);
         }
@@ -1241,8 +1090,7 @@ public final class E2EHarness
         case "crawl-side", "npc-crawl-side" ->
             check(name + "Visible", height > 0 && (layers.contains("climb") || layers.contains("crawl")),
                     "camera=" + client.getCameraEntity().getType() + "; height=" + height);
-        case "menu" ->
-        {
+        case "menu" -> {
             check("playerModelPanel", client.currentScreen instanceof PlayerModelScreen,
                     "Unified settings are separate from the action wheel");
             check("previewRespectsServerBinding",
@@ -1251,16 +1099,14 @@ public final class E2EHarness
         }
         case "self-hidden" ->
             check("selfDisplayToggleOff", height == 0 && own(client).isEmpty(), this.runtime.status().toString());
-        case "self-hidden-extra0" ->
-        {
+        case "self-hidden-extra0" -> {
             Map<String, Double> variables = ModelRenderer.expressionVariables(client.player.getUuid());
             check("hiddenSelfAccessoryTimelineRuns",
                     height == 0 && own(client).isEmpty() && variables.getOrDefault("variable.roaming.a", 0d) == 1
                             && variables.getOrDefault("variable.roaming.b", 0d) == 1,
                     "Local self toggle hides drawing and preserves source scripts; variables=" + variables);
         }
-        case "self-restored" ->
-        {
+        case "self-restored" -> {
             check("selfDisplayToggleOn", height > 0 && !bindings.isEmpty(), this.runtime.status().toString());
             Map<String, Double> variables = ModelRenderer.expressionVariables(client.player.getUuid());
             check("hiddenSelfAccessoryStatePersists",
@@ -1270,14 +1116,12 @@ public final class E2EHarness
         }
         case "server-reload" ->
             check("serverReloadReacquired", height > 0 && !bindings.isEmpty(), this.runtime.status().toString());
-        case "other-idle" ->
-        {
+        case "other-idle" -> {
             this.otherIdleHeight = otherHeight;
             check("remoteLocalModel", otherHeight > 0 && !otherBindings.isEmpty(),
                     "MPAObserver has no MPA client; local height=" + otherHeight);
         }
-        case "other-extra0" ->
-        {
+        case "other-extra0" -> {
             Map<String, Double> variables = ModelRenderer.expressionVariables(OTHER);
             check("remoteExtraActionObserved", this.remoteExtraSeen && this.remoteExtraEventChecked,
                     "Observed source extra0 startedAt=" + this.remoteExtraStartedAt + "; length="
@@ -1299,8 +1143,7 @@ public final class E2EHarness
                 otherHeight > 0 && otherHeight < this.otherIdleHeight * .8
                         && (otherLayers.contains("climb") || otherLayers.contains("crawl")),
                 "idle=" + this.otherIdleHeight + "; crawl=" + otherHeight + "; " + otherLayers);
-        case "other-bed" ->
-        {
+        case "other-bed" -> {
             check("remoteBed", otherHeight > 0 && otherLayers.contains("bed_sleep"),
                     "server layer=" + otherLayers + "; native entity present=" + (other != null));
             bedGeometry(client, models, OTHER, 5, 2, "otherBed");
@@ -1309,8 +1152,7 @@ public final class E2EHarness
                 "server layer=" + otherLayers + "; native entity present=" + (other != null));
         case "other-range-out" -> check("distanceAt8Hidden", otherBindings.isEmpty() && otherHeight == 0,
                 "Remote binding count=" + otherBindings.size());
-        case "other-range-in" ->
-        {
+        case "other-range-in" -> {
             check("distanceWithin8Visible", !otherBindings.isEmpty() && otherHeight > 0,
                     "Remote binding count=" + otherBindings.size() + "; height=" + otherHeight);
             Map<String, Double> variables = ModelRenderer.expressionVariables(OTHER);
@@ -1320,8 +1162,7 @@ public final class E2EHarness
                             && variables.getOrDefault("variable.roaming.b", 0d) == 1,
                     "New viewer binding restores server accessory state without replay; variables=" + variables);
         }
-        case "other-undisguise", "other-undisguise-again", "other-second-undisguise" ->
-        {
+        case "other-undisguise", "other-undisguise-again", "other-second-undisguise" -> {
             long copies = client.world.getPlayers().stream().filter(player -> player.getUuid().equals(OTHER)).count();
             check(name + "RestoresNativePlayer",
                     other != null && !other.isInvisibleTo(client.player) && otherBindings.isEmpty()
@@ -1339,8 +1180,7 @@ public final class E2EHarness
             check(name + "LocalModelReturns",
                     otherHeight > 0 && !otherBindings.isEmpty() && this.runtime.shouldHidePlayer(OTHER),
                     "Remote binding count=" + otherBindings.size() + "; height=" + otherHeight);
-        case "other-second-model", "own-second-model" ->
-        {
+        case "other-second-model", "own-second-model" -> {
             UUID owner = name.startsWith("other-") ? OTHER : client.player.getUuid();
             Optional<ClientRuntime.RenderBinding> local = this.runtime.renderBindings().stream()
                     .filter(binding -> binding.owner().equals(owner)).findFirst();
@@ -1362,12 +1202,10 @@ public final class E2EHarness
         case "preview-end" ->
             check("localPreviewReleased", bindings.isEmpty() && !this.runtime.shouldHidePlayer(client.player.getUuid()),
                     this.runtime.status().toString());
-        default ->
-            {
-            }
+        default -> {
         }
-        if (!models.isEmpty())
-        {
+        }
+        if (!models.isEmpty()) {
             boolean uprightYaw = models.stream().filter(ModelRenderer.FrameModel.class::isInstance)
                     .map(ModelRenderer.FrameModel.class::cast)
                     .allMatch(model -> Math.abs(model.appliedYaw() - (180 - model.bodyYaw())) < 0.001);
@@ -1377,30 +1215,23 @@ public final class E2EHarness
         screenshot(client, String.format("%02d-%s", this.stage + 1, name));
     }
 
-    private String diskPrivateProfile()
-    {
-        try
-        {
+    private String diskPrivateProfile() {
+        try {
             JsonObject json = JsonParser.parseString(Files.readString(this.runtime.localAppearanceSettingsPath()))
                     .getAsJsonObject();
             return json.has("localAppearance") ? json.get("localAppearance").toString() : "";
-        }
-        catch (Exception failure)
-        {
+        } catch (Exception failure) {
             return "";
         }
     }
 
-    private boolean savedPrivateUnchanged()
-    {
+    private boolean savedPrivateUnchanged() {
         return LOCAL_PROFILE.equals(this.runtime.localAppearance()) && !this.savedPrivateDiskProfile.isEmpty()
                 && this.savedPrivateDiskProfile.equals(diskPrivateProfile());
     }
 
-    private static boolean pressUiButton(Screen screen, String text)
-    {
-        if (screen == null)
-        {
+    private static boolean pressUiButton(Screen screen, String text) {
+        if (screen == null) {
             return false;
         }
 
@@ -1408,18 +1239,15 @@ public final class E2EHarness
                 .map(ButtonWidget.class::cast).filter(widget -> widget.visible && widget.active
                         && widget.getMessage().getString().replace(" ✓", "").equals(text))
                 .findFirst().orElse(null);
-        if (button == null)
-        {
+        if (button == null) {
             return false;
         }
 
         return clickUiPoint(screen, button.getX() + button.getWidth() / 2d, button.getY() + button.getHeight() / 2d);
     }
 
-    private static boolean clickUiPoint(Screen screen, double x, double y)
-    {
-        if (screen == null || !Double.isFinite(x) || !Double.isFinite(y))
-        {
+    private static boolean clickUiPoint(Screen screen, double x, double y) {
+        if (screen == null || !Double.isFinite(x) || !Double.isFinite(y)) {
             return false;
         }
 
@@ -1427,12 +1255,10 @@ public final class E2EHarness
         return screen.mouseClicked(new Click(x, y, new MouseInput(GLFW.GLFW_MOUSE_BUTTON_LEFT, 0)), false);
     }
 
-    private static boolean clickUiRectangle(Screen screen, Map<?, ?> rectangle)
-    {
+    private static boolean clickUiRectangle(Screen screen, Map<?, ?> rectangle) {
         if (!(rectangle.get("x") instanceof Number x) || !(rectangle.get("y") instanceof Number y)
                 || !(rectangle.get("width") instanceof Number width)
-                || !(rectangle.get("height") instanceof Number height))
-        {
+                || !(rectangle.get("height") instanceof Number height)) {
             return false;
         }
 
@@ -1440,16 +1266,14 @@ public final class E2EHarness
                 y.doubleValue() + height.doubleValue() / 2);
     }
 
-    private static boolean pressWheelControl(AnimationWheelScreen wheel, String id)
-    {
+    private static boolean pressWheelControl(AnimationWheelScreen wheel, String id) {
         Map<?, ?> control = pushRows(wheel.diagnostics(), "controls").stream()
                 .filter(row -> id.equals(row.get("id")) && Boolean.TRUE.equals(row.get("active"))).findFirst()
                 .orElse(Map.of());
         return !control.isEmpty() && clickUiRectangle(wheel, control);
     }
 
-    private static boolean widgetsInsideWindow(MinecraftClient client, Screen screen)
-    {
+    private static boolean widgetsInsideWindow(MinecraftClient client, Screen screen) {
         return screen != null && screen.children().stream().filter(ClickableWidget.class::isInstance)
                 .map(ClickableWidget.class::cast).filter(widget -> widget.visible)
                 .allMatch(widget -> widget.getX() >= 0 && widget.getY() >= 0
@@ -1458,12 +1282,10 @@ public final class E2EHarness
     }
 
     /** Sends the real registered entry binding through its Fabric/Minecraft event path. */
-    private boolean pressInteractionKey(MinecraftClient client)
-    {
+    private boolean pressInteractionKey(MinecraftClient client) {
         List<KeyBinding> bindings = Arrays.stream(client.options.allKeys)
                 .filter(binding -> binding.getId().startsWith("key.meplayeractions.")).toList();
-        if (bindings.size() != 1 || KeyBindingHelper.getBoundKeyOf(bindings.getFirst()).getCode() != GLFW.GLFW_KEY_J)
-        {
+        if (bindings.size() != 1 || KeyBindingHelper.getBoundKeyOf(bindings.getFirst()).getCode() != GLFW.GLFW_KEY_J) {
             return false;
         }
 
@@ -1471,8 +1293,7 @@ public final class E2EHarness
         return true;
     }
 
-    private void beginInteraction(MinecraftClient client, String name)
-    {
+    private void beginInteraction(MinecraftClient client, String name) {
         this.interactionUiStep = 0;
         this.interactionStableTicks = 0;
         this.interactionUiIssued = false;
@@ -1489,8 +1310,7 @@ public final class E2EHarness
         this.authorFormEmittedBaseline = 0;
         this.authorFormSource = Map.of();
         this.authorFormProof = Map.of();
-        if (name.equals("private-equipment-restored"))
-        {
+        if (name.equals("private-equipment-restored")) {
             this.heldPlaybackStep = 0;
             this.heldPlaybackStableTicks = 0;
             this.heldPlaybackSamples = 0;
@@ -1505,43 +1325,30 @@ public final class E2EHarness
             this.heldPlaybackEquipment = Map.of();
         }
         this.itemStageStartedAtMillis = System.currentTimeMillis();
-        if (name.equals("private-equipment-suspended"))
-        {
+        if (name.equals("private-equipment-suspended")) {
             this.localRequestBaseline = this.runtime.requestPacketsSent();
         }
 
         client.options.setPerspective(
                 name.startsWith("other-equipment-") ? Perspective.FIRST_PERSON : Perspective.THIRD_PERSON_FRONT);
-        if (name.equals("local-appearance-server-base"))
-        {
+        if (name.equals("local-appearance-server-base")) {
             command(client, "mpatest " + PLAYER + " reset");
             this.localRequestBaseline = this.runtime.requestPacketsSent();
-        }
-        else if (name.equals("server-equipment-armor") || name.equals("server-equipment-elytra"))
-        {
+        } else if (name.equals("server-equipment-armor") || name.equals("server-equipment-elytra")) {
             equipInteraction(client, PLAYER, name.endsWith("elytra"));
-        }
-        else if (name.equals("other-equipment-armor") || name.equals("other-equipment-elytra"))
-        {
+        } else if (name.equals("other-equipment-armor") || name.equals("other-equipment-elytra")) {
             equipInteraction(client, "MPAObserver", name.endsWith("elytra"));
-        }
-        else if (name.equals("undisguise"))
-        {
+        } else if (name.equals("undisguise")) {
             command(client, "meplayeractions undisguise");
         }
         this.equipmentSubmissionBaseline = ((Number) ModelRenderer.diagnostics().get("submittedItems")).longValue();
         this.interactionInstanceBaseline = this.runtime.serverOwnModelInstance();
     }
 
-    private void equipInteraction(MinecraftClient client, String player, boolean elytra)
-    {
-        for (String[] equipment : List.of(new String[]
-        { "head", "diamond_helmet" }, new String[]
-        { "chest", elytra ? "elytra" : "diamond_chestplate" }, new String[]
-        { "legs", "diamond_leggings" }, new String[]
-        { "feet", "diamond_boots" }))
-
-        {
+    private void equipInteraction(MinecraftClient client, String player, boolean elytra) {
+        for (String[] equipment : List.of(new String[] { "head", "diamond_helmet" },
+                new String[] { "chest", elytra ? "elytra" : "diamond_chestplate" },
+                new String[] { "legs", "diamond_leggings" }, new String[] { "feet", "diamond_boots" })) {
             command(client,
                     "item replace entity " + player + " armor." + equipment[0] + " with minecraft:" + equipment[1]);
         }
@@ -1550,10 +1357,8 @@ public final class E2EHarness
         command(client, "item replace entity " + player + " weapon.offhand with minecraft:shield");
     }
 
-    private void interactionTick(MinecraftClient client, String name) throws Exception
-    {
-        if (this.stageTicks % 10 == 0)
-        {
+    private void interactionTick(MinecraftClient client, String name) throws Exception {
+        if (this.stageTicks % 10 == 0) {
             command(client, "mpatest " + PLAYER + " status");
         }
 
@@ -1563,15 +1368,12 @@ public final class E2EHarness
                 && this.runtime.privateAppearanceActive();
         boolean serverMesh = mesh && !binding.instance().startsWith("local-self:")
                 && this.runtime.serverOwnModelReady();
-        switch (name)
-        {
-        case "local-appearance-server-base" ->
-        {
+        switch (name) {
+        case "local-appearance-server-base" -> {
             boolean ready = serverMesh && this.runtime.hasOwnServerDisguise() && !this.runtime.interactionLocalMode()
                     && !this.runtime.privateAppearanceActive();
             this.interactionStableTicks = ready ? this.interactionStableTicks + 1 : 0;
-            if (!this.captured && this.stageTicks >= 35 && this.interactionStableTicks >= 3)
-            {
+            if (!this.captured && this.stageTicks >= 35 && this.interactionStableTicks >= 3) {
                 this.localServerBaseline = binding;
                 this.localRemoteBaseline = otherBindings(client);
                 check("serverDisguiseSuppressesPrivateAppearance", ready && savedPrivateUnchanged(),
@@ -1580,38 +1382,28 @@ public final class E2EHarness
                 captureInteraction(client, name);
             }
         }
-        case "local-appearance-own", "local-appearance-off", "private-equipment-suspended", "server-instance-auto" ->
-        {
+        case "local-appearance-own", "local-appearance-off", "private-equipment-suspended", "server-instance-auto" -> {
             boolean clientMode = !name.equals("local-appearance-off");
-            if (this.interactionUiStep < 2)
-            {
-                if (!this.interactionUiIssued)
-                {
+            if (this.interactionUiStep < 2) {
+                if (!this.interactionUiIssued) {
                     this.interactionUiIssued = pressInteractionKey(client);
                     return;
                 }
-                if (this.interactionUiStep == 0 && client.currentScreen instanceof AnimationWheelScreen wheel)
-                {
-                    if (name.equals("local-appearance-own"))
-                    {
+                if (this.interactionUiStep == 0 && client.currentScreen instanceof AnimationWheelScreen wheel) {
+                    if (name.equals("local-appearance-own")) {
                         check("JOpensServerWheel",
                                 !Boolean.TRUE.equals(wheel.diagnostics().get("localMode"))
                                         && Boolean.TRUE.equals(wheel.diagnostics().get("ownServerDisguise")),
                                 wheel.diagnostics().toString());
                         screenshot(client, "interactions-j-server-wheel");
                     }
-                    if (pressUiButton(wheel, "⚙"))
-                    {
+                    if (pressUiButton(wheel, "⚙")) {
                         this.interactionUiStep = 1;
                     }
 
-                }
-                else if (this.interactionUiStep == 1 && client.currentScreen instanceof PlayerModelScreen hub)
-                {
+                } else if (this.interactionUiStep == 1 && client.currentScreen instanceof PlayerModelScreen hub) {
                     this.interactionEvidence = hub.diagnostics();
-                    if (name.equals("local-appearance-own"))
-
-                    {
+                    if (name.equals("local-appearance-own")) {
                         check("serverSettingsHidePrivateModelControls",
                                 "server".equals(this.interactionEvidence.get("mode"))
                                         && Boolean.FALSE
@@ -1621,18 +1413,15 @@ public final class E2EHarness
                                 "Actual unified settings opened from J wheel gear: " + this.interactionEvidence);
                     }
 
-                    if (pressUiButton(hub, clientMode ? "客户端" : "服务器下发"))
-                    {
+                    if (pressUiButton(hub, clientMode ? "客户端" : "服务器下发")) {
                         this.interactionUiStep = 2;
                     }
 
                 }
                 break;
             }
-            if (name.equals("server-instance-auto"))
-            {
-                if (this.interactionUiStep == 2 && privateMesh)
-                {
+            if (name.equals("server-instance-auto")) {
+                if (this.interactionUiStep == 2 && privateMesh) {
                     check("sameInstanceAllowsExplicitPrivateOverride",
                             this.runtime.hasOwnServerDisguise() && savedPrivateUnchanged(),
                             "Actual client-tab callback activates private rendering while raw server identity remains; "
@@ -1642,19 +1431,15 @@ public final class E2EHarness
                     command(client, "mpatest " + PLAYER + " disguise ysm_02_jk");
                     this.interactionUiStep = 3;
                     this.interactionUiIssued = false;
-                }
-                else if (!this.captured && this.interactionUiStep == 3 && serverMesh
+                } else if (!this.captured && this.interactionUiStep == 3 && serverMesh
                         && "ysm_02_jk".equals(this.runtime.serverOwnModelId())
                         && !this.interactionInstanceBaseline.equals(this.runtime.serverOwnModelInstance())
-                        && !this.runtime.interactionLocalMode())
-                {
-                    if (!this.interactionUiIssued)
-                    {
+                        && !this.runtime.interactionLocalMode()) {
+                    if (!this.interactionUiIssued) {
                         this.interactionUiIssued = pressInteractionKey(client);
                         break;
                     }
-                    if (client.currentScreen instanceof AnimationWheelScreen wheel)
-                    {
+                    if (client.currentScreen instanceof AnimationWheelScreen wheel) {
                         check("newServerInstanceResetsWheelSource",
                                 !Boolean.TRUE.equals(wheel.diagnostics().get("localMode"))
                                         && !this.runtime.privateAppearanceActive() && savedPrivateUnchanged(),
@@ -1666,16 +1451,13 @@ public final class E2EHarness
             }
             boolean ready = clientMode ? privateMesh && this.runtime.interactionLocalMode()
                     : serverMesh && !this.runtime.interactionLocalMode();
-            if (name.equals("local-appearance-own"))
-            {
+            if (name.equals("local-appearance-own")) {
                 ready &= client.currentScreen instanceof PlayerModelScreen hub && referenceGalleryReady(client, hub);
             }
 
             this.interactionStableTicks = ready ? this.interactionStableTicks + 1 : 0;
-            if (ready && !this.captured && this.stageTicks >= 35 && this.interactionStableTicks >= 3)
-            {
-                if (name.equals("local-appearance-own"))
-                {
+            if (ready && !this.captured && this.stageTicks >= 35 && this.interactionStableTicks >= 3) {
+                if (name.equals("local-appearance-own")) {
                     PlayerModelScreen hub = (PlayerModelScreen) client.currentScreen;
                     this.interactionEvidence = new LinkedHashMap<>(this.interactionPreviewSnapshot);
                     this.interactionEvidence.put("defaultVisibilityPixels", this.interactionPreviewPixels);
@@ -1691,18 +1473,14 @@ public final class E2EHarness
                                     && Math.abs(binding.y() - pos.y - .35) < .000001
                                     && Math.abs(binding.z() - pos.z + .2) < .000001,
                             "Actual local mesh under explicit client source, raw server binding retained: " + binding);
-                }
-                else if (name.equals("local-appearance-off"))
-                {
+                } else if (name.equals("local-appearance-off")) {
                     check("manualServerSelectionRestoresOriginalBinding",
                             this.localServerBaseline != null
                                     && sameBindings(List.of(this.localServerBaseline), List.of(binding))
                                     && savedPrivateUnchanged(),
                             "Server tab restores exact server instance/hash/scale/XYZ and retains saved private profile: "
                                     + binding);
-                }
-                else if (name.equals("private-equipment-suspended"))
-                {
+                } else if (name.equals("private-equipment-suspended")) {
                     checkInteractionEquipment(client, name, client.player, binding, true);
                 }
                 check(name + "RemoteBindingUnchanged", sameBindings(this.localRemoteBaseline, otherBindings(client)),
@@ -1714,34 +1492,27 @@ public final class E2EHarness
             }
         }
         case "local-appearance-action", "menu" -> interactionWheelTick(client, name, binding, privateMesh, serverMesh);
-        case "server-equipment-armor", "server-equipment-elytra", "other-equipment-armor", "other-equipment-elytra" ->
-        {
+        case "server-equipment-armor", "server-equipment-elytra", "other-equipment-armor", "other-equipment-elytra" -> {
             PlayerEntity actor = name.startsWith("other-") ? otherPlayer(client) : client.player;
             ClientRuntime.RenderBinding actorBinding = name.startsWith("other-")
                     ? otherBindings(client).stream().findFirst().orElse(null)
                     : binding;
             if (actorBinding != null && actor != null && this.stageTicks >= 35 && interactionEquipmentReady(actor, name)
-                    && visibleModel(ModelRenderer.diagnostics(), actorBinding))
-            {
+                    && visibleModel(ModelRenderer.diagnostics(), actorBinding)) {
                 this.interactionStableTicks++;
-                if (!this.captured && this.interactionStableTicks >= 3)
-                {
+                if (!this.captured && this.interactionStableTicks >= 3) {
                     checkInteractionEquipment(client, name, actor, actorBinding,
                             !name.equals("private-equipment-restored"));
                     captureInteraction(client, name);
                 }
-            }
-            else
-            {
+            } else {
                 this.interactionStableTicks = 0;
             }
 
         }
         case "private-equipment-restored" -> interactionHeldPlaybackTick(client, binding, privateMesh);
-        case "undisguise" ->
-        {
-            if (!this.captured && this.stageTicks >= 35 && !this.runtime.hasOwnServerDisguise() && privateMesh)
-            {
+        case "undisguise" -> {
+            if (!this.captured && this.stageTicks >= 35 && !this.runtime.hasOwnServerDisguise() && privateMesh) {
                 check("undisguiseRestoresSavedPrivateAppearance",
                         savedPrivateUnchanged() && binding.assetHash().equals(this.savedPrivateHash)
                                 && binding.motionSource().equals("local-self")
@@ -1751,28 +1522,22 @@ public final class E2EHarness
                 captureInteraction(client, name);
             }
         }
-        case "private-restored-ui" ->
-        {
-            if (!this.interactionUiIssued && privateMesh)
-            {
+        case "private-restored-ui" -> {
+            if (!this.interactionUiIssued && privateMesh) {
                 this.interactionUiIssued = pressInteractionKey(client);
                 return;
             }
-            if (this.interactionUiStep == 0 && client.currentScreen instanceof AnimationWheelScreen wheel)
-            {
+            if (this.interactionUiStep == 0 && client.currentScreen instanceof AnimationWheelScreen wheel) {
                 check("undisguiseRestoresClientWheel",
                         Boolean.TRUE.equals(wheel.diagnostics().get("localMode"))
                                 && !Boolean.TRUE.equals(wheel.diagnostics().get("ownServerDisguise")),
                         wheel.diagnostics().toString());
-                if (pressUiButton(wheel, "⚙"))
-                {
+                if (pressUiButton(wheel, "⚙")) {
                     this.interactionUiStep = 1;
                 }
 
-            }
-            else if (!this.captured && this.interactionUiStep == 1
-                    && client.currentScreen instanceof PlayerModelScreen hub && this.stageTicks >= 20)
-            {
+            } else if (!this.captured && this.interactionUiStep == 1
+                    && client.currentScreen instanceof PlayerModelScreen hub && this.stageTicks >= 20) {
                 check("undisguiseRestoresPrivateSettingsUi",
                         "client".equals(hub.diagnostics().get("mode"))
                                 && Boolean.TRUE.equals(hub.diagnostics().get("localModelControlsVisible"))
@@ -1783,22 +1548,19 @@ public final class E2EHarness
         }
         default -> throw new IllegalStateException("Unknown interactions phase " + name);
         }
-        if (this.captured && this.stageTicks >= 65)
-        {
+        if (this.captured && this.stageTicks >= 65) {
             next(client);
             return;
         }
         int phaseDeadline = name.equals("private-equipment-restored") ? 240 : 180;
-        if (this.stageTicks > phaseDeadline)
-        {
+        if (this.stageTicks > phaseDeadline) {
             check(name + "Completed", false,
                     "Fixed phase deadline; screen="
                             + (client.currentScreen == null ? "world" : client.currentScreen.getClass().getName())
                             + "; UI step=" + this.interactionUiStep + "; deadline=" + phaseDeadline + "; heldPlayback="
                             + heldPlaybackProof() + "; server=" + this.runtime.ownServerAppearanceDiagnostics()
                             + "; evidence=" + this.interactionEvidence);
-            if (!this.captured)
-            {
+            if (!this.captured) {
                 captureInteraction(client, name);
             }
 
@@ -1806,17 +1568,14 @@ public final class E2EHarness
         }
     }
 
-    private boolean selectWheelAction(AnimationWheelScreen wheel, String action)
-    {
+    private boolean selectWheelAction(AnimationWheelScreen wheel, String action) {
         Map<?, ?> point = pushRows(wheel.diagnostics(), "actions").stream().filter(row -> action.equals(row.get("id")))
                 .findFirst().orElse(Map.of());
-        if (!(point.get("x") instanceof Number x) || !(point.get("y") instanceof Number y))
-        {
+        if (!(point.get("x") instanceof Number x) || !(point.get("y") instanceof Number y)) {
             return false;
         }
 
-        if (!clickUiPoint(wheel, x.doubleValue(), y.doubleValue()))
-        {
+        if (!clickUiPoint(wheel, x.doubleValue(), y.doubleValue())) {
             return false;
         }
 
@@ -1826,23 +1585,20 @@ public final class E2EHarness
         return true;
     }
 
-    private boolean navigateServerWheelToAction(AnimationWheelScreen wheel, String action)
-    {
+    private boolean navigateServerWheelToAction(AnimationWheelScreen wheel, String action) {
         List<String> catalog = this.runtime.actions().stream().map(ClientRuntime.Action::id).toList();
         int target = catalog.indexOf(action);
         Map<String, Object> view = wheel.diagnostics();
         List<Integer> visible = pushRows(view, "actions").stream()
                 .map(row -> catalog.indexOf(String.valueOf(row.get("id")))).filter(index -> index >= 0).toList();
-        if (target < 0 || visible.isEmpty() || !Boolean.FALSE.equals(view.get("localMode")))
-        {
+        if (target < 0 || visible.isEmpty() || !Boolean.FALSE.equals(view.get("localMode"))) {
             return false;
         }
 
         int first = visible.stream().mapToInt(Integer::intValue).min().orElseThrow();
         int last = visible.stream().mapToInt(Integer::intValue).max().orElseThrow();
         String direction = target < first ? "previous" : (target > last ? "next" : "");
-        if (direction.isEmpty())
-        {
+        if (direction.isEmpty()) {
             return false;
         }
 
@@ -1852,8 +1608,7 @@ public final class E2EHarness
         return pressWheelControl(wheel, direction);
     }
 
-    private boolean referenceGalleryReady(MinecraftClient client, PlayerModelScreen hub) throws Exception
-    {
+    private boolean referenceGalleryReady(MinecraftClient client, PlayerModelScreen hub) throws Exception {
         Map<String, Object> view = hub.diagnostics(), gallery = hub.galleryDiagnostics();
         if (!Boolean.TRUE.equals(view.get("galleryHome")) || !"client".equals(view.get("mode"))
                 || !Boolean.TRUE.equals(view.get("localModelControlsVisible"))
@@ -1863,8 +1618,7 @@ public final class E2EHarness
                 || !LOCAL_PROFILE.modelId().equals(left.get("modelId"))
                 || !String.valueOf(left.get("key")).contains(this.savedPrivateHash)
                 || itemNumber(preview, "frameModels") < 2 || itemNumber(preview, "frameQuads") <= 0
-                || itemNumber(preview, "frameVertices") <= 0 || itemNumber(preview, "emittedVertices") <= 0)
-        {
+                || itemNumber(preview, "frameVertices") <= 0 || itemNumber(preview, "emittedVertices") <= 0) {
             return false;
         }
 
@@ -1879,13 +1633,11 @@ public final class E2EHarness
                                 && Boolean.TRUE.equals(card.get("loaded")) && Boolean.TRUE.equals(card.get("drawn")))
                 && cards.stream()
                         .allMatch(card -> itemNumber(card, "x") >= itemNumber(left, "x") + itemNumber(left, "width"));
-        if (!ready)
-        {
+        if (!ready) {
             return false;
         }
 
-        if (this.interactionPreviewScreenshot.isEmpty())
-        {
+        if (this.interactionPreviewScreenshot.isEmpty()) {
             this.interactionPreviewSnapshot = Map.of("gallery", gallery, "nativePreviewSource", source,
                     "nativeContextProof", contexts, "capturedStageTick", this.stageTicks);
             this.interactionEvidence = new LinkedHashMap<>(this.interactionPreviewSnapshot);
@@ -1899,16 +1651,14 @@ public final class E2EHarness
             return false;
         }
         if (this.screenshotCallbacks.stream().noneMatch(row -> this.interactionPreviewScreenshot.equals(row.get("file"))
-                && Boolean.TRUE.equals(row.get("fileWritten"))))
-        {
+                && Boolean.TRUE.equals(row.get("fileWritten")))) {
             return false;
         }
 
         @SuppressWarnings("unchecked")
         Map<String, Object> capturedContexts = (Map<String, Object>) this.interactionPreviewSnapshot
                 .get("nativeContextProof");
-        if (!this.interactionPreviewPixels.containsKey("passed"))
-        {
+        if (!this.interactionPreviewPixels.containsKey("passed")) {
             this.interactionPreviewPixels = LocalAppearanceHarness.defaultPngVisibilityProof(
                     this.output.resolve(this.interactionPreviewScreenshot), capturedContexts,
                     this.interactionPreviewScaledWidth, this.interactionPreviewScaledHeight,
@@ -1921,35 +1671,28 @@ public final class E2EHarness
         return Boolean.TRUE.equals(this.interactionPreviewPixels.get("passed"));
     }
 
-    private static boolean pointInsideQuad(List<?> vertices, double x, double y)
-    {
-        if (vertices.size() != 4)
-        {
+    private static boolean pointInsideQuad(List<?> vertices, double x, double y) {
+        if (vertices.size() != 4) {
             return false;
         }
 
         double sign = 0, area = 0;
-        for (int i = 0; i < 4; i++)
-        {
+        for (int i = 0; i < 4; i++) {
             if (!(vertices.get(i) instanceof List<?> a) || !(vertices.get((i + 1) % 4) instanceof List<?> b)
                     || a.size() != 2 || b.size() != 2 || !(a.get(0) instanceof Number ax)
                     || !(a.get(1) instanceof Number ay) || !(b.get(0) instanceof Number bx)
-                    || !(b.get(1) instanceof Number by))
-            {
+                    || !(b.get(1) instanceof Number by)) {
                 return false;
             }
 
             double x1 = ax.doubleValue(), y1 = ay.doubleValue(), x2 = bx.doubleValue(), y2 = by.doubleValue();
-            if (!Double.isFinite(x1) || !Double.isFinite(y1) || !Double.isFinite(x2) || !Double.isFinite(y2))
-            {
+            if (!Double.isFinite(x1) || !Double.isFinite(y1) || !Double.isFinite(x2) || !Double.isFinite(y2)) {
                 return false;
             }
 
             double cross = (x2 - x1) * (y - y1) - (y2 - y1) * (x - x1);
-            if (Math.abs(cross) > 1e-5)
-            {
-                if (sign != 0 && Math.signum(cross) != sign)
-                {
+            if (Math.abs(cross) > 1e-5) {
+                if (sign != 0 && Math.signum(cross) != sign) {
                     return false;
                 }
                 sign = Math.signum(cross);
@@ -1959,29 +1702,23 @@ public final class E2EHarness
         return Math.abs(area) > 10 && sign != 0;
     }
 
-    private static boolean referenceWheelGeometryReady(MinecraftClient client, Map<String, Object> view)
-    {
+    private static boolean referenceWheelGeometryReady(MinecraftClient client, Map<String, Object> view) {
         List<Map<?, ?>> actions = pushRows(view, "actions"), polygons = pushRows(view, "polygons");
-        if (actions.isEmpty() || polygons.isEmpty() || itemNumber(view, "emittedVertices") < polygons.size() * 4L)
-        {
+        if (actions.isEmpty() || polygons.isEmpty() || itemNumber(view, "emittedVertices") < polygons.size() * 4L) {
             return false;
         }
 
         int width = client.getWindow().getScaledWidth(), height = client.getWindow().getScaledHeight();
-        for (Map<?, ?> polygon : polygons)
-        {
-            if (!(polygon.get("vertices") instanceof List<?> vertices) || vertices.size() != 4)
-            {
+        for (Map<?, ?> polygon : polygons) {
+            if (!(polygon.get("vertices") instanceof List<?> vertices) || vertices.size() != 4) {
                 return false;
             }
 
-            for (Object value : vertices)
-            {
+            for (Object value : vertices) {
                 if (!(value instanceof List<?> point) || point.size() != 2 || !(point.get(0) instanceof Number x)
                         || !(point.get(1) instanceof Number y) || !Double.isFinite(x.doubleValue())
                         || !Double.isFinite(y.doubleValue()) || x.doubleValue() < 0 || x.doubleValue() > width
-                        || y.doubleValue() < 0 || y.doubleValue() > height)
-                {
+                        || y.doubleValue() < 0 || y.doubleValue() > height) {
                     return false;
                 }
 
@@ -1996,37 +1733,29 @@ public final class E2EHarness
                                         && pointInsideQuad(vertices, x.doubleValue(), y.doubleValue())));
     }
 
-    private static String normalizedAuthorVariable(String expression)
-    {
+    private static String normalizedAuthorVariable(String expression) {
         return expression.startsWith("v.") ? "variable." + expression.substring(2) : expression;
     }
 
-    private static Map<String, Object> readDefaultAuthorForm(MinecraftClient client)
-    {
+    private static Map<String, Object> readDefaultAuthorForm(MinecraftClient client) {
         Identifier source = Identifier.of("meplayeractions", "builtin/openysm_default/ysm.json");
-        try (BufferedReader reader = client.getResourceManager().getResource(source).orElseThrow().getReader())
-        {
+        try (BufferedReader reader = client.getResourceManager().getResource(source).orElseThrow().getReader()) {
             JsonObject properties = JsonParser.parseReader(reader).getAsJsonObject().getAsJsonObject("properties");
             String config = properties.getAsJsonObject("extra_animation").get("extra0").getAsString();
-            if (!config.startsWith("#"))
-            {
+            if (!config.startsWith("#")) {
                 throw new IllegalStateException("Default extra0 has no authored form reference");
             }
 
             String group = config.substring(1);
-            for (JsonElement definition : properties.getAsJsonArray("extra_animation_buttons"))
-            {
+            for (JsonElement definition : properties.getAsJsonArray("extra_animation_buttons")) {
                 JsonObject entry = definition.getAsJsonObject();
-                if (!group.equals(entry.get("id").getAsString()))
-                {
+                if (!group.equals(entry.get("id").getAsString())) {
                     continue;
                 }
 
-                for (JsonElement value : entry.getAsJsonArray("config_forms"))
-                {
+                for (JsonElement value : entry.getAsJsonArray("config_forms")) {
                     JsonObject form = value.getAsJsonObject();
-                    if (!"checkbox".equals(form.get("type").getAsString()))
-                    {
+                    if (!"checkbox".equals(form.get("type").getAsString())) {
                         continue;
                     }
 
@@ -2036,19 +1765,15 @@ public final class E2EHarness
                 }
             }
             throw new IllegalStateException("Default authored checkbox is absent");
-        }
-        catch (Exception failure)
-        {
+        } catch (Exception failure) {
             return Map.of("readSucceeded", false, "resource", source.toString(), "error", failure.toString());
         }
     }
 
-    private void interactionAuthorFormTick(MinecraftClient client, AnimationWheelScreen wheel)
-    {
+    private void interactionAuthorFormTick(MinecraftClient client, AnimationWheelScreen wheel) {
         Map<String, Object> view = wheel.diagnostics();
         if (!(view.get("formPanel") instanceof Map<?, ?> panel) || !Boolean.TRUE.equals(panel.get("visible"))
-                || !this.authorFormGroup.equals(panel.get("group")))
-        {
+                || !this.authorFormGroup.equals(panel.get("group"))) {
             return;
         }
 
@@ -2056,8 +1781,7 @@ public final class E2EHarness
                 .filter(row -> "CHECKBOX".equals(row.get("kind")) && this.authorFormVariable
                         .equals(normalizedAuthorVariable(String.valueOf(row.get("expression")))))
                 .findFirst().orElse(Map.of());
-        if (!(form.get("value") instanceof Number formValue))
-        {
+        if (!(form.get("value") instanceof Number formValue)) {
             return;
         }
 
@@ -2068,13 +1792,11 @@ public final class E2EHarness
         double actual = this.runtime.localModelVariables(LOCAL_PROFILE.modelId()).getOrDefault(this.authorFormVariable,
                 Double.NaN);
         boolean sameScreen = client.currentScreen == this.authorFormScreen && wheel == this.authorFormScreen;
-        if (this.interactionUiStep == 1)
-        {
+        if (this.interactionUiStep == 1) {
             if (!sameScreen || !referenceWheelGeometryReady(client, view)
                     || itemNumber(view, "emittedVertices") <= this.authorFormEmittedBaseline || !Double.isFinite(actual)
                     || Math.min(Math.abs(actual), Math.abs(actual - 1)) > 1e-5
-                    || Math.abs(formValue.doubleValue() - actual) > 1e-5 || control.isEmpty())
-            {
+                    || Math.abs(formValue.doubleValue() - actual) > 1e-5 || control.isEmpty()) {
                 return;
             }
 
@@ -2082,18 +1804,14 @@ public final class E2EHarness
             check("wheelReferencePolygonsActuallyRendered", true,
                     "Real mesh setup emitted vertices and published four-corner action polygons contain their actual clickable action points: "
                             + view);
-            if (clickUiRectangle(wheel, control))
-            {
+            if (clickUiRectangle(wheel, control)) {
                 this.interactionUiStep = 2;
             }
 
-        }
-        else if (this.interactionUiStep == 2)
-        {
+        } else if (this.interactionUiStep == 2) {
             double expected = this.authorFormInitialValue > 0 ? 0 : 1;
             if (!sameScreen || !Double.isFinite(actual) || Math.abs(actual - expected) > 1e-5
-                    || Math.abs(formValue.doubleValue() - expected) > 1e-5)
-            {
+                    || Math.abs(formValue.doubleValue() - expected) > 1e-5) {
                 return;
             }
 
@@ -2106,18 +1824,14 @@ public final class E2EHarness
                     "Manifest-authored checkbox was physically clicked on the wheel and changed Runtime's real variable, without another screen: "
                             + this.authorFormProof);
             screenshot(client, "interactions-wheel-author-form");
-            if (clickUiRectangle(wheel, control))
-            {
+            if (clickUiRectangle(wheel, control)) {
                 this.interactionUiStep = 3;
             }
 
-        }
-        else if (this.interactionUiStep == 3)
-        {
+        } else if (this.interactionUiStep == 3) {
             double restored = this.authorFormInitialValue > 0 ? 1 : 0;
             if (!sameScreen || !Double.isFinite(actual) || Math.abs(actual - restored) > 1e-5
-                    || Math.abs(formValue.doubleValue() - restored) > 1e-5)
-            {
+                    || Math.abs(formValue.doubleValue() - restored) > 1e-5) {
                 return;
             }
 
@@ -2131,21 +1845,16 @@ public final class E2EHarness
     }
 
     private void interactionWheelTick(MinecraftClient client, String name, ClientRuntime.RenderBinding binding,
-            boolean privateMesh, boolean serverMesh)
-    {
+            boolean privateMesh, boolean serverMesh) {
         boolean local = name.equals("local-appearance-action");
-        if (!this.interactionUiIssued)
-        {
+        if (!this.interactionUiIssued) {
             this.interactionUiIssued = pressInteractionKey(client);
             return;
         }
-        if (client.currentScreen instanceof AnimationWheelScreen wheel)
-        {
+        if (client.currentScreen instanceof AnimationWheelScreen wheel) {
             Map<String, Object> view = wheel.diagnostics();
-            if (local && this.interactionUiStep == 0)
-            {
-                if (!referenceWheelGeometryReady(client, view))
-                {
+            if (local && this.interactionUiStep == 0) {
+                if (!referenceWheelGeometryReady(client, view)) {
                     return;
                 }
 
@@ -2155,8 +1864,7 @@ public final class E2EHarness
                 screenshot(client, "interactions-manual-client-wheel");
                 this.serverUiProof = view;
                 this.authorFormSource = readDefaultAuthorForm(client);
-                if (!Boolean.TRUE.equals(this.authorFormSource.get("readSucceeded")))
-                {
+                if (!Boolean.TRUE.equals(this.authorFormSource.get("readSucceeded"))) {
                     return;
                 }
 
@@ -2164,27 +1872,20 @@ public final class E2EHarness
                 this.authorFormVariable = String.valueOf(this.authorFormSource.get("variable"));
                 Map<?, ?> gear = pushRows(view, "configSlots").stream()
                         .filter(row -> this.authorFormGroup.equals(row.get("group"))).findFirst().orElse(Map.of());
-                if (gear.get("x") instanceof Number x && gear.get("y") instanceof Number y)
-                {
+                if (gear.get("x") instanceof Number x && gear.get("y") instanceof Number y) {
                     this.authorFormScreen = wheel;
                     this.authorFormEmittedBaseline = itemNumber(view, "emittedVertices");
-                    if (clickUiPoint(wheel, x.doubleValue(), y.doubleValue()))
-                    {
+                    if (clickUiPoint(wheel, x.doubleValue(), y.doubleValue())) {
                         this.interactionUiStep = 1;
                     }
 
                 }
                 return;
-            }
-            else if (local && this.interactionUiStep < 4)
-            {
+            } else if (local && this.interactionUiStep < 4) {
                 interactionAuthorFormTick(client, wheel);
                 return;
-            }
-            else if (!local && this.interactionUiStep == 0)
-            {
-                if (!referenceWheelGeometryReady(client, view))
-                {
+            } else if (!local && this.interactionUiStep == 0) {
+                if (!referenceWheelGeometryReady(client, view)) {
                     return;
                 }
 
@@ -2200,10 +1901,8 @@ public final class E2EHarness
                                                 "config-up", "config-down").contains(row.get("id"))),
                         "Reference action polygons with right path/page/back/settings controls; no old grid or model-parameter sidebar: "
                                 + view);
-                if (((Number) view.get("pageCount")).intValue() > 1 && ((Number) view.get("page")).intValue() == 0)
-                {
-                    if (!pressWheelControl(wheel, "next"))
-                    {
+                if (((Number) view.get("pageCount")).intValue() > 1 && ((Number) view.get("page")).intValue() == 0) {
+                    if (!pressWheelControl(wheel, "next")) {
                         return;
                     }
 
@@ -2215,9 +1914,7 @@ public final class E2EHarness
                 this.interactionUiIssued = false;
                 this.interactionUiStep = 1;
                 return;
-            }
-            else if (!local && this.interactionUiStep == 1)
-            {
+            } else if (!local && this.interactionUiStep == 1) {
                 check("wheelReopenSameScopePage",
                         !Boolean.TRUE.equals(view.get("localMode")) && "SERVER".equals(view.get("rememberedSource"))
                                 && this.serverWheelPage == ((Number) view.get("page")).intValue()
@@ -2226,52 +1923,43 @@ public final class E2EHarness
                                 + this.serverUiProof + "; reopened=" + view);
                 this.interactionUiStep = 2;
             }
-            if (local && this.interactionUiStep == 4 && !this.serverUiActionSelected)
-            {
+            if (local && this.interactionUiStep == 4 && !this.serverUiActionSelected) {
                 this.serverUiActionSelected = selectWheelAction(wheel, "extra1");
-            }
-            else if (!local && this.interactionUiStep == 2 && !this.serverUiActionSelected)
-            {
+            } else if (!local && this.interactionUiStep == 2 && !this.serverUiActionSelected) {
                 this.serverUiProof = view;
                 this.serverUiActionSelected = selectWheelAction(wheel, "wave");
-                if (!this.serverUiActionSelected)
-                {
+                if (!this.serverUiActionSelected) {
                     navigateServerWheelToAction(wheel, "wave");
                     return;
                 }
                 this.interactionUiStep = 3;
             }
         }
-        if (!this.serverUiActionSelected || binding == null)
-        {
+        if (!this.serverUiActionSelected || binding == null) {
             return;
         }
 
         String action = local ? "extra1" : "wave";
         BbModel.Layer layer = binding.layers().stream().filter(value -> value.animation().equals(action)).findFirst()
                 .orElse(null);
-        if (layer == null)
-        {
+        if (layer == null) {
             return;
         }
 
         double age = binding.serverTick() - layer.startedAtTick(),
                 length = binding.model().animationLengthTicks(action) / layer.speed();
-        if (age < Math.min(3, length * .25) || age >= length)
-        {
+        if (age < Math.min(3, length * .25) || age >= length) {
             return;
         }
 
-        if (!this.captured)
-        {
+        if (!this.captured) {
             boolean expectedMesh = local ? privateMesh : serverMesh;
             check(local ? "manualPrivateWheelActionNoServerRequest" : "playerModelServerWheelActualAction",
                     expectedMesh && this.runtime.requestPacketsSent() == this.serverUiRequestBaseline + (local ? 0 : 1),
                     "Actual author/server action selected at its rendered polygon point then J repeat/release, live layer="
                             + layer + "; C2S before=" + this.serverUiRequestBaseline + "; after="
                             + this.runtime.requestPacketsSent());
-            if (local)
-            {
+            if (local) {
                 check("manualPrivateActionRemoteBindingUnchanged",
                         sameBindings(this.localRemoteBaseline, otherBindings(client)),
                         "Remote model identities/transforms are unchanged by private extra1");
@@ -2283,29 +1971,24 @@ public final class E2EHarness
         }
     }
 
-    private static boolean pressInteractionKeyInventory(MinecraftClient client)
-    {
+    private static boolean pressInteractionKeyInventory(MinecraftClient client) {
         List<KeyBinding> bindings = Arrays.stream(client.options.allKeys)
                 .filter(value -> value.getId().startsWith("key.meplayeractions.")).toList();
         return bindings.size() == 1 && "key.meplayeractions.action_wheel".equals(bindings.getFirst().getId())
                 && KeyBindingHelper.getBoundKeyOf(bindings.getFirst()).getCode() == GLFW.GLFW_KEY_J;
     }
 
-    private static Map<String, String> nativeArmor(PlayerEntity actor)
-    {
+    private static Map<String, String> nativeArmor(PlayerEntity actor) {
         Map<String, String> result = new LinkedHashMap<>();
         for (EquipmentSlot slot : List.of(EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS,
-                EquipmentSlot.FEET))
-
-        {
+                EquipmentSlot.FEET)) {
             result.put(slot.name(), Registries.ITEM.getId(actor.getEquippedStack(slot).getItem()).toString());
         }
 
         return Map.copyOf(result);
     }
 
-    private static boolean interactionEquipmentReady(PlayerEntity actor, String name)
-    {
+    private static boolean interactionEquipmentReady(PlayerEntity actor, String name) {
         Map<String, String> armor = nativeArmor(actor);
         return actor.getMainHandStack().isOf(Items.IRON_SWORD) && actor.getOffHandStack().isOf(Items.SHIELD)
                 && "minecraft:diamond_helmet".equals(armor.get("HEAD"))
@@ -2316,15 +1999,12 @@ public final class E2EHarness
     }
 
     private static Map<String, Object> readDefaultHeldPlaybackSource(MinecraftClient client,
-            ClientRuntime.RenderBinding binding)
-    {
+            ClientRuntime.RenderBinding binding) {
         Identifier manifestId = Identifier.of("meplayeractions", "builtin/" + LOCAL_PROFILE.modelId() + "/ysm.json");
-        try
-        {
+        try {
             byte[] manifestBytes;
             try (InputStream stream = client.getResourceManager().getResource(manifestId).orElseThrow()
-                    .getInputStream())
-            {
+                    .getInputStream()) {
                 manifestBytes = stream.readAllBytes();
             }
             JsonObject manifest = JsonParser.parseString(new String(manifestBytes, StandardCharsets.UTF_8))
@@ -2333,31 +2013,27 @@ public final class E2EHarness
                     .getAsJsonObject("animation");
             Map<String, Object> sources = new LinkedHashMap<>();
             JsonObject arm = null;
-            for (String family : List.of("main", "extra", "arm"))
-            {
+            for (String family : List.of("main", "extra", "arm")) {
                 String path = routes.get(family).getAsString();
                 Identifier resource = Identifier.of(manifestId.getNamespace(),
                         "builtin/" + LOCAL_PROFILE.modelId() + "/" + path);
                 byte[] bytes;
                 try (InputStream stream = client.getResourceManager().getResource(resource).orElseThrow()
-                        .getInputStream())
-                {
+                        .getInputStream()) {
                     bytes = stream.readAllBytes();
                 }
                 sources.put(family,
                         Map.of("declaredPath", path, "resource", resource.toString(), "sha256",
                                 HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)), "bytes",
                                 bytes.length));
-                if (family.equals("arm"))
-                {
+                if (family.equals("arm")) {
                     arm = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject()
                             .getAsJsonObject("animations");
                 }
 
             }
             List<Map<String, Object>> clips = new ArrayList<>();
-            for (String hand : List.of("mainhand", "offhand"))
-            {
+            for (String hand : List.of("mainhand", "offhand")) {
                 String animation = "hold_" + hand + ":sword";
                 JsonObject raw = Objects.requireNonNull(arm).getAsJsonObject(animation);
                 LinkedHashMap<String, Object> clip = new LinkedHashMap<String, Object>();
@@ -2387,24 +2063,19 @@ public final class E2EHarness
             proof.put("instance", binding.instance());
             proof.put("hash", binding.assetHash());
             return proof;
-        }
-        catch (Exception failure)
-        {
+        } catch (Exception failure) {
             return Map.of("readSucceeded", false, "manifest", manifestId.toString(), "error", failure.toString());
         }
     }
 
-    private void equipHeldPlayback(MinecraftClient client, String item)
-    {
-        for (String hand : List.of("mainhand", "offhand"))
-        {
+    private void equipHeldPlayback(MinecraftClient client, String item) {
+        for (String hand : List.of("mainhand", "offhand")) {
             command(client, "item replace entity " + PLAYER + " weapon." + hand + " with minecraft:" + item);
         }
 
     }
 
-    private Map<String, Object> heldPlaybackProof()
-    {
+    private Map<String, Object> heldPlaybackProof() {
         LinkedHashMap<String, Object> proof = new LinkedHashMap<String, Object>();
         proof.put("source", this.heldPlaybackSource);
         proof.put("sourcePassed", this.heldPlaybackSourcePassed);
@@ -2417,20 +2088,14 @@ public final class E2EHarness
         proof.put("frames", List.copyOf(this.heldPlaybackFrames));
         proof.put("initialEquipment", this.heldPlaybackEquipment);
         Map<String, Object> counts = new LinkedHashMap<>();
-        for (String hand : List.of("mainhand", "offhand"))
-        {
+        for (String hand : List.of("mainhand", "offhand")) {
             Set<Long> iron = new LinkedHashSet<>(), diamond = new LinkedHashSet<>();
-            for (Map<String, Object> frame : this.heldPlaybackFrames)
-            {
+            for (Map<String, Object> frame : this.heldPlaybackFrames) {
                 if (frame.get("hands") instanceof Map<?, ?> hands && hands.get(hand) instanceof Map<?, ?> row
-                        && row.get("layer") instanceof BbModel.Layer layer)
-                {
-                    if (itemNumber(frame, "step") == 1)
-                    {
+                        && row.get("layer") instanceof BbModel.Layer layer) {
+                    if (itemNumber(frame, "step") == 1) {
                         iron.add(layer.startedAtTick());
-                    }
-                    else if (itemNumber(frame, "step") == 3)
-                    {
+                    } else if (itemNumber(frame, "step") == 3) {
                         diamond.add(layer.startedAtTick());
                     }
 
@@ -2448,23 +2113,18 @@ public final class E2EHarness
     }
 
     private void interactionHeldPlaybackTick(MinecraftClient client, ClientRuntime.RenderBinding binding,
-            boolean privateMesh)
-    {
-        if (this.captured)
-        {
+            boolean privateMesh) {
+        if (this.captured) {
             return;
         }
 
-        if (this.heldPlaybackStep == 0)
-        {
+        if (this.heldPlaybackStep == 0) {
             if (this.stageTicks < 35 || !privateMesh
-                    || !interactionEquipmentReady(client.player, "private-equipment-restored"))
-            {
+                    || !interactionEquipmentReady(client.player, "private-equipment-restored")) {
                 this.heldPlaybackStableTicks = 0;
                 return;
             }
-            if (++this.heldPlaybackStableTicks < 3)
-            {
+            if (++this.heldPlaybackStableTicks < 3) {
                 return;
             }
 
@@ -2486,8 +2146,7 @@ public final class E2EHarness
             check("defaultHeldItemAuthoredLoopMetadata", this.heldPlaybackSourcePassed,
                     "Actual manifest-declared primary assembly routes and original author arm JSON retain HOLD, lengths and primary-format validity: "
                             + this.heldPlaybackSource);
-            if (!this.heldPlaybackSourcePassed)
-            {
+            if (!this.heldPlaybackSourcePassed) {
                 this.heldPlaybackStep = -1;
                 return;
             }
@@ -2503,16 +2162,13 @@ public final class E2EHarness
             this.heldPlaybackStep = 1;
             return;
         }
-        if (this.heldPlaybackStep < 0)
-        {
+        if (this.heldPlaybackStep < 0) {
             return;
         }
 
-        if (binding == null || !privateMesh)
-        {
+        if (binding == null || !privateMesh) {
             if ((this.heldPlaybackStep == 1 || this.heldPlaybackStep == 3)
-                    && !Double.isNaN(this.heldPlaybackWindowStarted))
-            {
+                    && !Double.isNaN(this.heldPlaybackWindowStarted)) {
                 this.heldPlaybackContinuous = false;
             }
 
@@ -2538,21 +2194,18 @@ public final class E2EHarness
                         && itemNumber(row, "extractedFrame") >= frame - 2 && itemMatrix(row.get("locatorTransform"))
                         && itemMatrix(row.get("finalTransform")))
                 .toList();
-        if (this.heldPlaybackStep == 2)
-        {
+        if (this.heldPlaybackStep == 2) {
             boolean empty = current && client.player.getMainHandStack().isEmpty()
                     && client.player.getOffHandStack().isEmpty() && nativeState.mainhand().empty()
                     && nativeState.offhand().empty()
                     && binding.layers().stream().noneMatch(
                             layer -> Set.of("hold_mainhand:sword", "hold_offhand:sword").contains(layer.animation()))
                     && ownerDraws.isEmpty();
-            if (frame != this.heldPlaybackLastFrame)
-            {
+            if (frame != this.heldPlaybackLastFrame) {
                 this.heldPlaybackLastFrame = frame;
                 this.heldPlaybackStableTicks = empty ? this.heldPlaybackStableTicks + 1 : 0;
             }
-            if (empty && this.heldPlaybackStableTicks >= 3)
-            {
+            if (empty && this.heldPlaybackStableTicks >= 3) {
                 this.heldPlaybackEmpty = Map.of("sampleTick", binding.serverTick(), "extractedFrame", frame, "owner",
                         client.player.getUuidAsString(), "instance", binding.instance(), "hash", binding.assetHash(),
                         "actualMainEmpty", true, "actualOffEmpty", true, "actualLayers", binding.layers(),
@@ -2565,16 +2218,14 @@ public final class E2EHarness
             }
             return;
         }
-        if (this.heldPlaybackStep == 4)
-        {
+        if (this.heldPlaybackStep == 4) {
             boolean restored = current && interactionEquipmentReady(client.player, "private-equipment-restored")
                     && submitted.stream().anyMatch(
                             row -> "mainhand".equals(row.get("hand")) && "minecraft:iron_sword".equals(row.get("item")))
                     && submitted.stream().anyMatch(
                             row -> "offhand".equals(row.get("hand")) && "minecraft:shield".equals(row.get("item")));
             this.heldPlaybackStableTicks = restored ? this.heldPlaybackStableTicks + 1 : 0;
-            if (this.heldPlaybackStableTicks >= 3)
-            {
+            if (this.heldPlaybackStableTicks >= 3) {
                 this.interactionEvidence = heldPlaybackProof();
                 captureInteraction(client, "private-equipment-restored");
                 this.heldPlaybackStep = 5;
@@ -2589,8 +2240,7 @@ public final class E2EHarness
                 && item.equals(Registries.ITEM.getId(client.player.getMainHandStack().getItem()).toString())
                 && item.equals(Registries.ITEM.getId(client.player.getOffHandStack().getItem()).toString())
                 && item.equals(nativeState.mainhand().id()) && item.equals(nativeState.offhand().id());
-        for (String hand : List.of("mainhand", "offhand"))
-        {
+        for (String hand : List.of("mainhand", "offhand")) {
             String animation = "hold_" + hand + ":sword";
             BbModel.Layer layer = binding.layers().stream().filter(value -> value.layer().equals("player.hold_" + hand))
                     .findFirst().orElse(null);
@@ -2603,8 +2253,7 @@ public final class E2EHarness
                     : client.player.getOffHandStack();
             boolean correct = layer != null && animation.equals(layer.animation()) && "HOLD".equals(layer.loop())
                     && layer.speed() == 1 && !draw.isEmpty();
-            if (correct && !starts.isEmpty() && starts.containsKey(hand))
-            {
+            if (correct && !starts.isEmpty() && starts.containsKey(hand)) {
                 correct = starts.get(hand) == layer.startedAtTick();
             }
 
@@ -2620,33 +2269,26 @@ public final class E2EHarness
             row.put("ageTicks", layer == null ? -1 : binding.serverTick() - layer.startedAtTick());
             hands.put(hand, row);
         }
-        if (Double.isNaN(this.heldPlaybackWindowStarted))
-        {
-            if (!valid)
-            {
+        if (Double.isNaN(this.heldPlaybackWindowStarted)) {
+            if (!valid) {
                 return;
             }
 
-            for (String hand : List.of("mainhand", "offhand"))
-            {
+            for (String hand : List.of("mainhand", "offhand")) {
                 long start = binding.layers().stream().filter(value -> value.layer().equals("player.hold_" + hand))
                         .findFirst().orElseThrow().startedAtTick();
                 starts.put(hand, start);
-                if (this.heldPlaybackStep == 3 && start <= this.heldPlaybackInitialStarts.get(hand))
-                {
+                if (this.heldPlaybackStep == 3 && start <= this.heldPlaybackInitialStarts.get(hand)) {
                     this.heldPlaybackContinuous = false;
                 }
 
             }
             this.heldPlaybackWindowStarted = binding.serverTick();
-        }
-        else
-        {
+        } else {
             this.heldPlaybackContinuous &= valid;
         }
 
-        if (frame != this.heldPlaybackLastFrame)
-        {
+        if (frame != this.heldPlaybackLastFrame) {
             this.heldPlaybackLastFrame = frame;
             this.heldPlaybackSamples++;
             this.heldPlaybackFrames.add(Map.of("step", this.heldPlaybackStep, "sampleTick", binding.serverTick(),
@@ -2654,13 +2296,11 @@ public final class E2EHarness
                     "valid", valid, "instance", binding.instance(), "hash", binding.assetHash(), "hands", hands));
         }
         if (binding.serverTick() - this.heldPlaybackWindowStarted < this.heldPlaybackMaxLength * 2
-                || this.heldPlaybackSamples < 20)
-        {
+                || this.heldPlaybackSamples < 20) {
             return;
         }
 
-        if (this.heldPlaybackStep == 1)
-        {
+        if (this.heldPlaybackStep == 1) {
             check("defaultHeldItemHoldsWithoutReplay", this.heldPlaybackContinuous && current,
                     "Both actual native swords retain the same authored HOLD start across at least two longest source clip lengths; actual per-frame item matrices and counters: "
                             + heldPlaybackProof());
@@ -2668,9 +2308,7 @@ public final class E2EHarness
             this.heldPlaybackStep = 2;
             this.heldPlaybackStableTicks = 0;
             equipHeldPlayback(client, "air");
-        }
-        else
-        {
+        } else {
             boolean once = this.heldPlaybackContinuous && current && !this.heldPlaybackEmpty.isEmpty()
                     && starts.size() == 2 && starts.entrySet().stream()
                             .allMatch(entry -> entry.getValue() > this.heldPlaybackInitialStarts.get(entry.getKey()));
@@ -2686,8 +2324,7 @@ public final class E2EHarness
     }
 
     private void checkInteractionEquipment(MinecraftClient client, String name, PlayerEntity actor,
-            ClientRuntime.RenderBinding binding, boolean hidden)
-    {
+            ClientRuntime.RenderBinding binding, boolean hidden) {
         Map<String, Object> diagnostic = ModelRenderer.diagnostics();
         Map<?, ?> source = pushRows(diagnostic, "items").stream()
                 .filter(row -> actor.getUuidAsString().equals(row.get("owner"))
@@ -2755,8 +2392,7 @@ public final class E2EHarness
                 "Actual current native sword and shield queue submissions remain visible: " + hands);
     }
 
-    private void captureInteraction(MinecraftClient client, String name)
-    {
+    private void captureInteraction(MinecraftClient client, String name) {
         this.captured = true;
         Map<String, Object> observation = new LinkedHashMap<>();
         observation.put("stage", name);
@@ -2770,13 +2406,11 @@ public final class E2EHarness
         observation.put("savedPrivateDiskProfile", diskPrivateProfile());
         observation.put("requestPacketsSent", this.runtime.requestPacketsSent());
         observation.put("evidence", this.interactionEvidence);
-        if (client.currentScreen instanceof PlayerModelScreen hub)
-        {
+        if (client.currentScreen instanceof PlayerModelScreen hub) {
             observation.put("settings", hub.diagnostics());
         }
 
-        if (client.currentScreen instanceof AnimationWheelScreen wheel)
-        {
+        if (client.currentScreen instanceof AnimationWheelScreen wheel) {
             observation.put("wheel", wheel.diagnostics());
         }
 
@@ -2785,8 +2419,7 @@ public final class E2EHarness
         screenshot(client, String.format("%02d-%s", this.stage + 1, name));
     }
 
-    private static List<Map<String, Object>> interactionBindingRows(List<ClientRuntime.RenderBinding> bindings)
-    {
+    private static List<Map<String, Object>> interactionBindingRows(List<ClientRuntime.RenderBinding> bindings) {
         return bindings.stream()
                 .map(binding -> Map.<String, Object>of("owner", binding.owner().toString(), "instance",
                         binding.instance(), "hash", binding.assetHash(), "motionSource", binding.motionSource(),
@@ -2795,13 +2428,10 @@ public final class E2EHarness
                 .toList();
     }
 
-    private void prepareNativeJump(MinecraftClient client)
-    {
-        if (this.jumpPressedAt >= 0)
-        {
+    private void prepareNativeJump(MinecraftClient client) {
+        if (this.jumpPressedAt >= 0) {
             // Hold for one simulation tick, then release to avoid repeated creative jumps.
-            if (this.stageTicks >= this.jumpPressedAt + 2)
-            {
+            if (this.stageTicks >= this.jumpPressedAt + 2) {
                 client.options.jumpKey.setPressed(false);
             }
 
@@ -2810,8 +2440,7 @@ public final class E2EHarness
         boolean standing = client.player.isOnGround() && !client.player.hasVehicle() && !client.player.isSleeping()
                 && client.player.getPose() == EntityPose.STANDING && Math.abs(client.player.getY() + 60) < .02;
         this.jumpGroundedTicks = this.stageTicks >= 10 && standing ? this.jumpGroundedTicks + 1 : 0;
-        if (this.jumpGroundedTicks >= 6)
-        {
+        if (this.jumpGroundedTicks >= 6) {
             this.jumpPressedAt = this.stageTicks;
             this.jumpGroundY = client.player.getY();
             client.options.jumpKey.setPressed(true);
@@ -2821,8 +2450,7 @@ public final class E2EHarness
     }
 
     private static boolean sameBindings(List<ClientRuntime.RenderBinding> before,
-            List<ClientRuntime.RenderBinding> after)
-    {
+            List<ClientRuntime.RenderBinding> after) {
         return before.size() == after.size() && before.stream()
                 .allMatch(original -> after.stream()
                         .anyMatch(current -> current.owner().equals(original.owner())
@@ -2833,29 +2461,24 @@ public final class E2EHarness
                                 && Math.abs(current.z() - original.z()) < .000001));
     }
 
-    private void localAppearanceTick(MinecraftClient client, String name)
-    {
+    private void localAppearanceTick(MinecraftClient client, String name) {
         ClientRuntime.RenderBinding local = own(client).stream().findFirst().orElse(null);
         boolean override = !name.equals("local-appearance-off");
         boolean ready = local != null && local.instance().startsWith("local-self:") == override
                 && visibleModel(ModelRenderer.diagnostics(), local);
-        if (ready && this.localAppearanceReadyAt < 0)
-        {
+        if (ready && this.localAppearanceReadyAt < 0) {
             this.localAppearanceReadyAt = this.stageTicks;
         }
 
-        if (name.equals("local-appearance-action"))
-        {
+        if (name.equals("local-appearance-action")) {
             BbModel.Layer action = local == null ? null
                     : local.layers().stream()
                             .filter(layer -> layer.layer().equals("manual") && layer.animation().equals("extra1"))
                             .findFirst().orElse(null);
-            if (ready && action != null)
-            {
+            if (ready && action != null) {
                 double age = local.serverTick() - action.startedAtTick();
                 double length = local.model().animationLengthTicks("extra1") / action.speed();
-                if (this.stageTicks % 5 == 0)
-                {
+                if (this.stageTicks % 5 == 0) {
                     this.fixtureFrames.add(Map.of("stage", name, "stageTick", this.stageTicks, "instance",
                             local.instance(), "sampleTick", local.serverTick(), "startedAtTick", action.startedAtTick(),
                             "ageTicks", age, "lengthTicks", length, "layers", local.layers()));
@@ -2863,30 +2486,24 @@ public final class E2EHarness
 
                 // The real OpenYSM extra1 is 20 ticks long. Observe after its blend-in
                 // while it is alive, instead of the old ready+25 capture after stopLocal.
-                if (!this.captured && age >= Math.min(5, length * .5) && age < length)
-                {
+                if (!this.captured && age >= Math.min(5, length * .5) && age < length) {
                     capture(client, name);
                 }
 
             }
-        }
-        else if (!this.captured && ready && this.localAppearanceReadyAt >= 0
-                && this.stageTicks >= this.localAppearanceReadyAt + 25)
-        {
+        } else if (!this.captured && ready && this.localAppearanceReadyAt >= 0
+                && this.stageTicks >= this.localAppearanceReadyAt + 25) {
             capture(client, name);
         }
 
-        if (this.captured && this.stageTicks >= this.localAppearanceReadyAt + 55)
-        {
+        if (this.captured && this.stageTicks >= this.localAppearanceReadyAt + 55) {
             next(client);
             return;
         }
-        if (this.stageTicks > 240)
-        {
+        if (this.stageTicks > 240) {
             check(name + "Ready", false,
                     "Local appearance did not become visible; status=" + this.runtime.localAppearanceStatus());
-            if (!this.captured)
-            {
+            if (!this.captured) {
                 capture(client, name);
             }
 
@@ -2894,8 +2511,7 @@ public final class E2EHarness
         }
     }
 
-    private void beginOwnAccessory(MinecraftClient client, String name)
-    {
+    private void beginOwnAccessory(MinecraftClient client, String name) {
         ClientRuntime.RenderBinding binding = this.runtime.animationBindings().stream()
                 .filter(value -> value.owner().equals(client.player.getUuid())).findFirst().orElse(null);
         this.ownAccessoryInstance = binding == null ? "" : binding.instance();
@@ -2915,14 +2531,12 @@ public final class E2EHarness
         command(client, "meplayeractions play extra0");
     }
 
-    private static String ownAccessoryPrefix(String name)
-    {
+    private static String ownAccessoryPrefix(String name) {
         return name.equals("firstperson-extra0") ? "firstPersonAccessory" : "hiddenSelfAccessory";
     }
 
     /** A fixed deadline in the accepted action clock, independent of when the expected value appears. */
-    private void ownAccessoryTick(MinecraftClient client, String name)
-    {
+    private void ownAccessoryTick(MinecraftClient client, String name) {
         String prefix = ownAccessoryPrefix(name);
         // showSelf=false suppresses renderBindings, while its real animation instance
         // must continue sampling. Read that clock without requiring submitted geometry.
@@ -2930,30 +2544,25 @@ public final class E2EHarness
                 .filter(value -> value.owner().equals(client.player.getUuid())
                         && value.instance().equals(this.ownAccessoryInstance))
                 .findFirst().orElse(null);
-        if (binding != null)
-        {
+        if (binding != null) {
             BbModel.Layer active = binding.layers().stream()
                     .filter(layer -> layer.layer().equals("manual") && layer.animation().equals("extra0")).findFirst()
                     .orElse(null);
-            if (!this.ownAccessorySeen && active != null)
-            {
+            if (!this.ownAccessorySeen && active != null) {
                 this.ownAccessorySeen = true;
                 this.ownAccessoryStartedAt = active.startedAtTick();
                 this.ownAccessoryLengthTicks = binding.model().animationLengthTicks("extra0") / active.speed();
             }
-            if (this.ownAccessorySeen)
-            {
+            if (this.ownAccessorySeen) {
                 double age = binding.serverTick() - this.ownAccessoryStartedAt;
                 Map<String, Double> authority = this.runtime.accessoryState(client.player.getUuid());
                 Map<String, Double> variables = ModelRenderer.expressionVariables(client.player.getUuid());
                 boolean changed = authority.getOrDefault("a", -1d) == 1 && authority.getOrDefault("b", -1d) == 1;
-                if (changed && !Double.isFinite(this.ownAccessoryFirstChangedAge))
-                {
+                if (changed && !Double.isFinite(this.ownAccessoryFirstChangedAge)) {
                     this.ownAccessoryFirstChangedAge = age;
                 }
 
-                if (age < 20)
-                {
+                if (age < 20) {
                     this.ownAccessoryEarlySamples++;
                     this.ownAccessoryEarlyValid &= authority.getOrDefault("a", -1d) == 0
                             && authority.getOrDefault("b", -1d) == 0;
@@ -2962,8 +2571,7 @@ public final class E2EHarness
                 // clock includes LERPIN and its snapshot can follow the rebased local
                 // event; use the same bounded 35-tick deadline as the remote fixture.
                 // Never wait for a/b=1 to decide when to assert or capture.
-                if (!this.ownAccessoryEventChecked && age >= 35)
-                {
+                if (!this.ownAccessoryEventChecked && age >= 35) {
                     this.ownAccessoryEventChecked = true;
                     check(prefix + "EventDeadline",
                             changed && variables.getOrDefault("variable.roaming.a", -1d) == 1
@@ -2974,8 +2582,7 @@ public final class E2EHarness
                                     + binding.instance());
                     capture(client, name);
                 }
-                if (this.stageTicks % 5 == 0)
-                {
+                if (this.stageTicks % 5 == 0) {
                     Map<String, Object> sample = new LinkedHashMap<>();
                     sample.put("stage", name);
                     sample.put("stageTick", this.stageTicks);
@@ -2988,15 +2595,13 @@ public final class E2EHarness
                     sample.put("authority", authority);
                     sample.put("variables", Map.of("a", variables.getOrDefault("variable.roaming.a", -1d), "b",
                             variables.getOrDefault("variable.roaming.b", -1d)));
-                    if (Double.isFinite(this.ownAccessoryFirstChangedAge))
-                    {
+                    if (Double.isFinite(this.ownAccessoryFirstChangedAge)) {
                         sample.put("firstAuthoritativeChangeAge", this.ownAccessoryFirstChangedAge);
                     }
 
                     this.fixtureFrames.add(sample);
                 }
-                if (this.ownAccessoryCompletedAt < 0 && age >= this.ownAccessoryLengthTicks + 10 && active == null)
-                {
+                if (this.ownAccessoryCompletedAt < 0 && age >= this.ownAccessoryLengthTicks + 10 && active == null) {
                     this.ownAccessoryCompletedAt = this.stageTicks;
                     check(prefix + "ActionCompleted", this.ownAccessoryEventChecked && this.captured,
                             "Actual manual source ended before restoring visibility; age=" + age + "; instance="
@@ -3004,20 +2609,18 @@ public final class E2EHarness
                 }
             }
         }
-        if (this.captured && this.ownAccessoryCompletedAt >= 0 && this.stageTicks >= this.ownAccessoryCompletedAt + 12)
-        {
+        if (this.captured && this.ownAccessoryCompletedAt >= 0
+                && this.stageTicks >= this.ownAccessoryCompletedAt + 12) {
             check(prefix + "NotPremature", this.ownAccessoryEarlySamples >= 3 && this.ownAccessoryEarlyValid,
                     "Actual pre-event samples=" + this.ownAccessoryEarlySamples + "; a/b remain 0 before source event");
             next(client);
             return;
         }
-        if (this.stageTicks > 240)
-        {
+        if (this.stageTicks > 240) {
             check(prefix + "TimelineCompleted", false,
                     "extra0 did not start/reach its fixed deadline/finish in the same real instance; started="
                             + this.ownAccessorySeen + "; eventChecked=" + this.ownAccessoryEventChecked);
-            if (!this.captured)
-            {
+            if (!this.captured) {
                 capture(client, name);
             }
 
@@ -3026,15 +2629,12 @@ public final class E2EHarness
     }
 
     private void recordJumpFrame(MinecraftClient client, String name, PlayerEntity entity,
-            List<ClientRuntime.RenderBinding> bindings)
-    {
-        if (entity == null)
-        {
+            List<ClientRuntime.RenderBinding> bindings) {
+        if (entity == null) {
             return;
         }
 
-        if (this.stageTicks > 55 && this.stageTicks % 5 != 0)
-        {
+        if (this.stageTicks > 55 && this.stageTicks % 5 != 0) {
             return;
         }
 
@@ -3051,8 +2651,7 @@ public final class E2EHarness
         this.fixtureFrames.add(row);
     }
 
-    private static boolean visibleModel(Map<String, Object> diagnostic, ClientRuntime.RenderBinding binding)
-    {
+    private static boolean visibleModel(Map<String, Object> diagnostic, ClientRuntime.RenderBinding binding) {
         return ((List<?>) diagnostic.get("models")).stream().filter(ModelRenderer.FrameModel.class::isInstance)
                 .map(ModelRenderer.FrameModel.class::cast)
                 .anyMatch(model -> model.owner().equals(binding.owner().toString())
@@ -3060,21 +2659,18 @@ public final class E2EHarness
                         && model.maxY() > model.minY());
     }
 
-    private void resourceReloadTick(MinecraftClient client)
-    {
+    private void resourceReloadTick(MinecraftClient client) {
         ClientRuntime.RenderBinding binding = own(client).stream().findFirst().orElse(null);
         Map<String, Object> diagnostic = ModelRenderer.diagnostics();
         long frameNumber = ((Number) diagnostic.get("extractedFrames")).longValue();
-        if (this.reload != null && this.reload.isCompletedExceptionally())
-        {
+        if (this.reload != null && this.reload.isCompletedExceptionally()) {
             check("resourceReload", false, "Resource reload future completed exceptionally");
             capture(client, "resource-reload");
             next(client);
             return;
         }
         boolean ready = this.reload != null && this.reload.isDone() && binding != null && this.clearWorldTicks >= 10;
-        if (ready && this.reloadReadyAt < 0)
-        {
+        if (ready && this.reloadReadyAt < 0) {
             this.reloadReadyAt = this.stageTicks;
             this.reloadFrameBaseline = frameNumber;
             LOGGER.info("E2E reload reacquired binding at stage tick {}, extracted frame {}", this.stageTicks,
@@ -3083,29 +2679,24 @@ public final class E2EHarness
         boolean freshVisible = ready && this.reloadReadyAt >= 0 && frameNumber >= this.reloadFrameBaseline + 2
                 && visibleModel(diagnostic, binding);
         this.reloadVisibleTicks = freshVisible ? this.reloadVisibleTicks + 1 : 0;
-        if (this.stageTicks % 5 == 0)
-        {
+        if (this.stageTicks % 5 == 0) {
             this.fixtureFrames.add(Map.of("stage", "resource-reload", "stageTick", this.stageTicks, "bindingReady",
                     ready, "readyAtStageTick", this.reloadReadyAt, "freshVisible", freshVisible, "visibleTicks",
                     this.reloadVisibleTicks, "frameBaseline", this.reloadFrameBaseline, "renderer", diagnostic));
         }
 
-        if (!this.captured && this.reloadVisibleTicks >= 10)
-        {
+        if (!this.captured && this.reloadVisibleTicks >= 10) {
             capture(client, "resource-reload");
         }
 
-        if (this.captured && freshVisible && this.stageTicks >= this.reloadReadyAt + 30)
-        {
+        if (this.captured && freshVisible && this.stageTicks >= this.reloadReadyAt + 30) {
             next(client);
             return;
         }
-        if (this.stageTicks > 400)
-        {
+        if (this.stageTicks > 400) {
             check("resourceReload", false,
                     "Reload failed to retain a fresh own model after binding acknowledgement; renderer=" + diagnostic);
-            if (!this.captured)
-            {
+            if (!this.captured) {
                 capture(client, "resource-reload");
             }
 
@@ -3113,36 +2704,30 @@ public final class E2EHarness
         }
     }
 
-    private static long pushCount(Map<String, Object> diagnostics, String key)
-    {
+    private static long pushCount(Map<String, Object> diagnostics, String key) {
         return diagnostics.get(key) instanceof Number count ? count.longValue() : -1;
     }
 
-    private static List<Map<?, ?>> pushRows(Map<?, ?> diagnostics, String key)
-    {
-        if (!(diagnostics.get(key) instanceof Collection<?> rows))
-        {
+    private static List<Map<?, ?>> pushRows(Map<?, ?> diagnostics, String key) {
+        if (!(diagnostics.get(key) instanceof Collection<?> rows)) {
             return List.of();
         }
 
         return rows.stream().filter(Map.class::isInstance).<Map<?, ?>>map(value -> (Map<?, ?>) value).toList();
     }
 
-    private static boolean pushNegotiated(Map<String, Object> diagnostics)
-    {
+    private static boolean pushNegotiated(Map<String, Object> diagnostics) {
         return Boolean.TRUE.equals(diagnostics.get("negotiated")) && "server-push".equals(diagnostics.get("assetMode"))
                 && diagnostics.get("capabilities") instanceof Collection<?> capabilities
                 && capabilities.contains("server_push_models");
     }
 
-    private static boolean samePushIdentity(Map<?, ?> row, ClientRuntime.RenderBinding binding)
-    {
+    private static boolean samePushIdentity(Map<?, ?> row, ClientRuntime.RenderBinding binding) {
         return binding.owner().toString().equals(row.get("owner")) && binding.instance().equals(row.get("instance"))
                 && binding.assetHash().equals(row.get("hash"));
     }
 
-    private static boolean currentPushAuthorization(Map<String, Object> push)
-    {
+    private static boolean currentPushAuthorization(Map<String, Object> push) {
         List<Map<?, ?>> raw = pushRows(push, "bindings");
         // A granted hash can finish for another still-authorized owner of that same hash.
         // The protocol tests verify its exact issuance identity; this check verifies current hash authority.
@@ -3151,8 +2736,7 @@ public final class E2EHarness
                         && offer.get("hash").equals(binding.get("hash"))));
     }
 
-    private void checkPushLifecycle(MinecraftClient client, String name, Map<String, Object> push)
-    {
+    private void checkPushLifecycle(MinecraftClient client, String name, Map<String, Object> push) {
         List<Map<?, ?>> raw = pushRows(push, "bindings");
         boolean renderedAuthorized = this.runtime.renderBindings().stream().filter(
                 binding -> !binding.instance().equals("preview") && !binding.instance().startsWith("local-self:"))
@@ -3170,8 +2754,7 @@ public final class E2EHarness
                         : (Set.of("own-second-undisguise", "undisguise", "preview", "preview-end").contains(name)
                                 ? client.player.getUuid()
                                 : null);
-        if (released != null)
-        {
+        if (released != null) {
             check(name + "PushOwnerReleased",
                     raw.stream().noneMatch(row -> released.toString().equals(row.get("owner")))
                             && this.runtime.renderBindings().stream()
@@ -3187,14 +2770,12 @@ public final class E2EHarness
                             + released + "; diagnostics=" + push);
         }
 
-        String expected = switch (name)
-        {
+        String expected = switch (name) {
         case "npc", "own-second-model", "other-second-model", "other-extra0" -> "ysm_02_jk";
         case "own-first-model", "other-first-model", "other-redisguise", "gsit-redisguise" -> "ysm_01_jk";
         default -> "";
         };
-        if (!expected.isEmpty())
-        {
+        if (!expected.isEmpty()) {
             String owner = (name.startsWith("other-") ? OTHER : client.player.getUuid()).toString();
             Map<?, ?> current = raw.stream().filter(row -> owner.equals(row.get("owner"))).findFirst().orElse(Map.of());
             String previous = name.equals("own-second-model") ? this.ownSecondSourceInstance
@@ -3205,15 +2786,13 @@ public final class E2EHarness
                     "Requested model=" + expected + "; previous observed instance=" + previous + "; current="
                             + current);
         }
-        for (Map<?, ?> row : raw)
-        {
+        for (Map<?, ?> row : raw) {
             this.pushPreviousInstances.put(String.valueOf(row.get("owner")), String.valueOf(row.get("instance")));
         }
 
     }
 
-    private void ownSecondModelTick(MinecraftClient client)
-    {
+    private void ownSecondModelTick(MinecraftClient client) {
         Map<String, Object> push = this.runtime.serverPushDiagnostics(), diagnostic = ModelRenderer.diagnostics();
         Map<?, ?> raw = pushRows(push, "bindings").stream()
                 .filter(row -> client.player.getUuidAsString().equals(row.get("owner"))).findFirst().orElse(Map.of());
@@ -3225,8 +2804,7 @@ public final class E2EHarness
                 && "ready".equals(raw.get("serverAssetStatus")) && "jar".equals(raw.get("serverAssetSource"))
                 && !previous.isEmpty() && !binding.instance().equals(previous) && visibleModel(diagnostic, binding);
         this.ownSecondReadyTicks = ready ? this.ownSecondReadyTicks + 1 : 0;
-        if (!this.ownSecondTargetRequested && this.ownSecondReadyTicks >= 3)
-        {
+        if (!this.ownSecondTargetRequested && this.ownSecondReadyTicks >= 3) {
             this.ownSecondSourceInstance = binding.instance();
             this.ownSecondSourceProof = Map.of("initialInstance", this.ownSecondInitialInstance, "initialHash",
                     this.ownSecondInitialHash, "sourceInstance", binding.instance(), "sourceHash", binding.assetHash(),
@@ -3240,9 +2818,7 @@ public final class E2EHarness
             this.ownSecondTargetRequested = true;
             this.ownSecondReadyTicks = 0;
             command(client, "mpatest " + PLAYER + " disguise ysm_02_jk");
-        }
-        else if (this.ownSecondTargetRequested && this.ownSecondReadyTicks >= 10 && this.stageTicks >= 30)
-        {
+        } else if (this.ownSecondTargetRequested && this.ownSecondReadyTicks >= 10 && this.stageTicks >= 30) {
             check("ownSecondModelTargetHashAndSource", binding.assetHash().equals(this.ownSecondInitialHash),
                     "Real ysm_02_jk returns to its original reference hash with a different instance from accepted ysm_01_jk, current JAR source, ready ACK and actual mesh: "
                             + raw);
@@ -3250,8 +2826,7 @@ public final class E2EHarness
             next(client);
             return;
         }
-        if (this.stageTicks > 240)
-        {
+        if (this.stageTicks > 240) {
             check("ownSecondModelChangeCompleted", false,
                     "Did not observe both actual authorized source and new target within 240 ticks; source="
                             + this.ownSecondSourceProof + "; current=" + push);
@@ -3260,8 +2835,7 @@ public final class E2EHarness
         }
     }
 
-    private void beginPushReconnect(MinecraftClient client)
-    {
+    private void beginPushReconnect(MinecraftClient client) {
         this.pushReconnectBaseline = this.runtime.serverPushDiagnostics();
         ClientRuntime.RenderBinding binding = own(client).stream().findFirst().orElse(null);
         this.pushReconnectPreviousInstance = binding == null ? "" : binding.instance();
@@ -3278,29 +2852,24 @@ public final class E2EHarness
         client.disconnect(new TitleScreen(), false);
     }
 
-    private void pushReconnectTick(MinecraftClient client)
-    {
+    private void pushReconnectTick(MinecraftClient client) {
         this.pushReconnectTicks++;
-        if (client.world == null && client.player == null && client.getNetworkHandler() == null)
-        {
+        if (client.world == null && client.player == null && client.getNetworkHandler() == null) {
             this.pushReconnectDisconnected = true;
         }
 
         if (!this.pushReconnectConnecting && this.pushReconnectDisconnected
                 && client.currentScreen instanceof TitleScreen && client.getOverlay() == null
-                && this.pushReconnectTicks >= 10)
-        {
+                && this.pushReconnectTicks >= 10) {
             String address = System.getProperty("meplayeractions.e2e.server", "127.0.0.1:25591");
             ConnectScreen.connect(client.currentScreen, client, ServerAddress.parse(address),
                     new ServerInfo("MEPlayerActions cache reconnect", address, ServerInfo.ServerType.OTHER), false,
                     null);
             this.pushReconnectConnecting = true;
         }
-        if (client.player != null && client.world != null && client.getNetworkHandler() != null)
-        {
+        if (client.player != null && client.world != null && client.getNetworkHandler() != null) {
             this.stageTicks++;
-            if (!this.pushReconnectDisguiseIssued)
-            {
+            if (!this.pushReconnectDisguiseIssued) {
                 this.runtime.options.showSelf = true;
                 client.options.setPerspective(Perspective.THIRD_PERSON_FRONT);
                 command(client, "mpatest " + PLAYER + " disguise ysm_01_jk");
@@ -3313,23 +2882,19 @@ public final class E2EHarness
                     && binding.assetHash().equals(this.pushReconnectHash)
                     && visibleModel(ModelRenderer.diagnostics(), binding) && client.currentScreen == null
                     && client.getOverlay() == null;
-            if (!ready)
-            {
+            if (!ready) {
                 this.pushReconnectReadyAt = -1;
             }
 
-            else if (this.pushReconnectReadyAt < 0)
-            {
+            else if (this.pushReconnectReadyAt < 0) {
                 this.pushReconnectReadyAt = this.stageTicks;
             }
 
-            if (this.stageTicks % 5 == 0)
-            {
+            if (this.stageTicks % 5 == 0) {
                 phase(client, "push-cache-reconnect");
             }
 
-            if (ready && this.stageTicks >= this.pushReconnectReadyAt + 20)
-            {
+            if (ready && this.stageTicks >= this.pushReconnectReadyAt + 20) {
                 check("serverPushActualReconnect",
                         this.pushReconnectDisconnected && this.pushReconnectConnecting
                                 && pushCount(push, "generation") > this.pushReconnectGeneration,
@@ -3356,28 +2921,23 @@ public final class E2EHarness
                 return;
             }
         }
-        if (this.pushReconnectTicks > 600)
-        {
+        if (this.pushReconnectTicks > 600) {
             check("serverPushActualReconnect", false,
                     "Reconnect exceeded 600 ticks: " + this.runtime.serverPushDiagnostics());
             finish(client);
         }
     }
 
-    private void beginPushFault(MinecraftClient client, String name)
-    {
+    private void beginPushFault(MinecraftClient client, String name) {
         this.pushFaultBaseline = this.runtime.serverPushDiagnostics();
         this.pushInvalidBaseline = Map.of();
         this.pushFaultStableTicks = 0;
         ClientRuntime.RenderBinding binding = own(client).stream().findFirst().orElse(null);
-        if (name.equals("push-asset-failed"))
-        {
+        if (name.equals("push-asset-failed")) {
             this.pushFaultOriginalHash = binding == null ? "" : binding.assetHash();
             this.pushFaultPreviousInstance = binding == null ? "" : binding.instance();
             this.pushFaultRequested = true;
-        }
-        else
-        {
+        } else {
             this.pushFaultPreviousInstance = this.packExpectedInstance;
         }
 
@@ -3387,8 +2947,7 @@ public final class E2EHarness
         command(client, "mpatest " + PLAYER + (name.equals("push-asset-failed") ? " push-fault" : " push-repair"));
     }
 
-    private Map<String, Object> pushFaultEvidence(MinecraftClient client, String name)
-    {
+    private Map<String, Object> pushFaultEvidence(MinecraftClient client, String name) {
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("stage", name);
         row.put("stageTick", this.stageTicks);
@@ -3405,20 +2964,16 @@ public final class E2EHarness
         return row;
     }
 
-    private void pushFaultTick(MinecraftClient client, String name)
-    {
+    private void pushFaultTick(MinecraftClient client, String name) {
         boolean failing = name.equals("push-asset-failed");
-        if (this.stageTicks % 10 == 0)
-        {
+        if (this.stageTicks % 10 == 0) {
             command(client, "mpatest " + PLAYER + " status");
         }
 
-        if (this.stageTicks % 5 == 0)
-        {
+        if (this.stageTicks % 5 == 0) {
             JsonObject status = readPackAuthority(client);
             if (status != null && !status.getAsJsonObject("clientSnapshot").get("instance").getAsString()
-                    .equals(this.pushFaultPreviousInstance))
-            {
+                    .equals(this.pushFaultPreviousInstance)) {
                 this.packAuthority = status;
                 this.packExpectedInstance = status.getAsJsonObject("clientSnapshot").get("instance").getAsString();
             }
@@ -3440,8 +2995,7 @@ public final class E2EHarness
                 && ((List<?>) ModelRenderer.diagnostics().get("models")).stream()
                         .filter(ModelRenderer.FrameModel.class::isInstance).map(ModelRenderer.FrameModel.class::cast)
                         .noneMatch(model -> model.owner().equals(client.player.getUuidAsString()));
-        if (invalid && this.pushInvalidBaseline.isEmpty())
-        {
+        if (invalid && this.pushInvalidBaseline.isEmpty()) {
             this.pushInvalidBaseline = push;
         }
 
@@ -3459,15 +3013,12 @@ public final class E2EHarness
         boolean settled = pushNegotiated(push) && packAuthorityMatches(client, !failing)
                 && (failing ? invalid && noLocal && quietInvalid : repaired);
         this.pushFaultStableTicks = settled ? this.pushFaultStableTicks + 1 : 0;
-        if (this.stageTicks % 5 == 0)
-        {
+        if (this.stageTicks % 5 == 0) {
             this.fixtureFrames.add(pushFaultEvidence(client, name));
         }
 
-        if (this.stageTicks >= 60 && this.pushFaultStableTicks >= 15 || this.stageTicks > (failing ? 240 : 400))
-        {
-            if (failing)
-            {
+        if (this.stageTicks >= 60 && this.pushFaultStableTicks >= 15 || this.stageTicks > (failing ? 240 : 400)) {
+            if (failing) {
                 check("serverPushInvalidOwnAssetAuthoritative", invalid,
                         "Real saved/created OWN {} plus actual plugin reload: " + this.packAuthority);
                 check("serverPushInvalidAssetFallback", settled && noLocal && packAuthorityMatches(client, false),
@@ -3475,9 +3026,7 @@ public final class E2EHarness
                                 + pushFaultEvidence(client, name));
                 check("serverPushInvalidAssetNoStaleTransfer", quietInvalid && this.pushFaultStableTicks >= 15,
                         "After invalid terminal state, no retry transfer, offer or stale render ACK: " + push);
-            }
-            else
-            {
+            } else {
                 check("serverPushFaultFixtureRestored",
                         authoritative && fault.get("restoredExactly").getAsBoolean()
                                 && !fault.get("active").getAsBoolean(),
@@ -3493,8 +3042,7 @@ public final class E2EHarness
                         && pushCount(push, "renderReadySent") > pushCount(this.pushFaultBaseline, "renderReadySent")
                         && pushCount(push, "renderAcks") > pushCount(this.pushFaultBaseline, "renderAcks"),
                         "Valid original model is reused only after fresh repair authorization: " + push);
-                if (repaired && authoritative && fault.get("restoredExactly").getAsBoolean())
-                {
+                if (repaired && authoritative && fault.get("restoredExactly").getAsBoolean()) {
                     this.pushFaultRequested = false;
                 }
 
@@ -3504,8 +3052,7 @@ public final class E2EHarness
         }
     }
 
-    private void beginPackDisable(MinecraftClient client)
-    {
+    private void beginPackDisable(MinecraftClient client) {
         ResourcePackManager manager = client.getResourcePackManager();
         this.originalPackProfiles = List.copyOf(manager.getEnabledIds());
         this.disabledPackProfiles = manager.getEnabledProfiles().stream()
@@ -3528,8 +3075,7 @@ public final class E2EHarness
         beginPackReload(client);
     }
 
-    private void beginPackReload(MinecraftClient client)
-    {
+    private void beginPackReload(MinecraftClient client) {
         this.packReadyAt = -1;
         this.packSettledTicks = 0;
         this.packFrameBaseline = -1;
@@ -3549,13 +3095,10 @@ public final class E2EHarness
                         + this.packPushBaseline);
         long request = ++this.packReloadRequest;
         this.reload = client.reloadResources();
-        this.reload.whenComplete((unused, failure) ->
-        {
+        this.reload.whenComplete((unused, failure) -> {
             long completedAt = System.currentTimeMillis();
-            client.execute(() ->
-            {
-                if (request != this.packReloadRequest)
-                {
+            client.execute(() -> {
+                if (request != this.packReloadRequest) {
                     return;
                 }
 
@@ -3566,38 +3109,32 @@ public final class E2EHarness
         });
     }
 
-    private void packReloadTick(MinecraftClient client, String name)
-    {
+    private void packReloadTick(MinecraftClient client, String name) {
         boolean disabling = name.equals("pack-disabled");
         Map<String, Object> diagnostic = ModelRenderer.diagnostics();
         long frameNumber = ((Number) diagnostic.get("extractedFrames")).longValue();
         boolean completed = this.reload != null && this.reload.isDone() && !this.reload.isCompletedExceptionally()
                 && this.packReloadCallbacks == 1 && this.packReloadCompletedAtMillis >= this.packReloadStartedAtMillis;
-        if (completed && this.clearWorldTicks >= 10 && this.packFrameBaseline < 0)
-        {
+        if (completed && this.clearWorldTicks >= 10 && this.packFrameBaseline < 0) {
             this.packFrameBaseline = frameNumber;
             this.packDrawBaseline = ((Number) diagnostic.get("drawnBatches")).longValue();
         }
         boolean freshFrames = completed && this.clearWorldTicks >= 10 && this.packFrameBaseline >= 0
                 && frameNumber >= this.packFrameBaseline + 2;
-        if (completed && this.stageTicks % 10 == 0)
-        {
+        if (completed && this.stageTicks % 10 == 0) {
             command(client, "mpatest " + PLAYER + " status");
         }
 
-        if (completed && this.stageTicks % 5 == 0)
-        {
+        if (completed && this.stageTicks % 5 == 0) {
             JsonObject status = readPackAuthority(client);
-            if (status != null)
-            {
+            if (status != null) {
                 this.packAuthority = status;
             }
 
         }
         ClientRuntime.RenderBinding binding = own(client).stream().findFirst().orElse(null);
         Map<String, Object> push = this.runtime.serverPushDiagnostics();
-        if (freshFrames)
-        {
+        if (freshFrames) {
             this.packMissingSamples++;
             this.packNoStaleReady &= currentPushAuthorization(push);
         }
@@ -3616,24 +3153,20 @@ public final class E2EHarness
                 && serverMatches && !packIndexPresent(client) && matchingReady && this.packNoStaleReady && noDownload
                 && freshAck;
         this.packSettledTicks = settled ? this.packSettledTicks + 1 : 0;
-        if (settled && this.packReadyAt < 0)
-        {
+        if (settled && this.packReadyAt < 0) {
             this.packReadyAt = this.stageTicks;
         }
 
-        if (this.stageTicks % 5 == 0)
-        {
+        if (this.stageTicks % 5 == 0) {
             this.fixtureFrames.add(packEvidence(client, name, diagnostic));
         }
 
         boolean failed = this.reload != null && this.reload.isCompletedExceptionally();
-        if (this.packSettledTicks >= 10 || failed || this.stageTicks > (disabling ? 240 : 400))
-        {
+        if (this.packSettledTicks >= 10 || failed || this.stageTicks > (disabling ? 240 : 400)) {
             check(disabling ? "packDisableReloadCompleted" : "packRestoreReloadCompleted", completed,
                     "Real reload callbacks=" + this.packReloadCallbacks + "; started=" + this.packReloadStartedAtMillis
                             + "; completed=" + this.packReloadCompletedAtMillis + "; error=" + this.packReloadError);
-            if (disabling)
-            {
+            if (disabling) {
                 check("serverPushPackDisabledNoIndex", profilesMatch && !packIndexPresent(client), "Enabled now="
                         + client.getResourcePackManager().getEnabledIds() + "; original=" + this.originalPackProfiles);
                 check("serverPushPackDisabledModelRetained",
@@ -3646,9 +3179,7 @@ public final class E2EHarness
                 check("serverPushPackDisabledOwnerLeaseSameInstance", serverMatches && this.packSettledTicks >= 10,
                         "Expected owner instance=" + this.packExpectedInstance + "; authority=" + this.packAuthority
                                 + "; read=" + this.packAuthorityError);
-            }
-            else
-            {
+            } else {
                 check("packRestoredExactProfiles", profilesMatch && !packIndexPresent(client),
                         "Restored enabled profiles=" + client.getResourcePackManager().getEnabledIds() + "; original="
                                 + this.originalPackProfiles);
@@ -3661,8 +3192,7 @@ public final class E2EHarness
                 check("packRestoredFreshFrames", freshFrames && matchingReady && this.packSettledTicks >= 10,
                         "Extracted frames=" + frameNumber + "; post-reload baseline=" + this.packFrameBaseline
                                 + "; renderer=" + diagnostic);
-                if (completed && profilesMatch)
-                {
+                if (completed && profilesMatch) {
                     this.packSelectionChanged = false;
                 }
 
@@ -3676,14 +3206,12 @@ public final class E2EHarness
         }
     }
 
-    private static boolean packIndexPresent(MinecraftClient client)
-    {
+    private static boolean packIndexPresent(MinecraftClient client) {
         return client.getResourceManager().getResource(Identifier.of("meplayeractions", "models/index.json"))
                 .isPresent();
     }
 
-    private Map<String, Object> packEvidence(MinecraftClient client, String name, Map<String, Object> diagnostic)
-    {
+    private Map<String, Object> packEvidence(MinecraftClient client, String name, Map<String, Object> diagnostic) {
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("stage", name);
         row.put("stageTick", this.stageTicks);
@@ -3712,8 +3240,7 @@ public final class E2EHarness
     }
 
     /** Correlate actual queue submissions with independent native B actions and server inventory. */
-    private void beginItemDraw(MinecraftClient client, String name)
-    {
+    private void beginItemDraw(MinecraftClient client, String name) {
         Map<String, Object> diagnostic = ModelRenderer.diagnostics();
         this.itemSubmissionBaseline = ((Number) diagnostic.get("submittedItems")).longValue();
         this.itemFrameBaseline = ((Number) diagnostic.get("extractedFrames")).longValue();
@@ -3724,29 +3251,23 @@ public final class E2EHarness
         this.itemShieldExpectedSource = name.endsWith("-hold") || name.endsWith("-use")
                 ? readShieldModelSource(client, name.endsWith("-use"))
                 : Map.of();
-        if (name.endsWith("-hold"))
-        {
+        if (name.endsWith("-hold")) {
             this.handsCleanupPending = true;
             command(client, "mpatest MPAObserver hands " + itemModel(name));
         }
     }
 
-    private static String itemModel(String stage)
-    {
+    private static String itemModel(String stage) {
         return stage.contains("-01-") ? "ysm_01_jk" : "ysm_02_jk";
     }
 
-    private void itemDrawTick(MinecraftClient client, String name)
-    {
+    private void itemDrawTick(MinecraftClient client, String name) {
         JsonObject authority = itemAuthority(), observer = itemObserverProof(name);
         JsonObject equipment = null, serverBinding = null;
-        if (authority != null && authority.has("equipmentActors"))
-        {
-            for (JsonElement row : authority.getAsJsonArray("equipmentActors"))
-            {
+        if (authority != null && authority.has("equipmentActors")) {
+            for (JsonElement row : authority.getAsJsonArray("equipmentActors")) {
                 JsonObject actor = row.getAsJsonObject();
-                if (OTHER.toString().equals(actor.get("uuid").getAsString()))
-                {
+                if (OTHER.toString().equals(actor.get("uuid").getAsString())) {
                     equipment = actor;
                     serverBinding = actor.getAsJsonObject("aViewerBinding");
                     break;
@@ -3768,12 +3289,9 @@ public final class E2EHarness
         boolean nativeAction = observer != null && observer.get("actionObserved").getAsBoolean();
         Map<String, Object> diagnostics = ModelRenderer.diagnostics();
         Map<String, Map<String, Object>> hands = new LinkedHashMap<>();
-        if (current && diagnostics.get("submittedItemDraws") instanceof List<?> draws)
-        {
-            for (Object value : draws)
-            {
-                if (!(value instanceof Map<?, ?> row))
-                {
+        if (current && diagnostics.get("submittedItemDraws") instanceof List<?> draws) {
+            for (Object value : draws) {
+                if (!(value instanceof Map<?, ?> row)) {
                     continue;
                 }
 
@@ -3785,8 +3303,7 @@ public final class E2EHarness
                         || !Boolean.TRUE.equals(row.get("nonempty"))
                         || itemNumber(row, "submission") <= this.itemSubmissionBaseline
                         || itemNumber(row, "extractedFrame") <= this.itemFrameBaseline
-                        || !itemMatrix(row.get("locatorTransform")) || !itemMatrix(row.get("finalTransform")))
-                {
+                        || !itemMatrix(row.get("locatorTransform")) || !itemMatrix(row.get("finalTransform"))) {
                     continue;
                 }
 
@@ -3797,13 +3314,11 @@ public final class E2EHarness
                 if (!(hand.equals("mainhand") && "minecraft:iron_sword".equals(row.get("item"))
                         && mainBone.equals(row.get("bone"))
                         || hand.equals("offhand") && "minecraft:shield".equals(row.get("item"))
-                                && offBone.equals(row.get("bone"))))
-                {
+                                && offBone.equals(row.get("bone")))) {
                     continue;
                 }
 
-                if (observer == null || itemNumber(row, "nativeEntityId") != observer.get("entityId").getAsLong())
-                {
+                if (observer == null || itemNumber(row, "nativeEntityId") != observer.get("entityId").getAsLong()) {
                     continue;
                 }
 
@@ -3816,16 +3331,14 @@ public final class E2EHarness
         boolean bothHands = hands.keySet().containsAll(Set.of("mainhand", "offhand"));
         boolean actionDraw = name.endsWith("-hold");
         Map<String, float[]> baseline = this.heldItemBaselines.get(expected);
-        if (name.endsWith("-swing") && hands.containsKey("mainhand") && baseline != null)
-        {
+        if (name.endsWith("-swing") && hands.containsKey("mainhand") && baseline != null) {
             Map<String, Object> draw = hands.get("mainhand");
             actionDraw = Boolean.TRUE.equals(draw.get("swinging")) && itemNumber(draw, "swingTicks") > 0
                     && itemMatrixChanged(draw.get("locatorTransform"), baseline.get("mainhand"))
                     && binding.layers().stream().anyMatch(
                             layer -> layer.animation().startsWith("swing") || layer.animation().equals("attack"));
         }
-        if (name.endsWith("-use") && hands.containsKey("offhand") && baseline != null)
-        {
+        if (name.endsWith("-use") && hands.containsKey("offhand") && baseline != null) {
             Map<String, Object> draw = hands.get("offhand");
             actionDraw = Boolean.TRUE.equals(draw.get("usingItem")) && "OFF_HAND".equals(draw.get("activeHand"))
                     && itemNumber(draw, "useTicks") >= 2
@@ -3847,22 +3360,19 @@ public final class E2EHarness
         proof.put("currentBinding", current);
         proof.put("bothHandsPostsubmit", bothHands);
         proof.put("nativeActionAndChangedLocator", actionDraw);
-        if (verifyShieldModel)
-        {
+        if (verifyShieldModel) {
             proof.put("nativeShieldModelSource", this.itemShieldExpectedSource);
             proof.put("nativeShieldModelResolved", nativeShieldModel);
         }
         proof.put("itemDraws", hands);
         proof.put("stableTicks", this.itemDrawStableTicks);
         this.itemLatestProof = proof;
-        if (this.stageTicks % 5 == 0)
-        {
+        if (this.stageTicks % 5 == 0) {
             this.fixtureFrames.add(proof);
         }
 
         if (!this.itemStageSucceeded && this.stageTicks >= 20
-                && this.itemDrawStableTicks >= (name.endsWith("-swing") ? 1 : 3))
-        {
+                && this.itemDrawStableTicks >= (name.endsWith("-swing") ? 1 : 3)) {
             this.itemStageSucceeded = true;
             check(name + "UnmoddedOwnerEquipment", serverEquipment,
                     "Fresh actual Bukkit inventory, model id, and no MPA session: " + equipment);
@@ -3872,16 +3382,14 @@ public final class E2EHarness
             check(name + "NativeActionMovesItemLocator", nativeAction && actionDraw,
                     "Independent B native swing/use plus matching A postsubmit state and changed sampled HandLocator; B="
                             + observer);
-            if (verifyShieldModel)
-            {
+            if (verifyShieldModel) {
                 check(name + (name.endsWith("-use") ? "NativeBlockingShieldModelResolved"
                         : "NativeHeldShieldModelResolved"), nativeShieldModel,
                         "Actual native special-renderer layer transformation equals the enabled Minecraft model resource; source="
                                 + this.itemShieldExpectedSource + "; postsubmit shield=" + hands.get("offhand"));
             }
 
-            if (name.endsWith("-hold"))
-            {
+            if (name.endsWith("-hold")) {
                 Map<String, float[]> matrices = new LinkedHashMap<>();
                 hands.forEach((hand, draw) -> matrices.put(hand, ((float[]) draw.get("locatorTransform")).clone()));
                 this.heldItemBaselines.put(expected, matrices);
@@ -3889,15 +3397,12 @@ public final class E2EHarness
             this.observations.add(proof);
             capture(client, name);
         }
-        if (this.itemStageSucceeded && this.stageTicks >= 40)
-        {
+        if (this.itemStageSucceeded && this.stageTicks >= 40) {
             next(client);
         }
 
-        else if (this.stageTicks >= 120)
-        {
-            if (verifyShieldModel)
-            {
+        else if (this.stageTicks >= 120) {
+            if (verifyShieldModel) {
                 check(name + (name.endsWith("-use") ? "NativeBlockingShieldModelResolved"
                         : "NativeHeldShieldModelResolved"), nativeShieldModel,
                         "Fixed deadline; actual native layer must equal the expected model resource; source="
@@ -3912,10 +3417,8 @@ public final class E2EHarness
         }
     }
 
-    private JsonObject itemAuthority()
-    {
-        try
-        {
+    private JsonObject itemAuthority() {
+        try {
             Path source = Path.of(String.valueOf(this.proof.get("serverSource"))).toAbsolutePath().normalize();
             Path file = source.getParent().resolve("MPATestHelper/actor-authority.json");
             JsonObject value = JsonParser.parseString(Files.readString(file)).getAsJsonObject();
@@ -3926,23 +3429,18 @@ public final class E2EHarness
                             .equals(value.get("ownerUuid").getAsString())
                     || !value.get("source").getAsString().startsWith("Ignored MPATestHelper authoritative Bukkit owner")
                     || !value.get("handsFixtureActive").getAsBoolean() || (STAGES.get(this.stage).endsWith("-hold")
-                            && value.get("handsEquippedAtMillis").getAsLong() < this.itemStageStartedAtMillis))
-            {
+                            && value.get("handsEquippedAtMillis").getAsLong() < this.itemStageStartedAtMillis)) {
                 return null;
             }
 
             return value;
-        }
-        catch (Exception absent)
-        {
+        } catch (Exception absent) {
             return null;
         }
     }
 
-    private JsonObject itemObserverProof(String stage)
-    {
-        try
-        {
+    private JsonObject itemObserverProof(String stage) {
+        try {
             JsonObject value = JsonParser
                     .parseString(Files.readString(this.output.resolve("observer-item-actions.json"))).getAsJsonObject();
             long sample = value.get("sampledAtMillis").getAsLong(), age = System.currentTimeMillis() - sample;
@@ -3953,41 +3451,32 @@ public final class E2EHarness
                     || !value.get("helperSha256").getAsString().matches("[a-f0-9]{64}")
                     || !"minecraft:iron_sword".equals(value.get("mainhand").getAsString())
                     || !"minecraft:shield".equals(value.get("offhand").getAsString())
-                    || !Set.of("LEFT", "RIGHT").contains(value.get("mainArm").getAsString())
-                    || !value.get("source").getAsString().startsWith("Ignored observer Fabric native inventory/action"))
-            {
+                    || !Set.of("LEFT", "RIGHT").contains(value.get("mainArm").getAsString()) || !value.get("source")
+                            .getAsString().startsWith("Ignored observer Fabric native inventory/action")) {
                 return null;
             }
 
             return value;
-        }
-        catch (Exception absent)
-        {
+        } catch (Exception absent) {
             return null;
         }
     }
 
-    private static long itemNumber(Map<?, ?> row, String field)
-    {
+    private static long itemNumber(Map<?, ?> row, String field) {
         return row.get(field) instanceof Number n ? n.longValue() : -1;
     }
 
-    private static double itemDecimal(Map<?, ?> row, String field)
-    {
+    private static double itemDecimal(Map<?, ?> row, String field) {
         return row.get(field) instanceof Number n ? n.doubleValue() : Double.NaN;
     }
 
-    private static boolean itemMatrix(Object value)
-    {
-        if (!(value instanceof float[] matrix) || matrix.length != 16)
-        {
+    private static boolean itemMatrix(Object value) {
+        if (!(value instanceof float[] matrix) || matrix.length != 16) {
             return false;
         }
 
-        for (float element : matrix)
-        {
-            if (!Float.isFinite(element) || Math.abs(element) > 1_000_000)
-            {
+        for (float element : matrix) {
+            if (!Float.isFinite(element) || Math.abs(element) > 1_000_000) {
                 return false;
             }
 
@@ -3996,17 +3485,13 @@ public final class E2EHarness
         return Math.abs(new Matrix4f().set(matrix).determinant3x3()) > 1e-12;
     }
 
-    private static boolean itemMatrixChanged(Object value, float[] before)
-    {
-        if (!(value instanceof float[] now) || before == null || before.length != now.length)
-        {
+    private static boolean itemMatrixChanged(Object value, float[] before) {
+        if (!(value instanceof float[] now) || before == null || before.length != now.length) {
             return false;
         }
 
-        for (int i = 0; i < now.length; i++)
-        {
-            if (Math.abs(now[i] - before[i]) > 1e-5)
-            {
+        for (int i = 0; i < now.length; i++) {
+            if (Math.abs(now[i] - before[i]) > 1e-5) {
                 return true;
             }
 
@@ -4015,16 +3500,13 @@ public final class E2EHarness
         return false;
     }
 
-    private static Map<String, Object> readShieldModelSource(MinecraftClient client, boolean blocking)
-    {
+    private static Map<String, Object> readShieldModelSource(MinecraftClient client, boolean blocking) {
         Identifier source = Identifier.of("minecraft",
                 "models/item/" + (blocking ? "shield_blocking" : "shield") + ".json");
-        try (BufferedReader reader = client.getResourceManager().getResource(source).orElseThrow().getReader())
-        {
+        try (BufferedReader reader = client.getResourceManager().getResource(source).orElseThrow().getReader()) {
             JsonObject display = JsonParser.parseReader(reader).getAsJsonObject().getAsJsonObject("display");
             Map<String, Object> contexts = new LinkedHashMap<>();
-            for (String context : List.of("thirdperson_lefthand", "thirdperson_righthand"))
-            {
+            for (String context : List.of("thirdperson_lefthand", "thirdperson_righthand")) {
                 JsonObject transform = display.getAsJsonObject(context);
                 contexts.put(context,
                         Map.of("rotationDegrees", itemSourceVector(transform, "rotation", 1), "translationBlocks",
@@ -4032,53 +3514,43 @@ public final class E2EHarness
                                 itemSourceVector(transform, "scale", 1)));
             }
             return Map.of("resource", source.toString(), "readSucceeded", true, "contexts", contexts);
-        }
-        catch (Exception failure)
-        {
+        } catch (Exception failure) {
             return Map.of("resource", source.toString(), "readSucceeded", false, "error", failure.toString());
         }
     }
 
-    private static List<Double> itemSourceVector(JsonObject transform, String key, double divisor)
-    {
+    private static List<Double> itemSourceVector(JsonObject transform, String key, double divisor) {
         JsonArray source = transform.getAsJsonArray(key);
-        if (source == null || source.size() != 3)
-        {
+        if (source == null || source.size() != 3) {
             throw new IllegalStateException("Missing native model transform " + key);
         }
 
         return source.asList().stream().map(value -> value.getAsDouble() / divisor).toList();
     }
 
-    private static boolean itemResolvedShieldModel(Map<String, Object> draw, Map<String, Object> source)
-    {
+    private static boolean itemResolvedShieldModel(Map<String, Object> draw, Map<String, Object> source) {
         if (draw == null || !"minecraft:shield".equals(draw.get("item"))
                 || !Boolean.TRUE.equals(source.get("readSucceeded"))
                 || !(source.get("contexts") instanceof Map<?, ?> contexts)
-                || !(draw.get("resolvedLayers") instanceof List<?> layers))
-        {
+                || !(draw.get("resolvedLayers") instanceof List<?> layers)) {
             return false;
         }
 
         String context = "LeftHandLocator".equals(draw.get("bone")) ? "thirdperson_lefthand" : "thirdperson_righthand";
-        if (!(contexts.get(context) instanceof Map<?, ?> expected))
-        {
+        if (!(contexts.get(context) instanceof Map<?, ?> expected)) {
             return false;
         }
 
         boolean shieldFound = false;
-        for (Object value : layers)
-        {
-            if (!(value instanceof Map<?, ?> layer) || !Boolean.TRUE.equals(layer.get("shieldSpecialRenderer")))
-            {
+        for (Object value : layers) {
+            if (!(value instanceof Map<?, ?> layer) || !Boolean.TRUE.equals(layer.get("shieldSpecialRenderer"))) {
                 continue;
             }
 
             if (!context.equals(layer.get("displayContext"))
                     || !itemVectorEquals(layer.get("rotationDegrees"), expected.get("rotationDegrees"))
                     || !itemVectorEquals(layer.get("translationBlocks"), expected.get("translationBlocks"))
-                    || !itemVectorEquals(layer.get("scale"), expected.get("scale")))
-            {
+                    || !itemVectorEquals(layer.get("scale"), expected.get("scale"))) {
                 return false;
             }
 
@@ -4087,19 +3559,15 @@ public final class E2EHarness
         return shieldFound;
     }
 
-    private static boolean itemVectorEquals(Object actual, Object expected)
-    {
-        if (!(actual instanceof List<?> a) || !(expected instanceof List<?> e) || a.size() != 3 || e.size() != 3)
-        {
+    private static boolean itemVectorEquals(Object actual, Object expected) {
+        if (!(actual instanceof List<?> a) || !(expected instanceof List<?> e) || a.size() != 3 || e.size() != 3) {
             return false;
         }
 
-        for (int axis = 0; axis < 3; axis++)
-        {
+        for (int axis = 0; axis < 3; axis++) {
             if (!(a.get(axis) instanceof Number av) || !(e.get(axis) instanceof Number ev)
                     || !Double.isFinite(av.doubleValue()) || !Double.isFinite(ev.doubleValue())
-                    || Math.abs(av.doubleValue() - ev.doubleValue()) > 1e-5)
-            {
+                    || Math.abs(av.doubleValue() - ev.doubleValue()) > 1e-5) {
                 return false;
             }
 
@@ -4107,64 +3575,50 @@ public final class E2EHarness
         return true;
     }
 
-    private JsonObject readPackAuthority(MinecraftClient client)
-    {
-        try
-        {
+    private JsonObject readPackAuthority(MinecraftClient client) {
+        try {
             String serverSource = (String) this.proof.get("serverSource");
             if (serverSource == null || serverSource.isBlank()
-                    || !String.valueOf(this.proof.get("serverArtifactSha256")).matches("[0-9a-fA-F]{64}"))
-
-            {
+                    || !String.valueOf(this.proof.get("serverArtifactSha256")).matches("[0-9a-fA-F]{64}")) {
                 throw new IllegalStateException("Missing existing frozen server artifact proof");
             }
 
             Path plugins = Path.of(serverSource).toAbsolutePath().normalize().getParent();
             Path log = plugins.getParent().resolve("logs/latest.log");
-            try (FileChannel channel = FileChannel.open(log, StandardOpenOption.READ))
-            {
+            try (FileChannel channel = FileChannel.open(log, StandardOpenOption.READ)) {
                 long size = channel.size();
                 int count = (int) Math.min(size, 512 * 1024L);
                 ByteBuffer buffer = ByteBuffer.allocate(count);
                 channel.position(size - count);
-                while (buffer.hasRemaining() && channel.read(buffer) > 0)
-                {
+                while (buffer.hasRemaining() && channel.read(buffer) > 0) {
                 }
                 String[] lines = new String(buffer.array(), 0, buffer.position(), StandardCharsets.UTF_8).split("\n");
-                for (int i = lines.length - 1; i >= 0; i--)
-                {
+                for (int i = lines.length - 1; i >= 0; i--) {
                     int marker = lines[i].indexOf("LOCAL STATUS ");
-                    if (marker < 0)
-                    {
+                    if (marker < 0) {
                         continue;
                     }
 
                     JsonObject status;
-                    try
-                    {
+                    try {
                         status = JsonParser.parseString(lines[i].substring(marker + "LOCAL STATUS ".length()).strip())
                                 .getAsJsonObject();
-                    }
-                    catch (RuntimeException incompleteLine)
-                    {
+                    } catch (RuntimeException incompleteLine) {
                         continue;
                     }
-                    if (!client.player.getUuidAsString().equals(status.get("owner").getAsString()))
-                    {
+                    if (!client.player.getUuidAsString().equals(status.get("owner").getAsString())) {
                         continue;
                     }
 
                     JsonObject snapshot = status.getAsJsonObject("clientSnapshot"),
                             actor = status.getAsJsonObject("testActorAuthority");
                     if (snapshot == null || actor == null || (!this.packExpectedInstance.isEmpty()
-                            && !this.packExpectedInstance.equals(snapshot.get("instance").getAsString())))
-                    {
+                            && !this.packExpectedInstance.equals(snapshot.get("instance").getAsString()))) {
                         continue;
                     }
 
                     long sample = actor.get("sampledAtMillis").getAsLong();
-                    if (sample < this.packReloadCompletedAtMillis || System.currentTimeMillis() - sample > 3_000)
-                    {
+                    if (sample < this.packReloadCompletedAtMillis || System.currentTimeMillis() - sample > 3_000) {
                         continue;
                     }
 
@@ -4172,8 +3626,7 @@ public final class E2EHarness
                             || !actor.get("serverActualOwned").getAsBoolean()
                             || !client.player.getUuidAsString().equals(actor.get("ownerUuid").getAsString())
                             || !actor.get("source").getAsString()
-                                    .startsWith("Ignored MPATestHelper authoritative Bukkit owner"))
-                    {
+                                    .startsWith("Ignored MPATestHelper authoritative Bukkit owner")) {
                         continue;
                     }
 
@@ -4182,60 +3635,46 @@ public final class E2EHarness
                 }
             }
             this.packAuthorityError = "Waiting for fresh same-owner/same-instance LOCAL STATUS after the real reload callback";
-        }
-        catch (Exception failure)
-        {
+        } catch (Exception failure) {
             this.packAuthorityError = failure.toString();
         }
         return null;
     }
 
-    private boolean packAuthorityMatches(MinecraftClient client, boolean localReady)
-    {
-        try
-        {
-            if (this.packAuthority == null)
-            {
+    private boolean packAuthorityMatches(MinecraftClient client, boolean localReady) {
+        try {
+            if (this.packAuthority == null) {
                 return false;
             }
 
             JsonObject actor = this.packAuthority.getAsJsonObject("testActorAuthority");
             long sample = actor.get("sampledAtMillis").getAsLong();
-            if (sample < this.packReloadCompletedAtMillis || System.currentTimeMillis() - sample > 3_000)
-            {
+            if (sample < this.packReloadCompletedAtMillis || System.currentTimeMillis() - sample > 3_000) {
                 return false;
             }
 
-            for (JsonElement entry : this.packAuthority.getAsJsonArray("viewers"))
-            {
+            for (JsonElement entry : this.packAuthority.getAsJsonArray("viewers")) {
                 JsonObject viewer = entry.getAsJsonObject();
-                if (client.player.getUuidAsString().equals(viewer.get("viewer").getAsString()))
-
-                {
+                if (client.player.getUuidAsString().equals(viewer.get("viewer").getAsString())) {
                     return viewer.get("allowed").getAsBoolean()
                             && viewer.get("localReadyForOwner").getAsBoolean() == localReady
                             && viewer.get("meVisibleForOwner").getAsBoolean() != localReady;
                 }
 
             }
-        }
-        catch (Exception failure)
-        {
+        } catch (Exception failure) {
             this.packAuthorityError = failure.toString();
         }
         return false;
     }
 
-    private void remoteAccessoryTick(MinecraftClient client)
-    {
+    private void remoteAccessoryTick(MinecraftClient client) {
         ClientRuntime.RenderBinding binding = otherBindings(client).stream().findFirst().orElse(null);
-        if (!this.remoteExtraRequested)
-        {
+        if (!this.remoteExtraRequested) {
             boolean ready = binding != null && !binding.instance().equals(this.remotePreviousInstance)
                     && visibleModel(ModelRenderer.diagnostics(), binding);
             this.remoteExtraReadyTicks = ready ? this.remoteExtraReadyTicks + 1 : 0;
-            if (this.remoteExtraReadyTicks >= 3)
-            {
+            if (this.remoteExtraReadyTicks >= 3) {
                 this.remoteExtraInstance = binding.instance();
                 Map<String, Double> state = this.runtime.accessoryState(OTHER);
                 check("remoteAccessoryStartsClear",
@@ -4245,36 +3684,30 @@ public final class E2EHarness
                 command(client, "mpatest MPAObserver extra0");
             }
         }
-        if (this.remoteExtraRequested && binding != null && binding.instance().equals(this.remoteExtraInstance))
-        {
+        if (this.remoteExtraRequested && binding != null && binding.instance().equals(this.remoteExtraInstance)) {
             BbModel.Layer active = binding.layers().stream().filter(layer -> layer.animation().equals("extra0"))
                     .findFirst().orElse(null);
-            if (!this.remoteExtraSeen && active != null)
-            {
+            if (!this.remoteExtraSeen && active != null) {
                 this.remoteExtraSeen = true;
                 this.remoteExtraStartedAt = active.startedAtTick();
                 this.remoteExtraLengthTicks = binding.model().animationLengthTicks("extra0") / active.speed();
             }
-            if (this.remoteExtraSeen)
-            {
+            if (this.remoteExtraSeen) {
                 double age = binding.serverTick() - this.remoteExtraStartedAt;
                 Map<String, Double> authority = this.runtime.accessoryState(OTHER);
                 Map<String, Double> variables = ModelRenderer.expressionVariables(OTHER);
                 boolean changed = authority.getOrDefault("a", 0d) == 1 && authority.getOrDefault("b", 0d) == 1;
-                if (changed && !Double.isFinite(this.remoteExtraFirstChangedAge))
-                {
+                if (changed && !Double.isFinite(this.remoteExtraFirstChangedAge)) {
                     this.remoteExtraFirstChangedAge = age;
                 }
 
-                if (age < 20)
-                {
+                if (age < 20) {
                     this.remoteExtraEarlySamples++;
                     this.remoteExtraEarlyValid &= authority.getOrDefault("a", -1d) == 0
                             && authority.getOrDefault("b", -1d) == 0;
                 }
                 // This is a fixed timeline deadline, never a wait until the expected state happens.
-                if (!this.remoteExtraEventChecked && age >= 35)
-                {
+                if (!this.remoteExtraEventChecked && age >= 35) {
                     this.remoteExtraEventChecked = true;
                     check("remoteAccessoryEventDeadline",
                             changed && variables.getOrDefault("variable.roaming.a", 0d) == 1
@@ -4282,32 +3715,27 @@ public final class E2EHarness
                             "Source events at 24.166/25 ticks plus bounded server/renderer allowance; age=" + age
                                     + "; authority=" + authority + "; variables=" + variables);
                 }
-                if (this.stageTicks % 5 == 0)
-                {
+                if (this.stageTicks % 5 == 0) {
                     this.fixtureFrames.add(Map.of("stage", "other-extra0", "stageTick", this.stageTicks, "instance",
                             binding.instance(), "sampleTick", binding.serverTick(), "startedAtTick",
                             this.remoteExtraStartedAt, "ageTicks", age, "layers", binding.layers(), "authority",
                             authority, "variables", variables));
                 }
 
-                if (this.remoteExtraCompletedAt < 0 && age >= this.remoteExtraLengthTicks + 10 && active == null)
-                {
+                if (this.remoteExtraCompletedAt < 0 && age >= this.remoteExtraLengthTicks + 10 && active == null) {
                     this.remoteExtraCompletedAt = this.stageTicks;
                     capture(client, "other-extra0");
                 }
             }
         }
-        if (this.captured && this.remoteExtraCompletedAt >= 0 && this.stageTicks >= this.remoteExtraCompletedAt + 12)
-        {
+        if (this.captured && this.remoteExtraCompletedAt >= 0 && this.stageTicks >= this.remoteExtraCompletedAt + 12) {
             next(client);
             return;
         }
-        if (this.stageTicks > 240)
-        {
+        if (this.stageTicks > 240) {
             check("remoteExtraTimelineCompleted", false,
                     "extra0 did not start/finish in the ready reference instance; started=" + this.remoteExtraSeen);
-            if (!this.captured)
-            {
+            if (!this.captured) {
                 capture(client, "other-extra0");
             }
 
@@ -4315,17 +3743,14 @@ public final class E2EHarness
         }
     }
 
-    private void measureFollow(MinecraftClient client, PlayerEntity entity)
-    {
-        if (entity == null)
-        {
+    private void measureFollow(MinecraftClient client, PlayerEntity entity) {
+        if (entity == null) {
             return;
         }
 
         ClientRuntime.RenderBinding binding = this.runtime.renderBindings().stream()
                 .filter(value -> value.owner().equals(entity.getUuid())).findFirst().orElse(null);
-        if (binding == null)
-        {
+        if (binding == null) {
             return;
         }
 
@@ -4335,24 +3760,20 @@ public final class E2EHarness
         this.maxFollowError = Math.max(this.maxFollowError, error);
         this.followSamples++;
         if (binding.layers().stream().anyMatch(layer -> layer.layer().equals("posture")
-                && (layer.animation().equals("walk") || layer.animation().equals("run"))))
-        {
+                && (layer.animation().equals("walk") || layer.animation().equals("run")))) {
             this.followWalking++;
         }
 
         TransformTimeline.Transform delayed = this.runtime.serverTransform(entity.getUuid());
-        if (delayed != null)
-        {
+        if (delayed != null) {
             this.maxServerGap = Math.max(this.maxServerGap, Math.sqrt(Math.pow(binding.x() - delayed.x(), 2)
                     + Math.pow(binding.y() - delayed.y(), 2) + Math.pow(binding.z() - delayed.z(), 2)));
         }
 
     }
 
-    private List<ClientRuntime.RenderBinding> own(MinecraftClient client)
-    {
-        if (client.player == null)
-        {
+    private List<ClientRuntime.RenderBinding> own(MinecraftClient client) {
+        if (client.player == null) {
             return List.of();
         }
 
@@ -4360,37 +3781,31 @@ public final class E2EHarness
         return bindings.stream().filter(binding -> binding.owner().equals(client.player.getUuid())).toList();
     }
 
-    private PlayerEntity otherPlayer(MinecraftClient client)
-    {
+    private PlayerEntity otherPlayer(MinecraftClient client) {
         return client.world == null ? null
                 : client.world.getPlayers().stream()
                         .filter(player -> player.getName().getString().equals("MPAObserver")).findFirst().orElse(null);
     }
 
-    private List<ClientRuntime.RenderBinding> otherBindings(MinecraftClient client)
-    {
+    private List<ClientRuntime.RenderBinding> otherBindings(MinecraftClient client) {
         return this.runtime.renderBindings().stream().filter(binding -> binding.owner().equals(OTHER)).toList();
     }
 
-    private void aim(MinecraftClient client, ClientRuntime.RenderBinding binding)
-    {
+    private void aim(MinecraftClient client, ClientRuntime.RenderBinding binding) {
         boolean low = binding.layers().stream().anyMatch(layer -> layer.animation().contains("climb")
                 || layer.animation().contains("crawl") || layer.animation().equals("sleep"));
         aim(client, binding.x(), binding.y() + (low ? .4 : 1.1), binding.z());
     }
 
-    private void aim(MinecraftClient client, double x, double targetY, double z)
-    {
+    private void aim(MinecraftClient client, double x, double targetY, double z) {
         double dx = x - client.player.getX(), dz = z - client.player.getZ();
         double dy = targetY - client.player.getEyeY();
         client.player.setYaw((float) Math.toDegrees(Math.atan2(-dx, dz)));
         client.player.setPitch((float) -Math.toDegrees(Math.atan2(dy, Math.hypot(dx, dz))));
     }
 
-    private void phase(MinecraftClient client, String name)
-    {
-        try
-        {
+    private void phase(MinecraftClient client, String name) {
+        try {
             Files.createDirectories(this.output);
             Map<String, Object> actor = new LinkedHashMap<>();
             actor.put("uuid", client.player.getUuidAsString());
@@ -4403,15 +3818,13 @@ public final class E2EHarness
             actor.put("vehicle", client.player.hasVehicle());
             actor.put("layers", own(client).stream().flatMap(binding -> binding.layers().stream())
                     .map(layer -> layer.animation()).toList());
-            if (name.startsWith("push-"))
-            {
+            if (name.startsWith("push-")) {
                 actor.put("pushDelivery", this.runtime.serverPushDiagnostics());
                 actor.put("pushAuthority", this.packAuthority);
             }
             own(client).stream().findFirst().ifPresent(binding -> actor.put("visualAnchor",
                     Map.of("x", binding.x(), "y", binding.y(), "z", binding.z(), "bodyYaw", binding.bodyYaw())));
-            if (name.startsWith("local-appearance-"))
-            {
+            if (name.startsWith("local-appearance-")) {
                 actor.put("privateAppearance",
                         Map.of("enabled", this.runtime.localAppearance().enabled(), "modelId",
                                 this.runtime.localAppearance().modelId(), "instance",
@@ -4425,23 +3838,19 @@ public final class E2EHarness
                                     "startedAtMillis", System.currentTimeMillis() - this.stageTicks * 50L, "actor",
                                     actor, "proof", this.proof)),
                     StandardCharsets.UTF_8);
-        }
-        catch (Exception failure)
-        {
+        } catch (Exception failure) {
             LOGGER.warn("Cannot write E2E phase", failure);
         }
     }
 
     private void bedGeometry(MinecraftClient client, List<?> models, UUID owner, double bedX, double bedZ,
-            String prefix)
-    {
+            String prefix) {
         ModelRenderer.FrameModel model = models.stream().filter(ModelRenderer.FrameModel.class::isInstance)
                 .map(ModelRenderer.FrameModel.class::cast).filter(frame -> frame.owner().equals(owner.toString()))
                 .findFirst().orElse(null);
         BlockPos bed = BlockPos.ofFloored(bedX, -60, bedZ), second = bed;
         BlockState state = client.world.getBlockState(bed);
-        if (state.getBlock() instanceof BedBlock)
-        {
+        if (state.getBlock() instanceof BedBlock) {
             second = bed.offset(BedBlock.getOppositePartDirection(state));
         }
 
@@ -4454,8 +3863,7 @@ public final class E2EHarness
                 && model.maxZ() > minZ, "Mesh overlaps actual two-block fixture bed; actual mesh=" + model);
     }
 
-    private ArmorStandEntity sideCamera(MinecraftClient client)
-    {
+    private ArmorStandEntity sideCamera(MinecraftClient client) {
         ClientRuntime.RenderBinding binding = own(client).stream().findFirst().orElse(null);
         double x = binding == null ? client.player.getX() : binding.x();
         double y = binding == null ? client.player.getY() : binding.y();
@@ -4467,25 +3875,20 @@ public final class E2EHarness
         return camera;
     }
 
-    private void command(MinecraftClient client, String command)
-    {
-        if (client.getNetworkHandler() != null)
-        {
+    private void command(MinecraftClient client, String command) {
+        if (client.getNetworkHandler() != null) {
             client.getNetworkHandler().sendChatCommand(command);
         }
 
     }
 
-    private void screenshot(MinecraftClient client, String name)
-    {
-        try
-        {
+    private void screenshot(MinecraftClient client, String name) {
+        try {
             Files.createDirectories(this.output);
             String filename = name + ".png";
             this.screenshots.add("screenshots/" + filename);
             client.inGameHud.getChatHud().clear(false);
-            ScreenshotRecorder.saveScreenshot(this.output.toFile(), filename, client.getFramebuffer(), 1, message ->
-            {
+            ScreenshotRecorder.saveScreenshot(this.output.toFile(), filename, client.getFramebuffer(), 1, message -> {
                 long completedAt = System.currentTimeMillis();
                 client.execute(() -> this.screenshotCallbacks
                         .add(Map.of("file", "screenshots/" + filename, "completedAtMillis", completedAt, "fileWritten",
@@ -4493,28 +3896,22 @@ public final class E2EHarness
                                 message.getString())));
                 LOGGER.info("E2E screenshot {}: {}", filename, message.getString());
             });
-        }
-        catch (Exception failure)
-        {
+        } catch (Exception failure) {
             check("screenshot-" + name, false, failure.toString());
         }
     }
 
-    private void check(String name, boolean passed, String detail)
-    {
+    private void check(String name, boolean passed, String detail) {
         this.checks.add(Map.of("name", name, "passed", passed, "detail", detail));
         LOGGER.info("E2E check {}={} {}", name, passed, detail);
     }
 
-    private void finish(MinecraftClient client)
-    {
-        if (this.finished)
-        {
+    private void finish(MinecraftClient client) {
+        if (this.finished) {
             return;
         }
 
-        if (!this.finishing)
-        {
+        if (!this.finishing) {
             this.finishing = true;
             this.finishStartedMillis = System.currentTimeMillis();
         }
@@ -4524,28 +3921,23 @@ public final class E2EHarness
                                 && Boolean.TRUE.equals(callback.get("fileWritten"))
                                 && Files.isRegularFile(this.output.resolve(file))))
                 .toList();
-        if (!pendingScreenshots.isEmpty() && System.currentTimeMillis() - this.finishStartedMillis < 10_000)
-        {
+        if (!pendingScreenshots.isEmpty() && System.currentTimeMillis() - this.finishStartedMillis < 10_000) {
             return;
         }
 
         check("screenshotCallbacksComplete", pendingScreenshots.isEmpty(),
                 "Waited for actual screenshot I/O callbacks before writing the final report; pending="
                         + pendingScreenshots);
-        if (this.handsCleanupPending && client.player != null && client.getNetworkHandler() != null)
-        {
+        if (this.handsCleanupPending && client.player != null && client.getNetworkHandler() != null) {
             command(client, "mpatest MPAObserver hands-restore");
             this.handsCleanupPending = false;
         }
-        if (this.pushFaultRequested && client.player != null && client.getNetworkHandler() != null)
-        {
+        if (this.pushFaultRequested && client.player != null && client.getNetworkHandler() != null) {
             // This is an emergency cleanup request, never evidence that the repair gate passed.
             command(client, "mpatest " + PLAYER + " push-repair");
         }
-        if (this.packSelectionChanged)
-        {
-            try
-            {
+        if (this.packSelectionChanged) {
+            try {
                 client.getResourcePackManager().setEnabledProfiles(this.originalPackProfiles);
                 check("packSelectionRestoredOnFailure",
                         List.copyOf(client.getResourcePackManager().getEnabledIds()).equals(this.originalPackProfiles),
@@ -4554,9 +3946,7 @@ public final class E2EHarness
                 // Normal pack-restored waits for the real callback and rendering. On a
                 // failing/timeout exit, restore selection as well without claiming that gate passed.
                 client.reloadResources();
-            }
-            catch (Exception failure)
-            {
+            } catch (Exception failure) {
                 check("packSelectionRestoredOnFailure", false, failure.toString());
             }
             this.packSelectionChanged = false;
@@ -4566,8 +3956,7 @@ public final class E2EHarness
                 "Final real asset_request send count="
                         + pushCount(this.runtime.serverPushDiagnostics(), "assetRequestPacketsSent"));
         this.finished = true;
-        try
-        {
+        try {
             Files.createDirectories(this.output);
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("passed", !this.checks.isEmpty()
@@ -4588,24 +3977,20 @@ public final class E2EHarness
             result.put("screenshotCallbacks", this.screenshotCallbacks);
             result.put("fixtureFrames", this.fixtureFrames);
             result.put("serverPushDelivery", serverPushDelivery());
-            if (INTERACTIONS)
-            {
+            if (INTERACTIONS) {
                 result.put("interactionDelivery", interactionDelivery());
             }
 
             Files.writeString(this.output.resolve("results.json"),
                     new GsonBuilder().setPrettyPrinting().create().toJson(result), StandardCharsets.UTF_8);
             LOGGER.info("E2E results written to {}", this.output.resolve("results.json"));
-        }
-        catch (Exception failure)
-        {
+        } catch (Exception failure) {
             LOGGER.error("Cannot save E2E results", failure);
         }
         client.scheduleStop();
     }
 
-    private Map<String, Object> interactionDelivery()
-    {
+    private Map<String, Object> interactionDelivery() {
         List<String> required = new ArrayList<>(List.of("savedPrivateAppearanceVisibleBeforeServerDisguise",
                 "serverDisguiseSuppressesPrivateAppearance", "JOpensServerWheel",
                 "serverSettingsHidePrivateModelControls", "manualPrivateOverrideCurrentMeshAndTransform",
@@ -4619,22 +4004,17 @@ public final class E2EHarness
                 "wheelAuthorFormSameScreenActualCallback", "wheelAuthorFormRestoredNoServerRequest",
                 "defaultHeldItemAuthoredLoopMetadata", "defaultHeldItemHoldsWithoutReplay",
                 "defaultHeldItemChangeRestartsOnce"));
-        for (String phase : List.of("local-appearance-own", "local-appearance-off", "private-equipment-suspended"))
-
-        {
-            for (String suffix : List.of("RemoteBindingUnchanged", "NoServerRequest", "SavedPrivateProfilePreserved"))
-            {
+        for (String phase : List.of("local-appearance-own", "local-appearance-off", "private-equipment-suspended")) {
+            for (String suffix : List.of("RemoteBindingUnchanged", "NoServerRequest", "SavedPrivateProfilePreserved")) {
                 required.add(phase + suffix);
             }
 
         }
 
         for (String phase : List.of("server-equipment-armor", "server-equipment-elytra", "other-equipment-armor",
-                "other-equipment-elytra", "private-equipment-suspended", "private-equipment-restored"))
-
-        {
-            for (String suffix : List.of("NativeEquipmentSource", "EquipmentRenderPolicy", "SwordShieldStillSubmitted"))
-            {
+                "other-equipment-elytra", "private-equipment-suspended", "private-equipment-restored")) {
+            for (String suffix : List.of("NativeEquipmentSource", "EquipmentRenderPolicy",
+                    "SwordShieldStillSubmitted")) {
                 required.add(phase + suffix);
             }
 
@@ -4660,8 +4040,7 @@ public final class E2EHarness
         return report;
     }
 
-    private Map<String, Object> serverPushDelivery()
-    {
+    private Map<String, Object> serverPushDelivery() {
         List<String> required = List.of("serverPushNegotiated", "serverPushPlainMePack",
                 "serverPushColdCacheDownloaded", "serverPushDefaultJarAssetSource", "serverPushReconnectPrerequisites",
                 "serverPushActualReconnect", "serverPushReconnectCacheHitNoDownload",
@@ -4703,20 +4082,17 @@ public final class E2EHarness
         return report;
     }
 
-    private Map<String, Object> stageObservation(String stageName)
-    {
+    private Map<String, Object> stageObservation(String stageName) {
         return this.observations.stream().filter(row -> stageName.equals(row.get("stage"))).findFirst()
                 .orElse(Map.of());
     }
 
-    private static Map<String, Object> artifactProof()
-    {
+    private static Map<String, Object> artifactProof() {
         Map<String, Object> proof = new LinkedHashMap<>();
         proof.put("serverArtifactSha256", System.getProperty("meplayeractions.e2e.serverSha256", ""));
         proof.put("serverSource", System.getProperty("meplayeractions.e2e.serverJar", ""));
         proof.put("serverHashSource", "Launcher read frozen test server plugin JAR before this run");
-        try
-        {
+        try {
             Path source = FabricLoader.getInstance().getModContainer("meplayeractions").orElseThrow().getOrigin()
                     .getPaths().getFirst();
             boolean fromJar = Files.isRegularFile(source) && source.getFileName().toString().endsWith(".jar")
@@ -4727,9 +4103,7 @@ public final class E2EHarness
                     ? HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(source)))
                     : "");
             proof.put("clientHashSource", "FabricLoader actual loaded mod origin; production remapped JAR");
-        }
-        catch (Exception failure)
-        {
+        } catch (Exception failure) {
             proof.put("clientFromJar", false);
             proof.put("clientArtifactSha256", "");
             proof.put("error", failure.toString());

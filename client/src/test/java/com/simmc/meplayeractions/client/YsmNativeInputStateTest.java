@@ -8,23 +8,19 @@ import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class YsmNativeInputStateTest
-{
+class YsmNativeInputStateTest {
     @Test
-    void realSwingPulseHasTheFixedTenTickWindowAndAdvancesOnlyOnGameTicks()
-    {
+    void realSwingPulseHasTheFixedTenTickWindowAndAdvancesOnlyOnGameTicks() {
         YsmInputPulseClock clock = new YsmInputPulseClock();
         clock.swing();
         assertEquals(10, clock.swingTicks());
         assertEquals(1, clock.swingAge());
         assertEquals(1, clock.sequence());
-        for (int i = 0; i < 5; i++)
-        {
+        for (int i = 0; i < 5; i++) {
             assertEquals(10, clock.swingTicks());
         }
         // Queries/renders are reads.
-        for (int i = 0; i < 9; i++)
-        {
+        for (int i = 0; i < 9; i++) {
             clock.tick(false, false);
         }
 
@@ -40,8 +36,7 @@ class YsmNativeInputStateTest
     }
 
     @Test
-    void useIntentExpiresAfterTwoTicksOrActualUseOrItemChange()
-    {
+    void useIntentExpiresAfterTwoTicksOrActualUseOrItemChange() {
         YsmInputPulseClock clock = new YsmInputPulseClock();
         clock.use();
         assertEquals(2, clock.useTicks());
@@ -67,8 +62,7 @@ class YsmNativeInputStateTest
     }
 
     @Test
-    void vanillaSwingAndAttackInterpolationTakePriorityOverAnExistingLocalPulse()
-    {
+    void vanillaSwingAndAttackInterpolationTakePriorityOverAnExistingLocalPulse() {
         YsmInputPulseClock clock = new YsmInputPulseClock();
         clock.swing();
         assertEquals(4.5f, clock.swingTicks(true, 4, .5f, true), 1e-6);
@@ -79,8 +73,7 @@ class YsmNativeInputStateTest
         assertEquals(0, clock.attackProgress(0, false, clock.swingTicks(false, 0, .5f, true)));
         assertEquals(0, clock.swingTicks(true, 0, 0, true),
                 "Native swing beginning remains zero instead of taking the pending pulse");
-        for (int i = 0; i < 10; i++)
-        {
+        for (int i = 0; i < 10; i++) {
             clock.tick(false, false);
         }
 
@@ -88,8 +81,7 @@ class YsmNativeInputStateTest
         assertEquals(0, clock.attackProgress(0, true, 1.5f));
     }
 
-    private static VanillaState event(long sequence, int nativeTicks)
-    {
+    private static VanillaState event(long sequence, int nativeTicks) {
         VanillaYsmAnimations.ItemState sword = new ItemState("minecraft:iron_sword", Set.of("minecraft:swords"),
                 "sword", "none", false, false, 1);
         return new VanillaState(false, 0, false, false, false, sword, ItemState.EMPTY, Hand.NONE, 0, Hand.MAIN,
@@ -97,8 +89,7 @@ class YsmNativeInputStateTest
     }
 
     @Test
-    void rawPulseAndLaterNativeSwingMirrorUseOnePlaybackStartUntilTheNextRealEdge()
-    {
+    void rawPulseAndLaterNativeSwingMirrorUseOnePlaybackStartUntilTheNextRealEdge() {
         VanillaYsmAnimations.Catalog catalog = new Catalog(List.of("swing:sword"));
         VanillaYsmAnimations.HandPlayback playback = new HandPlayback();
         VanillaYsmAnimations.VanillaState first = event(1, 1);

@@ -12,14 +12,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /** Hides only native equipment in the extracted state; body and hand items remain independent. */
 @Mixin(PlayerEntityRenderer.class)
-public abstract class PlayerEquipmentVisibilityMixin
-{
+public abstract class PlayerEquipmentVisibilityMixin {
     @Inject(method = "updateRenderState(Lnet/minecraft/entity/PlayerLikeEntity;Lnet/minecraft/client/render/entity/state/PlayerEntityRenderState;F)V", at = @At("TAIL"))
     private void meplayeractions$hideNativeEquipment(PlayerLikeEntity entity, PlayerEntityRenderState state,
-            float tickDelta, CallbackInfo ci)
-    {
-        if (!ModelRenderer.shouldHideVanillaLayers(entity.getUuid()))
-        {
+            float tickDelta, CallbackInfo ci) {
+        if (!ModelRenderer.shouldHideVanillaLayers(entity.getUuid())) {
             return;
         }
 

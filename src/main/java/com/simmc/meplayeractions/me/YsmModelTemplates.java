@@ -10,14 +10,10 @@ import com.google.gson.JsonArray;
 import java.util.concurrent.CancellationException;
 
 /** Bounded, class-loader-local source cache. JSON is converted to immutable data and discarded. */
-final class YsmModelTemplates
-{
-    record Point(String x, String y, String z)
-    {
-        String axis(String axis)
-        {
-            return switch (axis)
-            {
+final class YsmModelTemplates {
+    record Point(String x, String y, String z) {
+        String axis(String axis) {
+            return switch (axis) {
             case "x" -> this.x;
             case "y" -> this.y;
             case "z" -> this.z;
@@ -26,30 +22,23 @@ final class YsmModelTemplates
         }
     }
 
-    record Frame(String channel, float time, Point pre, Point post, boolean discontinuous, String interpolation)
-    {
+    record Frame(String channel, float time, Point pre, Point post, boolean discontinuous, String interpolation) {
     }
 
-    record Bone(UUID id, List<Frame> frames)
-    {
-        Bone
-        {
+    record Bone(UUID id, List<Frame> frames) {
+        Bone {
             frames = List.copyOf(frames);
         }
     }
 
-    record Clip(String name, List<Bone> bones)
-    {
-        Clip
-        {
+    record Clip(String name, List<Bone> bones) {
+        Clip {
             bones = List.copyOf(bones);
         }
     }
 
-    record Model(YsmRuntime.Template runtime, List<Clip> clips)
-    {
-        Model
-        {
+    record Model(YsmRuntime.Template runtime, List<Clip> clips) {
+        Model {
             clips = List.copyOf(clips);
         }
     }
@@ -58,10 +47,8 @@ final class YsmModelTemplates
     private final Function<String, JsonObject> loader;
     private final Map<String, Model> models = new LinkedHashMap<>(16, .75f, true);
 
-    YsmModelTemplates(int capacity, Function<String, JsonObject> loader)
-    {
-        if (capacity < 1)
-        {
+    YsmModelTemplates(int capacity, Function<String, JsonObject> loader) {
+        if (capacity < 1) {
             throw new IllegalArgumentException("Template cache capacity must be positive");
         }
 
@@ -69,51 +56,42 @@ final class YsmModelTemplates
         this.loader = Objects.requireNonNull(loader);
     }
 
-    synchronized Optional<Model> get(String name)
-    {
+    synchronized Optional<Model> get(String name) {
         Model existing = this.models.get(name);
-        if (existing != null || this.models.containsKey(name))
-        {
+        if (existing != null || this.models.containsKey(name)) {
             return Optional.ofNullable(existing);
         }
 
         JsonObject raw = this.loader.apply(name);
         Model loaded = raw == null || !raw.has("mpa_runtime") ? null : read(raw);
         this.models.put(name, loaded);
-        if (this.models.size() > this.capacity)
-        {
+        if (this.models.size() > this.capacity) {
             this.models.remove(this.models.keySet().iterator().next());
         }
 
         return Optional.ofNullable(loaded);
     }
 
-    static Model read(JsonObject raw)
-    {
+    static Model read(JsonObject raw) {
         canceled();
         YsmRuntime.Template runtime = YsmRuntime.Template.compile(raw);
         List<Clip> clips = new ArrayList<>();
-        for (JsonElement element : raw.getAsJsonArray("animations"))
-        {
+        for (JsonElement element : raw.getAsJsonArray("animations")) {
             canceled();
             JsonObject animation = element.getAsJsonObject();
             List<Bone> bones = new ArrayList<>();
-            for (Map.Entry<String, JsonElement> entry : animation.getAsJsonObject("animators").entrySet())
-            {
+            for (Map.Entry<String, JsonElement> entry : animation.getAsJsonObject("animators").entrySet()) {
                 canceled();
                 JsonObject animator = entry.getValue().getAsJsonObject();
-                if (!animator.get("type").getAsString().equals("bone"))
-                {
+                if (!animator.get("type").getAsString().equals("bone")) {
                     continue;
                 }
 
                 List<Frame> frames = new ArrayList<>();
-                for (JsonElement key : animator.getAsJsonArray("keyframes"))
-                {
+                for (JsonElement key : animator.getAsJsonArray("keyframes")) {
                     JsonObject frame = key.getAsJsonObject();
                     JsonArray points = frame.getAsJsonArray("data_points");
-                    if (points.isEmpty())
-                    {
+                    if (points.isEmpty()) {
                         continue;
                     }
 
@@ -131,37 +109,27 @@ final class YsmModelTemplates
     }
 
     /** Conservative retained syntax/descriptors allowance; source JSON and textures are discarded. */
-    static long retainedBytes(JsonObject raw)
-    {
+    static long retainedBytes(JsonObject raw) {
         long bytes = 4096;
-        for (JsonElement element : raw.getAsJsonArray("animations"))
-        {
+        for (JsonElement element : raw.getAsJsonArray("animations")) {
             canceled();
             JsonObject animation = element.getAsJsonObject();
             bytes += 256 + animation.get("name").getAsString().length() * 2L;
-            for (Map.Entry<String, JsonElement> entry : animation.getAsJsonObject("animators").entrySet())
-            {
+            for (Map.Entry<String, JsonElement> entry : animation.getAsJsonObject("animators").entrySet()) {
                 JsonObject animator = entry.getValue().getAsJsonObject();
                 bytes += 256;
-                for (JsonElement key : animator.getAsJsonArray("keyframes"))
-                {
+                for (JsonElement key : animator.getAsJsonArray("keyframes")) {
                     JsonObject frame = key.getAsJsonObject();
                     bytes += 256;
-                    for (JsonElement data : frame.getAsJsonArray("data_points"))
-                    {
+                    for (JsonElement data : frame.getAsJsonArray("data_points")) {
                         JsonObject point = data.getAsJsonObject();
-                        for (String name : List.of("x", "y", "z", "script"))
-                        {
-                            if (point.has(name))
-                            {
+                        for (String name : List.of("x", "y", "z", "script")) {
+                            if (point.has(name)) {
                                 String text = point.get(name).getAsString();
                                 bytes += text.length() * 2L;
-                                try
-                                {
+                                try {
                                     Double.parseDouble(text);
-                                }
-                                catch (NumberFormatException expression)
-                                {
+                                } catch (NumberFormatException expression) {
                                     bytes += text.length() * 64L;
                                 }
                             }
@@ -174,22 +142,18 @@ final class YsmModelTemplates
         return bytes;
     }
 
-    private static void canceled()
-    {
-        if (Thread.currentThread().isInterrupted())
-        {
+    private static void canceled() {
+        if (Thread.currentThread().isInterrupted()) {
             throw new CancellationException("Template preparation canceled");
         }
     }
 
-    private static Point point(JsonObject point, String channel)
-    {
+    private static Point point(JsonObject point, String channel) {
         String fallback = channel.equals("scale") ? "1" : "0";
         return new Point(text(point, "x", fallback), text(point, "y", fallback), text(point, "z", fallback));
     }
 
-    private static String text(JsonObject point, String axis, String fallback)
-    {
+    private static String text(JsonObject point, String axis, String fallback) {
         return point.has(axis) ? point.get(axis).getAsString() : fallback;
     }
 }

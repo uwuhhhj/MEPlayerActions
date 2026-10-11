@@ -4,14 +4,12 @@ import org.junit.jupiter.api.Test;
 import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
-class InteractionTrackerTest
-{
+class InteractionTrackerTest {
     private static final InteractionTracker.Target A = new InteractionTracker.Target(UUID.randomUUID(), 1, 2, 3);
     private static final InteractionTracker.Target B = new InteractionTracker.Target(A.world(), 2, 2, 3);
 
     @Test
-    void handsHaveIndependentMappingsAndSwingExpires()
-    {
+    void handsHaveIndependentMappingsAndSwingExpires() {
         InteractionTracker t = new InteractionTracker(8, 12);
         t.swing(false, 100);
         assertEquals(ActionState.SWING_MAINHAND, t.select(101, true, true));
@@ -21,8 +19,7 @@ class InteractionTrackerTest
     }
 
     @Test
-    void miningRequiresBlockDamageAndWinsOverSwingsWithoutFallbackWhenDisabled()
-    {
+    void miningRequiresBlockDamageAndWinsOverSwingsWithoutFallbackWhenDisabled() {
         InteractionTracker t = new InteractionTracker(8, 12);
         t.swing(false, 100);
         assertEquals(ActionState.SWING_MAINHAND, t.select(101, true, true));
@@ -33,8 +30,7 @@ class InteractionTrackerTest
     }
 
     @Test
-    void miningIsRefreshedByMainhandSwingsAndTimeoutClearsAllHistory()
-    {
+    void miningIsRefreshedByMainhandSwingsAndTimeoutClearsAllHistory() {
         InteractionTracker t = new InteractionTracker(8, 12);
         t.startMining(A, 100);
         t.swing(false, 110);
@@ -47,8 +43,7 @@ class InteractionTrackerTest
     }
 
     @Test
-    void lateSwingCannotResurrectExpiredMining()
-    {
+    void lateSwingCannotResurrectExpiredMining() {
         InteractionTracker t = new InteractionTracker(8, 12);
         t.startMining(A, 100);
         t.swing(false, 120);
@@ -56,8 +51,7 @@ class InteractionTrackerTest
     }
 
     @Test
-    void abortOfPreviousBlockCannotStopNewBlockAndMatchingAbortClearsSwing()
-    {
+    void abortOfPreviousBlockCannotStopNewBlockAndMatchingAbortClearsSwing() {
         InteractionTracker t = new InteractionTracker(8, 12);
         t.startMining(A, 100);
         t.startMining(B, 101);
@@ -69,8 +63,7 @@ class InteractionTrackerTest
     }
 
     @Test
-    void changingTargetOrResetStopsMiningAndPendingSwings()
-    {
+    void changingTargetOrResetStopsMiningAndPendingSwings() {
         InteractionTracker t = new InteractionTracker(8, 12);
         t.startMining(A, 100);
         t.swing(false, 101);

@@ -8,11 +8,9 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.*;
 
-class NativeEntityHidingTest
-{
+class NativeEntityHidingTest {
     @Test
-    void onlyLegalVanillaTrackedViewersAreHidden()
-    {
+    void onlyLegalVanillaTrackedViewersAreHidden() {
         World world = world();
         Person owner = new Person(world), viewer = new Person(world), untracked = new Person(world);
         owner.tracked.add(viewer.player);
@@ -21,8 +19,7 @@ class NativeEntityHidingTest
     }
 
     @Test
-    void selfLocalLeaseVanishOtherWorldAndOfflineAreExcluded()
-    {
+    void selfLocalLeaseVanishOtherWorldAndOfflineAreExcluded() {
         World world = world();
         Person owner = new Person(world), plain = new Person(world), local = new Person(world),
                 vanished = new Person(world), departed = new Person(world), otherWorld = new Person(world());
@@ -34,8 +31,7 @@ class NativeEntityHidingTest
     }
 
     @Test
-    void anOfflineOwnerNeverRemovesEntitiesFromViewers()
-    {
+    void anOfflineOwnerNeverRemovesEntitiesFromViewers() {
         World world = world();
         Person owner = new Person(world), viewer = new Person(world);
         owner.tracked.add(viewer.player);
@@ -44,8 +40,7 @@ class NativeEntityHidingTest
     }
 
     @Test
-    void delayedReconcileRechecksTrackingAndLocalLeasesAtExecution()
-    {
+    void delayedReconcileRechecksTrackingAndLocalLeasesAtExecution() {
         World world = world();
         Person owner = new Person(world), plain = new Person(world), newLocal = new Person(world),
                 departed = new Person(world);
@@ -63,11 +58,9 @@ class NativeEntityHidingTest
     }
 
     @Test
-    void replacementOrReleasedSessionCannotRunAnOldRemovalCallback()
-    {
+    void replacementOrReleasedSessionCannotRunAnOldRemovalCallback() {
         // Equal session values still represent separate lifetimes and must not share callbacks.
-        record Session(int id)
-        {
+        record Session(int id) {
         }
         Session expected = new Session(1);
         AtomicReference<Session> current = new AtomicReference<>(expected);
@@ -85,12 +78,10 @@ class NativeEntityHidingTest
     }
 
     @Test
-    void restoredBaseVisibilityStopsAnAlreadyScheduledRemoval()
-    {
+    void restoredBaseVisibilityStopsAnAlreadyScheduledRemoval() {
         Object session = new Object();
         List<String> calls = new ArrayList<>();
-        boolean[] hidden =
-        { true };
+        boolean[] hidden = { true };
         Runnable callback = NativeEntityHiding.afterTick(session, () -> session, () -> hidden[0],
                 () -> calls.add("remove"));
         hidden[0] = false;
@@ -101,36 +92,32 @@ class NativeEntityHidingTest
         assertEquals(List.of("remove"), calls);
     }
 
-    private static World world()
-    {
-        return (World) Proxy.newProxyInstance(World.class.getClassLoader(), new Class[]
-        { World.class }, (proxy, method, args) -> method.getName().equals("equals") ? proxy == args[0]
-                : (method.getName().equals("hashCode") ? System.identityHashCode(proxy) : null));
+    private static World world() {
+        return (World) Proxy.newProxyInstance(World.class.getClassLoader(), new Class[] { World.class },
+                (proxy, method, args) -> method.getName().equals("equals") ? proxy == args[0]
+                        : (method.getName().equals("hashCode") ? System.identityHashCode(proxy) : null));
     }
 
-    private static final class Person
-    {
+    private static final class Person {
         final UUID id = UUID.randomUUID();
         final Player player;
         final Set<Player> tracked = new LinkedHashSet<>();
         final World world;
         boolean online = true, visible = true;
 
-        Person(World world)
-        {
+        Person(World world) {
             this.world = world;
-            this.player = (Player) Proxy.newProxyInstance(Player.class.getClassLoader(), new Class[]
-            { Player.class }, (proxy, method, args) -> switch (method.getName())
-            {
-            case "getUniqueId" -> this.id;
-            case "getWorld" -> this.world;
-            case "isOnline" -> this.online;
-            case "canSee" -> this.visible;
-            case "getTrackedBy" -> this.tracked;
-            case "equals" -> proxy == args[0];
-            case "hashCode" -> this.id.hashCode();
-            default -> null;
-            });
+            this.player = (Player) Proxy.newProxyInstance(Player.class.getClassLoader(), new Class[] { Player.class },
+                    (proxy, method, args) -> switch (method.getName()) {
+                    case "getUniqueId" -> this.id;
+                    case "getWorld" -> this.world;
+                    case "isOnline" -> this.online;
+                    case "canSee" -> this.visible;
+                    case "getTrackedBy" -> this.tracked;
+                    case "equals" -> proxy == args[0];
+                    case "hashCode" -> this.id.hashCode();
+                    default -> null;
+                    });
         }
     }
 }

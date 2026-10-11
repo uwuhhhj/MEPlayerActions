@@ -3,11 +3,9 @@ package com.simmc.meplayeractions.client.ui;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
-class AuthorFormLayoutTest
-{
+class AuthorFormLayoutTest {
     @Test
-    void longRadioLabelsUseOneColumnAndAllChoicesRemainReachable()
-    {
+    void longRadioLabelsUseOneColumnAndAllChoicesRemainReachable() {
         int columns = AuthorFormLayout.radioColumns(115, 140, 64);
         assertEquals(1, columns);
         assertEquals(64, AuthorFormLayout.radioRows(64, columns));
@@ -15,16 +13,14 @@ class AuthorFormLayoutTest
     }
 
     @Test
-    void shortRadioChoicesWrapAndNeverAddEmptyColumns()
-    {
+    void shortRadioChoicesWrapAndNeverAddEmptyColumns() {
         assertEquals(4, AuthorFormLayout.radioColumns(120, 10, 6));
         assertEquals(2, AuthorFormLayout.radioRows(6, 4));
         assertEquals(2, AuthorFormLayout.radioColumns(720, 8, 2));
     }
 
     @Test
-    void emptyOrTinyLayoutsKeepAValidScrollRange()
-    {
+    void emptyOrTinyLayoutsKeepAValidScrollRange() {
         assertEquals(1, AuthorFormLayout.radioColumns(0, 0, 0));
         assertEquals(0, AuthorFormLayout.radioRows(0, 0));
         assertEquals(0, AuthorFormLayout.clampScroll(-20, 100, 80));

@@ -9,11 +9,9 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class MolangQueryDiagnosticsTest
-{
+class MolangQueryDiagnosticsTest {
     @Test
-    void ordinaryClientAndServerContextsRetainZeroNullAndNoDiagnostics()
-    {
+    void ordinaryClientAndServerContextsRetainZeroNullAndNoDiagnostics() {
         Molang.Context context = new Molang.Context();
         context.query("q.biome_category", (Object) null);
         assertTrue(context.has("query.biome_category"));
@@ -30,8 +28,7 @@ class MolangQueryDiagnosticsTest
     }
 
     @Test
-    void optedInUnavailableBindingsReadZeroButUseLazyAuthorDefaults()
-    {
+    void optedInUnavailableBindingsReadZeroButUseLazyAuthorDefaults() {
         Molang.Context context = localContext();
         context.query("ysm.biome_category", (Object) null);
         assertTrue(context.has("ysm.biome_category"));
@@ -52,8 +49,7 @@ class MolangQueryDiagnosticsTest
     }
 
     @Test
-    void missingQueriesMergeAliasesAndRecordTheActualTypedFallback()
-    {
+    void missingQueriesMergeAliasesAndRecordTheActualTypedFallback() {
         Molang.Context context = localContext();
         assertFalse(context.has("q.projectile_owner"));
         assertTrue(context.diagnostics().isEmpty());
@@ -72,8 +68,7 @@ class MolangQueryDiagnosticsTest
     }
 
     @Test
-    void snapshotsStayImmutableAndPreserveUnavailableBindingsThroughScopes()
-    {
+    void snapshotsStayImmutableAndPreserveUnavailableBindingsThroughScopes() {
         Molang.Context context = localContext();
         context.query("query.absent", (Object) null);
         context.query("ysm.texture_name", "blue");
@@ -102,8 +97,7 @@ class MolangQueryDiagnosticsTest
     }
 
     @Test
-    void diagnosticsSurviveFramesButResetWithoutChangingExistingSnapshots()
-    {
+    void diagnosticsSurviveFramesButResetWithoutChangingExistingSnapshots() {
         Molang.Context context = localContext();
         context.get("q.missing");
         List<Molang.QueryDiagnostic> first = context.diagnostics();
@@ -121,11 +115,9 @@ class MolangQueryDiagnosticsTest
     }
 
     @Test
-    void diagnosticsAreBoundedAndContinueCountingAlreadyTrackedNames()
-    {
+    void diagnosticsAreBoundedAndContinueCountingAlreadyTrackedNames() {
         Molang.Context context = localContext();
-        for (int index = 0; index < 300; index++)
-        {
+        for (int index = 0; index < 300; index++) {
             context.get("ysm.unbound_" + index);
         }
 
@@ -138,8 +130,7 @@ class MolangQueryDiagnosticsTest
     }
 
     @Test
-    void registeredZeroAndVectorPropertiesAreNotMissingQueries()
-    {
+    void registeredZeroAndVectorPropertiesAreNotMissingQueries() {
         Molang.Context context = localContext();
         context.query("query.health", 0d);
         context.query("ysm.position", new Molang.VectorValue(1, 2, 3));
@@ -153,11 +144,9 @@ class MolangQueryDiagnosticsTest
     }
 
     @Test
-    void unknownFunctionsAndHostCallsRemainExplicitlyRejected()
-    {
+    void unknownFunctionsAndHostCallsRemainExplicitlyRejected() {
         for (String source : List.of("q.unimplemented(1)", "ysm.unimplemented(1)", "java.lang.Runtime.exec('x')",
-                "math.exec(1)"))
-        {
+                "math.exec(1)")) {
             IllegalArgumentException rejected = assertThrows(IllegalArgumentException.class,
                     () -> Molang.compile(source));
             assertTrue(rejected.getMessage().contains("表达式已拒绝"), source);
@@ -167,13 +156,10 @@ class MolangQueryDiagnosticsTest
     }
 
     @Test
-    void deferUsesOnlyTheWhitelistedResolverAndKeepsItsArgumentTypes()
-    {
+    void deferUsesOnlyTheWhitelistedResolverAndKeepsItsArgumentTypes() {
         Molang.Context context = localContext();
-        int[] calls =
-        { 0 };
-        context.functions((name, arguments) ->
-        {
+        int[] calls = { 0 };
+        context.functions((name, arguments) -> {
             assertEquals("ysm.defer", name);
             assertEquals(List.of("once", 9d, "blue"), arguments);
             calls[0]++;
@@ -186,8 +172,7 @@ class MolangQueryDiagnosticsTest
     }
 
     @Test
-    void diagnosticsAndAuthorDefaultsDoNotBypassEvaluationBudgets()
-    {
+    void diagnosticsAndAuthorDefaultsDoNotBypassEvaluationBudgets() {
         Molang.Context context = localContext();
         context.query("q.empty", (Object) null);
         assertThrows(IllegalArgumentException.class,
@@ -204,8 +189,7 @@ class MolangQueryDiagnosticsTest
         assertTrue(ordinary.diagnostics().isEmpty());
     }
 
-    private static Molang.Context localContext()
-    {
+    private static Molang.Context localContext() {
         Molang.Context context = new Molang.Context();
         context.enableDiagnostics();
         context.enableDiagnostics();

@@ -5,15 +5,12 @@ import org.junit.jupiter.api.Test;
 import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
-class DisguiseEffectsTest
-{
-    private static DisguiseEffects.State state(String id, int amplifier, int ticks)
-    {
+class DisguiseEffectsTest {
+    private static DisguiseEffects.State state(String id, int amplifier, int ticks) {
         return new DisguiseEffects.State(id, amplifier, ticks, true, true, true, null);
     }
 
-    private static final class Potions implements DisguiseEffects.Port
-    {
+    private static final class Potions implements DisguiseEffects.Port {
         final Map<String, DisguiseEffects.State> current = new HashMap<>();
         final DisguiseEffects effects = new DisguiseEffects(this);
         String rejectAdd, rejectRemove;
@@ -21,16 +18,13 @@ class DisguiseEffectsTest
         int writes;
 
         @Override
-        public DisguiseEffects.State current(String id)
-        {
+        public DisguiseEffects.State current(String id) {
             return this.current.get(id);
         }
 
         @Override
-        public boolean add(DisguiseEffects.State state)
-        {
-            if (state.id().equals(this.rejectAdd) || (this.rejectRestore && state.ambient()))
-            {
+        public boolean add(DisguiseEffects.State state) {
+            if (state.id().equals(this.rejectAdd) || (this.rejectRestore && state.ambient())) {
                 return false;
             }
 
@@ -41,10 +35,8 @@ class DisguiseEffectsTest
         }
 
         @Override
-        public void remove(String id)
-        {
-            if (id.equals(this.rejectRemove))
-            {
+        public void remove(String id) {
+            if (id.equals(this.rejectRemove)) {
                 return;
             }
 
@@ -55,8 +47,7 @@ class DisguiseEffectsTest
     }
 
     @Test
-    void sessionEffectUsesBoundedLeaseAndRestoresAgedOriginal()
-    {
+    void sessionEffectUsesBoundedLeaseAndRestoresAgedOriginal() {
         DisguiseEffectsTest.Potions p = new Potions();
         p.current.put("slowness", state("slowness", 2, 1000));
         p.effects.apply(List.of(new Effect("slowness", 1, 0)), 0);
@@ -71,8 +62,7 @@ class DisguiseEffectsTest
     }
 
     @Test
-    void renewalKeepsOwnershipAndFiniteEffectsExpireIndependently()
-    {
+    void renewalKeepsOwnershipAndFiniteEffectsExpireIndependently() {
         DisguiseEffectsTest.Potions p = new Potions();
         p.current.put("speed", state("speed", 0, 1000));
         p.effects.apply(List.of(new Effect("slowness", 1, 0), new Effect("speed", 2, 3)), 0);
@@ -88,8 +78,7 @@ class DisguiseEffectsTest
     }
 
     @Test
-    void externalIdenticalEffectIsNotRemovedOrOverwrittenOnUndisguise()
-    {
+    void externalIdenticalEffectIsNotRemovedOrOverwrittenOnUndisguise() {
         DisguiseEffectsTest.Potions p = new Potions();
         p.effects.apply(List.of(new Effect("slowness", 1, 0)), 0);
         DisguiseEffects.State external = p.current("slowness");
@@ -101,8 +90,7 @@ class DisguiseEffectsTest
     }
 
     @Test
-    void milkEndsOwnershipAndDoesNotResurrectTheOriginalPotion()
-    {
+    void milkEndsOwnershipAndDoesNotResurrectTheOriginalPotion() {
         DisguiseEffectsTest.Potions p = new Potions();
         p.current.put("slowness", state("slowness", 2, 1000));
         p.effects.apply(List.of(new Effect("slowness", 1, 0)), 0);
@@ -113,8 +101,7 @@ class DisguiseEffectsTest
     }
 
     @Test
-    void rejectedSecondEffectRollsBackFirstAndPreservesOriginals()
-    {
+    void rejectedSecondEffectRollsBackFirstAndPreservesOriginals() {
         DisguiseEffectsTest.Potions p = new Potions();
         p.current.put("slowness", state("slowness", 2, 1000));
         p.rejectAdd = "speed";
@@ -126,8 +113,7 @@ class DisguiseEffectsTest
     }
 
     @Test
-    void cancelledRemovalLeavesTheOriginalAndAllowsCleanupToBeRetried()
-    {
+    void cancelledRemovalLeavesTheOriginalAndAllowsCleanupToBeRetried() {
         DisguiseEffectsTest.Potions p = new Potions();
         p.current.put("slowness", state("slowness", 2, 1000));
         p.rejectRemove = "slowness";
@@ -145,8 +131,7 @@ class DisguiseEffectsTest
     }
 
     @Test
-    void naturalExpiryRestoresOriginalButDeathDoesNot()
-    {
+    void naturalExpiryRestoresOriginalButDeathDoesNot() {
         DisguiseEffectsTest.Potions p = new Potions();
         p.current.put("slowness", state("slowness", 2, 1000));
         p.effects.apply(List.of(new Effect("slowness", 1, 1)), 0);
@@ -160,8 +145,7 @@ class DisguiseEffectsTest
     }
 
     @Test
-    void elapsedOriginalAndHiddenEffectsNeverBecomeInfiniteByAccident()
-    {
+    void elapsedOriginalAndHiddenEffectsNeverBecomeInfiniteByAccident() {
         assertNull(state("speed", 0, 20).remaining(21));
         assertEquals(-1, state("speed", 0, -1).remaining(500).duration());
         DisguiseEffects.State chain = new DisguiseEffects.State("speed", 2, 20, false, false, true,
@@ -175,8 +159,7 @@ class DisguiseEffectsTest
     }
 
     @Test
-    void rejectedRestorationRetainsCleanupAndRetriesWithElapsedTime()
-    {
+    void rejectedRestorationRetainsCleanupAndRetriesWithElapsedTime() {
         DisguiseEffectsTest.Potions p = new Potions();
         p.current.put("slowness", state("slowness", 2, 1000));
         p.effects.apply(List.of(new Effect("slowness", 1, 0)), 0);
@@ -191,8 +174,7 @@ class DisguiseEffectsTest
     }
 
     @Test
-    void changedEffectWithoutAnEventIsStillPreservedAtCleanup()
-    {
+    void changedEffectWithoutAnEventIsStillPreservedAtCleanup() {
         DisguiseEffectsTest.Potions p = new Potions();
         p.effects.apply(List.of(new Effect("slowness", 1, 0)), 0);
         DisguiseEffects.State external = state("slowness", 3, 1000);

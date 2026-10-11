@@ -3,11 +3,9 @@ package com.simmc.meplayeractions.client;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
-class RequestCooldownTest
-{
+class RequestCooldownTest {
     @Test
-    void playCanBeStoppedAndResetImmediatelyWithoutExtendingStartCooldown()
-    {
+    void playCanBeStoppedAndResetImmediatelyWithoutExtendingStartCooldown() {
         RequestCooldown gate = new RequestCooldown();
         assertTrue(gate.allow("request", "play", 100, 4));
         assertTrue(gate.allow("request", "stop", 100, 4));
@@ -17,8 +15,7 @@ class RequestCooldownTest
     }
 
     @Test
-    void snapshotsAndStartingPosturesShareCooldownButEmergencyStopDoesNotConsumeIt()
-    {
+    void snapshotsAndStartingPosturesShareCooldownButEmergencyStopDoesNotConsumeIt() {
         RequestCooldown gate = new RequestCooldown();
         assertTrue(gate.allow("request", "stop", 10, 4));
         assertTrue(gate.allow("snapshot_request", "", 10, 4));
@@ -28,8 +25,7 @@ class RequestCooldownTest
     }
 
     @Test
-    void unsignedPaperTickWrapIsHandled()
-    {
+    void unsignedPaperTickWrapIsHandled() {
         RequestCooldown gate = new RequestCooldown();
         assertTrue(gate.allow("request", "play", 0xfffffffeL, 4));
         assertFalse(gate.allow("request", "play", 0, 4));

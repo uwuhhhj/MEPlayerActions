@@ -26,8 +26,7 @@ import java.util.regex.Pattern;
 import org.bukkit.plugin.messaging.Messenger;
 
 /** Verified local-render takeover with per-viewer fallback and bounded asset transfers. */
-public final class ClientSyncService implements PluginMessageListener, AutoCloseable
-{
+public final class ClientSyncService implements PluginMessageListener, AutoCloseable {
     public static final String CHANNEL = "meplayeractions:main";
     public static final int PROTOCOL = 3;
     public static final String DISGUISE_RESULTS = "disguise_results";
@@ -66,14 +65,12 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     private BukkitTask maintenanceTask;
 
     public ClientSyncService(JavaPlugin plugin, Supplier<List<StateSnapshot>> snapshots,
-            Consumer<ActionRequest> requests)
-    {
+            Consumer<ActionRequest> requests) {
         this(plugin, snapshots, requests, new ModelAssets(plugin));
     }
 
     ClientSyncService(Plugin plugin, Supplier<List<StateSnapshot>> snapshots, Consumer<ActionRequest> requests,
-            ModelAssets assets)
-    {
+            ModelAssets assets) {
         this.plugin = Objects.requireNonNull(plugin);
         this.snapshotCache = new ClientSnapshotCache(snapshots);
         this.actionRequests = Objects.requireNonNull(requests);
@@ -81,31 +78,26 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         this.privateModels = new PrivateModelSyncService(plugin, this::readOwnerIds, this.limits);
     }
 
-    public void modelCatalog(Supplier<List<String>> choices)
-    {
+    public void modelCatalog(Supplier<List<String>> choices) {
         this.modelCatalog = new ServerModelCatalog(choices,
                 () -> this.modelFolders == null ? null : this.modelFolders.snapshot());
     }
 
-    public void snapshotSources(Supplier<Set<UUID>> ownerIds, Function<UUID, StateSnapshot> snapshot)
-    {
+    public void snapshotSources(Supplier<Set<UUID>> ownerIds, Function<UUID, StateSnapshot> snapshot) {
         this.snapshotCache.configure(ownerIds, snapshot);
     }
 
-    public void configurePerformance(PerformanceSettings performance)
-    {
+    public void configurePerformance(PerformanceSettings performance) {
         Objects.requireNonNull(performance);
         this.audienceRefreshTicks = performance.audienceRefreshTicks();
         this.validationTicks = performance.validationTicks();
         this.privateModels.configurePerformance(performance);
     }
 
-    public void configureResources(ResourceProtection runtime)
-    {
+    public void configureResources(ResourceProtection runtime) {
         this.protection = Objects.requireNonNull(runtime);
         this.limits.configure(runtime.settings().network());
-        if (this.modelFolders != null)
-        {
+        if (this.modelFolders != null) {
             this.modelFolders.close();
         }
 
@@ -116,38 +108,31 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
                 "queuedBytes", "queuedBytes.limit", "queuedBytes.peak", "uploadBytes", "downloadBytes",
                 "uploadBytesPerSecond", "downloadBytesPerSecond", "uploadBytesPerSecond.limit",
                 "downloadBytesPerSecond.limit", "rejected", "deferred", "timeouts", "transfers.peak",
-                "ingressCallbacks", "ingressBytes", "packetsPerSecond.limit", "assetPacketsPerSecond.limit"))
-        {
+                "ingressCallbacks", "ingressBytes", "packetsPerSecond.limit", "assetPacketsPerSecond.limit")) {
             runtime.gauge("network." + metric, () -> this.limits.metric(metric));
         }
 
         runtime.gauge("models.modViewerRelations", this::viewerRelationships);
-        for (Session session : this.sessions.values())
-        {
+        for (Session session : this.sessions.values()) {
             session.offers.configure(runtime.settings().network());
         }
 
     }
 
-    public void writability(Predicate<UUID> writable)
-    {
+    public void writability(Predicate<UUID> writable) {
         this.limits.writability(writable);
     }
 
-    public String networkStatus()
-    {
+    public String networkStatus() {
         return this.limits.status(System.nanoTime());
     }
 
-    public int viewerRelationships()
-    {
+    public int viewerRelationships() {
         return this.sessions.values().stream().mapToInt(session -> session.bindings.size()).sum();
     }
 
-    public void configure(boolean enabled, int limit, int cooldown, double distance)
-    {
-        if (!enabled && this.configuredEnabled)
-        {
+    public void configure(boolean enabled, int limit, int cooldown, double distance) {
+        if (!enabled && this.configuredEnabled) {
             clearSessions("sync_disabled");
         }
         this.configuredEnabled = enabled;
@@ -159,59 +144,49 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         this.packetTick = -1;
     }
 
-    public void audience(BiPredicate<Player, UUID> value)
-    {
+    public void audience(BiPredicate<Player, UUID> value) {
         this.audience = Objects.requireNonNull(value);
     }
 
-    public void configurePrivateModels(PrivateModelSyncService.Policy policy)
-    {
+    public void configurePrivateModels(PrivateModelSyncService.Policy policy) {
         this.privateModels.configure(policy);
     }
 
-    public void rendering(RenderControl value)
-    {
+    public void rendering(RenderControl value) {
         this.renderControl = Objects.requireNonNull(value);
     }
 
     /** Capture the current negotiated connection. Replays never execute a command twice. */
     public DisguiseRequest beginDisguiseRequest(Player player, UUID requestId, String modelId, String fingerprint,
-            int bytes)
-    {
+            int bytes) {
         Session session = this.sessions.get(player.getUniqueId());
         if (requestId == null || !this.running || !this.configuredEnabled || session == null || !session.disguiseResults
-                || !session.helloAcknowledged || !player.isOnline() || !MODEL_ID.matcher(modelId).matches())
-        {
+                || !session.helloAcknowledged || !player.isOnline() || !MODEL_ID.matcher(modelId).matches()) {
             return null;
         }
 
-        if (!this.limits.allowInbound(player.getUniqueId(), Math.max(1, bytes), System.nanoTime()))
-        {
+        if (!this.limits.allowInbound(player.getUniqueId(), Math.max(1, bytes), System.nanoTime())) {
             DisguiseRequest denied = new DisguiseRequest(session, requestId, new DisguiseReceipt(modelId, fingerprint),
                     false, false);
             disguiseFailure(player, denied, "request_cooldown", "伪装请求过于频繁，请稍后重试");
             return denied;
         }
         DisguiseReceipt receipt = session.disguiseReceipts.get(requestId);
-        if (receipt != null)
-        {
-            if (!receipt.modelId.equals(modelId) || !receipt.fingerprint.equals(fingerprint))
-            {
+        if (receipt != null) {
+            if (!receipt.modelId.equals(modelId) || !receipt.fingerprint.equals(fingerprint)) {
                 DisguiseRequest conflict = new DisguiseRequest(session, requestId,
                         new DisguiseReceipt(modelId, fingerprint), false, false);
                 disguiseFailure(player, conflict, "request_id_reused", "请求标识已用于另一条伪装指令");
                 return conflict;
             }
             DisguiseRequest replay = new DisguiseRequest(session, requestId, receipt, false, true);
-            if (receipt.result != null)
-            {
+            if (receipt.result != null) {
                 sendDisguiseResult(player, replay);
             }
 
             return replay;
         }
-        while (session.disguiseReceipts.size() >= DISGUISE_RECEIPTS)
-        {
+        while (session.disguiseReceipts.size() >= DISGUISE_RECEIPTS) {
             UUID oldest = session.disguiseReceipts.keySet().iterator().next();
             session.disguiseReceipts.remove(oldest);
             session.controls.cancel("disguise_result:" + oldest);
@@ -220,25 +195,21 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         session.disguiseReceipts.put(requestId, receipt);
         DisguiseRequest request = new DisguiseRequest(session, requestId, receipt, true, true);
         if (!this.limits.allowRequest(player.getUniqueId(), "disguise_command", "", currentTick(),
-                this.requestCooldownTicks))
-        {
+                this.requestCooldownTicks)) {
             disguiseFailure(player, request, "request_cooldown", "伪装请求过于频繁，请稍后重试");
             return new DisguiseRequest(session, requestId, receipt, false, true);
         }
         return request;
     }
 
-    public void disguiseSucceeded(Player player, DisguiseRequest request, UUID instance, DisguiseOptions options)
-    {
-        if (request == null || request.receipt.result != null)
-        {
+    public void disguiseSucceeded(Player player, DisguiseRequest request, UUID instance, DisguiseOptions options) {
+        if (request == null || request.receipt.result != null) {
             return;
         }
 
         Objects.requireNonNull(instance);
         Objects.requireNonNull(options);
-        if (!request.receipt.modelId.equals(options.modelId()))
-        {
+        if (!request.receipt.modelId.equals(options.modelId())) {
             throw new IllegalArgumentException("Disguise result model differs from request");
         }
 
@@ -257,17 +228,14 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         sendDisguiseResult(player, request);
     }
 
-    public void disguiseFailure(Player player, DisguiseRequest request, String code, String message)
-    {
+    public void disguiseFailure(Player player, DisguiseRequest request, String code, String message) {
         boolean retryable = code.equals("request_cooldown") || code.equals("server_busy")
                 || code.equals("tps_protection") || code.equals("asset_queue_full");
         disguiseFailure(player, request, new ResourceError(code, "disguise", retryable, retryable ? 100 : 0), message);
     }
 
-    public void disguiseFailure(Player player, DisguiseRequest request, ResourceError error, String message)
-    {
-        if (request == null || request.receipt.result != null)
-        {
+    public void disguiseFailure(Player player, DisguiseRequest request, ResourceError error, String message) {
+        if (request == null || request.receipt.result != null) {
             return;
         }
 
@@ -278,8 +246,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         sendDisguiseResult(player, request);
     }
 
-    private static JsonObject disguiseResult(DisguiseRequest request, boolean success)
-    {
+    private static JsonObject disguiseResult(DisguiseRequest request, boolean success) {
         JsonObject result = envelope("disguise_result");
         result.addProperty("requestId", request.requestId.toString());
         result.addProperty("modelId", request.receipt.modelId);
@@ -287,48 +254,38 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         return result;
     }
 
-    private void sendDisguiseResult(Player player, DisguiseRequest request)
-    {
-        if (request.receipt.result == null || !disguiseRequestCurrent(player, request))
-        {
+    private void sendDisguiseResult(Player player, DisguiseRequest request) {
+        if (request.receipt.result == null || !disguiseRequestCurrent(player, request)) {
             return;
         }
 
         String key = (request.tracked ? "disguise_result:" : "disguise_error:") + request.requestId;
         request.session.controls.cancel(key);
-        critical(player, request.session, key, request.receipt.result, () ->
-        {
-        }, () ->
-        {
+        critical(player, request.session, key, request.receipt.result, () -> {
+        }, () -> {
         }, () -> disguiseRequestCurrent(player, request));
     }
 
-    private boolean disguiseRequestCurrent(Player player, DisguiseRequest request)
-    {
+    private boolean disguiseRequestCurrent(Player player, DisguiseRequest request) {
         return request.session.viewer.equals(player.getUniqueId())
                 && this.sessions.get(player.getUniqueId()) == request.session && request.session.disguiseResults
                 && request.session.helloAcknowledged && player.isOnline()
                 && (!request.tracked || request.session.disguiseReceipts.get(request.requestId) == request.receipt);
     }
 
-    public void enable()
-    {
-        if (this.running)
-        {
+    public void enable() {
+        if (this.running) {
             return;
         }
         Messenger messenger = this.plugin.getServer().getMessenger();
         messenger.registerOutgoingPluginChannel(this.plugin, CHANNEL);
-        try
-        {
+        try {
             messenger.registerIncomingPluginChannel(this.plugin, CHANNEL, this);
             this.running = true;
             this.maintenanceTask = this.plugin.getServer().getScheduler().runTaskTimer(this.plugin,
                     this::maintainSessions, 1L, 1L);
             this.privateModels.enable();
-        }
-        catch (RuntimeException exception)
-        {
+        } catch (RuntimeException exception) {
             this.running = false;
             messenger.unregisterIncomingPluginChannel(this.plugin, CHANNEL, this);
             messenger.unregisterOutgoingPluginChannel(this.plugin, CHANNEL);
@@ -337,16 +294,13 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     }
 
     @Override
-    public void close()
-    {
-        if (this.modelFolders != null)
-        {
+    public void close() {
+        if (this.modelFolders != null) {
             this.modelFolders.close();
         }
 
         this.privateModels.close();
-        if (this.maintenanceTask != null)
-        {
+        if (this.maintenanceTask != null) {
             this.maintenanceTask.cancel();
             this.maintenanceTask = null;
         }
@@ -354,20 +308,15 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         this.assets.invalidate();
         this.running = false;
         Messenger messenger = this.plugin.getServer().getMessenger();
-        try
-        {
+        try {
             messenger.unregisterIncomingPluginChannel(this.plugin, CHANNEL, this);
-        }
-        finally
-        {
+        } finally {
             messenger.unregisterOutgoingPluginChannel(this.plugin, CHANNEL);
         }
     }
 
-    public void broadcast(StateSnapshot snapshot)
-    {
-        if (!this.running || !this.configuredEnabled)
-        {
+    public void broadcast(StateSnapshot snapshot) {
+        if (!this.running || !this.configuredEnabled) {
             return;
         }
 
@@ -375,56 +324,43 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         this.statePackets.remove(snapshot.owner());
         this.stateMetadata.remove(snapshot.owner());
         Set<UUID> targets = new HashSet<>(this.viewersByOwner.getOrDefault(snapshot.owner(), Set.of()));
-        if (this.sessions.containsKey(snapshot.owner()))
-        {
+        if (this.sessions.containsKey(snapshot.owner())) {
             targets.add(snapshot.owner());
         }
 
-        for (UUID id : targets)
-        {
+        for (UUID id : targets) {
             Session session = this.sessions.get(id);
-            if (session == null)
-            {
+            if (session == null) {
                 continue;
             }
 
             Player viewer = Bukkit.getPlayer(id);
-            if (viewer == null || !viewer.isOnline())
-            {
+            if (viewer == null || !viewer.isOnline()) {
                 endSession(id, viewer, session, "offline");
                 this.limits.forget(id);
-            }
-            else if (canObserve(viewer, snapshot.owner()))
-            {
-                if (this.protection == null || this.protection.tryMainWork(1))
-                {
+            } else if (canObserve(viewer, snapshot.owner())) {
+                if (this.protection == null || this.protection.tryMainWork(1)) {
                     sendState(viewer, session, snapshot, false);
                 }
 
-            }
-            else
-            {
+            } else {
                 removeBinding(viewer, session, snapshot.owner(), "out_of_range");
             }
 
         }
     }
 
-    public void unbind(UUID owner, UUID instance, String reason)
-    {
+    public void unbind(UUID owner, UUID instance, String reason) {
         this.statePackets.remove(owner);
         this.stateMetadata.remove(owner);
-        for (UUID id : List.copyOf(this.viewersByOwner.getOrDefault(owner, Set.of())))
-        {
+        for (UUID id : List.copyOf(this.viewersByOwner.getOrDefault(owner, Set.of()))) {
             Session session = this.sessions.get(id);
-            if (session == null)
-            {
+            if (session == null) {
                 continue;
             }
 
             ClientSyncService.BoundState bound = session.bindings.get(owner);
-            if (bound != null && bound.instance().equals(instance))
-            {
+            if (bound != null && bound.instance().equals(instance)) {
                 removeBinding(Bukkit.getPlayer(id), session, owner, reason);
             }
 
@@ -432,21 +368,17 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     }
 
     /** Teleports/world changes revoke only existing relations; discovery remains background work. */
-    public void observationChanged(Player player)
-    {
+    public void observationChanged(Player player) {
         Session own = this.sessions.get(player.getUniqueId());
-        if (own != null)
-        {
+        if (own != null) {
             validateBindings(player, own);
         }
 
-        for (UUID id : List.copyOf(this.viewersByOwner.getOrDefault(player.getUniqueId(), Set.of())))
-        {
+        for (UUID id : List.copyOf(this.viewersByOwner.getOrDefault(player.getUniqueId(), Set.of()))) {
             Session session = this.sessions.get(id);
             Player viewer = Bukkit.getPlayer(id);
-            if (session != null && (viewer == null || !viewer.isOnline() || !canObserve(viewer, player.getUniqueId())))
-
-            {
+            if (session != null
+                    && (viewer == null || !viewer.isOnline() || !canObserve(viewer, player.getUniqueId()))) {
                 removeBinding(viewer, session, player.getUniqueId(), "observation_changed");
             }
 
@@ -454,32 +386,26 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         this.privateModels.observationChanged(player);
     }
 
-    public void forget(Player player)
-    {
+    public void forget(Player player) {
         this.privateModels.forget(player);
         Session session = this.sessions.get(player.getUniqueId());
-        if (session != null)
-        {
+        if (session != null) {
             endSession(player.getUniqueId(), player, session, "session_ended");
         }
         this.limits.forget(player.getUniqueId());
     }
 
-    public void sendSnapshot(Player player)
-    {
+    public void sendSnapshot(Player player) {
         Session session = this.sessions.get(player.getUniqueId());
-        if (!this.running || !this.configuredEnabled || session == null || !player.isOnline())
-        {
+        if (!this.running || !this.configuredEnabled || session == null || !player.isOnline()) {
             return;
         }
 
-        if (session.pendingSnapshotId != 0 || session.endingSnapshotId != 0 || session.snapshotBeginning)
-        {
+        if (session.pendingSnapshotId != 0 || session.endingSnapshotId != 0 || session.snapshotBeginning) {
             session.snapshotRequested = true;
             return;
         }
-        if (this.protection != null && (!this.protection.shouldStartTransfer() || !this.protection.tryMainWork(1)))
-        {
+        if (this.protection != null && (!this.protection.shouldStartTransfer() || !this.protection.tryMainWork(1))) {
             session.snapshotRequested = true;
             return;
         }
@@ -489,89 +415,71 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         JsonObject begin = envelope("snapshot_begin");
         begin.addProperty("snapshotId", id);
         begin.addProperty("serverTick", currentTick());
-        critical(player, session, "snapshot_begin", begin, () ->
-        {
+        critical(player, session, "snapshot_begin", begin, () -> {
             session.snapshotBeginning = false;
             session.pendingSnapshotId = id;
             pumpSnapshot(player, session);
-        }, () ->
-        {
+        }, () -> {
             session.snapshotBeginning = false;
             session.snapshotRequested = true;
         }, () -> this.sessions.get(session.viewer) == session);
     }
 
-    private void pumpSnapshot(Player player, Session session)
-    {
-        if (session.pendingSnapshotId == 0 || this.sessions.get(session.viewer) != session || !player.isOnline())
-        {
+    private void pumpSnapshot(Player player, Session session) {
+        if (session.pendingSnapshotId == 0 || this.sessions.get(session.viewer) != session || !player.isOnline()) {
             return;
         }
 
-        if (this.protection != null && (!this.protection.shouldStartTransfer() || !this.protection.tryMainWork(1)))
-        {
+        if (this.protection != null && (!this.protection.shouldStartTransfer() || !this.protection.tryMainWork(1))) {
             return;
         }
 
         long started = System.nanoTime(), id = session.pendingSnapshotId;
         session.pendingSnapshotId = 0;
-        try
-        {
+        try {
             reconcile(player, session, true);
             session.lastDiscoveryTick = ClientSyncCadence.initialTick(session.viewer, currentTick(),
                     this.audienceRefreshTicks);
             session.endingSnapshotId = id;
             finishSnapshot(player, session);
-        }
-        finally
-        {
-            if (this.protection != null && !this.inMaintenance)
-            {
+        } finally {
+            if (this.protection != null && !this.inMaintenance) {
                 this.protection.recordWork(System.nanoTime() - started);
             }
         }
     }
 
-    private void finishSnapshot(Player player, Session session)
-    {
-        if (session.endingSnapshotId == 0 || !session.pendingStates.isEmpty())
-        {
+    private void finishSnapshot(Player player, Session session) {
+        if (session.endingSnapshotId == 0 || !session.pendingStates.isEmpty()) {
             return;
         }
 
         long id = session.endingSnapshotId;
         JsonObject end = envelope("snapshot_end");
         end.addProperty("snapshotId", id);
-        critical(player, session, "snapshot_end", end, () ->
-        {
-            if (session.endingSnapshotId == id)
-            {
+        critical(player, session, "snapshot_end", end, () -> {
+            if (session.endingSnapshotId == id) {
                 session.endingSnapshotId = 0;
             }
-        }, () ->
-        {
-            if (session.endingSnapshotId == id)
-            {
+        }, () -> {
+            if (session.endingSnapshotId == id) {
                 session.endingSnapshotId = 0;
                 session.snapshotRequested = true;
             }
         }, () -> this.sessions.get(session.viewer) == session && session.endingSnapshotId == id);
     }
 
-    public String status(Player player)
-    {
+    public String status(Player player) {
         StateSnapshot snapshot = readSnapshot(player.getUniqueId());
         String diagnostic = "";
-        if (snapshot != null)
-        {
+        if (snapshot != null) {
             ModelAssets.Status asset = this.assets.status(snapshot.modelId());
             diagnostic = "；本人资产 " + snapshot.modelId() + "="
                     + (snapshot.localRenderable() ? asset.state() : "server-only") + "；来源 " + asset.source() + "；原因 "
                     + (snapshot.localRenderable() ? asset.reason() : "当前伪装不允许客户端接管");
         }
         diagnostic += "；" + this.privateModels.status(player) + "；服务器可选目录 " + this.modelCatalog.status();
-        if (!this.running || !this.configuredEnabled)
-        {
+        if (!this.running || !this.configuredEnabled) {
             return "disabled（服务器渲染）" + diagnostic;
         }
 
@@ -583,29 +491,23 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     }
 
     /** Diagnostic reads use prepared metadata and lease identities; they do not prepare assets or change rendering. */
-    public List<String> statusLines(Player player)
-    {
+    public List<String> statusLines(Player player) {
         List<String> lines = new ArrayList<>();
         Session session = this.sessions.get(player.getUniqueId());
-        if (!this.running || !this.configuredEnabled)
-        {
+        if (!this.running || !this.configuredEnabled) {
             lines.add("§e客户端接管服务已关闭；服务器伪装继续由 ModelEngine 渲染。");
         }
 
-        else if (session == null)
-        {
+        else if (session == null) {
             lines.add("§e该玩家的客户端尚未连接模组协议；其画面继续由 ModelEngine 渲染。");
         }
 
-        else if (!session.helloAcknowledged)
-        {
+        else if (!session.helloAcknowledged) {
             lines.add("§e客户端握手正在确认；暂由 ModelEngine 渲染。");
         }
 
-        else
-        {
-            lines.add("§7客户端连接：§f" + session.clientVersion + "§7；资源方式：§f" + switch (session.assetMode())
-            {
+        else {
+            lines.add("§7客户端连接：§f" + session.clientVersion + "§7；资源方式：§f" + switch (session.assetMode()) {
             case "server-push" -> "服务器推送";
             case "resource-pack" -> "资源包";
             default -> "兼容下载";
@@ -613,17 +515,14 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             lines.add("§7该客户端：可见实例 §f" + session.bindings.size() + "§7；已确认接管 §f" + session.leases.size() + " §7个");
         }
         StateSnapshot snapshot = readSnapshot(player.getUniqueId());
-        if (snapshot != null)
-        {
+        if (snapshot != null) {
             lines.addAll(modelResourceLines(snapshot.modelId(), snapshot.localRenderable()));
             int confirmed = 0;
-            for (UUID viewer : this.viewersByOwner.getOrDefault(player.getUniqueId(), Set.of()))
-            {
+            for (UUID viewer : this.viewersByOwner.getOrDefault(player.getUniqueId(), Set.of())) {
                 Session watching = this.sessions.get(viewer);
                 BoundState bound = watching == null ? null : watching.bindings.get(player.getUniqueId());
                 if (bound != null && bound.instance().equals(snapshot.instance()) && watching.leases
-                        .contains(new RenderLeases.Binding(player.getUniqueId(), bound.instance(), bound.hash())))
-                {
+                        .contains(new RenderLeases.Binding(player.getUniqueId(), bound.instance(), bound.hash()))) {
                     confirmed++;
                 }
 
@@ -635,87 +534,66 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         return List.copyOf(lines);
     }
 
-    public List<String> modelResourceLines(String modelId, boolean eligible)
-    {
+    public List<String> modelResourceLines(String modelId, boolean eligible) {
         ModelAssets.Status asset = this.assets.status(modelId);
         return ServerMessages.modelResource(modelId, asset.state(), asset.source(), asset.reason(), eligible);
     }
 
     @Override
-    public void onPluginMessageReceived(String channel, Player player, byte[] bytes)
-    {
+    public void onPluginMessageReceived(String channel, Player player, byte[] bytes) {
         if (!CHANNEL.equals(channel) || !this.running || !this.configuredEnabled || bytes == null || bytes.length == 0
-                || bytes.length > this.maxPayload)
-        {
+                || bytes.length > this.maxPayload) {
             return;
         }
 
-        if (!Bukkit.isPrimaryThread())
-        {
-            if (!this.plugin.isEnabled() || !this.limits.reserveInboundDispatch(bytes.length))
-            {
+        if (!Bukkit.isPrimaryThread()) {
+            if (!this.plugin.isEnabled() || !this.limits.reserveInboundDispatch(bytes.length)) {
                 return;
             }
 
-            try
-            {
+            try {
                 byte[] copy = bytes.clone();
-                this.plugin.getServer().getScheduler().runTask(this.plugin, () ->
-                {
-                    try
-                    {
+                this.plugin.getServer().getScheduler().runTask(this.plugin, () -> {
+                    try {
                         onPluginMessageReceived(channel, player, copy);
-                    }
-                    finally
-                    {
+                    } finally {
                         this.limits.releaseInboundDispatch(copy.length);
                     }
                 });
-            }
-            catch (RuntimeException failure)
-            {
+            } catch (RuntimeException failure) {
                 this.limits.releaseInboundDispatch(bytes.length);
             }
             return;
         }
         long receivedAt = System.nanoTime();
         if (!player.isOnline() || !this.limits.allowInboundDecode(player.getUniqueId(), bytes.length, receivedAt)
-                || !this.limits.allowInbound(player.getUniqueId(), bytes.length, receivedAt))
-        {
+                || !this.limits.allowInbound(player.getUniqueId(), bytes.length, receivedAt)) {
             return;
         }
 
         Inbound inbound;
-        try
-        {
+        try {
             inbound = decode(bytes);
-        }
-        catch (IOException | IllegalArgumentException | IllegalStateException exception)
-        {
+        } catch (IOException | IllegalArgumentException | IllegalStateException exception) {
             sendError(player, "invalid_payload");
             return;
         }
-        if (inbound.protocol() != PROTOCOL)
-        {
+        if (inbound.protocol() != PROTOCOL) {
             sendError(player, "unsupported_protocol");
             Session previous = this.sessions.get(player.getUniqueId());
-            if (previous != null)
-            {
+            if (previous != null) {
                 endSession(player.getUniqueId(), player, previous, "unsupported_protocol");
             }
             return;
         }
-        if (inbound.type().equals("hello"))
-        {
+        if (inbound.type().equals("hello")) {
             long now = System.nanoTime();
             Session previous = this.sessions.get(player.getUniqueId());
-            if (!this.limits.allowHello(player.getUniqueId(), now))
-            {
+            if (!this.limits.allowHello(player.getUniqueId(), now)) {
                 return;
             }
 
-            if (previous != null)
-            {
+            if (previous != null) {
                 endSession(player.getUniqueId(), player, previous, "new_handshake");
             }
 
@@ -726,8 +604,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             session.controls = new DeferredClientPackets(
                     bytesToQueue -> this.limits.queueOutgoing(session.viewer, bytesToQueue),
                     bytesToRelease -> this.limits.releaseOutgoing(session.viewer, bytesToRelease));
-            if (this.protection != null)
-            {
+            if (this.protection != null) {
                 session.offers.configure(this.protection.settings().network());
             }
 
@@ -742,89 +619,70 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             ack.addProperty("requestCooldownTicks", this.requestCooldownTicks);
             JsonArray capabilities = new JsonArray();
             capabilities.add("local_render");
-            if (session.pushModels)
-            {
+            if (session.pushModels) {
                 capabilities.add("server_push_models");
             }
 
-            else if (session.packModels)
-            {
+            else if (session.packModels) {
                 capabilities.add("resource_pack_models");
             }
             ack.add("capabilities", capabilities);
-            if (session.incremental)
-            {
+            if (session.incremental) {
                 capabilities.add("incremental_state");
             }
 
-            if (session.timeline)
-            {
+            if (session.timeline) {
                 capabilities.add("server_timeline");
             }
 
-            if (session.catalog)
-            {
+            if (session.catalog) {
                 capabilities.add(ServerModelCatalog.CAPABILITY);
             }
 
-            if (session.disguiseResults)
-            {
+            if (session.disguiseResults) {
                 capabilities.add(DISGUISE_RESULTS);
             }
 
-            critical(player, session, "hello_ack", ack, () ->
-            {
+            critical(player, session, "hello_ack", ack, () -> {
                 session.helloAcknowledged = true;
                 updateCatalog(player, session);
                 pumpCatalog(player, session);
                 sendSnapshot(player);
-            }, () ->
-            {
+            }, () -> {
             }, () -> this.sessions.get(session.viewer) == session);
             return;
         }
         Session session = this.sessions.get(player.getUniqueId());
-        if (session == null)
-        {
+        if (session == null) {
             return;
         }
         long tick = currentTick();
-        switch (inbound.type())
-        {
+        switch (inbound.type()) {
         case "asset_request" -> requestAsset(player, session, inbound, tick);
         case "asset_status" -> assetStatus(player, session, inbound, tick);
         case "render_ready" -> ready(player, session, inbound.binding(), tick);
-        case "render_failed" ->
-        {
+        case "render_failed" -> {
             PendingReady pending = session.pendingReady.get(inbound.binding().owner());
             if (session.leases.contains(inbound.binding())
-                    || pending != null && pending.binding().equals(inbound.binding()))
-            {
+                    || pending != null && pending.binding().equals(inbound.binding())) {
                 removeBinding(player, session, inbound.binding().owner(), "render_failed");
             }
         }
         case "render_heartbeat" -> session.leases.renew(inbound.bindings(), tick);
-        case "snapshot_request", "request" ->
-        {
+        case "snapshot_request", "request" -> {
             if (!this.limits.allowRequest(player.getUniqueId(), inbound.type(), inbound.action(), tick,
-                    this.requestCooldownTicks))
-            {
+                    this.requestCooldownTicks)) {
                 sendError(player, "request_cooldown");
                 return;
             }
-            if (inbound.type().equals("snapshot_request"))
-            {
+            if (inbound.type().equals("snapshot_request")) {
                 sendSnapshot(player);
             }
 
-            else
-            {
-                try
-                {
+            else {
+                try {
                     this.actionRequests.accept(new ActionRequest(player, inbound.action(), inbound.argument()));
-                }
-                catch (RuntimeException exception)
-                {
+                } catch (RuntimeException exception) {
                     warnFailure("Client action failed", exception);
                     sendError(player, "action_failed");
                 }
@@ -835,12 +693,10 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         }
     }
 
-    private void ready(Player viewer, Session session, RenderLeases.Binding binding, long tick)
-    {
+    private void ready(Player viewer, Session session, RenderLeases.Binding binding, long tick) {
         BoundState bound = session.bindings.get(binding.owner());
         StateSnapshot current = readSnapshot(binding.owner());
-        if (current != null && viewer.getUniqueId().equals(binding.owner()) && !current.showSelf())
-        {
+        if (current != null && viewer.getUniqueId().equals(binding.owner()) && !current.showSelf()) {
             // Ownership metadata remains visible to the owner. It never grants a hidden model a render lease.
             session.pendingReady.remove(binding.owner());
             sendError(viewer, "render_not_authorized", binding);
@@ -849,11 +705,9 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         if (bound == null || current == null || !current.localRenderable()
                 || !current.instance().equals(binding.instance()) || !bound.instance().equals(binding.instance())
                 || !bound.hash().equals(binding.hash()) || !canObserve(viewer, binding.owner())
-                || this.assets.get(current.modelId()).filter(asset -> asset.hash().equals(binding.hash())).isEmpty())
-        {
+                || this.assets.get(current.modelId()).filter(asset -> asset.hash().equals(binding.hash())).isEmpty()) {
             PendingReady pending = session.pendingReady.get(binding.owner());
-            if (pending != null && pending.binding().equals(binding))
-            {
+            if (pending != null && pending.binding().equals(binding)) {
                 session.pendingReady.remove(binding.owner());
                 restore(session.viewer, binding);
             }
@@ -864,22 +718,17 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         addBinding(ack, binding);
         byte[] ackBytes = encode(ack);
         Result reserved = reserveBytes(viewer, ackBytes, false);
-        if (reserved == Result.DEFERRED)
-        {
+        if (reserved == Result.DEFERRED) {
             session.pendingReady.putIfAbsent(binding.owner(), new PendingReady(binding, tick));
             return;
         }
-        if (reserved == Result.FAILED)
-        {
+        if (reserved == Result.FAILED) {
             failReady(session, binding);
             return;
         }
-        try
-        {
-            if (!this.renderControl.set(viewer.getUniqueId(), binding.owner(), binding.instance(), true))
-            {
-                if (this.renderControl.pending(viewer.getUniqueId(), binding.owner(), binding.instance()))
-                {
+        try {
+            if (!this.renderControl.set(viewer.getUniqueId(), binding.owner(), binding.instance(), true)) {
+                if (this.renderControl.pending(viewer.getUniqueId(), binding.owner(), binding.instance())) {
                     session.pendingReady.putIfAbsent(binding.owner(), new PendingReady(binding, tick));
                     return;
                 }
@@ -887,9 +736,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
                 sendError(viewer, "render_unavailable", binding);
                 return;
             }
-        }
-        catch (RuntimeException exception)
-        {
+        } catch (RuntimeException exception) {
             failReady(session, binding);
             warnFailure("Cannot enable client rendering", exception);
             sendError(viewer, "render_unavailable", binding);
@@ -897,16 +744,13 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         }
         session.pendingReady.remove(binding.owner());
         session.leases.ready(binding, tick);
-        if (sendReservedBytes(viewer, ackBytes) == Result.FAILED)
-        {
+        if (sendReservedBytes(viewer, ackBytes) == Result.FAILED) {
             failReady(session, binding);
             return;
         }
-        if (session.pushModels)
-        {
+        if (session.pushModels) {
             PushAssetOffers.Offer offer = session.offers.find(binding.hash());
-            if (offer != null)
-            {
+            if (offer != null) {
                 releaseWaitingOffer(session, offer);
             }
 
@@ -916,34 +760,29 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         }
     }
 
-    private void failReady(Session session, RenderLeases.Binding binding)
-    {
+    private void failReady(Session session, RenderLeases.Binding binding) {
         session.pendingReady.remove(binding.owner());
-        if (session.leases.contains(binding))
-        {
+        if (session.leases.contains(binding)) {
             session.leases.remove(binding.owner());
         }
 
         restore(session.viewer, binding);
     }
 
-    private void assetStatus(Player viewer, Session session, Inbound inbound, long tick)
-    {
-        if (!session.pushModels)
-        {
+    private void assetStatus(Player viewer, Session session, Inbound inbound, long tick) {
+        if (!session.pushModels) {
             sendError(viewer, "asset_status_wrong_mode");
             return;
         }
         PushAssetOffers.Offer offer = session.offers.find(inbound.hash());
-        if (offer == null || !offer.id().equals(inbound.offerId()) || !authorizedHash(viewer, session, inbound.hash()))
-        {
+        if (offer == null || !offer.id().equals(inbound.offerId())
+                || !authorizedHash(viewer, session, inbound.hash())) {
             return;
         }
 
         PushAssetOffers.Feedback feedback = session.offers.feedback(inbound.offerId(), inbound.hash(),
                 inbound.assetStatus(), tick);
-        if (feedback == PushAssetOffers.Feedback.REJECTED)
-        {
+        if (feedback == PushAssetOffers.Feedback.REJECTED) {
             cancelOffer(viewer, session, offer, "asset_rejected");
         }
 
@@ -951,23 +790,18 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         // cached is not a render lease. missing is queued by the server maintenance pump.
     }
 
-    private boolean authorizedHash(Player viewer, Session session, String hash)
-    {
-        if (hash.isEmpty())
-        {
+    private boolean authorizedHash(Player viewer, Session session, String hash) {
+        if (hash.isEmpty()) {
             return false;
         }
 
-        for (Map.Entry<UUID, ClientSyncService.BoundState> entry : session.bindings.entrySet())
-        {
-            if (entry.getValue().hash().equals(hash))
-            {
+        for (Map.Entry<UUID, ClientSyncService.BoundState> entry : session.bindings.entrySet()) {
+            if (entry.getValue().hash().equals(hash)) {
                 StateSnapshot current = readSnapshot(entry.getKey());
                 BoundState bound = entry.getValue();
                 if (current != null && current.localRenderable() && current.instance().equals(bound.instance())
                         && current.modelId().equals(bound.modelId()) && canObserve(viewer, entry.getKey())
-                        && this.assets.get(current.modelId()).filter(asset -> asset.hash().equals(hash)).isPresent())
-                {
+                        && this.assets.get(current.modelId()).filter(asset -> asset.hash().equals(hash)).isPresent()) {
                     return true;
                 }
 
@@ -977,22 +811,18 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         return false;
     }
 
-    private Set<String> authorizedHashes(Player viewer, Session session)
-    {
+    private Set<String> authorizedHashes(Player viewer, Session session) {
         Set<String> result = new HashSet<>();
-        if (viewer == null)
-        {
+        if (viewer == null) {
             return result;
         }
 
-        for (Map.Entry<UUID, ClientSyncService.BoundState> entry : session.bindings.entrySet())
-        {
+        for (Map.Entry<UUID, ClientSyncService.BoundState> entry : session.bindings.entrySet()) {
             BoundState bound = entry.getValue();
             StateSnapshot snapshot = readSnapshot(entry.getKey());
             if (snapshot != null && snapshot.localRenderable() && !bound.hash().isEmpty()
                     && bound.instance().equals(snapshot.instance()) && bound.modelId().equals(snapshot.modelId())
-                    && canObserve(viewer, snapshot.owner()))
-            {
+                    && canObserve(viewer, snapshot.owner())) {
                 result.add(bound.hash());
             }
 
@@ -1000,52 +830,42 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         return result;
     }
 
-    private void offerAsset(Player viewer, Session session, UUID owner, BoundState bound, long tick)
-    {
-        if (!session.pushModels || bound.hash().isEmpty() || !session.offers.canIssue(bound.hash()))
-        {
+    private void offerAsset(Player viewer, Session session, UUID owner, BoundState bound, long tick) {
+        if (!session.pushModels || bound.hash().isEmpty() || !session.offers.canIssue(bound.hash())) {
             return;
         }
 
-        if (this.protection != null && !this.protection.shouldStartTransfer())
-        {
+        if (this.protection != null && !this.protection.shouldStartTransfer()) {
             return;
         }
 
         if (session.bindings.entrySet().stream()
-                .anyMatch(entry -> entry.getValue().hash().equals(bound.hash()) && session.leases
-                        .contains(new RenderLeases.Binding(entry.getKey(), entry.getValue().instance(), bound.hash()))))
-        {
+                .anyMatch(entry -> entry.getValue().hash().equals(bound.hash()) && session.leases.contains(
+                        new RenderLeases.Binding(entry.getKey(), entry.getValue().instance(), bound.hash())))) {
             return;
         }
 
         Set<UUID> instances = new HashSet<>();
         // Already authorized aliases share attempt history, without scanning every disguise for each viewer.
-        for (Map.Entry<UUID, ClientSyncService.BoundState> entry : session.bindings.entrySet())
-        {
-            if (entry.getValue().hash().equals(bound.hash()) && canObserve(viewer, entry.getKey()))
-
-            {
+        for (Map.Entry<UUID, ClientSyncService.BoundState> entry : session.bindings.entrySet()) {
+            if (entry.getValue().hash().equals(bound.hash()) && canObserve(viewer, entry.getKey())) {
                 instances.add(entry.getValue().instance());
             }
 
         }
 
         if (!instances.contains(bound.instance())
-                || !this.limits.canPushOffer(session.viewer, bound.hash(), instances, tick))
-        {
+                || !this.limits.canPushOffer(session.viewer, bound.hash(), instances, tick)) {
             return;
         }
 
-        if (!this.limits.reserveWaiting(session.viewer))
-        {
+        if (!this.limits.reserveWaiting(session.viewer)) {
             return;
         }
 
         PushAssetOffers.Offer offer = session.offers.issue(owner, bound.instance(), bound.modelId(), bound.hash(),
                 tick);
-        if (offer == null)
-        {
+        if (offer == null) {
             this.limits.releaseWaiting(session.viewer);
             return;
         }
@@ -1055,56 +875,43 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         packet.addProperty("instance", bound.instance().toString());
         packet.addProperty("modelId", bound.modelId());
         addOffer(packet, offer);
-        if (sendPacket(viewer, packet, false) == Result.SENT)
-
-        {
+        if (sendPacket(viewer, packet, false) == Result.SENT) {
             this.limits.pushOfferSent(session.viewer, bound.hash(), instances, tick);
         }
 
-        else
-        {
+        else {
             session.offers.remove(bound.hash());
             releaseWaitingOffer(session, offer);
         }
     }
 
-    private void maintainOffers(Player viewer, Session session, long tick, Set<String> authorized)
-    {
-        if (!session.pushModels)
-        {
+    private void maintainOffers(Player viewer, Session session, long tick, Set<String> authorized) {
+        if (!session.pushModels) {
             return;
         }
 
         expireOffers(viewer, session, tick, authorized);
         List<PushAssetOffers.Offer> missing = session.offers.missing();
-        if (missing.isEmpty())
-        {
+        if (missing.isEmpty()) {
             return;
         }
 
-        if (this.protection != null && (!this.protection.shouldStartTransfer() || !this.protection.tryMainWork(1)))
-        {
+        if (this.protection != null && (!this.protection.shouldStartTransfer() || !this.protection.tryMainWork(1))) {
             return;
         }
 
-        for (PushAssetOffers.Offer offer : missing)
-        {
-            if (!authorized.contains(offer.hash()))
-            {
+        for (PushAssetOffers.Offer offer : missing) {
+            if (!authorized.contains(offer.hash())) {
                 cancelOffer(viewer, session, offer, "asset_not_authorized");
                 continue;
             }
             Optional<ModelAssets.Asset> asset = this.assets.get(offer.modelId())
                     .filter(value -> value.hash().equals(offer.hash()));
-            if (asset.isEmpty())
-            {
-                for (BoundState bound : session.bindings.values())
-                {
-                    if (bound.hash().equals(offer.hash()))
-                    {
+            if (asset.isEmpty()) {
+                for (BoundState bound : session.bindings.values()) {
+                    if (bound.hash().equals(offer.hash())) {
                         asset = this.assets.get(bound.modelId()).filter(value -> value.hash().equals(offer.hash()));
-                        if (asset.isPresent())
-                        {
+                        if (asset.isPresent()) {
                             break;
                         }
 
@@ -1112,29 +919,24 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
                 }
 
             }
-            if (asset.isEmpty())
-            {
+            if (asset.isEmpty()) {
                 cancelOffer(viewer, session, offer, assetFailureCode(offer.modelId()));
                 continue;
             }
-            if (!this.limits.reserveTransfer(session.viewer))
-            {
+            if (!this.limits.reserveTransfer(session.viewer)) {
                 continue;
             }
 
-            if (!this.limits.allowAsset(session.viewer, offer.hash(), tick))
-            {
+            if (!this.limits.allowAsset(session.viewer, offer.hash(), tick)) {
                 this.limits.releaseTransfer(session.viewer);
                 continue;
             }
-            if (!this.assets.retain(asset.get()))
-            {
+            if (!this.assets.retain(asset.get())) {
                 this.limits.releaseTransfer(session.viewer);
                 cancelOffer(viewer, session, offer, "memory_budget_exceeded");
                 continue;
             }
-            if (!session.offers.start(offer))
-            {
+            if (!session.offers.start(offer)) {
                 this.assets.release(asset.get());
                 this.limits.releaseTransfer(session.viewer);
                 continue;
@@ -1145,34 +947,27 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         }
     }
 
-    private void cancelUnauthorizedOffers(Player viewer, Session session, long tick)
-    {
+    private void cancelUnauthorizedOffers(Player viewer, Session session, long tick) {
         expireOffers(viewer, session, tick, authorizedHashes(viewer, session));
     }
 
-    private void expireOffers(Player viewer, Session session, long tick, Set<String> authorized)
-    {
+    private void expireOffers(Player viewer, Session session, long tick, Set<String> authorized) {
         for (PushAssetOffers.Cancelled cancelled : session.offers.expire(tick,
-                offer -> authorized.contains(offer.hash())))
-
-        {
+                offer -> authorized.contains(offer.hash()))) {
             cancelOffer(viewer, session, cancelled.offer(), cancelled.reason());
         }
 
     }
 
-    private void cancelOffer(Player viewer, Session session, PushAssetOffers.Offer offer, String reason)
-    {
+    private void cancelOffer(Player viewer, Session session, PushAssetOffers.Offer offer, String reason) {
         PushAssetOffers.Offer current = session.offers.find(offer.hash());
-        if (current != null && current.id().equals(offer.id()))
-        {
+        if (current != null && current.id().equals(offer.id())) {
             session.offers.remove(offer.hash());
         }
 
         releaseWaitingOffer(session, offer);
         removeOfferTransfers(session, offer.hash());
-        if (reason.contains("timeout") || reason.equals("asset_offer_expired"))
-        {
+        if (reason.contains("timeout") || reason.equals("asset_offer_expired")) {
             this.limits.transferTimedOut();
         }
 
@@ -1183,23 +978,18 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         send(viewer, packet);
     }
 
-    private void releaseWaitingOffer(Session session, PushAssetOffers.Offer offer)
-    {
-        if (session.waitingOffers.remove(offer.id()))
-        {
+    private void releaseWaitingOffer(Session session, PushAssetOffers.Offer offer) {
+        if (session.waitingOffers.remove(offer.id())) {
             this.limits.releaseWaiting(session.viewer);
         }
 
     }
 
-    private void removeOfferTransfers(Session session, String hash)
-    {
+    private void removeOfferTransfers(Session session, String hash) {
         Iterator<Transfer> iterator = session.transfers.iterator();
-        while (iterator.hasNext())
-        {
+        while (iterator.hasNext()) {
             Transfer transfer = iterator.next();
-            if (transfer.offer != null && transfer.offer.hash().equals(hash))
-            {
+            if (transfer.offer != null && transfer.offer.hash().equals(hash)) {
                 iterator.remove();
                 releaseTransferPayload(session, transfer);
                 this.assets.release(transfer.asset);
@@ -1208,60 +998,49 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         }
     }
 
-    private static void addOffer(JsonObject packet, PushAssetOffers.Offer offer)
-    {
+    private static void addOffer(JsonObject packet, PushAssetOffers.Offer offer) {
         packet.addProperty("offerId", offer.id().toString());
         packet.addProperty("hash", offer.hash());
     }
 
-    private void requestAsset(Player viewer, Session session, Inbound inbound, long tick)
-    {
-        if (session.pushModels)
-        {
+    private void requestAsset(Player viewer, Session session, Inbound inbound, long tick) {
+        if (session.pushModels) {
             sendError(viewer, "asset_server_push_mode");
             return;
         }
-        if (session.packModels)
-        {
+        if (session.packModels) {
             sendError(viewer, "asset_resource_pack_mode");
             return;
         }
-        if (this.protection != null && !this.protection.shouldStartTransfer())
-        {
+        if (this.protection != null && !this.protection.shouldStartTransfer()) {
             sendError(viewer, "tps_protection");
             return;
         }
         if (session.bindings.entrySet().stream().noneMatch(e -> e.getValue().modelId().equals(inbound.modelId())
-                && e.getValue().hash().equals(inbound.hash()) && canObserve(viewer, e.getKey())))
-        {
+                && e.getValue().hash().equals(inbound.hash()) && canObserve(viewer, e.getKey()))) {
             sendError(viewer, "asset_not_authorized");
             return;
         }
-        if (session.transfers.stream().anyMatch(t -> t.asset.hash().equals(inbound.hash())))
-        {
+        if (session.transfers.stream().anyMatch(t -> t.asset.hash().equals(inbound.hash()))) {
             return;
         }
 
         Optional<ModelAssets.Asset> asset = this.assets.get(inbound.modelId())
                 .filter(a -> a.hash().equals(inbound.hash()));
-        if (asset.isEmpty())
-        {
+        if (asset.isEmpty()) {
             sendError(viewer, assetFailureCode(inbound.modelId()));
             return;
         }
-        if (!this.limits.reserveTransfer(viewer.getUniqueId()))
-        {
+        if (!this.limits.reserveTransfer(viewer.getUniqueId())) {
             sendError(viewer, "asset_queue_full");
             return;
         }
-        if (!this.limits.allowAsset(viewer.getUniqueId(), inbound.hash(), tick))
-        {
+        if (!this.limits.allowAsset(viewer.getUniqueId(), inbound.hash(), tick)) {
             this.limits.releaseTransfer(viewer.getUniqueId());
             sendError(viewer, "asset_cooldown");
             return;
         }
-        if (!this.assets.retain(asset.get()))
-        {
+        if (!this.assets.retain(asset.get())) {
             this.limits.releaseTransfer(viewer.getUniqueId());
             sendError(viewer, "memory_budget_exceeded");
             return;
@@ -1269,22 +1048,17 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         session.transfers.add(new Transfer(asset.get(), Math.min(9000, (this.maxPayload - 512) * 3 / 4), null, tick));
     }
 
-    private void maintainSessions()
-    {
-        if (!this.configuredEnabled || this.sessions.isEmpty())
-        {
+    private void maintainSessions() {
+        if (!this.configuredEnabled || this.sessions.isEmpty()) {
             return;
         }
         long tick = currentTick();
-        if (this.modelFolders != null)
-        {
+        if (this.modelFolders != null) {
             this.modelFolders.refresh(tick);
         }
 
-        if (tick % HEARTBEAT_TICKS == 0)
-        {
-            this.limits.pruneOffline(id ->
-            {
+        if (tick % HEARTBEAT_TICKS == 0) {
+            this.limits.pruneOffline(id -> {
                 Player viewer = Bukkit.getPlayer(id);
                 return viewer != null && viewer.isOnline();
             });
@@ -1293,16 +1067,12 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         List<Session> ordered = new ArrayList<>(this.sessions.values());
         Collections.rotate(ordered, -(this.viewerRotation++ % ordered.size()));
         this.inMaintenance = true;
-        try
-        {
-            for (Session session : ordered)
-            {
+        try {
+            for (Session session : ordered) {
                 long workStarted = System.nanoTime();
-                try
-                {
+                try {
                     Player viewer = Bukkit.getPlayer(session.viewer);
-                    if (viewer == null || !viewer.isOnline())
-                    {
+                    if (viewer == null || !viewer.isOnline()) {
                         endSession(session.viewer, viewer, session, "offline");
                         continue;
                     }
@@ -1311,41 +1081,34 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
                     expireLegacyTransfers(viewer, session, tick);
                     pumpSnapshot(viewer, session);
                     if (session.snapshotRequested && session.pendingSnapshotId == 0 && session.endingSnapshotId == 0
-                            && !session.snapshotBeginning)
-                    {
+                            && !session.snapshotBeginning) {
                         sendSnapshot(viewer);
                     }
 
-                    if (!session.pendingStates.isEmpty() && (this.protection == null || this.protection.tryMainWork(1)))
-                    {
+                    if (!session.pendingStates.isEmpty()
+                            && (this.protection == null || this.protection.tryMainWork(1))) {
                         retryStates(viewer, session);
                     }
 
                     finishSnapshot(viewer, session);
                     if (ClientSyncCadence.due(tick, session.lastDiscoveryTick, this.audienceRefreshTicks)
                             && (this.protection == null
-                                    || this.protection.shouldStartTransfer() && this.protection.tryMainWork(1)))
-                    {
+                                    || this.protection.shouldStartTransfer() && this.protection.tryMainWork(1))) {
                         reconcile(viewer, session, false);
                         updateCatalog(viewer, session);
                         session.lastDiscoveryTick = tick;
                     }
-                    if (ClientSyncCadence.due(tick, session.lastValidationTick, this.validationTicks))
-                    {
+                    if (ClientSyncCadence.due(tick, session.lastValidationTick, this.validationTicks)) {
                         validateBindings(viewer, session);
                         session.lastValidationTick = tick;
-                        for (RenderLeases.Binding expired : session.leases.expired(tick))
-                        {
+                        for (RenderLeases.Binding expired : session.leases.expired(tick)) {
                             restore(session.viewer, expired);
                             removeBinding(viewer, session, expired.owner(), "render_lease_expired");
                         }
-                        if (this.protection == null || this.protection.tryMainWork(1))
-                        {
-                            for (UUID owner : List.copyOf(session.bindings.keySet()))
-                            {
+                        if (this.protection == null || this.protection.tryMainWork(1)) {
+                            for (UUID owner : List.copyOf(session.bindings.keySet())) {
                                 StateSnapshot state = readSnapshot(owner);
-                                if (state != null)
-                                {
+                                if (state != null) {
                                     sendState(viewer, session, state, false);
                                 }
 
@@ -1357,24 +1120,19 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
                     if ((!session.incremental
                             && ClientSyncCadence.due(tick, session.lastLegacyTick, ClientSyncCadence.LEGACY_STATE_TICKS)
                             || session.timeline && tick % ClientSyncCadence.TIMELINE_TICKS == 0)
-                            && (this.protection == null || this.protection.tryMainWork(1)))
-                    {
-                        for (UUID owner : List.copyOf(session.bindings.keySet()))
-                        {
+                            && (this.protection == null || this.protection.tryMainWork(1))) {
+                        for (UUID owner : List.copyOf(session.bindings.keySet())) {
                             StateSnapshot state = readSnapshot(owner);
-                            if (state != null && canObserve(viewer, owner))
-                            {
+                            if (state != null && canObserve(viewer, owner)) {
                                 sendState(viewer, session, state, true);
                             }
 
-                            else
-                            {
+                            else {
                                 removeBinding(viewer, session, owner, "not_visible_or_active");
                             }
 
                         }
-                        if (!session.incremental)
-                        {
+                        if (!session.incremental) {
                             session.lastLegacyTick = tick;
                         }
 
@@ -1382,48 +1140,37 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
                     pumpCatalog(viewer, session);
                     maintainOffers(viewer, session, tick, session.authorized);
                     pumpAssets(viewer, session, session.authorized);
-                    if (ClientSyncCadence.due(tick, session.lastHeartbeatTick, HEARTBEAT_TICKS))
-                    {
+                    if (ClientSyncCadence.due(tick, session.lastHeartbeatTick, HEARTBEAT_TICKS)) {
                         heartbeat(viewer, session, tick);
                         session.lastHeartbeatTick = tick;
                     }
-                }
-                finally
-                {
-                    if (this.protection != null)
-                    {
+                } finally {
+                    if (this.protection != null) {
                         this.protection.recordWork(System.nanoTime() - workStarted);
                     }
                 }
             }
-        }
-        finally
-        {
+        } finally {
             this.inMaintenance = false;
         }
     }
 
-    private boolean catalogPermitted(Player viewer)
-    {
+    private boolean catalogPermitted(Player viewer) {
         return viewer.hasPermission("mact.use") && viewer.hasPermission("mact.disguise");
     }
 
-    private void updateCatalog(Player viewer, Session session)
-    {
-        if (!session.catalog || !session.helloAcknowledged)
-        {
+    private void updateCatalog(Player viewer, Session session) {
+        if (!session.catalog || !session.helloAcknowledged) {
             return;
         }
 
-        if (this.modelFolders != null)
-        {
+        if (this.modelFolders != null) {
             this.modelFolders.refresh(currentTick());
         }
 
         this.modelCatalog.refresh(currentTick());
         ServerModelCatalog.Plan plan = this.modelCatalog.plan(catalogPermitted(viewer), this.maxPayload);
-        if (session.catalogPlan == plan)
-        {
+        if (session.catalogPlan == plan) {
             return;
         }
 
@@ -1433,148 +1180,114 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         session.catalogRevision++;
     }
 
-    private void pumpCatalog(Player viewer, Session session)
-    {
+    private void pumpCatalog(Player viewer, Session session) {
         if (!session.catalog || !session.helloAcknowledged || session.catalogPlan == null
-                || session.catalogIndex >= session.catalogPlan.count())
-        {
+                || session.catalogIndex >= session.catalogPlan.count()) {
             return;
         }
 
         // A permission revocation cancels a partially sent directory before another chunk leaves.
-        if (session.catalogPlan.canDisguise != catalogPermitted(viewer))
-        {
+        if (session.catalogPlan.canDisguise != catalogPermitted(viewer)) {
             updateCatalog(viewer, session);
         }
 
         long tick = currentTick();
-        if (session.catalogIndex >= session.catalogPlan.count() || session.lastCatalogSentTick == tick)
-        {
+        if (session.catalogIndex >= session.catalogPlan.count() || session.lastCatalogSentTick == tick) {
             return;
         }
 
-        if (session.pendingCatalogBytes == null)
-        {
-            if (this.protection != null && !this.protection.tryMainWork(1))
-            {
+        if (session.pendingCatalogBytes == null) {
+            if (this.protection != null && !this.protection.tryMainWork(1)) {
                 return;
             }
 
-            if (!this.limits.canQueueOutgoing(session.viewer, this.maxPayload))
-            {
+            if (!this.limits.canQueueOutgoing(session.viewer, this.maxPayload)) {
                 return;
             }
 
             byte[] payload = session.catalogPlan.packet(session.catalogIndex, session.catalogRevision);
-            if (!this.limits.queueOutgoing(session.viewer, payload.length))
-            {
+            if (!this.limits.queueOutgoing(session.viewer, payload.length)) {
                 return;
             }
 
             session.pendingCatalogBytes = payload;
         }
         Result result = sendBytes(viewer, session.pendingCatalogBytes, false);
-        if (result == Result.SENT)
-        {
+        if (result == Result.SENT) {
             session.catalogIndex++;
             releaseCatalogPayload(session);
             session.lastCatalogSentTick = tick;
-        }
-        else if (result == Result.FAILED)
-        {
+        } else if (result == Result.FAILED) {
             releaseCatalogPayload(session);
         }
 
     }
 
-    private void releaseCatalogPayload(Session session)
-    {
-        if (session.pendingCatalogBytes != null)
-        {
+    private void releaseCatalogPayload(Session session) {
+        if (session.pendingCatalogBytes != null) {
             this.limits.releaseOutgoing(session.viewer, session.pendingCatalogBytes.length);
             session.pendingCatalogBytes = null;
         }
     }
 
-    private void validateBindings(Player viewer, Session session)
-    {
-        for (Map.Entry<UUID, ClientSyncService.BoundState> entry : List.copyOf(session.bindings.entrySet()))
-        {
+    private void validateBindings(Player viewer, Session session) {
+        for (Map.Entry<UUID, ClientSyncService.BoundState> entry : List.copyOf(session.bindings.entrySet())) {
             StateSnapshot current = readSnapshot(entry.getKey());
             BoundState bound = entry.getValue();
             if (current == null || !current.instance().equals(bound.instance())
-                    || !current.modelId().equals(bound.modelId()) || !canObserve(viewer, entry.getKey()))
-
-            {
+                    || !current.modelId().equals(bound.modelId()) || !canObserve(viewer, entry.getKey())) {
                 removeBinding(viewer, session, entry.getKey(), "not_visible_or_active");
             }
 
         }
     }
 
-    private void maintainReady(Player viewer, Session session, long tick)
-    {
-        for (ClientSyncService.PendingReady pending : List.copyOf(session.pendingReady.values()))
-        {
+    private void maintainReady(Player viewer, Session session, long tick) {
+        for (ClientSyncService.PendingReady pending : List.copyOf(session.pendingReady.values())) {
             if (!matches(session.bindings.get(pending.binding().owner()), pending.binding())
-                    || !canObserve(viewer, pending.binding().owner()))
-            {
+                    || !canObserve(viewer, pending.binding().owner())) {
                 failReady(session, pending.binding());
-            }
-            else if (tickDistance(tick, pending.since()) >= RenderLeases.LEASE_TICKS)
-            {
+            } else if (tickDistance(tick, pending.since()) >= RenderLeases.LEASE_TICKS) {
                 session.pendingReady.remove(pending.binding().owner());
                 // A duplicate ready delayed by budget cannot revoke an already acknowledged, renewing lease.
-                if (!session.leases.contains(pending.binding()))
-                {
+                if (!session.leases.contains(pending.binding())) {
                     restore(session.viewer, pending.binding());
                 }
 
-            }
-            else
-            {
+            } else {
                 ready(viewer, session, pending.binding(), tick);
             }
 
         }
     }
 
-    private void heartbeat(Player viewer, Session session, long tick)
-    {
-        if (!session.incremental)
-        {
+    private void heartbeat(Player viewer, Session session, long tick) {
+        if (!session.incremental) {
             send(viewer, heartbeatPacket(tick, null));
             return;
         }
         List<RenderLeases.Binding> bindings = new ArrayList<>();
-        for (Map.Entry<UUID, ClientSyncService.BoundState> entry : session.bindings.entrySet())
-        {
-            if (liveBinding(viewer, entry.getKey(), entry.getValue()))
-
-            {
+        for (Map.Entry<UUID, ClientSyncService.BoundState> entry : session.bindings.entrySet()) {
+            if (liveBinding(viewer, entry.getKey(), entry.getValue())) {
                 bindings.add(
                         new RenderLeases.Binding(entry.getKey(), entry.getValue().instance(), entry.getValue().hash()));
             }
 
         }
-        for (byte[] packet : heartbeatPackets(tick, bindings, this.maxPayload))
-        {
+        for (byte[] packet : heartbeatPackets(tick, bindings, this.maxPayload)) {
             sendBytes(viewer, packet, false);
         }
 
     }
 
-    private boolean liveBinding(Player viewer, UUID owner, BoundState bound)
-    {
-        if (!canObserve(viewer, owner))
-        {
+    private boolean liveBinding(Player viewer, UUID owner, BoundState bound) {
+        if (!canObserve(viewer, owner)) {
             return false;
         }
 
         StateSnapshot current = readSnapshot(owner);
         if (current == null || !current.instance().equals(bound.instance())
-                || !current.modelId().equals(bound.modelId()))
-        {
+                || !current.modelId().equals(bound.modelId())) {
             return false;
         }
 
@@ -1584,18 +1297,15 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         return hash.equals(bound.hash());
     }
 
-    static List<byte[]> heartbeatPackets(long tick, List<RenderLeases.Binding> bindings, int maxPayload)
-    {
+    static List<byte[]> heartbeatPackets(long tick, List<RenderLeases.Binding> bindings, int maxPayload) {
         List<byte[]> packets = new ArrayList<>();
         JsonArray identities = new JsonArray();
         int baseBytes = payloadSize(heartbeatPacket(tick, identities)), size = baseBytes;
-        for (RenderLeases.Binding binding : bindings)
-        {
+        for (RenderLeases.Binding binding : bindings) {
             JsonObject identity = new JsonObject();
             addBinding(identity, binding);
             int itemBytes = payloadSize(identity);
-            if (identities.size() == 64 || size + itemBytes + (identities.isEmpty() ? 0 : 1) > maxPayload)
-            {
+            if (identities.size() == 64 || size + itemBytes + (identities.isEmpty() ? 0 : 1) > maxPayload) {
                 packets.add(encode(heartbeatPacket(tick, identities)));
                 identities = new JsonArray();
                 size = baseBytes;
@@ -1607,132 +1317,107 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         return List.copyOf(packets);
     }
 
-    static JsonObject heartbeatPacket(long tick, JsonArray identities)
-    {
+    static JsonObject heartbeatPacket(long tick, JsonArray identities) {
         JsonObject message = envelope("heartbeat");
         message.addProperty("serverTick", tick);
         message.addProperty("leaseTicks", RenderLeases.LEASE_TICKS);
-        if (identities != null)
-        {
+        if (identities != null) {
             message.add("bindings", identities);
         }
         return message;
     }
 
-    private void pumpAssets(Player viewer, Session session, Set<String> authorized)
-    {
-        if (session.transfers.isEmpty())
-        {
+    private void pumpAssets(Player viewer, Session session, Set<String> authorized) {
+        if (session.transfers.isEmpty()) {
             return;
         }
 
-        if (this.protection != null && !this.protection.tryMainWork(1))
-        {
+        if (this.protection != null && !this.protection.tryMainWork(1)) {
             return;
         }
 
         int sentChunks = 0;
-        while (sentChunks < 2 && !session.transfers.isEmpty())
-        {
+        while (sentChunks < 2 && !session.transfers.isEmpty()) {
             Transfer transfer = session.transfers.peek();
             if (transfer.offer != null
                     && (!session.offers.transferring(transfer.offer) || !authorized.contains(transfer.asset.hash())
-                            || !authorizedHash(viewer, session, transfer.asset.hash())))
-            {
+                            || !authorizedHash(viewer, session, transfer.asset.hash()))) {
                 cancelOffer(viewer, session, transfer.offer, "asset_not_authorized");
                 continue;
             }
-            if (transfer.offer == null && !authorizedHash(viewer, session, transfer.asset.hash()))
-            {
+            if (transfer.offer == null && !authorizedHash(viewer, session, transfer.asset.hash())) {
                 removeTransfer(session);
                 continue;
             }
-            if (!transfer.started)
-            {
-                if (transfer.pendingPayload == null)
-                {
+            if (!transfer.started) {
+                if (transfer.pendingPayload == null) {
                     JsonObject begin = envelope("asset_begin");
                     begin.addProperty("modelId",
                             transfer.offer == null ? transfer.asset.modelId() : transfer.offer.modelId());
                     begin.addProperty("hash", transfer.asset.hash());
-                    if (transfer.offer != null)
-                    {
+                    if (transfer.offer != null) {
                         addOffer(begin, transfer.offer);
                     }
 
                     begin.addProperty("rawBytes", transfer.asset.rawBytes());
                     begin.addProperty("compressedBytes", transfer.asset.compressedBytes());
                     begin.addProperty("chunks", transfer.asset.chunks(transfer.chunkBytes));
-                    if (!retainTransferPayload(session, transfer, encode(begin)))
-                    {
+                    if (!retainTransferPayload(session, transfer, encode(begin))) {
                         return;
                     }
 
                 }
                 Result result = sendTransfer(viewer, session, transfer);
-                if (result == Result.DEFERRED)
-                {
+                if (result == Result.DEFERRED) {
                     return;
                 }
 
-                if (result == Result.FAILED)
-                {
+                if (result == Result.FAILED) {
                     failTransfer(viewer, session, transfer);
                     continue;
                 }
                 transfer.started = true;
                 transfer.lastProgress = currentTick();
-                if (transfer.offer != null)
-                {
+                if (transfer.offer != null) {
                     session.offers.progress(transfer.offer, currentTick());
                 }
 
             }
-            if (transfer.index == transfer.asset.chunks(transfer.chunkBytes))
-            {
-                if (transfer.pendingPayload == null)
-                {
+            if (transfer.index == transfer.asset.chunks(transfer.chunkBytes)) {
+                if (transfer.pendingPayload == null) {
                     JsonObject end = envelope("asset_end");
                     end.addProperty("hash", transfer.asset.hash());
-                    if (transfer.offer != null)
-                    {
+                    if (transfer.offer != null) {
                         addOffer(end, transfer.offer);
                     }
 
-                    if (!retainTransferPayload(session, transfer, encode(end)))
-                    {
+                    if (!retainTransferPayload(session, transfer, encode(end))) {
                         return;
                     }
 
                 }
                 Result result = sendTransfer(viewer, session, transfer);
-                if (result == Result.DEFERRED)
-                {
+                if (result == Result.DEFERRED) {
                     return;
                 }
 
-                if (result == Result.FAILED)
-                {
+                if (result == Result.FAILED) {
                     failTransfer(viewer, session, transfer);
                 }
 
-                else
-                {
-                    if (transfer.offer != null)
-                    {
+                else {
+                    if (transfer.offer != null) {
                         session.offers.delivered(transfer.offer, currentTick());
                     }
                     removeTransfer(session);
                 }
                 continue;
             }
-            if (transfer.pendingPayload == null)
-            {
+            if (transfer.pendingPayload == null) {
                 JsonObject chunk = envelope("asset_chunk");
                 chunk.addProperty("hash", transfer.asset.hash());
                 chunk.addProperty("index", transfer.index);
-                if (transfer.offer != null)
-                {
+                if (transfer.offer != null) {
                     addOffer(chunk, transfer.offer);
                 }
 
@@ -1741,62 +1426,52 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
                         transfer.asset.compressedBytes() - transfer.index * transfer.chunkBytes);
                 int padding = (3 - raw % 3) % 3;
                 int estimated = encode(chunk).length + ((raw + 2) / 3) * 4 + padding * 5;
-                if (!this.limits.canQueueOutgoing(session.viewer, estimated)
-                        || !this.limits.canOutbound(session.viewer, estimated, true, System.nanoTime(), currentTick()))
-                {
+                if (!this.limits.canQueueOutgoing(session.viewer, estimated) || !this.limits.canOutbound(session.viewer,
+                        estimated, true, System.nanoTime(), currentTick())) {
                     return;
                 }
 
                 // Gson's HTML-safe JSON escapes each trailing '=' as six ASCII bytes.
                 chunk.addProperty("data", transfer.asset.base64Chunk(transfer.index, transfer.chunkBytes));
-                if (!retainTransferPayload(session, transfer, encode(chunk)))
-                {
+                if (!retainTransferPayload(session, transfer, encode(chunk))) {
                     return;
                 }
 
             }
             Result result = sendTransfer(viewer, session, transfer);
-            if (result == Result.DEFERRED)
-            {
+            if (result == Result.DEFERRED) {
                 return;
             }
 
-            if (result == Result.FAILED)
-            {
+            if (result == Result.FAILED) {
                 failTransfer(viewer, session, transfer);
                 continue;
             }
             sentChunks++;
             transfer.index++;
             transfer.lastProgress = currentTick();
-            if (transfer.offer != null)
-            {
+            if (transfer.offer != null) {
                 session.offers.progress(transfer.offer, currentTick());
             }
 
         }
     }
 
-    private Result sendTransfer(Player viewer, Session session, Transfer transfer)
-    {
-        if (!authorizedHash(viewer, session, transfer.asset.hash()))
-        {
+    private Result sendTransfer(Player viewer, Session session, Transfer transfer) {
+        if (!authorizedHash(viewer, session, transfer.asset.hash())) {
             return Result.FAILED;
         }
 
         Result result = sendBytes(viewer, transfer.pendingPayload, true);
-        if (result != Result.DEFERRED)
-        {
+        if (result != Result.DEFERRED) {
             releaseTransferPayload(session, transfer);
         }
 
         return result;
     }
 
-    private boolean retainTransferPayload(Session session, Transfer transfer, byte[] payload)
-    {
-        if (!this.limits.queueOutgoing(session.viewer, payload.length))
-        {
+    private boolean retainTransferPayload(Session session, Transfer transfer, byte[] payload) {
+        if (!this.limits.queueOutgoing(session.viewer, payload.length)) {
             return false;
         }
 
@@ -1804,31 +1479,25 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         return true;
     }
 
-    private void releaseTransferPayload(Session session, Transfer transfer)
-    {
-        if (transfer.pendingPayload != null)
-        {
+    private void releaseTransferPayload(Session session, Transfer transfer) {
+        if (transfer.pendingPayload != null) {
             this.limits.releaseOutgoing(session.viewer, transfer.pendingPayload.length);
             transfer.pendingPayload = null;
         }
     }
 
-    private void removeTransfer(Session session)
-    {
+    private void removeTransfer(Session session) {
         Transfer transfer = session.transfers.remove();
         releaseTransferPayload(session, transfer);
         this.assets.release(transfer.asset);
         this.limits.releaseTransfer(session.viewer);
     }
 
-    private void expireLegacyTransfers(Player viewer, Session session, long tick)
-    {
+    private void expireLegacyTransfers(Player viewer, Session session, long tick) {
         Iterator<Transfer> iterator = session.transfers.iterator();
-        while (iterator.hasNext())
-        {
+        while (iterator.hasNext()) {
             Transfer transfer = iterator.next();
-            if (transfer.offer != null)
-            {
+            if (transfer.offer != null) {
                 continue;
             }
 
@@ -1839,8 +1508,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
                                     : this.limits.transferQueueTicks())
                                             ? (transfer.started ? "download_idle_timeout" : "asset_queue_timeout")
                                             : null);
-            if (reason != null)
-            {
+            if (reason != null) {
                 iterator.remove();
                 releaseTransferPayload(session, transfer);
                 this.assets.release(transfer.asset);
@@ -1854,65 +1522,47 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         }
     }
 
-    private void failTransfer(Player viewer, Session session, Transfer transfer)
-    {
-        if (transfer.offer == null)
-        {
+    private void failTransfer(Player viewer, Session session, Transfer transfer) {
+        if (transfer.offer == null) {
             removeTransfer(session);
-        }
-        else
-        {
+        } else {
             cancelOffer(viewer, session, transfer.offer, "asset_send_failed");
         }
 
     }
 
-    private Set<UUID> readOwnerIds()
-    {
-        try
-        {
+    private Set<UUID> readOwnerIds() {
+        try {
             return this.snapshotCache.owners(currentTick());
-        }
-        catch (RuntimeException exception)
-        {
+        } catch (RuntimeException exception) {
             warnFailure("Cannot obtain client owner directory", exception);
             return Set.of();
         }
     }
 
-    private StateSnapshot readSnapshot(UUID owner)
-    {
-        try
-        {
+    private StateSnapshot readSnapshot(UUID owner) {
+        try {
             return this.snapshotCache.get(owner, currentTick());
-        }
-        catch (RuntimeException exception)
-        {
+        } catch (RuntimeException exception) {
             warnFailure("Cannot obtain client snapshot", exception);
             return null;
         }
     }
 
-    private void reconcile(Player viewer, Session session, boolean fullSnapshot)
-    {
+    private void reconcile(Player viewer, Session session, boolean fullSnapshot) {
         Set<UUID> visible = new HashSet<>();
-        for (UUID owner : readOwnerIds())
-        {
-            if (canObserve(viewer, owner))
-            {
+        for (UUID owner : readOwnerIds()) {
+            if (canObserve(viewer, owner)) {
                 StateSnapshot snapshot = readSnapshot(owner);
-                if (snapshot != null)
-                {
+                if (snapshot != null) {
                     visible.add(owner);
                     sendState(viewer, session, snapshot, fullSnapshot, fullSnapshot);
                 }
             }
         }
 
-        for (UUID owner : List.copyOf(session.bindings.keySet()))
-        {
-            if (!visible.contains(owner))
-            {
+        for (UUID owner : List.copyOf(session.bindings.keySet())) {
+            if (!visible.contains(owner)) {
                 removeBinding(viewer, session, owner, "not_visible_or_active");
             }
 
@@ -1921,21 +1571,17 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         session.authorized = session.pushModels ? authorizedHashes(viewer, session) : Set.of();
     }
 
-    private boolean canObserve(Player viewer, UUID ownerId)
-    {
-        if (viewer == null || !viewer.isOnline())
-        {
+    private boolean canObserve(Player viewer, UUID ownerId) {
+        if (viewer == null || !viewer.isOnline()) {
             return false;
         }
 
         Player owner = Bukkit.getPlayer(ownerId);
-        if (owner == null || !owner.isOnline() || !viewer.getWorld().equals(owner.getWorld()))
-        {
+        if (owner == null || !owner.isOnline() || !viewer.getWorld().equals(owner.getWorld())) {
             return false;
         }
 
-        if (viewer.getUniqueId().equals(ownerId))
-        {
+        if (viewer.getUniqueId().equals(ownerId)) {
             return true;
         }
 
@@ -1943,22 +1589,19 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
                 .distanceSquared(owner.getLocation()) <= this.viewDistanceBlocks * this.viewDistanceBlocks;
     }
 
-    private void sendState(Player viewer, Session session, StateSnapshot snapshot, boolean force)
-    {
+    private void sendState(Player viewer, Session session, StateSnapshot snapshot, boolean force) {
         sendState(viewer, session, snapshot, force, false);
     }
 
-    private void sendState(Player viewer, Session session, StateSnapshot snapshot, boolean force, boolean completeMenu)
-    {
+    private void sendState(Player viewer, Session session, StateSnapshot snapshot, boolean force,
+            boolean completeMenu) {
         StateMetadata metadata = stateMetadata(snapshot);
         BoundState previous = session.bindings.get(snapshot.owner());
-        if (previous != null && !previous.equals(metadata.binding()))
-        {
+        if (previous != null && !previous.equals(metadata.binding())) {
             removeBinding(viewer, session, snapshot.owner(), "instance_or_asset_changed");
         }
 
-        if (!force && metadata.signature().equals(session.sentState.get(snapshot.owner())))
-        {
+        if (!force && metadata.signature().equals(session.sentState.get(snapshot.owner()))) {
             offerAsset(viewer, session, snapshot.owner(), metadata.binding(), currentTick());
             return;
         }
@@ -1969,40 +1612,32 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         deliverState(viewer, session, new PendingState(packet, menu));
     }
 
-    private void deliverState(Player viewer, Session session, PendingState pending)
-    {
+    private void deliverState(Player viewer, Session session, PendingState pending) {
         StatePacket packet = pending.packet();
         UUID owner = packet.snapshot().owner();
         byte[] payload = pending.menu() ? packet.full() : packet.delta();
-        if (payload == null)
-        {
+        if (payload == null) {
             removeBinding(viewer, session, owner, "state_payload_limit");
-            if (session.payloadFailures.add(owner))
-            {
+            if (session.payloadFailures.add(owner)) {
                 this.plugin.getLogger().warning("客户端状态超过负载上限，保持 ME：" + packet.snapshot().modelId());
             }
 
             return;
         }
         Result result = sendBytes(viewer, payload, false);
-        if (result == Result.DEFERRED)
-        {
-            if (session.pendingStates.get(owner) == pending)
-            {
+        if (result == Result.DEFERRED) {
+            if (session.pendingStates.get(owner) == pending) {
                 return;
             }
 
             if (session.pendingStates.containsKey(owner)
-                    || session.pendingStates.size() < DeferredClientPackets.CAPACITY)
-            {
+                    || session.pendingStates.size() < DeferredClientPackets.CAPACITY) {
                 removePendingState(session, owner);
-                if (this.limits.queueOutgoing(session.viewer, payload.length))
-                {
+                if (this.limits.queueOutgoing(session.viewer, payload.length)) {
                     session.pendingStates.put(owner, pending);
                 }
 
-                else
-                {
+                else {
                     removeBinding(viewer, session, owner, "state_queue_full");
                 }
 
@@ -2010,8 +1645,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             return;
         }
         removePendingState(session, owner);
-        if (result == Result.FAILED)
-        {
+        if (result == Result.FAILED) {
             removeBinding(viewer, session, owner, "state_send_failed");
             return;
         }
@@ -2020,13 +1654,11 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         session.controls.cancel("unbind:" + owner + ":" + packet.binding().instance());
         this.viewersByOwner.computeIfAbsent(owner, ignored -> new HashSet<>()).add(session.viewer);
         session.sentState.put(owner, packet.signature());
-        if (pending.menu())
-        {
+        if (pending.menu()) {
             session.sentMenus.put(owner, packet.publishedMenu());
         }
 
-        if (!packet.binding().hash().isEmpty())
-        {
+        if (!packet.binding().hash().isEmpty()) {
             HashSet<String> authorized = new HashSet<>(session.authorized);
             authorized.add(packet.binding().hash());
             session.authorized = Set.copyOf(authorized);
@@ -2034,59 +1666,48 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         offerAsset(viewer, session, owner, packet.binding(), currentTick());
     }
 
-    private void retryStates(Player viewer, Session session)
-    {
+    private void retryStates(Player viewer, Session session) {
         int attempts = 0;
-        for (PendingState pending : List.copyOf(session.pendingStates.values()))
-        {
-            if (attempts++ >= 4)
-            {
+        for (PendingState pending : List.copyOf(session.pendingStates.values())) {
+            if (attempts++ >= 4) {
                 break;
             }
 
             UUID owner = pending.packet().snapshot().owner();
             StateSnapshot current = readSnapshot(owner);
             if (current == null || !current.instance().equals(pending.packet().binding().instance())
-                    || !canObserve(viewer, owner))
-            {
+                    || !canObserve(viewer, owner)) {
                 removeBinding(viewer, session, owner, "not_visible_or_active");
                 continue;
             }
             deliverState(viewer, session, pending);
-            if (session.pendingStates.containsKey(owner))
-            {
+            if (session.pendingStates.containsKey(owner)) {
                 break;
             }
 
         }
     }
 
-    private void removePendingState(Session session, UUID owner)
-    {
+    private void removePendingState(Session session, UUID owner) {
         PendingState removed = session.pendingStates.remove(owner);
-        if (removed != null)
-        {
+        if (removed != null) {
             byte[] payload = removed.menu() ? removed.packet().full() : removed.packet().delta();
-            if (payload != null)
-            {
+            if (payload != null) {
                 this.limits.releaseOutgoing(session.viewer, payload.length);
             }
 
         }
     }
 
-    private StateMetadata stateMetadata(StateSnapshot snapshot)
-    {
+    private StateMetadata stateMetadata(StateSnapshot snapshot) {
         long tick = currentTick();
-        if (this.packetTick != tick)
-        {
+        if (this.packetTick != tick) {
             this.packetTick = tick;
             this.statePackets.clear();
             this.stateMetadata.clear();
         }
         StateMetadata known = this.stateMetadata.get(snapshot.owner());
-        if (known != null && known.snapshot().equals(snapshot))
-        {
+        if (known != null && known.snapshot().equals(snapshot)) {
             return known;
         }
 
@@ -2109,11 +1730,9 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         return result;
     }
 
-    private StatePacket statePacket(StateSnapshot snapshot, StateMetadata metadata)
-    {
+    private StatePacket statePacket(StateSnapshot snapshot, StateMetadata metadata) {
         StatePacket known = this.statePackets.get(snapshot.owner());
-        if (known != null && known.snapshot().equals(snapshot))
-        {
+        if (known != null && known.snapshot().equals(snapshot)) {
             return known;
         }
 
@@ -2144,8 +1763,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         state.add("accessories", accessoriesJson(snapshot.accessories()));
         state.add("motion", motionJson(snapshot.motion()));
         JsonArray layers = new JsonArray();
-        for (LayerState layer : snapshot.layers())
-        {
+        for (LayerState layer : snapshot.layers()) {
             JsonObject value = new JsonObject();
             value.addProperty("layer", layer.layer());
             value.addProperty("animation", layer.animation());
@@ -2158,8 +1776,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         }
         state.add("layers", layers);
         JsonArray animations = new JsonArray();
-        for (AnimationInfo info : snapshot.animations())
-        {
+        for (AnimationInfo info : snapshot.animations()) {
             JsonObject value = new JsonObject();
             value.addProperty("id", info.id());
             value.addProperty("label", truncateLabel(info.label()));
@@ -2168,21 +1785,18 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         state.add("animations", animations);
         byte[] full = encode(state);
         List<AnimationInfo> published = snapshot.animations();
-        if (full.length > this.maxPayload)
-        {
+        if (full.length > this.maxPayload) {
             state.add("animations", new JsonArray());
             full = encode(state);
             published = List.of();
         }
-        if (full.length > this.maxPayload)
-        {
+        if (full.length > this.maxPayload) {
             full = null;
         }
 
         state.remove("animations");
         byte[] delta = encode(state);
-        if (delta.length > this.maxPayload)
-        {
+        if (delta.length > this.maxPayload) {
             delta = null;
         }
 
@@ -2192,15 +1806,12 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         return result;
     }
 
-    private static byte[] encode(JsonObject message)
-    {
+    private static byte[] encode(JsonObject message) {
         return GSON.toJson(message).getBytes(StandardCharsets.UTF_8);
     }
 
-    static String truncateLabel(String label)
-    {
-        if (label == null)
-        {
+    static String truncateLabel(String label) {
+        if (label == null) {
             return "";
         }
 
@@ -2210,10 +1821,8 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         return safe.toString();
     }
 
-    static boolean fitStatePacket(JsonObject state, int maxPayload)
-    {
-        if (payloadSize(state) <= maxPayload)
-        {
+    static boolean fitStatePacket(JsonObject state, int maxPayload) {
+        if (payloadSize(state) <= maxPayload) {
             return true;
         }
 
@@ -2221,28 +1830,23 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         return payloadSize(state) <= maxPayload;
     }
 
-    private static int payloadSize(JsonObject packet)
-    {
+    private static int payloadSize(JsonObject packet) {
         return GSON.toJson(packet).getBytes(StandardCharsets.UTF_8).length;
     }
 
-    private void removeBinding(Player viewer, Session session, UUID owner, String reason)
-    {
+    private void removeBinding(Player viewer, Session session, UUID owner, String reason) {
         PendingReady pending = session.pendingReady.remove(owner);
-        if (pending != null)
-        {
+        if (pending != null) {
             restore(session.viewer, pending.binding());
         }
 
         RenderLeases.Binding lease = session.leases.remove(owner);
-        if (lease != null)
-        {
+        if (lease != null) {
             restore(session.viewer, lease);
         }
 
         BoundState previous = session.bindings.remove(owner);
-        if (previous != null && viewer != null)
-        {
+        if (previous != null && viewer != null) {
             sendUnbind(viewer, owner, previous.instance(), reason);
         }
 
@@ -2250,38 +1854,29 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         session.sentState.remove(owner);
         session.sentMenus.remove(owner);
         Set<UUID> indexed = this.viewersByOwner.get(owner);
-        if (indexed != null)
-        {
+        if (indexed != null) {
             indexed.remove(session.viewer);
-            if (indexed.isEmpty())
-            {
+            if (indexed.isEmpty()) {
                 this.viewersByOwner.remove(owner);
             }
         }
-        if (session.pushModels)
-        {
+        if (session.pushModels) {
             cancelUnauthorizedOffers(viewer, session, currentTick());
         }
 
     }
 
-    private void restore(UUID viewer, RenderLeases.Binding binding)
-    {
-        try
-        {
+    private void restore(UUID viewer, RenderLeases.Binding binding) {
+        try {
             this.renderControl.set(viewer, binding.owner(), binding.instance(), false);
-        }
-        catch (RuntimeException exception)
-        {
+        } catch (RuntimeException exception) {
             warnFailure("Cannot restore ME viewer rendering", exception);
         }
     }
 
-    private void warnFailure(String message, RuntimeException failure)
-    {
+    private void warnFailure(String message, RuntimeException failure) {
         long now = System.nanoTime();
-        if (this.failureWarningInitialized && now - this.lastFailureWarning < 5_000_000_000L)
-        {
+        if (this.failureWarningInitialized && now - this.lastFailureWarning < 5_000_000_000L) {
             this.suppressedFailures++;
             return;
         }
@@ -2293,22 +1888,17 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         this.plugin.getLogger().log(Level.WARNING, aggregated, failure);
     }
 
-    private void sendUnbind(Player viewer, UUID owner, UUID instance, String reason)
-    {
+    private void sendUnbind(Player viewer, UUID owner, UUID instance, String reason) {
         JsonObject message = envelope("unbind");
         message.addProperty("owner", owner.toString());
         message.addProperty("instance", instance.toString());
         message.addProperty("reason",
                 reason == null ? "unspecified" : reason.substring(0, Math.min(128, reason.length())));
         Session session = viewer == null ? null : this.sessions.get(viewer.getUniqueId());
-        if (session != null)
-        {
-            critical(viewer, session, "unbind:" + owner + ":" + instance, message, () ->
-            {
-            }, () ->
-            {
-            }, () ->
-            {
+        if (session != null) {
+            critical(viewer, session, "unbind:" + owner + ":" + instance, message, () -> {
+            }, () -> {
+            }, () -> {
                 BoundState rebound = session.bindings.get(owner);
                 return rebound == null || !rebound.instance().equals(instance);
             });
@@ -2316,30 +1906,24 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
 
     }
 
-    private void endSession(UUID id, Player viewer, Session session, String reason)
-    {
-        for (UUID owner : List.copyOf(session.bindings.keySet()))
-        {
+    private void endSession(UUID id, Player viewer, Session session, String reason) {
+        for (UUID owner : List.copyOf(session.bindings.keySet())) {
             removeBinding(viewer, session, owner, reason);
         }
 
-        for (RenderLeases.Binding binding : session.leases.clear())
-        {
+        for (RenderLeases.Binding binding : session.leases.clear()) {
             restore(id, binding);
         }
 
-        for (PushAssetOffers.Offer offer : session.offers.clear())
-        {
+        for (PushAssetOffers.Offer offer : session.offers.clear()) {
             cancelOffer(viewer, session, offer, reason);
         }
 
-        while (!session.transfers.isEmpty())
-        {
+        while (!session.transfers.isEmpty()) {
             removeTransfer(session);
         }
 
-        for (UUID owner : List.copyOf(session.pendingStates.keySet()))
-        {
+        for (UUID owner : List.copyOf(session.pendingStates.keySet())) {
             removePendingState(session, owner);
         }
 
@@ -2350,10 +1934,8 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         this.sessions.remove(id);
     }
 
-    private void clearSessions(String reason)
-    {
-        for (Map.Entry<UUID, ClientSyncService.Session> entry : List.copyOf(this.sessions.entrySet()))
-        {
+    private void clearSessions(String reason) {
+        for (Map.Entry<UUID, ClientSyncService.Session> entry : List.copyOf(this.sessions.entrySet())) {
             endSession(entry.getKey(), Bukkit.getPlayer(entry.getKey()), entry.getValue(), reason);
         }
 
@@ -2363,116 +1945,93 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         this.stateMetadata.clear();
     }
 
-    private boolean send(Player player, JsonObject message)
-    {
+    private boolean send(Player player, JsonObject message) {
         return sendPacket(player, message, false) == Result.SENT;
     }
 
-    private Result sendPacket(Player player, JsonObject message, boolean asset)
-    {
+    private Result sendPacket(Player player, JsonObject message, boolean asset) {
         return sendBytes(player, encode(message), asset);
     }
 
-    private Result sendBytes(Player player, byte[] payload, boolean asset)
-    {
+    private Result sendBytes(Player player, byte[] payload, boolean asset) {
         Result reserved = reserveBytes(player, payload, asset);
         return reserved == Result.SENT ? sendReservedBytes(player, payload) : reserved;
     }
 
-    private Result reserveBytes(Player player, byte[] payload, boolean asset)
-    {
+    private Result reserveBytes(Player player, byte[] payload, boolean asset) {
         if (player == null || !this.running || !this.configuredEnabled || !this.plugin.isEnabled() || !player.isOnline()
-                || !this.sessions.containsKey(player.getUniqueId()))
-        {
+                || !this.sessions.containsKey(player.getUniqueId())) {
             return Result.FAILED;
         }
 
-        try
-        {
-            if (payload.length > this.maxPayload)
-            {
+        try {
+            if (payload.length > this.maxPayload) {
                 this.plugin.getLogger().warning("Client packet exceeds payload limit");
                 return Result.FAILED;
             }
             if (!this.limits.allowOutbound(player.getUniqueId(), payload.length, asset, System.nanoTime(),
-                    currentTick()))
-            {
+                    currentTick())) {
                 return Result.DEFERRED;
             }
 
             return Result.SENT;
-        }
-        catch (RuntimeException exception)
-        {
+        } catch (RuntimeException exception) {
             this.plugin.getLogger().log(Level.FINE, "Cannot send client packet", exception);
             return Result.FAILED;
         }
     }
 
-    private Result sendReservedBytes(Player player, byte[] payload)
-    {
+    private Result sendReservedBytes(Player player, byte[] payload) {
         if (player == null || !this.running || !this.configuredEnabled || !this.plugin.isEnabled() || !player.isOnline()
-                || !this.sessions.containsKey(player.getUniqueId()))
-        {
+                || !this.sessions.containsKey(player.getUniqueId())) {
             return Result.FAILED;
         }
 
-        try
-        {
+        try {
             player.sendPluginMessage(this.plugin, CHANNEL, payload);
             return Result.SENT;
-        }
-        catch (RuntimeException exception)
-        {
+        } catch (RuntimeException exception) {
             this.plugin.getLogger().log(Level.FINE, "Cannot send client packet", exception);
             return Result.FAILED;
         }
     }
 
     private void critical(Player viewer, Session session, String key, JsonObject message, Runnable sent,
-            Runnable failed, BooleanSupplier valid)
-    {
+            Runnable failed, BooleanSupplier valid) {
         byte[] bytes = encode(message);
         Result result = sendBytes(viewer, bytes, false);
-        if (result == Result.SENT)
-        {
+        if (result == Result.SENT) {
             sent.run();
         }
 
-        else if (result == Result.DEFERRED)
-        {
+        else if (result == Result.DEFERRED) {
             session.controls.add(key, bytes, currentTick(), valid, sent, failed);
         }
 
-        else
-        {
+        else {
             failed.run();
         }
 
     }
 
-    private static boolean matches(BoundState bound, RenderLeases.Binding identity)
-    {
+    private static boolean matches(BoundState bound, RenderLeases.Binding identity) {
         return bound != null && bound.instance().equals(identity.instance()) && bound.hash().equals(identity.hash());
     }
 
-    private void sendError(Player player, String code)
-    {
+    private void sendError(Player player, String code) {
         JsonObject message = envelope("error");
         addErrorDetails(message, code);
         send(player, message);
     }
 
-    private void sendError(Player player, String code, RenderLeases.Binding binding)
-    {
+    private void sendError(Player player, String code, RenderLeases.Binding binding) {
         JsonObject message = envelope("error");
         addErrorDetails(message, code);
         addBinding(message, binding);
         send(player, message);
     }
 
-    private static void addErrorDetails(JsonObject message, String code)
-    {
+    private static void addErrorDetails(JsonObject message, String code) {
         String stage = code.equals("tps_protection") ? "admission"
                 : (code.contains("queue") ? "queue"
                         : (code.contains("render") ? "ready"
@@ -2490,10 +2049,8 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         error.json().entrySet().forEach(entry -> message.add(entry.getKey(), entry.getValue()));
     }
 
-    private String assetFailureCode(String modelId)
-    {
-        return switch (this.assets.status(modelId).state())
-        {
+    private String assetFailureCode(String modelId) {
+        return switch (this.assets.status(modelId).state()) {
         case "pending" -> "asset_preparing";
         case "missing" -> "asset_missing";
         case "invalid" -> "invalid_asset";
@@ -2506,16 +2063,12 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         };
     }
 
-    private static Inbound decode(byte[] bytes) throws IOException
-    {
+    private static Inbound decode(byte[] bytes) throws IOException {
         String text;
-        try
-        {
+        try {
             text = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
                     .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
-        }
-        catch (CharacterCodingException exception)
-        {
+        } catch (CharacterCodingException exception) {
             throw new IOException("Invalid UTF-8", exception);
         }
         int protocol = -1;
@@ -2524,30 +2077,23 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         UUID owner = null, instance = null, offerId = null;
         List<RenderLeases.Binding> bindings = List.of();
         Set<String> fields = new HashSet<>(), capabilities = new HashSet<>();
-        try (JsonReader reader = new JsonReader(new StringReader(text)))
-        {
+        try (JsonReader reader = new JsonReader(new StringReader(text))) {
             reader.setStrictness(Strictness.STRICT);
             reader.beginObject();
-            while (reader.hasNext())
-            {
+            while (reader.hasNext()) {
                 String key = reader.nextName();
-                if (!fields.add(key) || fields.size() > 10)
-                {
+                if (!fields.add(key) || fields.size() > 10) {
                     throw new IllegalArgumentException("Duplicate or excessive fields");
                 }
 
-                switch (key)
-                {
-                case "protocol" ->
-                {
-                    if (reader.peek() != JsonToken.NUMBER)
-                    {
+                switch (key) {
+                case "protocol" -> {
+                    if (reader.peek() != JsonToken.NUMBER) {
                         throw new IllegalArgumentException("Protocol must be an integer");
                     }
 
                     String number = reader.nextString();
-                    if (number.length() > 12)
-                    {
+                    if (number.length() > 12) {
                         throw new IllegalArgumentException("Protocol overflow");
                     }
                     protocol = new BigDecimal(number).intValueExact();
@@ -2563,14 +2109,11 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
                 case "owner" -> owner = readUuid(reader);
                 case "instance" -> instance = readUuid(reader);
                 case "bindings" -> bindings = readBindings(reader);
-                case "capabilities" ->
-                {
+                case "capabilities" -> {
                     reader.beginArray();
-                    while (reader.hasNext())
-                    {
+                    while (reader.hasNext()) {
                         String capability = readString(reader, 32);
-                        if (!CAPABILITIES.contains(capability) || !capabilities.add(capability))
-                        {
+                        if (!CAPABILITIES.contains(capability) || !capabilities.add(capability)) {
                             throw new IllegalArgumentException("Unsupported capability");
                         }
 
@@ -2581,75 +2124,57 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
                 }
             }
             reader.endObject();
-            if (reader.peek() != JsonToken.END_DOCUMENT || !fields.containsAll(Set.of("protocol", "type")))
-            {
+            if (reader.peek() != JsonToken.END_DOCUMENT || !fields.containsAll(Set.of("protocol", "type"))) {
                 throw new IllegalArgumentException("Incomplete/trailing payload");
             }
 
-        }
-        catch (ArithmeticException exception)
-        {
+        } catch (ArithmeticException exception) {
             throw new IllegalArgumentException("Protocol must be an integer", exception);
         }
         Set<String> allowed;
-        switch (type)
-        {
-        case "hello" ->
-        {
+        switch (type) {
+        case "hello" -> {
             allowed = Set.of("protocol", "type", "clientVersion", "capabilities");
-            if (!capabilities.contains("local_render"))
-            {
+            if (!capabilities.contains("local_render")) {
                 throw new IllegalArgumentException("local_render capability required");
             }
         }
         case "snapshot_request" -> allowed = Set.of("protocol", "type");
-        case "request" ->
-        {
+        case "request" -> {
             allowed = Set.of("protocol", "type", "action", "argument");
             if (!ACTIONS.contains(action)
-                    || (action.equals("play") ? !ANIMATION_NAME.matcher(argument).matches() : !argument.isEmpty()))
-            {
+                    || (action.equals("play") ? !ANIMATION_NAME.matcher(argument).matches() : !argument.isEmpty())) {
                 throw new IllegalArgumentException("Invalid action request");
             }
         }
-        case "asset_request" ->
-        {
+        case "asset_request" -> {
             allowed = Set.of("protocol", "type", "modelId", "hash");
-            if (!MODEL_ID.matcher(modelId).matches() || !HASH.matcher(hash).matches())
-            {
+            if (!MODEL_ID.matcher(modelId).matches() || !HASH.matcher(hash).matches()) {
                 throw new IllegalArgumentException("Invalid asset key");
             }
         }
-        case "asset_status" ->
-        {
+        case "asset_status" -> {
             allowed = Set.of("protocol", "type", "offerId", "hash", "status");
             if (offerId == null || !HASH.matcher(hash).matches()
-                    || !Set.of("cached", "missing", "rejected").contains(assetStatus))
-
-            {
+                    || !Set.of("cached", "missing", "rejected").contains(assetStatus)) {
                 throw new IllegalArgumentException("Invalid asset feedback");
             }
         }
-        case "render_ready", "render_failed" ->
-        {
+        case "render_ready", "render_failed" -> {
             allowed = Set.of("protocol", "type", "owner", "instance", "hash");
-            if (owner == null || instance == null || !HASH.matcher(hash).matches())
-            {
+            if (owner == null || instance == null || !HASH.matcher(hash).matches()) {
                 throw new IllegalArgumentException("Incomplete render binding");
             }
         }
-        case "render_heartbeat" ->
-        {
+        case "render_heartbeat" -> {
             allowed = Set.of("protocol", "type", "bindings");
-            if (!fields.contains("bindings"))
-            {
+            if (!fields.contains("bindings")) {
                 throw new IllegalArgumentException("Bindings required");
             }
         }
         default -> throw new IllegalArgumentException("Unknown message type");
         }
-        if (!allowed.containsAll(fields))
-        {
+        if (!allowed.containsAll(fields)) {
             throw new IllegalArgumentException("Field not allowed for message");
         }
 
@@ -2660,15 +2185,12 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
                 owner == null ? null : new RenderLeases.Binding(owner, instance, hash), bindings);
     }
 
-    private static List<RenderLeases.Binding> readBindings(JsonReader reader) throws IOException
-    {
+    private static List<RenderLeases.Binding> readBindings(JsonReader reader) throws IOException {
         List<RenderLeases.Binding> bindings = new ArrayList<>();
         Set<UUID> owners = new HashSet<>();
         reader.beginArray();
-        while (reader.hasNext())
-        {
-            if (bindings.size() >= 64)
-            {
+        while (reader.hasNext()) {
+            if (bindings.size() >= 64) {
                 throw new IllegalArgumentException("Too many render bindings");
             }
 
@@ -2676,16 +2198,13 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             Set<String> keys = new HashSet<>();
             UUID owner = null, instance = null;
             String hash = "";
-            while (reader.hasNext())
-            {
+            while (reader.hasNext()) {
                 String key = reader.nextName();
-                if (!keys.add(key))
-                {
+                if (!keys.add(key)) {
                     throw new IllegalArgumentException("Duplicate binding field");
                 }
 
-                switch (key)
-                {
+                switch (key) {
                 case "owner" -> owner = readUuid(reader);
                 case "instance" -> instance = readUuid(reader);
                 case "hash" -> hash = readString(reader, 64);
@@ -2693,8 +2212,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
                 }
             }
             reader.endObject();
-            if (owner == null || instance == null || !HASH.matcher(hash).matches() || !owners.add(owner))
-            {
+            if (owner == null || instance == null || !HASH.matcher(hash).matches() || !owners.add(owner)) {
                 throw new IllegalArgumentException("Invalid/duplicate render binding");
             }
 
@@ -2704,66 +2222,55 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         return List.copyOf(bindings);
     }
 
-    private static UUID readUuid(JsonReader reader) throws IOException
-    {
+    private static UUID readUuid(JsonReader reader) throws IOException {
         String text = readString(reader, 36);
         UUID uuid = UUID.fromString(text);
-        if (!uuid.toString().equals(text))
-        {
+        if (!uuid.toString().equals(text)) {
             throw new IllegalArgumentException("UUID must be canonical lowercase");
         }
         return uuid;
     }
 
-    private static String readString(JsonReader reader, int maxLength) throws IOException
-    {
-        if (reader.peek() != JsonToken.STRING)
-        {
+    private static String readString(JsonReader reader, int maxLength) throws IOException {
+        if (reader.peek() != JsonToken.STRING) {
             throw new IllegalArgumentException("Expected string");
         }
 
         String value = reader.nextString();
-        if (value.length() > maxLength || value.chars().anyMatch(Character::isISOControl))
-        {
+        if (value.length() > maxLength || value.chars().anyMatch(Character::isISOControl)) {
             throw new IllegalArgumentException("Invalid string");
         }
         return value;
     }
 
-    private static void addBinding(JsonObject object, RenderLeases.Binding binding)
-    {
+    private static void addBinding(JsonObject object, RenderLeases.Binding binding) {
         object.addProperty("owner", binding.owner().toString());
         object.addProperty("instance", binding.instance().toString());
         object.addProperty("hash", binding.hash());
     }
 
-    private static JsonObject envelope(String type)
-    {
+    private static JsonObject envelope(String type) {
         JsonObject object = new JsonObject();
         object.addProperty("protocol", PROTOCOL);
         object.addProperty("type", type);
         return object;
     }
 
-    private static long currentTick()
-    {
+    private static long currentTick() {
         return Integer.toUnsignedLong(Bukkit.getCurrentTick());
     }
 
-    private static long tickDistance(long current, long previous)
-    {
+    private static long tickDistance(long current, long previous) {
         return (current - previous) & 0xffffffffL;
     }
 
-    private static JsonObject motionJson(MotionState motion)
-    {
+    private static JsonObject motionJson(MotionState motion) {
         JsonObject value = new JsonObject();
         JsonArray features = new JsonArray();
         motion.features().forEach(features::add);
         value.add("features", features);
         JsonArray clips = new JsonArray();
-        for (LayerState clip : motion.clips())
-        {
+        for (LayerState clip : motion.clips()) {
             JsonObject entry = new JsonObject();
             entry.addProperty("state", clip.layer());
             entry.addProperty("animation", clip.animation());
@@ -2790,8 +2297,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         return value;
     }
 
-    static JsonObject accessoriesJson(Map<String, Double> accessories)
-    {
+    static JsonObject accessoriesJson(Map<String, Double> accessories) {
         JsonObject result = new JsonObject();
         accessories.forEach(result::addProperty);
         return result;
@@ -2801,10 +2307,8 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     public record MotionState(List<String> features, List<LayerState> clips, int jumpMinTicks, int landingGraceTicks,
             double movementThreshold, boolean interruptMove, boolean interruptPosture, boolean flying,
             String interaction, String forcedPose, String specialPose, double anchorX, double anchorY, double anchorZ,
-            float anchorYaw)
-    {
-        public MotionState
-        {
+            float anchorYaw) {
+        public MotionState {
             features = List.copyOf(features);
             clips = List.copyOf(clips);
             Objects.requireNonNull(specialPose);
@@ -2816,19 +2320,16 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     public record StateSnapshot(UUID owner, UUID instance, String modelId, long sequence, long serverTick,
             List<LayerState> layers, UUID world, double x, double y, double z, double bodyYaw, double headYaw,
             double headPitch, double scale, boolean hidePlayer, boolean showSelf, List<AnimationInfo> animations,
-            boolean localRenderable, MotionState motion, Map<String, Double> accessories)
-    {
+            boolean localRenderable, MotionState motion, Map<String, Double> accessories) {
         public StateSnapshot(UUID owner, UUID instance, String modelId, long sequence, long serverTick,
                 List<LayerState> layers, UUID world, double x, double y, double z, double bodyYaw, double headYaw,
                 double headPitch, double scale, boolean hidePlayer, boolean showSelf, List<AnimationInfo> animations,
-                boolean localRenderable, MotionState motion)
-        {
+                boolean localRenderable, MotionState motion) {
             this(owner, instance, modelId, sequence, serverTick, layers, world, x, y, z, bodyYaw, headYaw, headPitch,
                     scale, hidePlayer, showSelf, animations, localRenderable, motion, Map.of());
         }
 
-        public StateSnapshot
-        {
+        public StateSnapshot {
             Objects.requireNonNull(owner);
             Objects.requireNonNull(instance);
             Objects.requireNonNull(modelId);
@@ -2838,16 +2339,13 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             Objects.requireNonNull(motion);
             accessories = Map.copyOf(accessories);
             if (!accessories.isEmpty() && (!accessories.keySet().equals(Set.of("a", "b")) || accessories.values()
-                    .stream().anyMatch(value -> !Double.isFinite(value) || value < 0 || value > 1)))
-
-            {
+                    .stream().anyMatch(value -> !Double.isFinite(value) || value < 0 || value > 1))) {
                 throw new IllegalArgumentException("Invalid accessory state");
             }
 
             if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z) || !Double.isFinite(bodyYaw)
                     || !Double.isFinite(headYaw) || !Double.isFinite(headPitch) || !Double.isFinite(scale)
-                    || scale <= 0)
-            {
+                    || scale <= 0) {
                 throw new IllegalArgumentException("Invalid visual transform");
             }
 
@@ -2855,35 +2353,28 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     }
 
     public record LayerState(String layer, String animation, long startedAtTick, double speed, String loop, int inTicks,
-            int outTicks)
-    {
-        public LayerState
-        {
+            int outTicks) {
+        public LayerState {
             Objects.requireNonNull(layer);
             Objects.requireNonNull(animation);
             Objects.requireNonNull(loop);
-            if (!Double.isFinite(speed) || speed <= 0 || inTicks < 0 || outTicks < 0)
-            {
+            if (!Double.isFinite(speed) || speed <= 0 || inTicks < 0 || outTicks < 0) {
                 throw new IllegalArgumentException("Invalid animation parameters");
             }
         }
     }
 
-    public record AnimationInfo(String id, String label)
-    {
+    public record AnimationInfo(String id, String label) {
     }
 
-    public record ActionRequest(Player player, String action, String argument)
-    {
+    public record ActionRequest(Player player, String action, String argument) {
     }
 
     @FunctionalInterface
-    public interface RenderControl
-    {
+    public interface RenderControl {
         boolean set(UUID viewer, UUID owner, UUID instance, boolean enabled);
 
-        default boolean pending(UUID viewer, UUID owner, UUID instance)
-        {
+        default boolean pending(UUID viewer, UUID owner, UUID instance) {
             return false;
         }
     }
@@ -2891,49 +2382,40 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     private record Inbound(int protocol, String type, String clientVersion, boolean packModels, boolean pushModels,
             boolean incremental, boolean timeline, boolean catalog, boolean disguiseResults, String action,
             String argument, String modelId, String hash, UUID offerId, String assetStatus,
-            RenderLeases.Binding binding, List<RenderLeases.Binding> bindings)
-    {
+            RenderLeases.Binding binding, List<RenderLeases.Binding> bindings) {
     }
 
-    private record BoundState(UUID instance, String modelId, String hash)
-    {
+    private record BoundState(UUID instance, String modelId, String hash) {
     }
 
     private record StateSignature(UUID instance, String modelId, String hash, long sequence, UUID world,
             List<LayerState> layers, MotionState motion, Map<String, Double> accessories, double scale, boolean hide,
             boolean show, List<AnimationInfo> animations, String assetState, String assetReason, String assetSource,
-            int food, boolean sourceInvisible)
-    {
+            int food, boolean sourceInvisible) {
     }
 
     private record StatePacket(StateSnapshot snapshot, BoundState binding, StateSignature signature, byte[] full,
-            byte[] delta, List<AnimationInfo> publishedMenu)
-    {
+            byte[] delta, List<AnimationInfo> publishedMenu) {
     }
 
     private record StateMetadata(StateSnapshot snapshot, BoundState binding, StateSignature signature,
-            ModelAssets.Status status, int food, boolean sourceInvisible)
-    {
+            ModelAssets.Status status, int food, boolean sourceInvisible) {
     }
 
-    private record PendingState(StatePacket packet, boolean menu)
-    {
+    private record PendingState(StatePacket packet, boolean menu) {
     }
 
-    private record PendingReady(RenderLeases.Binding binding, long since)
-    {
+    private record PendingReady(RenderLeases.Binding binding, long since) {
     }
 
-    public static final class DisguiseRequest
-    {
+    public static final class DisguiseRequest {
         private final Session session;
         private final UUID requestId;
         private final DisguiseReceipt receipt;
         private final boolean execute, tracked;
 
         private DisguiseRequest(Session session, UUID requestId, DisguiseReceipt receipt, boolean execute,
-                boolean tracked)
-        {
+                boolean tracked) {
             this.session = session;
             this.requestId = requestId;
             this.receipt = receipt;
@@ -2941,32 +2423,27 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             this.tracked = tracked;
         }
 
-        public boolean execute()
-        {
+        public boolean execute() {
             return this.execute;
         }
     }
 
-    private static final class DisguiseReceipt
-    {
+    private static final class DisguiseReceipt {
         final String modelId, fingerprint;
         JsonObject result;
 
-        DisguiseReceipt(String modelId, String fingerprint)
-        {
+        DisguiseReceipt(String modelId, String fingerprint) {
             this.modelId = modelId;
             this.fingerprint = fingerprint;
         }
     }
 
-    private static final class Session
-    {
+    private static final class Session {
         final UUID viewer;
         final boolean packModels, pushModels, incremental, timeline, catalog, disguiseResults;
 
         Session(UUID viewer, boolean packModels, boolean pushModels, boolean incremental, boolean timeline,
-                boolean catalog, boolean disguiseResults, long tick, int discovery, int validation)
-        {
+                boolean catalog, boolean disguiseResults, long tick, int discovery, int validation) {
             this.viewer = viewer;
             this.packModels = packModels;
             this.pushModels = pushModels;
@@ -2980,8 +2457,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             this.lastLegacyTick = tick;
         }
 
-        String assetMode()
-        {
+        String assetMode() {
             return this.pushModels ? "server-push" : (this.packModels ? "resource-pack" : "legacy-download");
         }
 
@@ -3010,8 +2486,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         byte[] pendingCatalogBytes;
     }
 
-    private static final class Transfer
-    {
+    private static final class Transfer {
         final ModelAssets.Asset asset;
         final int chunkBytes;
         final PushAssetOffers.Offer offer;
@@ -3021,8 +2496,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         final long created;
         long lastProgress;
 
-        Transfer(ModelAssets.Asset asset, int chunkBytes, PushAssetOffers.Offer offer, long tick)
-        {
+        Transfer(ModelAssets.Asset asset, int chunkBytes, PushAssetOffers.Offer offer, long tick) {
             this.asset = asset;
             this.chunkBytes = chunkBytes;
             this.offer = offer;

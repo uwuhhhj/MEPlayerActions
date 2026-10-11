@@ -10,11 +10,9 @@ import java.util.*;
 import javax.imageio.ImageIO;
 import static org.junit.jupiter.api.Assertions.*;
 
-class YsmAnimationControllerTest
-{
+class YsmAnimationControllerTest {
     @Test
-    void orderedTransitionsRunExitThenEntryExactlyOnceAndPreserveRepeatedFrame()
-    {
+    void orderedTransitionsRunExitThenEntryExactlyOnceAndPreserveRepeatedFrame() {
         JsonObject raw = fixture();
         clip(raw, "idle", 0, "LOOP", "position", "0");
         clip(raw, "active", 0, "LOOP", "position", "16");
@@ -36,8 +34,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void emptyEntriesChainInOneFrameButCyclesAreBounded()
-    {
+    void emptyEntriesChainInOneFrameButCyclesAreBounded() {
         JsonObject raw = fixture();
         clip(raw, "idle", 0, "LOOP", "position", "16");
         controllers(raw, """
@@ -58,8 +55,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void conditionsAreBooleanClipWeightsAreNumericAndSameStateScaleMultiplies()
-    {
+    void conditionsAreBooleanClipWeightsAreNumericAndSameStateScaleMultiplies() {
         JsonObject raw = fixture();
         clip(raw, "a", 0, "LOOP", "position", "8");
         clip(raw, "b", 0, "LOOP", "position", "8");
@@ -75,8 +71,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void transitionHoldsClipTimeZeroThenStartsClockAndUsesAuthoredBlendCurve()
-    {
+    void transitionHoldsClipTimeZeroThenStartsClockAndUsesAuthoredBlendCurve() {
         JsonObject raw = fixture();
         clip(raw, "a", 0, "LOOP", "position", "0");
         clip(raw, "b", 2, "HOLD", "position", "q.anim_time*16");
@@ -94,8 +89,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void finishedQueriesArePerControllerAndLoopFinishedIsSticky()
-    {
+    void finishedQueriesArePerControllerAndLoopFinishedIsSticky() {
         JsonObject raw = fixture();
         clip(raw, "a", 1, "LOOP", "position", "0");
         clip(raw, "b", 0, "LOOP", "position", "16");
@@ -113,8 +107,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void contextVariablesAreIsolatedButEntityVariablesAreSharedAndResetWithClock()
-    {
+    void contextVariablesAreIsolatedButEntityVariablesAreSharedAndResetWithClock() {
         JsonObject raw = fixture();
         clip(raw, "a", 0, "LOOP", "position", "c.amount");
         controllers(raw, """
@@ -130,8 +123,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void parallelRotationAddsButPositionOverridesAndMainDoesNotDiscardNativeHandSlot()
-    {
+    void parallelRotationAddsButPositionOverridesAndMainDoesNotDiscardNativeHandSlot() {
         JsonObject raw = fixture();
         clip(raw, "idle", 0, "LOOP", "position", "16");
         clip(raw, "hold", 0, "LOOP", "position", "32");
@@ -143,8 +135,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void timelineRunsOncePerCycleAndPauseSuppressesContributionWithoutRewindingClock()
-    {
+    void timelineRunsOncePerCycleAndPauseSuppressesContributionWithoutRewindingClock() {
         JsonObject raw = fixture();
         clip(raw, "idle", 1, "LOOP", "position", "q.anim_time*16");
         timeline(raw, "idle", 0, "v.events += 1;");
@@ -162,15 +153,13 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void physicsNameIdentityAndModelInstancesRemainIndependent()
-    {
+    void physicsNameIdentityAndModelInstancesRemainIndependent() {
         JsonObject raw = fixture();
         clip(raw, "parallel0", 0, "LOOP", "position", "ysm.second_order('same', q.target, 1, 0.5, 0)");
         AnimationPlayer a = new AnimationPlayer(parse(raw)), b = new AnimationPlayer(parse(raw));
         a.sample(0, List.of(), 0, 0, Map.of("query.target", 16d));
         b.sample(0, List.of(), 0, 0, Map.of("query.target", 0d));
-        for (int i = 1; i <= 100; i++)
-        {
+        for (int i = 1; i <= 100; i++) {
             a.sample(i, List.of(), 0, 0, Map.of("query.target", 16d));
             b.sample(i, List.of(), 0, 0, Map.of("query.target", 0d));
         }
@@ -179,8 +168,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void basisAndDefaultsNeverExecuteEntryOrWorldFunctionsAndTransformsAreCopies()
-    {
+    void basisAndDefaultsNeverExecuteEntryOrWorldFunctionsAndTransformsAreCopies() {
         JsonObject raw = fixture();
         clip(raw, "parallel1", 0, "LOOP", "position", "0");
         timeline(raw, "parallel1", 0, "v.roaming.a = v.roaming.a ?? 1;ysm.play_sound('test');");
@@ -199,8 +187,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void nestedEntryControllersResolveOnlyBoundedNamedChildren()
-    {
+    void nestedEntryControllersResolveOnlyBoundedNamedChildren() {
         JsonObject raw = fixture();
         clip(raw, "a", 0, "LOOP", "position", "16");
         controllers(raw, """
@@ -214,8 +201,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void controllerEventSetAnimationDoesNotRestartEveryFrameAndDelegatesWorldEffects()
-    {
+    void controllerEventSetAnimationDoesNotRestartEveryFrameAndDelegatesWorldEffects() {
         JsonObject raw = fixture();
         clip(raw, "a", 2, "HOLD", "position", "q.anim_time*16");
         raw.add("ysm_events",
@@ -223,8 +209,7 @@ class YsmAnimationControllerTest
         timeline(raw, "a", 0, "ysm.play_sound('safe:event');");
         List<String> effects = new ArrayList<>();
         AnimationPlayer player = new AnimationPlayer(parse(raw));
-        player.configureFrame(context -> context.functions((name, args) ->
-        {
+        player.configureFrame(context -> context.functions((name, args) -> {
             effects.add(name);
             return 0d;
         }));
@@ -235,8 +220,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void onetimeClipsFinishAndFadeRatherThanHoldingLastPose()
-    {
+    void onetimeClipsFinishAndFadeRatherThanHoldingLastPose() {
         JsonObject raw = fixture();
         clip(raw, "a", 1, "ONCE", "position", "16");
         AnimationPlayer player = new AnimationPlayer(parse(raw));
@@ -250,8 +234,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void unspecifiedConstantLengthRemainsUnfinishedUntilExplicitStop()
-    {
+    void unspecifiedConstantLengthRemainsUnfinishedUntilExplicitStop() {
         JsonObject raw = fixture();
         clip(raw, "constant", 0, "ONCE", "position", "16");
         raw.getAsJsonArray("animations").get(0).getAsJsonObject().addProperty("ysm_infinite", true);
@@ -268,8 +251,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void hiddenBoneMatricesAreExcludedWhileStaticShoulderBasisRemainsAvailable()
-    {
+    void hiddenBoneMatricesAreExcludedWhileStaticShoulderBasisRemainsAvailable() {
         JsonObject raw = fixture();
         raw.getAsJsonArray("outliner").get(0).getAsJsonObject().addProperty("visibility", false);
         BbModel model = parse(raw);
@@ -280,14 +262,12 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void invalidStateTargetsAndOversizedControllerGraphsAreRejected()
-    {
+    void invalidStateTargetsAndOversizedControllerGraphsAreRejected() {
         JsonObject raw = fixture();
         controllers(raw, "{\"player.main\":{\"states\":{\"default\":{\"transitions\":[{\"missing\":\"1\"}]}}}}");
         assertThrows(IllegalArgumentException.class, () -> parse(raw));
         JsonObject definitions = new JsonObject();
-        for (int i = 0; i < 65; i++)
-        {
+        for (int i = 0; i < 65; i++) {
             definitions.add("player.parallel_" + i, JsonParser.parseString("{\"states\":{\"default\":{}}}"));
         }
 
@@ -295,8 +275,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void firstEventAloneControlsBuiltinAndBypassRestoresTheNativePredicate()
-    {
+    void firstEventAloneControlsBuiltinAndBypassRestoresTheNativePredicate() {
         JsonObject raw = fixture();
         clip(raw, "script", 2, "HOLD", "position", "q.anim_time*16");
         clip(raw, "native", 0, "LOOP", "position", "16");
@@ -312,8 +291,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void continueDoesNotSelectNewNativeAnimationAndPausePreservesTheClock()
-    {
+    void continueDoesNotSelectNewNativeAnimationAndPausePreservesTheClock() {
         JsonObject raw = fixture();
         clip(raw, "a", 2, "HOLD", "position", "q.anim_time*16");
         clip(raw, "b", 0, "LOOP", "position", "32");
@@ -334,8 +312,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void stopBeginsEndingTransitionWhileResetIsImmediateAndPreservesDefinitionVariables()
-    {
+    void stopBeginsEndingTransitionWhileResetIsImmediateAndPreservesDefinitionVariables() {
         JsonObject stop = fixture();
         clip(stop, "a", 0, "LOOP", "position", "16");
         event(stop, "player_ctrl_post_main", "return q.stop ? 3 : 5;");
@@ -362,8 +339,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void indicateReloadLeavesCurrentClockUntilNextMatchingSetRequestRestarts()
-    {
+    void indicateReloadLeavesCurrentClockUntilNextMatchingSetRequestRestarts() {
         JsonObject raw = fixture();
         clip(raw, "a", 2, "HOLD", "position", "q.anim_time*16");
         event(raw, "player_ctrl_post_main",
@@ -376,8 +352,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void requestDedupIncludesExplicitLoopOverrideAndInvalidNamesCancelCurrent()
-    {
+    void requestDedupIncludesExplicitLoopOverrideAndInvalidNamesCancelCurrent() {
         JsonObject raw = fixture();
         clip(raw, "a", 2, "HOLD", "position", "q.anim_time*16");
         event(raw, "player_ctrl_post_main",
@@ -391,8 +366,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void controllerMutationsInEntryTimelineAndNonbuiltinEventsAreInert()
-    {
+    void controllerMutationsInEntryTimelineAndNonbuiltinEventsAreInert() {
         JsonObject raw = fixture();
         clip(raw, "a", 0, "LOOP", "position", "16");
         clip(raw, "b", 0, "LOOP", "position", "32");
@@ -402,8 +376,7 @@ class YsmAnimationControllerTest
         timeline(raw, "a", 0, "ctrl.reset();ctrl.set_animation('b',10);ctrl.indicate_reload();");
         List<String> delegated = new ArrayList<>();
         AnimationPlayer player = new AnimationPlayer(parse(raw));
-        player.configureFrame(context -> context.functions((name, args) ->
-        {
+        player.configureFrame(context -> context.functions((name, args) -> {
             delegated.add(name);
             return 0d;
         }));
@@ -414,8 +387,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void namedFunctionsUseTypedZeroBasedArgsAndIsolateNestedTempsButPersistVariables()
-    {
+    void namedFunctionsUseTypedZeroBasedArgsAndIsolateNestedTempsButPersistVariables() {
         JsonObject raw = fixture();
         clip(raw, "parallel0", 0, "LOOP", "position", "v.result");
         functions(raw,
@@ -439,8 +411,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void recursiveFunctionsAreBoundedAndCallsShareTheFrameExecutionBudget()
-    {
+    void recursiveFunctionsAreBoundedAndCallsShareTheFrameExecutionBudget() {
         JsonObject raw = fixture();
         clip(raw, "parallel0", 0, "LOOP", "position", "0");
         functions(raw, "{\"recurse\":\"v.n+=1;return fn.recurse();\"}");
@@ -458,8 +429,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void functionsReturnTypedStringsAndVectorsWithoutExposingHostObjects()
-    {
+    void functionsReturnTypedStringsAndVectorsWithoutExposingHostObjects() {
         JsonObject raw = fixture();
         clip(raw, "parallel0", 0, "LOOP", "position", "fn.identity(ysm.bone_scale('bone')).x*16");
         functions(raw, "{\"identity\":\"return args[0];\"}");
@@ -470,8 +440,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void functionDefaultsRemainInertAndDefinitionsRejectAmbiguityAndOversizedInput()
-    {
+    void functionDefaultsRemainInertAndDefinitionsRejectAmbiguityAndOversizedInput() {
         JsonObject raw = fixture();
         clip(raw, "parallel0", 0, "LOOP", "position", "0");
         functions(raw, "{\"defaultBow\":\"ysm.play_sound('ignored');return 1;\"}");
@@ -482,8 +451,7 @@ class YsmAnimationControllerTest
         functions(raw, "{\"Foo\":\"return 1;\",\"foo\":\"return 2;\"}");
         assertThrows(IllegalArgumentException.class, () -> parse(raw));
         JsonObject tooMany = new JsonObject();
-        for (int i = 0; i < 65; i++)
-        {
+        for (int i = 0; i < 65; i++) {
             tooMany.addProperty("f" + i, "return 0;");
         }
         raw.add("ysm_functions", tooMany);
@@ -498,16 +466,14 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void lifecycleRunsAllInitProgramsOnceAndAllUpdateProgramsOnEverySampleAfterReset()
-    {
+    void lifecycleRunsAllInitProgramsOnceAndAllUpdateProgramsOnEverySampleAfterReset() {
         JsonObject raw = fixture();
         clip(raw, "a", 0, "LOOP", "position", "16");
         event(raw, "player_init", "v.init+=1;v.order=1;ysm.play_sound('init');ctrl.reset();", "v.order=v.order*10+2;");
         event(raw, "player_update", "v.updates+=1;v.fp=args[0];", "v.order=v.order*10+3;");
         List<String> effects = new ArrayList<>();
         AnimationPlayer player = new AnimationPlayer(parse(raw));
-        player.configureFrame(context -> context.functions((name, args) ->
-        {
+        player.configureFrame(context -> context.functions((name, args) -> {
             effects.add(name);
             return 0d;
         }));
@@ -526,8 +492,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void lifecycleArgumentsAndTempsAreFreshPerProgramAndFirstPersonHasAnExplicitOverride()
-    {
+    void lifecycleArgumentsAndTempsAreFreshPerProgramAndFirstPersonHasAnExplicitOverride() {
         JsonObject raw = fixture();
         event(raw, "player_init", "t.x=9;v.initArgs=args[0];", "v.initTemp=t.x;");
         event(raw, "player_update", "t.x=9;v.fp=args[0];", "v.updateTemp=t.x;v.secondFp=args[0];");
@@ -548,8 +513,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void inactiveAuthorDefaultsUseAllInitProgramsAndFunctionsWithoutRunningUpdateOrEntry()
-    {
+    void inactiveAuthorDefaultsUseAllInitProgramsAndFunctionsWithoutRunningUpdateOrEntry() {
         JsonObject raw = fixture();
         functions(raw, "{\"bow\":\"ysm.play_sound('inert');return 1;\"}");
         event(raw, "player_init", "v.bow=fn.bow();t.x=7;", "v.initTemp=t.x;v.initialized=1;");
@@ -564,8 +528,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void syncDispatchesEveryLocalSubscriberWithNumericArgsAndIndependentTemps()
-    {
+    void syncDispatchesEveryLocalSubscriberWithNumericArgsAndIndependentTemps() {
         JsonObject raw = fixture();
         clip(raw, "parallel0", 0, "LOOP", "position", "v.horn");
         event(raw, "sync", "v.calls+=1;t.x=9;v.firstArg=args[0];v.horn=args[1]*16;v.global+=3;",
@@ -573,8 +536,7 @@ class YsmAnimationControllerTest
         timeline(raw, "parallel0", 0, "t.x=7;v.syncResult=ysm.sync(0,1);v.callerTemp=t.x;v.outerArgs=args[0];");
         List<String> delegated = new ArrayList<>();
         AnimationPlayer player = new AnimationPlayer(parse(raw));
-        player.configureFrame(context -> context.functions((name, args) ->
-        {
+        player.configureFrame(context -> context.functions((name, args) -> {
             delegated.add(name);
             return 0d;
         }));
@@ -591,8 +553,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void syncRejectsInvalidArgsAndBoundsRecursiveEventsWithoutRenewingTheirBudget()
-    {
+    void syncRejectsInvalidArgsAndBoundsRecursiveEventsWithoutRenewingTheirBudget() {
         JsonObject raw = fixture();
         clip(raw, "parallel0", 0, "LOOP", "position", "0");
         event(raw, "sync", "v.calls+=1;");
@@ -618,16 +579,14 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void syncSubscribersCannotMutateTheBuiltinControllerAndCallerPhaseIsRestored()
-    {
+    void syncSubscribersCannotMutateTheBuiltinControllerAndCallerPhaseIsRestored() {
         JsonObject raw = fixture();
         clip(raw, "a", 0, "LOOP", "position", "16");
         event(raw, "sync", "ctrl.set_animation('a',10);");
         event(raw, "player_ctrl_post_main", "ysm.sync();q.select ? ctrl.set_animation('a',10) : 0;return 2;");
         List<String> delegated = new ArrayList<>();
         AnimationPlayer player = new AnimationPlayer(parse(raw));
-        player.configureFrame(context -> context.functions((name, args) ->
-        {
+        player.configureFrame(context -> context.functions((name, args) -> {
             delegated.add(name);
             return 0d;
         }));
@@ -637,8 +596,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void deferWaitsForStrictLoopBoundaryUsesLifoAndCurrentTimeAndClearsSlotContext()
-    {
+    void deferWaitsForStrictLoopBoundaryUsesLifoAndCurrentTimeAndClearsSlotContext() {
         JsonObject raw = fixture();
         clip(raw, "a", 1, "LOOP", "position", "q.anim_time*16");
         timeline(raw, "a", 0, "c.n=7;ysm.defer('one',1,q.anim_time,c.n);ysm.defer('two',2);ysm.defer('',9);");
@@ -663,8 +621,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void onceRemainingEventsUseEndTimeAndFlushAtExactEndWhileHoldKeepsPendingUntilStateChange()
-    {
+    void onceRemainingEventsUseEndTimeAndFlushAtExactEndWhileHoldKeepsPendingUntilStateChange() {
         JsonObject raw = fixture();
         clip(raw, "a", 1, "ONCE", "position", "0");
         timeline(raw, "a", .5, "ysm.defer('all',q.anim_time);");
@@ -697,8 +654,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void ysmTimelineKeysObserveCurrentSampleTimeAndBeginningBlendDefersZeroKey()
-    {
+    void ysmTimelineKeysObserveCurrentSampleTimeAndBeginningBlendDefersZeroKey() {
         JsonObject raw = fixture();
         clip(raw, "a", 2, "HOLD", "position", "0");
         timeline(raw, "a", .1, "v.time=q.anim_time;");
@@ -713,8 +669,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void deferCapturesAreBoundedAndResetDropsPendingReferences()
-    {
+    void deferCapturesAreBoundedAndResetDropsPendingReferences() {
         JsonObject raw = fixture();
         clip(raw, "a", 1, "LOOP", "position", "0");
         timeline(raw, "a", 0, "loop(300,ysm.defer('all',1));");
@@ -730,8 +685,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void boneSamplingCannotCaptureDeferOutsideTheClientEventPhase()
-    {
+    void boneSamplingCannotCaptureDeferOutsideTheClientEventPhase() {
         JsonObject raw = fixture();
         clip(raw, "a", 1, "LOOP", "position", "ysm.defer('bone',9);return 0;");
         timeline(raw, "a", 0, "ysm.defer('timeline',1);");
@@ -746,8 +700,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void nativeTimingIsAbsoluteAliasesAreExclusiveAndRawBbKeepsRejectingFields()
-    {
+    void nativeTimingIsAbsoluteAliasesAreExclusiveAndRawBbKeepsRejectingFields() {
         JsonObject raw = fixture();
         raw.addProperty("ysm_format_version", 65535);
         clip(raw, "a", 2, "HOLD", "position", "q.anim_time*16");
@@ -766,8 +719,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void authoredSeekMovesEventCursorWithoutReverseReplayAndSameTickCannotReevaluate()
-    {
+    void authoredSeekMovesEventCursorWithoutReverseReplayAndSameTickCannotReevaluate() {
         JsonObject raw = fixture();
         raw.addProperty("ysm_format_version", 65535);
         clip(raw, "a", 2, "HOLD", "position", "q.anim_time*16");
@@ -788,8 +740,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void startDelayIsOncePerActivationAndLoopDelayWaitsWithoutReplayingZeroKey()
-    {
+    void startDelayIsOncePerActivationAndLoopDelayWaitsWithoutReplayingZeroKey() {
         JsonObject raw = fixture();
         raw.addProperty("ysm_format_version", 65535);
         clip(raw, "a", .5, "LOOP", "position", "q.anim_time*16");
@@ -820,8 +771,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void explicitStopKeepsPausedCapturesThroughEndingThenIdleFlushesLifoAndClearsOnlyControllerScope()
-    {
+    void explicitStopKeepsPausedCapturesThroughEndingThenIdleFlushesLifoAndClearsOnlyControllerScope() {
         JsonObject raw = fixture();
         clip(raw, "a", 1, "HOLD", "position", "16");
         timeline(raw, "a", 0, "c.tag=7;v.kept=42;ysm.defer('all',1);ysm.defer('all',2);");
@@ -830,8 +780,7 @@ class YsmAnimationControllerTest
                 "v.order=v.order*10+args[0];v.c=c.tag;c.tag+=1;v.callbackTime=q.anim_time;v.kept+=1;ysm.play_sound('safe:defer');");
         List<String> effects = new ArrayList<>();
         AnimationPlayer player = new AnimationPlayer(parse(raw));
-        player.configureFrame(context -> context.functions((name, args) ->
-        {
+        player.configureFrame(context -> context.functions((name, args) -> {
             effects.add(name);
             return 0d;
         }));
@@ -855,8 +804,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void authorResetInIdleStopPreservesContextUntilContinueWhileDisposalDropsWorldEffects()
-    {
+    void authorResetInIdleStopPreservesContextUntilContinueWhileDisposalDropsWorldEffects() {
         JsonObject raw = fixture();
         clip(raw, "a", 1, "HOLD", "position", "16");
         timeline(raw, "a", 0, "c.tag=7;v.kept=42;ysm.defer('all',1);");
@@ -864,8 +812,7 @@ class YsmAnimationControllerTest
         event(raw, "defer", "v.n+=1;v.c=c.tag;ysm.play_sound('safe:defer');");
         List<String> effects = new ArrayList<>();
         AnimationPlayer player = new AnimationPlayer(parse(raw));
-        player.configureFrame(context -> context.functions((name, args) ->
-        {
+        player.configureFrame(context -> context.functions((name, args) -> {
             effects.add(name);
             return 0d;
         }));
@@ -882,8 +829,7 @@ class YsmAnimationControllerTest
         player.sample(3, layers, 0, 0, Map.of("query.continue", 1d));
         assertEquals(1, effects.size());
         AnimationPlayer disposed = new AnimationPlayer(parse(raw));
-        disposed.configureFrame(context -> context.functions((name, args) ->
-        {
+        disposed.configureFrame(context -> context.functions((name, args) -> {
             effects.add(name);
             return 0d;
         }));
@@ -895,8 +841,7 @@ class YsmAnimationControllerTest
     }
 
     @Test
-    void stopWhileIdlePreservesPendingAnimationAndInvalidLookupDoesNotEraseIt()
-    {
+    void stopWhileIdlePreservesPendingAnimationAndInvalidLookupDoesNotEraseIt() {
         JsonObject raw = fixture();
         clip(raw, "a", 2, "HOLD", "position", "q.anim_time*16");
         timeline(raw, "a", 0, "v.started+=1;");
@@ -910,11 +855,9 @@ class YsmAnimationControllerTest
         assertEquals(1.5, x(player.sample(20, List.of(), 0, 0, Map.of("query.phase", 1d))), 1e-5);
     }
 
-    private static void event(JsonObject raw, String name, String... scripts)
-    {
+    private static void event(JsonObject raw, String name, String... scripts) {
         JsonArray values = new JsonArray();
-        for (String script : scripts)
-        {
+        for (String script : scripts) {
             values.add(script);
         }
 
@@ -923,33 +866,27 @@ class YsmAnimationControllerTest
         raw.add("ysm_events", events);
     }
 
-    private static void functions(JsonObject raw, String json)
-    {
+    private static void functions(JsonObject raw, String json) {
         raw.add("ysm_functions", JsonParser.parseString(json));
     }
 
-    private static BbModel.Layer layer(String name, String clip, long tick)
-    {
+    private static BbModel.Layer layer(String name, String clip, long tick) {
         return new BbModel.Layer(name, clip, tick, 1, "LOOP", 0, 0);
     }
 
-    private static double x(List<BbModel.Vertex> vertices)
-    {
+    private static double x(List<BbModel.Vertex> vertices) {
         return vertices.getFirst().x();
     }
 
-    private static BbModel parse(JsonObject raw)
-    {
+    private static BbModel parse(JsonObject raw) {
         return BbModel.parse(raw.toString().getBytes(StandardCharsets.UTF_8));
     }
 
-    private static void controllers(JsonObject raw, String json)
-    {
+    private static void controllers(JsonObject raw, String json) {
         raw.add("ysm_animation_controllers", JsonParser.parseString(json));
     }
 
-    private static void timeline(JsonObject raw, String clip, double time, String script)
-    {
+    private static void timeline(JsonObject raw, String clip, double time, String script) {
         JsonObject animator = JsonParser.parseString("{\"type\":\"effect\",\"keyframes\":[]}").getAsJsonObject();
         JsonObject point = new JsonObject();
         point.addProperty("script", script);
@@ -960,10 +897,8 @@ class YsmAnimationControllerTest
         frame.addProperty("time", time);
         frame.add("data_points", points);
         animator.getAsJsonArray("keyframes").add(frame);
-        for (JsonElement item : raw.getAsJsonArray("animations"))
-        {
-            if (item.getAsJsonObject().get("name").getAsString().equals(clip))
-            {
+        for (JsonElement item : raw.getAsJsonArray("animations")) {
+            if (item.getAsJsonObject().get("name").getAsString().equals(clip)) {
                 item.getAsJsonObject().getAsJsonObject("animators").add("effects", animator);
             }
 
@@ -971,8 +906,7 @@ class YsmAnimationControllerTest
 
     }
 
-    private static void clip(JsonObject raw, String name, double length, String loop, String channel, String x)
-    {
+    private static void clip(JsonObject raw, String name, double length, String loop, String channel, String x) {
         JsonObject point = new JsonObject();
         point.addProperty("x", x);
         point.addProperty("y", channel.equals("scale") ? 1 : 0);
@@ -997,8 +931,7 @@ class YsmAnimationControllerTest
         raw.getAsJsonArray("animations").add(clip);
     }
 
-    private static JsonObject fixture()
-    {
+    private static JsonObject fixture() {
         JsonObject raw = JsonParser
                 .parseString(
                         """
@@ -1007,8 +940,7 @@ class YsmAnimationControllerTest
                                  "outliner":[{"uuid":"bone","name":"bone","origin":[0,0,0],"children":["cube"]}]}
                                 """)
                 .getAsJsonObject();
-        try
-        {
+        try {
             BufferedImage image = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
             image.setRGB(0, 0, 0xffffffff);
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
@@ -1017,9 +949,7 @@ class YsmAnimationControllerTest
             texture.addProperty("source",
                     "data:image/png;base64," + Base64.getEncoder().encodeToString(bytes.toByteArray()));
             raw.getAsJsonArray("textures").add(texture);
-        }
-        catch (Exception exception)
-        {
+        } catch (Exception exception) {
             throw new AssertionError(exception);
         }
         return raw;

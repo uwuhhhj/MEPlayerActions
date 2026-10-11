@@ -16,15 +16,12 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NativeYsmFileTest
-{
+class NativeYsmFileTest {
     @Test
-    void bodyFamilyConflictsFollowAuthoredOrderAndExplicitFirstPersonFamilyRemainsSeparate() throws Exception
-    {
+    void bodyFamilyConflictsFollowAuthoredOrderAndExplicitFirstPersonFamilyRemainsSeparate() throws Exception {
         RawYsmModel source = model();
         source.mainEntity.armModel = source.mainEntity.mainModel;
-        for (Map.Entry<String, Float> entry : Map.of("main", 1f, "extra", 3f, "arm", 2f, "fp_arm", 4f).entrySet())
-        {
+        for (Map.Entry<String, Float> entry : Map.of("main", 1f, "extra", 3f, "arm", 2f, "fp_arm", 4f).entrySet()) {
             RawYsmModel.RawAnimationFile file = new RawYsmModel.RawAnimationFile();
             RawYsmModel.RawAnimation animation = new RawYsmModel.RawAnimation();
             animation.name = "shared";
@@ -35,8 +32,7 @@ class NativeYsmFileTest
             source.mainEntity.animationFiles.put(entry.getKey(), file);
         }
         LinkedHashMap<String, RawYsmModel.RawAnimationFile> ordered = new LinkedHashMap<String, RawYsmModel.RawAnimationFile>();
-        for (String family : List.of("main", "extra", "arm", "fp_arm"))
-        {
+        for (String family : List.of("main", "extra", "arm", "fp_arm")) {
             ordered.put(family, source.mainEntity.animationFiles.get(family));
         }
 
@@ -47,15 +43,13 @@ class NativeYsmFileTest
         assertEquals(80, imported.profile().components().stream().filter(component -> component.kind().equals("fp_arm"))
                 .findFirst().orElseThrow().model().animationLengthTicks("shared"));
         assertEquals(4, imported.profile().animationFiles().size());
-        for (String family : ordered.keySet())
-        {
+        for (String family : ordered.keySet()) {
             assertTrue(imported.sourceFiles().containsKey("animations/" + family + ".json"),
                     "Full source families are preserved");
         }
 
         source.mainEntity.animationFiles.clear();
-        for (String family : List.of("arm", "main", "extra", "fp_arm"))
-        {
+        for (String family : List.of("arm", "main", "extra", "fp_arm")) {
             source.mainEntity.animationFiles.put(family, ordered.get(family));
         }
 
@@ -64,8 +58,7 @@ class NativeYsmFileTest
     }
 
     @Test
-    void binaryTimelinePreservesOneHundredEightySeparateProgramsAndTheirOriginalOrder() throws Exception
-    {
+    void binaryTimelinePreservesOneHundredEightySeparateProgramsAndTheirOriginalOrder() throws Exception {
         RawYsmModel source = model();
         RawYsmModel.RawAnimationFile file = new RawYsmModel.RawAnimationFile();
         RawYsmModel.RawAnimation animation = new RawYsmModel.RawAnimation();
@@ -75,8 +68,7 @@ class NativeYsmFileTest
         RawYsmModel.RawTimelineEvent event = new RawYsmModel.RawTimelineEvent();
         event.timestamp = 0;
         event.events.add("v.n+=1;return 7;");
-        for (int i = 1; i < 180; i++)
-        {
+        for (int i = 1; i < 180; i++) {
             event.events.add("v.n+=1;v.last=" + i + ";");
         }
 
@@ -89,8 +81,7 @@ class NativeYsmFileTest
         assertEquals(180d, player.expressionVariables().get("variable.n"));
         assertEquals(179d, player.expressionVariables().get("variable.last"));
         event.events.clear();
-        for (int i = 0; i < 256; i++)
-        {
+        for (int i = 0; i < 256; i++) {
             event.events.add("v.n+=1;");
         }
 
@@ -100,8 +91,7 @@ class NativeYsmFileTest
     }
 
     @Test
-    void matureBinaryAdapterRetainsBakedFaceWindingUvsGlowAndNativeFormat() throws Exception
-    {
+    void matureBinaryAdapterRetainsBakedFaceWindingUvsGlowAndNativeFormat() throws Exception {
         RawYsmModel source = model();
         YsmFolderModel.Imported imported = NativeYsmFile.importModel(source, null);
         BbModel model = BbModel.parse(imported.raw());
@@ -126,11 +116,8 @@ class NativeYsmFileTest
     }
 
     @Test
-    void unsupportedTruncatedAndCorruptedFilesFailBeforeNativeAllocation()
-    {
-        for (int version : new int[]
-        { 0, 1, 32, 33 })
-        {
+    void unsupportedTruncatedAndCorruptedFilesFailBeforeNativeAllocation() {
+        for (int version : new int[] { 0, 1, 32, 33 }) {
             byte[] header = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(version).array();
             assertThrows(IOException.class, () -> NativeYsmFile.readDecompressed(header, null));
         }
@@ -139,8 +126,7 @@ class NativeYsmFileTest
         assertThrows(Exception.class, () -> PublicYsmCodec.decode(new byte[8 * 1024 * 1024 + 1]));
     }
 
-    static RawYsmModel model()
-    {
+    static RawYsmModel model() {
         RawYsmModel raw = new RawYsmModel();
         raw.formatVersion = 26;
         raw.metadata.name = "Binary model";
@@ -151,18 +137,10 @@ class NativeYsmFileTest
         bone.name = "ysmGlowEyes";
         bone.parentName = "";
         RawYsmModel.RawFace face = new RawYsmModel.RawFace();
-        face.normal = new float[]
-        { 0, 0, 1 };
-        face.positions = new float[][]
-        {
-                { 0, 0, 0 },
-                { 1, 0, 0 },
-                { 1, 1, 0 },
-                { 0, 1, 0 } };
-        face.u = new float[]
-        { 0, 1, 1, 0 };
-        face.v = new float[]
-        { 0, 0, 1, 1 };
+        face.normal = new float[] { 0, 0, 1 };
+        face.positions = new float[][] { { 0, 0, 0 }, { 1, 0, 0 }, { 1, 1, 0 }, { 0, 1, 0 } };
+        face.u = new float[] { 0, 1, 1, 0 };
+        face.v = new float[] { 0, 0, 1, 1 };
         RawYsmModel.RawCube cube = new RawYsmModel.RawCube();
         cube.faces.add(face);
         bone.cubes.add(cube);
@@ -172,8 +150,7 @@ class NativeYsmFileTest
         texture.name = "default";
         texture.imageFormat = -1;
         texture.width = texture.height = 1;
-        texture.data = new byte[]
-        { (byte) 255, 0, 0, (byte) 255 };
+        texture.data = new byte[] { (byte) 255, 0, 0, (byte) 255 };
         raw.mainEntity.textures.put("default", texture);
         raw.properties.heightScale = raw.properties.widthScale = 1;
         RawYsmModel.ExtraAnimationButton button = new RawYsmModel.ExtraAnimationButton();

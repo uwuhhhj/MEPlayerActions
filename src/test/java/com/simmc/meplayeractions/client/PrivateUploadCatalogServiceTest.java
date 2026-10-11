@@ -25,17 +25,14 @@ import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 /** Actual negotiation and budget paths through Bukkit's public Player/Server interfaces. */
-class PrivateUploadCatalogServiceTest
-{
+class PrivateUploadCatalogServiceTest {
     @TempDir
     Path temporary;
 
     @Test
     void negotiatedOwnersReceiveOnlyTheirOwnReceiptsAndTheSharedRefreshDoesNotPublishOrRunOnTheMainThread()
-            throws Exception
-    {
-        try (PrivateUploadCatalogServiceTest.Scene scene = new Scene(this.temporary))
-        {
+            throws Exception {
+        try (PrivateUploadCatalogServiceTest.Scene scene = new Scene(this.temporary)) {
             byte[] first = bundle(1), second = bundle(2);
             String firstHash = PrivateModelBundle.hash(first), secondHash = PrivateModelBundle.hash(second);
             scene.store.saveValidated(scene.owner.id, "ysm:本人.ysm", firstHash, "ysm", first);
@@ -55,8 +52,7 @@ class PrivateUploadCatalogServiceTest
             scene.maintain();
             assertEquals(1, scene.workers.size());
             assertEquals(0, scene.callbacks.size());
-            for (int tick = 1; tick < 100; tick++)
-            {
+            for (int tick = 1; tick < 100; tick++) {
                 scene.tick = tick;
                 scene.maintain();
             }
@@ -74,10 +70,8 @@ class PrivateUploadCatalogServiceTest
 
     @Test
     void clearingAnActualPublicationPreservesTheReceiptButRevokingUploadPermissionSendsAnEmptyDirectory()
-            throws Exception
-    {
-        try (PrivateUploadCatalogServiceTest.Scene scene = new Scene(this.temporary))
-        {
+            throws Exception {
+        try (PrivateUploadCatalogServiceTest.Scene scene = new Scene(this.temporary)) {
             byte[] bytes = bundle(1);
             String hash = PrivateModelBundle.hash(bytes);
             scene.store.saveValidated(scene.owner.id, "ysm:saved.ysm", hash, "ysm", bytes);
@@ -104,10 +98,8 @@ class PrivateUploadCatalogServiceTest
     }
 
     @Test
-    void metadataFragmentsSendAtMostOncePerTickAndRetryTheSameIndexAfterGlobalOrConnectionPressure() throws Exception
-    {
-        try (PrivateUploadCatalogServiceTest.Scene scene = new Scene(this.temporary))
-        {
+    void metadataFragmentsSendAtMostOncePerTickAndRetryTheSameIndexAfterGlobalOrConnectionPressure() throws Exception {
+        try (PrivateUploadCatalogServiceTest.Scene scene = new Scene(this.temporary)) {
             List<PrivateModelStore.UploadedModel> models = PrivateUploadCatalogTest.models(64, true);
             set(scene.store, "catalog", new PrivateModelStore.CatalogSnapshot(1, Map.of(scene.owner.id, models)));
             scene.hello(scene.owner, true);
@@ -132,8 +124,7 @@ class PrivateUploadCatalogServiceTest
             scene.resetOwnerWindow();
             scene.tick++;
             for (int attempts = 0; attempts < 64
-                    && !((Set<?>) field(scene.service, "pendingCatalogs")).isEmpty(); attempts++)
-            {
+                    && !((Set<?>) field(scene.service, "pendingCatalogs")).isEmpty(); attempts++) {
                 scene.pump();
                 scene.tick++;
             }
@@ -150,10 +141,8 @@ class PrivateUploadCatalogServiceTest
 
     @Test
     void sourceIdsRequireTheNegotiatedCapabilityAndOnlyAnExplicitAuthorizedCacheOfferCreatesAPublication()
-            throws Exception
-    {
-        try (PrivateUploadCatalogServiceTest.Scene scene = new Scene(this.temporary))
-        {
+            throws Exception {
+        try (PrivateUploadCatalogServiceTest.Scene scene = new Scene(this.temporary)) {
             byte[] bytes = bundle(1);
             String hash = PrivateModelBundle.hash(bytes);
             scene.store.saveValidated(scene.owner.id, "ysm:original.ysm", hash, "ysm", bytes);
@@ -184,10 +173,9 @@ class PrivateUploadCatalogServiceTest
     }
 
     @Test
-    void deletingAnExactUploadRunsOnTheWorkerAndRevokesItsPublicationWithoutTouchingAnotherOwnersCopy() throws Exception
-    {
-        try (PrivateUploadCatalogServiceTest.Scene scene = new Scene(this.temporary))
-        {
+    void deletingAnExactUploadRunsOnTheWorkerAndRevokesItsPublicationWithoutTouchingAnotherOwnersCopy()
+            throws Exception {
+        try (PrivateUploadCatalogServiceTest.Scene scene = new Scene(this.temporary)) {
             byte[] bytes = bundle(1);
             String hash = PrivateModelBundle.hash(bytes), source = "ysm:saved.ysm";
             scene.store.saveValidated(scene.owner.id, source, hash, "ysm", bytes);
@@ -230,10 +218,8 @@ class PrivateUploadCatalogServiceTest
     }
 
     @Test
-    void staleHashesAndRevokedOrUnnegotiatedDeleteRequestsNeverStartDiskWork() throws Exception
-    {
-        try (PrivateUploadCatalogServiceTest.Scene scene = new Scene(this.temporary))
-        {
+    void staleHashesAndRevokedOrUnnegotiatedDeleteRequestsNeverStartDiskWork() throws Exception {
+        try (PrivateUploadCatalogServiceTest.Scene scene = new Scene(this.temporary)) {
             byte[] first = bundle(1), second = bundle(2);
             String firstHash = PrivateModelBundle.hash(first), secondHash = PrivateModelBundle.hash(second),
                     source = "ysm:saved.ysm";
@@ -259,30 +245,23 @@ class PrivateUploadCatalogServiceTest
     }
 
     @Test
-    void completedOrFailedDeleteAfterOwnerQuitReleasesSlotsWithoutRevivingAnOldSessionReply() throws Exception
-    {
-        for (boolean failed : List.of(false, true))
-        {
+    void completedOrFailedDeleteAfterOwnerQuitReleasesSlotsWithoutRevivingAnOldSessionReply() throws Exception {
+        for (boolean failed : List.of(false, true)) {
             try (PrivateUploadCatalogServiceTest.Scene scene = new Scene(
-                    this.temporary.resolve("late-delete-" + failed)))
-            {
+                    this.temporary.resolve("late-delete-" + failed))) {
                 byte[] bytes = bundle(1);
                 String hash = PrivateModelBundle.hash(bytes), source = "ysm:saved.ysm";
                 scene.store.saveValidated(scene.owner.id, source, hash, "ysm", bytes);
                 scene.hello(scene.owner, true);
                 scene.send(scene.owner, scene.delete(scene.owner, UUID.randomUUID(), source, hash, bytes.length));
                 assertEquals(1, ((Set<?>) field(scene.service, "deleting")).size());
-                try
-                {
-                    if (failed)
-                    {
+                try {
+                    if (failed) {
                         Thread.currentThread().interrupt();
                     }
 
                     scene.workers.removeFirst().run();
-                }
-                finally
-                {
+                } finally {
                     Thread.interrupted();
                 }
                 assertEquals(1, scene.callbacks.size());
@@ -301,12 +280,10 @@ class PrivateUploadCatalogServiceTest
     }
 
     @Test
-    void anOwnerHashCannotBeUploadedWhileDeletingOrDeletedWhileItsCancelledValidatorStillRuns() throws Exception
-    {
+    void anOwnerHashCannotBeUploadedWhileDeletingOrDeletedWhileItsCancelledValidatorStillRuns() throws Exception {
         byte[] bytes = bundle(1);
         String hash = PrivateModelBundle.hash(bytes), source = "ysm:saved.ysm";
-        try (PrivateUploadCatalogServiceTest.Scene scene = new Scene(this.temporary))
-        {
+        try (PrivateUploadCatalogServiceTest.Scene scene = new Scene(this.temporary)) {
             scene.store.saveValidated(scene.owner.id, source, hash, "ysm", bytes);
             scene.hello(scene.owner, true);
             scene.send(scene.owner, scene.delete(scene.owner, UUID.randomUUID(), source, hash, bytes.length));
@@ -323,8 +300,7 @@ class PrivateUploadCatalogServiceTest
             scene.callbacks.removeFirst().run();
             assertFalse(Files.exists(scene.archive(scene.owner, hash)));
         }
-        try (PrivateUploadCatalogServiceTest.Scene scene = new Scene(this.temporary))
-        {
+        try (PrivateUploadCatalogServiceTest.Scene scene = new Scene(this.temporary)) {
             scene.store.saveValidated(scene.owner.id, source, hash, "ysm", bytes);
             scene.hello(scene.owner, true);
             scene.send(scene.owner, offer(hash, bytes.length, source));
@@ -351,16 +327,13 @@ class PrivateUploadCatalogServiceTest
     }
 
     @Test
-    void deletingASourcesHistoryRevokesItsOlderPublicationButLeavesADifferentPublishedSourceAlone() throws Exception
-    {
+    void deletingASourcesHistoryRevokesItsOlderPublicationButLeavesADifferentPublishedSourceAlone() throws Exception {
         byte[] older = bundle(1), latest = bundle(2), other = bundle(3);
         String oldHash = PrivateModelBundle.hash(older), latestHash = PrivateModelBundle.hash(latest),
                 otherHash = PrivateModelBundle.hash(other), source = "ysm:saved.ysm";
-        for (boolean sameSource : List.of(true, false))
-        {
+        for (boolean sameSource : List.of(true, false)) {
             try (PrivateUploadCatalogServiceTest.Scene scene = new Scene(
-                    this.temporary.resolve(Boolean.toString(sameSource))))
-            {
+                    this.temporary.resolve(Boolean.toString(sameSource)))) {
                 scene.store.saveValidated(scene.owner.id, source, oldHash, "ysm", older);
                 Files.setLastModifiedTime(scene.archive(scene.owner, oldHash), FileTime.fromMillis(1));
                 scene.store.saveValidated(scene.owner.id, source, latestHash, "ysm", latest);
@@ -381,13 +354,10 @@ class PrivateUploadCatalogServiceTest
                 assertTrue(Files.exists(scene.archive(scene.owner, otherHash)));
                 assertEquals(List.of("ysm:other.ysm"), scene.store.listUploaded(scene.owner.id).stream()
                         .map(PrivateModelStore.UploadedModel::sourceId).toList());
-                if (sameSource)
-                {
+                if (sameSource) {
                     assertTrue(scene.publications().isEmpty());
                     assertEquals(1, scene.viewer.count("private_remove"));
-                }
-                else
-                {
+                } else {
                     assertSame(published, scene.publications().get(scene.owner.id));
                     assertEquals(0, scene.viewer.count("private_remove"));
                 }
@@ -397,10 +367,8 @@ class PrivateUploadCatalogServiceTest
     }
 
     @Test
-    void anEvictedDeleteSequenceOrPreviousHandshakeTokenCannotDeleteANewCopyOfTheSameContent() throws Exception
-    {
-        try (PrivateUploadCatalogServiceTest.Scene scene = new Scene(this.temporary))
-        {
+    void anEvictedDeleteSequenceOrPreviousHandshakeTokenCannotDeleteANewCopyOfTheSameContent() throws Exception {
+        try (PrivateUploadCatalogServiceTest.Scene scene = new Scene(this.temporary)) {
             byte[] bytes = bundle(1);
             String hash = PrivateModelBundle.hash(bytes), source = "ysm:saved.ysm";
             scene.store.saveValidated(scene.owner.id, source, hash, "ysm", bytes);
@@ -430,8 +398,7 @@ class PrivateUploadCatalogServiceTest
         }
     }
 
-    private static final class Scene implements AutoCloseable
-    {
+    private static final class Scene implements AutoCloseable {
         final Field bukkit = Bukkit.class.getDeclaredField("server");
         final Object previous;
         final Map<UUID, Person> people = new LinkedHashMap<>();
@@ -444,41 +411,34 @@ class PrivateUploadCatalogServiceTest
         final Path directory;
         int tick;
 
-        Scene(Path temporary) throws Exception
-        {
+        Scene(Path temporary) throws Exception {
             this.directory = temporary.resolve("private-models");
             this.store = new PrivateModelStore(this.directory, PrivateModelStore.Settings.defaults());
             BukkitTask task = proxy(BukkitTask.class, (instance, method,
                     args) -> method.getName().equals("cancel") ? null : object(instance, method, args));
             BukkitScheduler scheduler = proxy(BukkitScheduler.class,
-                    (instance, method, args) -> switch (method.getName())
-                    {
-                    case "runTaskAsynchronously" ->
-                    {
+                    (instance, method, args) -> switch (method.getName()) {
+                    case "runTaskAsynchronously" -> {
                         this.workers.add((Runnable) args[1]);
                         yield task;
                     }
-                    case "runTask" ->
-                    {
+                    case "runTask" -> {
                         this.callbacks.add((Runnable) args[1]);
                         yield task;
                     }
                     default -> object(instance, method, args);
                     });
-            Server server = proxy(Server.class, (instance, method, args) -> switch (method.getName())
-            {
+            Server server = proxy(Server.class, (instance, method, args) -> switch (method.getName()) {
             case "getCurrentTick" -> this.tick;
             case "isPrimaryThread" -> true;
             case "getScheduler" -> scheduler;
-            case "getPlayer" ->
-            {
+            case "getPlayer" -> {
                 Person person = this.people.get(args[0]);
                 yield person == null ? null : person.player;
             }
             default -> object(instance, method, args);
             });
-            Plugin plugin = proxy(Plugin.class, (instance, method, args) -> switch (method.getName())
-            {
+            Plugin plugin = proxy(Plugin.class, (instance, method, args) -> switch (method.getName()) {
             case "getServer" -> server;
             case "isEnabled" -> true;
             case "getName" -> "UploadCatalogFixture";
@@ -488,50 +448,42 @@ class PrivateUploadCatalogServiceTest
             this.bukkit.setAccessible(true);
             this.previous = this.bukkit.get(null);
             this.bukkit.set(null, server);
-            try
-            {
+            try {
                 this.service = new PrivateModelSyncService(plugin, Set::of, this.limits, this::now);
                 this.service.configure(new PrivateModelSyncService.Policy(true, 1024, PrivateModelBundle.MAX_BYTES,
                         32L * 1024 * 1024, 64, 10, "mact.private.upload", "mact.private.view"));
                 this.service.configurePerformance(PerformanceSettings.defaults());
                 set(this.service, "running", true);
                 set(this.service, "store", this.store);
-            }
-            catch (Exception | Error failure)
-            {
+            } catch (Exception | Error failure) {
                 this.bukkit.set(null, this.previous);
                 throw failure;
             }
         }
 
-        Person person()
-        {
+        Person person() {
             Person person = new Person(new UUID(0, this.people.size() + 1));
             this.people.put(person.id, person);
             return person;
         }
 
-        void hello(Person person, boolean catalog)
-        {
+        void hello(Person person, boolean catalog) {
             JsonObject message = packet("hello");
             JsonArray capabilities = new JsonArray();
             capabilities.add(PrivateModelSyncService.CAPABILITY);
-            if (catalog)
-            {
+            if (catalog) {
                 capabilities.add(PrivateUploadCatalog.CAPABILITY);
             }
             message.add("capabilities", capabilities);
             send(person, message);
         }
 
-        void send(Person person, JsonObject packet)
-        {
+        void send(Person person, JsonObject packet) {
             this.service.onPluginMessageReceived(PrivateModelSyncService.CHANNEL, person.player,
                     packet.toString().getBytes(StandardCharsets.UTF_8));
         }
 
-        JsonObject delete(Person person, UUID request, String modelId, String hash, int bytes)
-        {
+        JsonObject delete(Person person, UUID request, String modelId, String hash, int bytes) {
             JsonObject packet = packet("upload_delete"), ack = person.last("hello_ack");
             packet.addProperty("requestId", request.toString());
             packet.addProperty("modelId", modelId);
@@ -545,37 +497,30 @@ class PrivateUploadCatalogServiceTest
             return packet;
         }
 
-        void maintain() throws Exception
-        {
+        void maintain() throws Exception {
             invoke(this.service, "maintain", new Class<?>[0]);
         }
 
-        void pump() throws Exception
-        {
-            invoke(this.service, "pumpCatalogs", new Class<?>[]
-            { long.class }, (long) this.tick);
+        void pump() throws Exception {
+            invoke(this.service, "pumpCatalogs", new Class<?>[] { long.class }, (long) this.tick);
         }
 
-        void update(Person person) throws Exception
-        {
+        void update(Person person) throws Exception {
             Object session = session(person);
-            invoke(this.service, "updateCatalog", new Class<?>[]
-            { Player.class, session.getClass() }, person.player, session);
+            invoke(this.service, "updateCatalog", new Class<?>[] { Player.class, session.getClass() }, person.player,
+                    session);
         }
 
-        Object session(Person person) throws Exception
-        {
+        Object session(Person person) throws Exception {
             return ((Map<?, ?>) field(this.service, "sessions")).get(person.id);
         }
 
         @SuppressWarnings("unchecked")
-        Map<UUID, Object> publications() throws Exception
-        {
+        Map<UUID, Object> publications() throws Exception {
             return (Map<UUID, Object>) field(this.service, "publications");
         }
 
-        void publication(Person person, byte[] bytes) throws Exception
-        {
+        void publication(Person person, byte[] bytes) throws Exception {
             Class<?> type = Class.forName(PrivateModelSyncService.class.getName() + "$Publication");
             Constructor<?> constructor = type.getDeclaredConstructor(UUID.class, UUID.class, String.class, String.class,
                     byte[].class, JsonObject.class, long.class);
@@ -586,19 +531,16 @@ class PrivateUploadCatalogServiceTest
             set(this.service, "storedBytes", (long) bytes.length);
         }
 
-        Path archive(Person owner, String hash)
-        {
+        Path archive(Person owner, String hash) {
             return this.directory.resolve(owner.id + "_" + hash + ".zip");
         }
 
-        Path metadata(Person owner, String hash)
-        {
+        Path metadata(Person owner, String hash) {
             return this.directory.resolve(owner.id + "_" + hash + ".meta.json");
         }
 
         @SuppressWarnings("unchecked")
-        void observe(Person owner, Person viewer) throws Exception
-        {
+        void observe(Person owner, Person viewer) throws Exception {
             Object publication = publications().get(owner.id);
             Class<?> type = Class.forName(PrivateModelSyncService.class.getName() + "$Offer");
             Constructor<?> constructor = type.getDeclaredConstructor(UUID.class, publication.getClass(), long.class);
@@ -611,23 +553,19 @@ class PrivateUploadCatalogServiceTest
             ((Set<UUID>) field(publication, "offeredViewers")).add(viewer.id);
         }
 
-        long now()
-        {
+        long now() {
             return 10_000_000_000L + this.tick * 50_000_000L;
         }
 
-        private Object ownerWindow() throws Exception
-        {
+        private Object ownerWindow() throws Exception {
             return field(((Map<?, ?>) field(this.limits, "connections")).get(this.owner.id), "outbound");
         }
 
-        void saturateOwnerWindow() throws Exception
-        {
+        void saturateOwnerWindow() throws Exception {
             Object window = ownerWindow();
             set(window, "startedAt", now() + 60_000_000_000L);
             int remaining = ConnectionLimits.OUTBOUND_BYTES_PER_SECOND - ((Number) field(window, "bytes")).intValue();
-            while (remaining > 0)
-            {
+            while (remaining > 0) {
                 this.tick++;
                 int charge = Math.min(ConnectionLimits.GLOBAL_BYTES_PER_TICK, remaining);
                 assertTrue(this.limits.allowOutbound(this.owner.id, charge, false, now(), this.tick));
@@ -635,38 +573,32 @@ class PrivateUploadCatalogServiceTest
             }
         }
 
-        void resetOwnerWindow() throws Exception
-        {
+        void resetOwnerWindow() throws Exception {
             set(ownerWindow(), "startedAt", now() - 1_000_000_001L);
         }
 
         @Override
-        public void close() throws Exception
-        {
+        public void close() throws Exception {
             this.bukkit.set(null, this.previous);
         }
     }
 
-    private static final class Person
-    {
+    private static final class Person {
         final UUID id;
         final Player player;
         final List<JsonObject> messages = new ArrayList<>();
         final List<byte[]> wire = new ArrayList<>();
         boolean upload = true;
 
-        Person(UUID id)
-        {
+        Person(UUID id) {
             this.id = id;
-            this.player = proxy(Player.class, (instance, method, args) -> switch (method.getName())
-            {
+            this.player = proxy(Player.class, (instance, method, args) -> switch (method.getName()) {
             case "getUniqueId" -> id;
             case "isOnline" -> true;
             case "isFlying" -> false;
             case "hasPermission" ->
                 args[0].equals("mact.private.upload") ? this.upload : args[0].equals("mact.private.view");
-            case "sendPluginMessage" ->
-            {
+            case "sendPluginMessage" -> {
                 byte[] bytes = ((byte[]) args[2]).clone();
                 this.wire.add(bytes);
                 this.messages.add(JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject());
@@ -676,24 +608,20 @@ class PrivateUploadCatalogServiceTest
             });
         }
 
-        List<JsonObject> ofType(String type)
-        {
+        List<JsonObject> ofType(String type) {
             return this.messages.stream().filter(value -> value.get("type").getAsString().equals(type)).toList();
         }
 
-        int count(String type)
-        {
+        int count(String type) {
             return ofType(type).size();
         }
 
-        JsonObject last(String type)
-        {
+        JsonObject last(String type) {
             return ofType(type).getLast();
         }
     }
 
-    private static JsonObject offer(String hash, int bytes, String modelId)
-    {
+    private static JsonObject offer(String hash, int bytes, String modelId) {
         JsonObject packet = packet("upload_offer");
         packet.addProperty("generation", UUID.randomUUID().toString());
         packet.addProperty("hash", hash);
@@ -704,16 +632,13 @@ class PrivateUploadCatalogServiceTest
         return packet;
     }
 
-    private static byte[] bundle(int marker) throws Exception
-    {
+    private static byte[] bundle(int marker) throws Exception {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
-        try (ZipOutputStream zip = new ZipOutputStream(output))
-        {
+        try (ZipOutputStream zip = new ZipOutputStream(output)) {
             Map<String, String> files = Map.of("manifest.json",
                     "{\"format\":1,\"kind\":\"ysm\",\"entry\":\"ysm.json\"}", "ysm.json",
                     "{\"marker\":" + marker + "}");
-            for (Map.Entry<String, String> file : files.entrySet())
-            {
+            for (Map.Entry<String, String> file : files.entrySet()) {
                 ZipEntry entry = new ZipEntry(file.getKey());
                 entry.setTime(0);
                 zip.putNextEntry(entry);
@@ -726,50 +651,40 @@ class PrivateUploadCatalogServiceTest
         return bytes;
     }
 
-    private static JsonObject packet(String type)
-    {
+    private static JsonObject packet(String type) {
         JsonObject result = new JsonObject();
         result.addProperty("protocol", 1);
         result.addProperty("type", type);
         return result;
     }
 
-    private static Object field(Object target, String name) throws Exception
-    {
+    private static Object field(Object target, String name) throws Exception {
         Field field = target.getClass().getDeclaredField(name);
         field.setAccessible(true);
         return field.get(target);
     }
 
-    private static void set(Object target, String name, Object value) throws Exception
-    {
+    private static void set(Object target, String name, Object value) throws Exception {
         Field field = target.getClass().getDeclaredField(name);
         field.setAccessible(true);
         field.set(target, value);
     }
 
-    private static void invoke(Object target, String name, Class<?>[] types, Object... args) throws Exception
-    {
+    private static void invoke(Object target, String name, Class<?>[] types, Object... args) throws Exception {
         Method method = target.getClass().getDeclaredMethod(name, types);
         method.setAccessible(true);
-        try
-        {
+        try {
             method.invoke(target, args);
-        }
-        catch (InvocationTargetException failure)
-        {
-            if (failure.getCause() instanceof Exception cause)
-            {
+        } catch (InvocationTargetException failure) {
+            if (failure.getCause() instanceof Exception cause) {
                 throw cause;
             }
             throw failure;
         }
     }
 
-    private static Object object(Object instance, Method method, Object[] args)
-    {
-        return switch (method.getName())
-        {
+    private static Object object(Object instance, Method method, Object[] args) {
+        return switch (method.getName()) {
         case "equals" -> instance == args[0];
         case "hashCode" -> System.identityHashCode(instance);
         case "toString" -> "UploadCatalogFixture";
@@ -777,9 +692,7 @@ class PrivateUploadCatalogServiceTest
         };
     }
 
-    private static <T> T proxy(Class<T> type, InvocationHandler handler)
-    {
-        return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]
-        { type }, handler));
+    private static <T> T proxy(Class<T> type, InvocationHandler handler) {
+        return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[] { type }, handler));
     }
 }

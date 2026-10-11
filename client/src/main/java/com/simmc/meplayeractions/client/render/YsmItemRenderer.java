@@ -26,38 +26,30 @@ import java.util.List;
 import java.util.Map;
 
 /** Vanilla item models attached to the final sampled YSM hand pose, without a remote mod handshake. */
-public final class YsmItemRenderer
-{
+public final class YsmItemRenderer {
     private static long submittedItems;
 
-    private YsmItemRenderer()
-    {
+    private YsmItemRenderer() {
     }
 
-    public record Attachment(ItemRenderState state, Matrix4f transform, String hand, String item, String bone)
-    {
-        public Attachment
-        {
+    public record Attachment(ItemRenderState state, Matrix4f transform, String hand, String item, String bone) {
+        public Attachment {
             transform = new Matrix4f(transform);
         }
 
         @Override
-        public Matrix4f transform()
-        {
+        public Matrix4f transform() {
             return new Matrix4f(this.transform);
         }
     }
 
     /** Item resolution happens during world extraction; the later command submission reads no live inventory. */
-    public static List<Attachment> extract(PlayerEntity entity, AnimationPlayer player)
-    {
+    public static List<Attachment> extract(PlayerEntity entity, AnimationPlayer player) {
         return extract(entity, player, false);
     }
 
-    public static List<Attachment> extract(PlayerEntity entity, AnimationPlayer player, boolean importedBbmodel)
-    {
-        if (entity == null)
-        {
+    public static List<Attachment> extract(PlayerEntity entity, AnimationPlayer player, boolean importedBbmodel) {
+        if (entity == null) {
             return List.of();
         }
 
@@ -74,10 +66,8 @@ public final class YsmItemRenderer
     }
 
     private static void append(List<Attachment> result, PlayerEntity entity, AnimationPlayer player,
-            Map<String, Matrix4f> bones, Arm arm, ItemStack source, String hand, boolean equipmentLocator)
-    {
-        if (source.isEmpty())
-        {
+            Map<String, Matrix4f> bones, Arm arm, ItemStack source, String hand, boolean equipmentLocator) {
+        if (source.isEmpty()) {
             return;
         }
 
@@ -86,8 +76,7 @@ public final class YsmItemRenderer
         // another drawing position; BB-to-native conversion performs its own upstream inference.
         List<String> attachmentBones = equipmentLocator ? equipmentAttachmentBones(bones, side)
                 : attachmentBones(bones, side, player.hasBone(side + "HandLocator"), player.nativeYsm());
-        for (String bone : attachmentBones)
-        {
+        for (String bone : attachmentBones) {
             Matrix4f transform = bones.get(bone);
             ItemRenderState state = new ItemRenderState();
             // Native use predicates compare the stack with entity.getActiveItem() by identity.
@@ -96,8 +85,7 @@ public final class YsmItemRenderer
                     arm == Arm.LEFT ? ItemDisplayContext.THIRD_PERSON_LEFT_HAND
                             : ItemDisplayContext.THIRD_PERSON_RIGHT_HAND,
                     entity);
-            if (!state.isEmpty())
-            {
+            if (!state.isEmpty()) {
                 result.add(new Attachment(state, itemTransform(transform), hand,
                         Registries.ITEM.getId(source.getItem()).toString(), bone));
             }
@@ -106,35 +94,29 @@ public final class YsmItemRenderer
     }
 
     /** OpenYSM's primary locator plus its seven explicitly authored extra hand locator chains. */
-    static List<String> attachmentBones(Map<String, Matrix4f> transforms, String side)
-    {
+    static List<String> attachmentBones(Map<String, Matrix4f> transforms, String side) {
         return attachmentBones(transforms, side, transforms.containsKey(side + "HandLocator"));
     }
 
-    static List<String> attachmentBones(Map<String, Matrix4f> transforms, String side, boolean locatorDeclared)
-    {
+    static List<String> attachmentBones(Map<String, Matrix4f> transforms, String side, boolean locatorDeclared) {
         return attachmentBones(transforms, side, locatorDeclared, true);
     }
 
     static List<String> attachmentBones(Map<String, Matrix4f> transforms, String side, boolean locatorDeclared,
-            boolean nativeYsm)
-    {
+            boolean nativeYsm) {
         List<String> selected = new ArrayList<>(8);
         // OpenYSM YSMClientMapper selects only the authored HandLocator. Legacy raw BBModel
         // keeps its existing hand fallback, including the author-hidden locator boundary.
         String primary = side + (nativeYsm || locatorDeclared ? "HandLocator" : "Hand");
         Matrix4f primaryTransform = transforms.get(primary);
-        if (primaryTransform != null && usable(primaryTransform))
-        {
+        if (primaryTransform != null && usable(primaryTransform)) {
             selected.add(primary);
         }
 
-        for (int i = 2; i <= 8; i++)
-        {
+        for (int i = 2; i <= 8; i++) {
             String name = side + "HandLocator" + i;
             Matrix4f transform = transforms.get(name);
-            if (transform != null && usable(transform))
-            {
+            if (transform != null && usable(transform)) {
                 selected.add(name);
             }
 
@@ -143,21 +125,17 @@ public final class YsmItemRenderer
     }
 
     /** Sparkle's VANILLA_EQUIPMENT direct-anchor branch wins over extras; extras are used only without a primary. */
-    static List<String> equipmentAttachmentBones(Map<String, Matrix4f> transforms, String side)
-    {
+    static List<String> equipmentAttachmentBones(Map<String, Matrix4f> transforms, String side) {
         String primary = side + "HandLocator";
-        if (transforms.containsKey(primary))
-        {
+        if (transforms.containsKey(primary)) {
             Matrix4f transform = transforms.get(primary);
             return transform != null && usable(transform) ? List.of(primary) : List.of();
         }
         List<String> selected = new ArrayList<>(7);
-        for (int i = 2; i <= 8; i++)
-        {
+        for (int i = 2; i <= 8; i++) {
             String extra = side + "HandLocator" + i;
             Matrix4f transform = transforms.get(extra);
-            if (transform != null && usable(transform))
-            {
+            if (transform != null && usable(transform)) {
                 selected.add(extra);
             }
 
@@ -166,18 +144,14 @@ public final class YsmItemRenderer
     }
 
     /** Bedrock locator axes to the native third-person item basis, after the model's body transform. */
-    static Matrix4f itemTransform(Matrix4f locator)
-    {
+    static Matrix4f itemTransform(Matrix4f locator) {
         return new Matrix4f(locator).translate(0, -.0625f, -.1f).rotateX((float) (-Math.PI / 2));
     }
 
-    static boolean usable(Matrix4f transform)
-    {
+    static boolean usable(Matrix4f transform) {
         float[] values = transform.get(new float[16]);
-        for (float value : values)
-        {
-            if (!Float.isFinite(value) || Math.abs(value) > 1_000_000)
-            {
+        for (float value : values) {
+            if (!Float.isFinite(value) || Math.abs(value) > 1_000_000) {
                 return false;
             }
 
@@ -187,19 +161,15 @@ public final class YsmItemRenderer
     }
 
     public static List<Map<String, Object>> submit(List<Attachment> items, MatrixStack matrices,
-            OrderedRenderCommandQueue queue, int light)
-    {
+            OrderedRenderCommandQueue queue, int light) {
         List<Map<String, Object>> draws = new ArrayList<>(items.size());
-        for (Attachment item : items)
-        {
-            if (item.state().isEmpty())
-            {
+        for (Attachment item : items) {
+            if (item.state().isEmpty()) {
                 continue;
             }
 
             matrices.push();
-            try
-            {
+            try {
                 matrices.multiplyPositionMatrix(item.transform());
                 item.state().render(matrices, queue, light, OverlayTexture.DEFAULT_UV, 0);
                 submittedItems++;
@@ -213,31 +183,25 @@ public final class YsmItemRenderer
                 draw.put("finalTransform", matrices.peek().getPositionMatrix().get(new float[16]));
                 draw.put("resolvedLayers", resolvedLayers(item.state()));
                 draws.add(Map.copyOf(draw));
-            }
-            finally
-            {
+            } finally {
                 matrices.pop();
             }
         }
         return List.copyOf(draws);
     }
 
-    public static long submittedItems()
-    {
+    public static long submittedItems() {
         return submittedItems;
     }
 
-    private static List<Map<String, Object>> resolvedLayers(ItemRenderState state)
-    {
+    private static List<Map<String, Object>> resolvedLayers(ItemRenderState state) {
         ItemRenderStateAccessor resolved = (ItemRenderStateAccessor) (Object) state;
         ItemRenderState.LayerRenderState[] layers = resolved.meplayeractions$getLayers();
         List<Map<String, Object>> result = new ArrayList<>();
-        for (int i = 0; i < resolved.meplayeractions$getLayerCount() && i < layers.length; i++)
-        {
+        for (int i = 0; i < resolved.meplayeractions$getLayerCount() && i < layers.length; i++) {
             ItemLayerRenderStateAccessor layer = (ItemLayerRenderStateAccessor) (Object) layers[i];
             Transformation transform = layer.meplayeractions$getTransform();
-            if (transform == null)
-            {
+            if (transform == null) {
                 continue;
             }
 
@@ -256,8 +220,7 @@ public final class YsmItemRenderer
         return List.copyOf(result);
     }
 
-    public static List<Map<String, Object>> diagnostics(List<Attachment> items)
-    {
+    public static List<Map<String, Object>> diagnostics(List<Attachment> items) {
         return items.stream()
                 .map(item -> Map.<String, Object>of("hand", item.hand(), "item", item.item(), "bone", item.bone(),
                         "nonempty", !item.state().isEmpty(), "transform", item.transform().get(new float[16]),

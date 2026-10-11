@@ -15,8 +15,7 @@ import java.util.function.Predicate;
 import java.util.function.DoubleSupplier;
 
 /** Main-thread connection budgets. A protocol session ending never resets these counters. */
-final class ConnectionLimits
-{
+final class ConnectionLimits {
     static final int INBOUND_PACKETS_PER_SECOND = 48;
     static final int INBOUND_BYTES_PER_SECOND = 256 * 1024;
     static final int OUTBOUND_BYTES_PER_SECOND = 2 * 1024 * 1024;
@@ -47,8 +46,7 @@ final class ConnectionLimits
     private long globalTick;
     private boolean tickInitialized;
 
-    void configure(ResourceSettings.Network value)
-    {
+    void configure(ResourceSettings.Network value) {
         this.policy = Objects.requireNonNull(value);
         this.upload.reset();
         this.download.reset();
@@ -60,23 +58,19 @@ final class ConnectionLimits
         this.decodePackets.reset();
     }
 
-    void writability(Predicate<UUID> value)
-    {
+    void writability(Predicate<UUID> value) {
         this.writable = Objects.requireNonNull(value);
     }
 
-    void assetFactor(DoubleSupplier value)
-    {
+    void assetFactor(DoubleSupplier value) {
         this.assetFactor = Objects.requireNonNull(value);
     }
 
     /** Foreign-thread callbacks may not create an unlimited Bukkit main-thread queue. */
-    synchronized boolean reserveInboundDispatch(int bytes)
-    {
+    synchronized boolean reserveInboundDispatch(int bytes) {
         int count = Math.max(16, Math.min(1024, this.policy.waitingTransfers() * 2));
         long cap = Math.max(256 * 1024L, Math.min(16 * 1024 * 1024L, this.policy.maxQueuedOutgoingBytes()));
-        if (bytes <= 0 || this.pendingInboundPackets >= count || bytes > cap - this.pendingInboundBytes)
-        {
+        if (bytes <= 0 || this.pendingInboundPackets >= count || bytes > cap - this.pendingInboundBytes) {
             return false;
         }
 
@@ -85,23 +79,19 @@ final class ConnectionLimits
         return true;
     }
 
-    synchronized void releaseInboundDispatch(int bytes)
-    {
+    synchronized void releaseInboundDispatch(int bytes) {
         this.pendingInboundPackets = Math.max(0, this.pendingInboundPackets - 1);
         this.pendingInboundBytes = Math.max(0, this.pendingInboundBytes - Math.max(0, bytes));
     }
 
-    boolean allowInbound(UUID viewer, int bytes, long now)
-    {
-        if (bytes <= 0)
-        {
+    boolean allowInbound(UUID viewer, int bytes, long now) {
+        if (bytes <= 0) {
             return false;
         }
 
         Window window = connection(viewer).inbound;
         window.roll(now);
-        if (!inboundAvailable(window, bytes, now))
-        {
+        if (!inboundAvailable(window, bytes, now)) {
             this.rejectedPackets++;
             return false;
         }
@@ -112,10 +102,8 @@ final class ConnectionLimits
     }
 
     /** CPU admission is independent of upload credit, and is charged even for malformed frames. */
-    boolean allowInboundDecode(UUID viewer, int bytes, long now)
-    {
-        if (bytes <= 0)
-        {
+    boolean allowInboundDecode(UUID viewer, int bytes, long now) {
+        if (bytes <= 0) {
             return false;
         }
 
@@ -126,8 +114,7 @@ final class ConnectionLimits
                 || !this.decodeBytes.available(bytes, this.policy.globalUploadBytesPerSecond(),
                         this.policy.burstBytes(), now)
                 || !this.decodePackets.available(1, this.policy.globalPacketsPerSecond(),
-                        this.policy.globalPacketsPerSecond(), now))
-        {
+                        this.policy.globalPacketsPerSecond(), now)) {
             this.rejectedPackets++;
             return false;
         }
@@ -139,18 +126,15 @@ final class ConnectionLimits
     }
 
     /** Credit charges the complete maximum wire packet before the client is allowed to upload it. */
-    boolean grantUploadCredit(UUID viewer, int maxWireBytes, long now)
-    {
-        if (maxWireBytes <= 0)
-        {
+    boolean grantUploadCredit(UUID viewer, int maxWireBytes, long now) {
+        if (maxWireBytes <= 0) {
             return false;
         }
 
         Connection connection = connection(viewer);
         Window window = connection.inbound;
         window.roll(now);
-        if (connection.uploadCredits.size() >= 4 || !inboundAvailable(window, maxWireBytes, now))
-        {
+        if (connection.uploadCredits.size() >= 4 || !inboundAvailable(window, maxWireBytes, now)) {
             return false;
         }
 
@@ -159,12 +143,10 @@ final class ConnectionLimits
         return true;
     }
 
-    boolean allowInboundCredited(UUID viewer, int wireBytes, long now)
-    {
+    boolean allowInboundCredited(UUID viewer, int wireBytes, long now) {
         Connection connection = connection(viewer);
         Integer credit = connection.uploadCredits.peekFirst();
-        if (wireBytes <= 0 || credit == null || wireBytes > credit)
-        {
+        if (wireBytes <= 0 || credit == null || wireBytes > credit) {
             this.rejectedPackets++;
             return false;
         }
@@ -174,17 +156,14 @@ final class ConnectionLimits
         return true;
     }
 
-    void clearUploadCredits(UUID viewer)
-    {
+    void clearUploadCredits(UUID viewer) {
         Connection connection = this.connections.get(viewer);
-        if (connection != null)
-        {
+        if (connection != null) {
             connection.uploadCredits.clear();
         }
     }
 
-    private boolean inboundAvailable(Window window, int bytes, long now)
-    {
+    private boolean inboundAvailable(Window window, int bytes, long now) {
         return window.packets < this.policy.packetsPerSecond()
                 && bytes <= this.policy.uploadBytesPerSecond() - window.bytes
                 && this.upload.available(bytes, this.policy.globalUploadBytesPerSecond(), this.policy.burstBytes(), now)
@@ -192,19 +171,16 @@ final class ConnectionLimits
                         this.policy.globalPacketsPerSecond(), now);
     }
 
-    private void chargeInbound(Window window, int bytes, long now)
-    {
+    private void chargeInbound(Window window, int bytes, long now) {
         window.packets++;
         window.bytes += bytes;
         this.upload.take(bytes);
         this.incomingPackets.take(1);
     }
 
-    boolean allowHello(UUID viewer, long now)
-    {
+    boolean allowHello(UUID viewer, long now) {
         Connection connection = connection(viewer);
-        if (connection.helloInitialized && now - connection.lastHelloAt < SECOND_NANOS)
-        {
+        if (connection.helloInitialized && now - connection.lastHelloAt < SECOND_NANOS) {
             return false;
         }
 
@@ -213,20 +189,17 @@ final class ConnectionLimits
         return true;
     }
 
-    boolean allowRequest(UUID viewer, String type, String action, long tick, int cooldownTicks)
-    {
+    boolean allowRequest(UUID viewer, String type, String action, long tick, int cooldownTicks) {
         return connection(viewer).requests.allow(type, action, tick, cooldownTicks);
     }
 
     /** Records an accepted transfer, including one subsequently cancelled by a new handshake. */
-    boolean allowAsset(UUID viewer, String hash, long tick)
-    {
+    boolean allowAsset(UUID viewer, String hash, long tick) {
         Objects.requireNonNull(hash);
         Connection connection = connection(viewer);
         connection.assetRequests.entrySet()
                 .removeIf(entry -> tickDistance(tick, entry.getValue()) >= ASSET_COOLDOWN_TICKS);
-        if (connection.assetRequests.containsKey(hash))
-        {
+        if (connection.assetRequests.containsKey(hash)) {
             return false;
         }
 
@@ -235,11 +208,9 @@ final class ConnectionLimits
     }
 
     /** A new hello cannot reset offer pacing or the attempts for an unchanged server instance. */
-    boolean canPushOffer(UUID viewer, String hash, Set<UUID> instances, long tick)
-    {
+    boolean canPushOffer(UUID viewer, String hash, Set<UUID> instances, long tick) {
         Connection connection = connection(viewer);
-        if (connection.offerInitialized && tickDistance(tick, connection.lastOfferTick) < PUSH_OFFER_INTERVAL_TICKS)
-        {
+        if (connection.offerInitialized && tickDistance(tick, connection.lastOfferTick) < PUSH_OFFER_INTERVAL_TICKS) {
             return false;
         }
 
@@ -248,16 +219,13 @@ final class ConnectionLimits
                 && (Collections.disjoint(previous.instances, instances) || previous.attempts < PUSH_MAX_ATTEMPTS);
     }
 
-    void pushOfferSent(UUID viewer, String hash, Set<UUID> instances, long tick)
-    {
+    void pushOfferSent(UUID viewer, String hash, Set<UUID> instances, long tick) {
         Connection connection = connection(viewer);
         PushAttempt previous = connection.pushAttempts.remove(hash);
         int attempts = previous != null && !Collections.disjoint(previous.instances, instances) ? previous.attempts + 1
                 : 1;
         connection.pushAttempts.put(hash, new PushAttempt(instances, tick, attempts, true));
-        while (connection.pushAttempts.size() > PUSH_MAX_RECORDS)
-
-        {
+        while (connection.pushAttempts.size() > PUSH_MAX_RECORDS) {
             connection.pushAttempts.remove(connection.pushAttempts.keySet().iterator().next());
         }
 
@@ -266,18 +234,15 @@ final class ConnectionLimits
     }
 
     /** Refunds this pending offer once when a negotiated viewer pauses; keeps failures and pacing. */
-    void cancelPausedPushOffer(UUID viewer, String hash, Set<UUID> instances, long issuedTick)
-    {
+    void cancelPausedPushOffer(UUID viewer, String hash, Set<UUID> instances, long issuedTick) {
         Connection connection = this.connections.get(viewer);
-        if (connection == null)
-        {
+        if (connection == null) {
             return;
         }
 
         PushAttempt previous = connection.pushAttempts.get(hash);
         if (previous == null || !previous.cancellable || previous.attempts <= 0 || previous.lastTick != issuedTick
-                || !previous.instances.equals(instances))
-        {
+                || !previous.instances.equals(instances)) {
             return;
         }
 
@@ -286,23 +251,19 @@ final class ConnectionLimits
     }
 
     /** Only an authorized render_ready resets failure attempts; cached feedback cannot do it. */
-    void pushRenderReady(UUID viewer, String hash)
-    {
+    void pushRenderReady(UUID viewer, String hash) {
         Connection connection = connection(viewer);
         PushAttempt previous = connection.pushAttempts.get(hash);
-        if (previous != null)
-        {
+        if (previous != null) {
             connection.pushAttempts.put(hash, new PushAttempt(previous.instances, previous.lastTick, 0, false));
         }
 
     }
 
-    boolean reserveTransfer(UUID viewer)
-    {
+    boolean reserveTransfer(UUID viewer) {
         Connection connection = connection(viewer);
         if (connection.transfers >= this.policy.transfersPerPlayer()
-                || this.activeTransfers >= this.policy.globalTransfers())
-        {
+                || this.activeTransfers >= this.policy.globalTransfers()) {
             return false;
         }
 
@@ -312,12 +273,10 @@ final class ConnectionLimits
         return true;
     }
 
-    boolean reserveWaiting(UUID viewer)
-    {
+    boolean reserveWaiting(UUID viewer) {
         Connection connection = connection(viewer);
         if (connection.waiting >= this.policy.transfersPerPlayer()
-                || this.waitingTransfers >= this.policy.waitingTransfers())
-        {
+                || this.waitingTransfers >= this.policy.waitingTransfers()) {
             return false;
         }
 
@@ -326,30 +285,24 @@ final class ConnectionLimits
         return true;
     }
 
-    void releaseWaiting(UUID viewer)
-    {
+    void releaseWaiting(UUID viewer) {
         Connection connection = this.connections.get(viewer);
-        if (connection != null && connection.waiting > 0)
-        {
+        if (connection != null && connection.waiting > 0) {
             connection.waiting--;
             this.waitingTransfers--;
         }
     }
 
-    void releaseWaitingTransfers(UUID viewer)
-    {
+    void releaseWaitingTransfers(UUID viewer) {
         Connection connection = this.connections.get(viewer);
-        if (connection != null)
-        {
+        if (connection != null) {
             this.waitingTransfers -= connection.waiting;
             connection.waiting = 0;
         }
     }
 
-    boolean queueOutgoing(UUID viewer, int bytes)
-    {
-        if (!canQueueOutgoing(viewer, bytes))
-        {
+    boolean queueOutgoing(UUID viewer, int bytes) {
+        if (!canQueueOutgoing(viewer, bytes)) {
             return false;
         }
 
@@ -359,61 +312,49 @@ final class ConnectionLimits
         return true;
     }
 
-    boolean canQueueOutgoing(UUID viewer, int bytes)
-    {
+    boolean canQueueOutgoing(UUID viewer, int bytes) {
         return bytes > 0 && bytes <= this.policy.maxQueuedOutgoingBytes() - this.queuedBytes;
     }
 
-    void releaseOutgoing(UUID viewer, int bytes)
-    {
+    void releaseOutgoing(UUID viewer, int bytes) {
         Connection connection = this.connections.get(viewer);
-        if (connection != null)
-        {
+        if (connection != null) {
             long released = Math.min(connection.queuedBytes, Math.max(0, bytes));
             connection.queuedBytes -= released;
             this.queuedBytes -= released;
         }
     }
 
-    void transferTimedOut()
-    {
+    void transferTimedOut() {
         this.timedOutTransfers++;
     }
 
-    int transferQueueTicks()
-    {
+    int transferQueueTicks() {
         return this.policy.transferQueueTicks();
     }
 
-    int transferIdleTicks()
-    {
+    int transferIdleTicks() {
         return this.policy.transferIdleTicks();
     }
 
-    int transferTotalTicks()
-    {
+    int transferTotalTicks() {
         return this.policy.transferTotalTicks();
     }
 
-    int readyTicks()
-    {
+    int readyTicks() {
         return this.policy.readyTicks();
     }
 
-    int waitingLimit()
-    {
+    int waitingLimit() {
         return this.policy.waitingTransfers();
     }
 
-    int transferLimit()
-    {
+    int transferLimit() {
         return this.policy.globalTransfers();
     }
 
-    long metric(String name)
-    {
-        return switch (name)
-        {
+    long metric(String name) {
+        return switch (name) {
         case "connections" -> this.connections.size();
         case "transfers" -> this.activeTransfers;
         case "transfers.limit" -> this.policy.globalTransfers();
@@ -440,32 +381,26 @@ final class ConnectionLimits
         };
     }
 
-    void releaseTransfer(UUID viewer)
-    {
+    void releaseTransfer(UUID viewer) {
         Connection connection = this.connections.get(viewer);
-        if (connection != null && connection.transfers > 0)
-        {
+        if (connection != null && connection.transfers > 0) {
             connection.transfers--;
             this.activeTransfers--;
         }
     }
 
     /** Releases session work without erasing connection traffic, hello or asset cooldowns. */
-    void releaseTransfers(UUID viewer)
-    {
+    void releaseTransfers(UUID viewer) {
         Connection connection = this.connections.get(viewer);
-        if (connection != null)
-        {
+        if (connection != null) {
             this.activeTransfers -= connection.transfers;
             connection.transfers = 0;
         }
     }
 
     /** Checks every budget before charging any bytes, so a deferred packet consumes nothing. */
-    boolean allowOutbound(UUID viewer, int bytes, boolean asset, long now, long tick)
-    {
-        if (!canOutbound(viewer, bytes, asset, now, tick))
-        {
+    boolean allowOutbound(UUID viewer, int bytes, boolean asset, long now, long tick) {
+        if (!canOutbound(viewer, bytes, asset, now, tick)) {
             this.deferredPackets++;
             return false;
         }
@@ -477,8 +412,7 @@ final class ConnectionLimits
         this.outgoingPackets.take(1);
         this.downloadedBytes += bytes;
         this.outgoingRate.record(bytes, now);
-        if (asset)
-        {
+        if (asset) {
             window.assetBytes += bytes;
             window.assetPackets++;
             this.globalAssetBytes += bytes;
@@ -489,23 +423,19 @@ final class ConnectionLimits
     }
 
     /** Cheap preflight before slicing, Base64 encoding or constructing a large JSON packet. */
-    boolean canOutbound(UUID viewer, int bytes, boolean asset, long now, long tick)
-    {
-        if (bytes <= 0)
-        {
+    boolean canOutbound(UUID viewer, int bytes, boolean asset, long now, long tick) {
+        if (bytes <= 0) {
             return false;
         }
 
         double factor = asset ? Math.max(0, Math.min(1, this.assetFactor.getAsDouble())) : 1;
-        if (asset && factor <= 0)
-        {
+        if (asset && factor <= 0) {
             return false;
         }
 
         Window window = connection(viewer).outbound;
         window.roll(now);
-        if (!this.tickInitialized || this.globalTick != tick)
-        {
+        if (!this.tickInitialized || this.globalTick != tick) {
             this.tickInitialized = true;
             this.globalTick = tick;
             this.globalBytes = this.globalAssetBytes = 0;
@@ -530,13 +460,11 @@ final class ConnectionLimits
     }
 
     /** At least one and at least a quarter of packet capacity remain available to ACK/revoke/cleanup. */
-    private static int assetPacketQuota(int total)
-    {
+    private static int assetPacketQuota(int total) {
         return Math.max(1, total - Math.max(1, (total + 3) / 4));
     }
 
-    String status(long now)
-    {
+    String status(long now) {
         return "连接 " + this.connections.size() + "；活动传输 " + this.activeTransfers + "/" + this.policy.globalTransfers()
                 + "；等待 " + this.waitingTransfers + "/" + this.policy.waitingTransfers() + "；待发 " + this.queuedBytes
                 + "/" + this.policy.maxQueuedOutgoingBytes() + " B（峰值 " + this.peakQueuedBytes + "）；累计上下行 "
@@ -546,26 +474,21 @@ final class ConnectionLimits
     }
 
     /** Only call for an actual disconnect/offline player, never for protocol/session errors. */
-    void forget(UUID viewer)
-    {
+    void forget(UUID viewer) {
         Connection removed = this.connections.remove(viewer);
-        if (removed != null)
-        {
+        if (removed != null) {
             this.activeTransfers -= removed.transfers;
             this.waitingTransfers -= removed.waiting;
             this.queuedBytes -= removed.queuedBytes;
         }
     }
 
-    void pruneOffline(Predicate<UUID> online)
-    {
+    void pruneOffline(Predicate<UUID> online) {
         Objects.requireNonNull(online);
         Iterator<Map.Entry<UUID, Connection>> iterator = this.connections.entrySet().iterator();
-        while (iterator.hasNext())
-        {
+        while (iterator.hasNext()) {
             Map.Entry<UUID, Connection> entry = iterator.next();
-            if (!online.test(entry.getKey()))
-            {
+            if (!online.test(entry.getKey())) {
                 this.activeTransfers -= entry.getValue().transfers;
                 this.waitingTransfers -= entry.getValue().waiting;
                 this.queuedBytes -= entry.getValue().queuedBytes;
@@ -574,18 +497,15 @@ final class ConnectionLimits
         }
     }
 
-    private Connection connection(UUID viewer)
-    {
+    private Connection connection(UUID viewer) {
         return this.connections.computeIfAbsent(Objects.requireNonNull(viewer), ignored -> new Connection());
     }
 
-    private static long tickDistance(long current, long previous)
-    {
+    private static long tickDistance(long current, long previous) {
         return (current - previous) & 0xffffffffL;
     }
 
-    private static final class Connection
-    {
+    private static final class Connection {
         final Window inbound = new Window(), outbound = new Window(), decode = new Window();
         final RequestCooldown requests = new RequestCooldown();
         final Map<String, Long> assetRequests = new HashMap<>();
@@ -597,26 +517,20 @@ final class ConnectionLimits
         long queuedBytes;
     }
 
-    private static final class Bucket
-    {
+    private static final class Bucket {
         double tokens;
         long at;
         boolean initialized;
 
-        boolean available(long bytes, long rate, long burst, long now)
-        {
+        boolean available(long bytes, long rate, long burst, long now) {
             long capacity = Math.max(1, burst);
-            if (!this.initialized)
-            {
+            if (!this.initialized) {
                 this.initialized = true;
                 this.tokens = capacity;
                 this.at = now;
-            }
-            else
-            {
+            } else {
                 long elapsed = now - this.at;
-                if (elapsed > 0)
-                {
+                if (elapsed > 0) {
                     this.tokens = Math.min(capacity, this.tokens + elapsed / (double) SECOND_NANOS * rate);
                 }
 
@@ -625,45 +539,37 @@ final class ConnectionLimits
             return bytes <= this.tokens;
         }
 
-        void take(long bytes)
-        {
+        void take(long bytes) {
             this.tokens -= bytes;
         }
 
-        void reset()
-        {
+        void reset() {
             this.initialized = false;
             this.tokens = 0;
         }
     }
 
-    private static final class Rate
-    {
+    private static final class Rate {
         long at, current, previous;
         boolean initialized;
 
-        void record(long bytes, long now)
-        {
+        void record(long bytes, long now) {
             roll(now);
             this.current += bytes;
         }
 
-        long value(long now)
-        {
+        long value(long now) {
             roll(now);
             return this.previous;
         }
 
-        private void roll(long now)
-        {
-            if (!this.initialized)
-            {
+        private void roll(long now) {
+            if (!this.initialized) {
                 this.initialized = true;
                 this.at = now;
             }
             long elapsed = now - this.at;
-            if (elapsed >= SECOND_NANOS)
-            {
+            if (elapsed >= SECOND_NANOS) {
                 this.previous = elapsed < SECOND_NANOS * 2 ? this.current : 0;
                 this.current = 0;
                 this.at = now;
@@ -671,24 +577,19 @@ final class ConnectionLimits
         }
     }
 
-    private record PushAttempt(Set<UUID> instances, long lastTick, int attempts, boolean cancellable)
-    {
-        private PushAttempt
-        {
+    private record PushAttempt(Set<UUID> instances, long lastTick, int attempts, boolean cancellable) {
+        private PushAttempt {
             instances = Set.copyOf(instances);
         }
     }
 
-    private static final class Window
-    {
+    private static final class Window {
         long startedAt;
         int packets, assetPackets, bytes, assetBytes;
         boolean initialized;
 
-        void roll(long now)
-        {
-            if (!this.initialized || now - this.startedAt >= SECOND_NANOS)
-            {
+        void roll(long now) {
+            if (!this.initialized || now - this.startedAt >= SECOND_NANOS) {
                 this.initialized = true;
                 this.startedAt = now;
                 this.packets = this.assetPackets = this.bytes = this.assetBytes = 0;

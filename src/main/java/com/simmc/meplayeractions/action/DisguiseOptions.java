@@ -8,102 +8,81 @@ import java.util.regex.Pattern;
 
 /** Per-command overrides; parsing and validation finish before an existing disguise is touched. */
 public record DisguiseOptions(String modelId, double scale, boolean hideSelf, int visualDelay, boolean showSelf,
-        double viewDistance, int maxViewers, List<Effect> effects)
-{
+        double viewDistance, int maxViewers, List<Effect> effects) {
 
     private static final List<String> KEYS = List.of("scale", "hide-self", "delay", "show-self", "view-distance",
             "max-viewers", "effect");
     private static final Pattern EFFECT_ID = Pattern.compile("[a-z0-9_-]{1,64}");
-    public record Effect(String id, int level, int seconds)
-    {
-        public Effect
-        {
-            if (!EFFECT_ID.matcher(id).matches())
-            {
+    public record Effect(String id, int level, int seconds) {
+        public Effect {
+            if (!EFFECT_ID.matcher(id).matches()) {
                 throw new IllegalArgumentException("药水名须使用原版英文 ID");
             }
 
-            if (level < 1 || level > 256)
-            {
+            if (level < 1 || level > 256) {
                 throw new IllegalArgumentException("药水等级范围：1–256；1 表示 I 级");
             }
 
-            if (seconds < 0 || seconds > 86400)
-            {
+            if (seconds < 0 || seconds > 86400) {
                 throw new IllegalArgumentException("药水持续秒数范围：1–86400；省略表示随伪装持续");
             }
 
         }
 
-        public String display()
-        {
+        public String display() {
             return this.id + ":" + this.level + (this.seconds == 0 ? "" : ":" + this.seconds);
         }
     }
 
-    public DisguiseOptions
-    {
+    public DisguiseOptions {
         modelId = Settings.id(modelId);
-        if (!Double.isFinite(scale) || scale < 0.05 || scale > 8)
-
-        {
+        if (!Double.isFinite(scale) || scale < 0.05 || scale > 8) {
             throw new IllegalArgumentException("缩放范围：0.05–8");
         }
 
-        if (visualDelay < 0 || visualDelay > 20)
-        {
+        if (visualDelay < 0 || visualDelay > 20) {
             throw new IllegalArgumentException("视觉延迟范围：0–20 tick");
         }
 
-        if (!Double.isFinite(viewDistance) || viewDistance < 0.1 || viewDistance > 256)
-
-        {
+        if (!Double.isFinite(viewDistance) || viewDistance < 0.1 || viewDistance > 256) {
             throw new IllegalArgumentException("可视距离范围：0.1–256 格");
         }
 
-        if (maxViewers < 0 || maxViewers > 1000)
-        {
+        if (maxViewers < 0 || maxViewers > 1000) {
             throw new IllegalArgumentException("最大观看人数范围：0–1000；0 表示其他玩家均不可见");
         }
 
         effects = List.copyOf(effects);
         HashSet<String> ids = new HashSet<String>();
-        for (Effect effect : effects)
-        {
-            if (!effect.id().equals("slowness"))
-            {
+        for (Effect effect : effects) {
+            if (!effect.id().equals("slowness")) {
                 throw new IllegalArgumentException("伪装药水仅支持缓慢：effect=slowness[:等级[:秒数]]");
             }
 
-            if (!ids.add(effect.id()))
-            {
+            if (!ids.add(effect.id())) {
                 throw new IllegalArgumentException("药水重复设置：" + effect.id());
             }
 
         }
     }
 
-    public static DisguiseOptions defaults(String model, double scale, boolean hideSelf, int delay)
-    {
+    public static DisguiseOptions defaults(String model, double scale, boolean hideSelf, int delay) {
         return new DisguiseOptions(model, scale, hideSelf, delay, true, 8, 10, List.of());
     }
 
-    public static DisguiseOptions defaults(String model, Settings settings)
-    {
+    public static DisguiseOptions defaults(String model, Settings settings) {
         return new DisguiseOptions(model, settings.scale, settings.hideSelf, settings.visualDelayTicks,
                 settings.showSelf, settings.modelViewDistance, settings.maxViewers, List.of());
     }
 
     /** The command's explicit model supplies the defaults; no configuration model registration is needed. */
-    public static DisguiseOptions parse(String[] args, Settings settings)
-    {
+    public static DisguiseOptions parse(String[] args, Settings settings) {
         requireModelArgument(args);
         return parse(args, defaults(args[1], settings));
     }
 
     /** Requires the model first, then key=value, --key=value or --key value overrides. */
-    public static DisguiseOptions parse(String[] args, DisguiseOptions defaults)
-    {
+    public static DisguiseOptions parse(String[] args, DisguiseOptions defaults) {
         requireModelArgument(args);
         String model = Settings.id(args[1]);
         double scale = defaults.scale();
@@ -113,94 +92,68 @@ public record DisguiseOptions(String modelId, double scale, boolean hideSelf, in
         List<Effect> effects = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         int index = 2;
-        while (index < args.length)
-        {
+        while (index < args.length) {
             String token = args[index++];
             String key, value;
             int equals = token.indexOf('=');
-            if (equals > 0)
-            {
+            if (equals > 0) {
                 key = token.substring(0, equals);
                 value = token.substring(equals + 1);
-                if (key.startsWith("--"))
-                {
+                if (key.startsWith("--")) {
                     key = key.substring(2);
                 }
 
-            }
-            else if (token.startsWith("--"))
-            {
+            } else if (token.startsWith("--")) {
                 key = token.substring(2);
-                if (index >= args.length || args[index].startsWith("--") || args[index].contains("="))
-
-                {
+                if (index >= args.length || args[index].startsWith("--") || args[index].contains("=")) {
                     throw new IllegalArgumentException("参数缺少值：" + token);
                 }
 
                 value = args[index++];
-            }
-            else
-            {
+            } else {
                 throw new IllegalArgumentException("伪装参数使用 key=value，例如 scale=0.8 effect=slowness:1");
             }
 
             key = key.toLowerCase(Locale.ROOT);
-            if (!KEYS.contains(key))
-
-            {
+            if (!KEYS.contains(key)) {
                 throw new IllegalArgumentException("未知伪装参数：" + key + "；支持 " + String.join("、", KEYS));
             }
 
-            if (value.isBlank())
-            {
+            if (value.isBlank()) {
                 throw new IllegalArgumentException("参数缺少值：" + key);
             }
 
-            if (!seen.add(key))
-            {
+            if (!seen.add(key)) {
                 throw new IllegalArgumentException("参数重复设置：" + key);
             }
 
-            switch (key)
-            {
-            case "scale" ->
-            {
-                try
-                {
+            switch (key) {
+            case "scale" -> {
+                try {
                     scale = Double.parseDouble(value);
-                }
-                catch (NumberFormatException e)
-                {
+                } catch (NumberFormatException e) {
                     throw new IllegalArgumentException("scale 请输入数字，例如 0.8");
                 }
             }
             case "hide-self" -> hide = bool(value, key);
             case "show-self" -> showSelf = bool(value, key);
-            case "view-distance" ->
-            {
-                try
-                {
+            case "view-distance" -> {
+                try {
                     viewDistance = Double.parseDouble(value);
-                }
-                catch (NumberFormatException e)
-                {
+                } catch (NumberFormatException e) {
                     throw new IllegalArgumentException("view-distance 请输入格数，例如 8");
                 }
             }
             case "max-viewers" -> maxViewers = integer(value, key);
             case "delay" -> delay = integer(value, "delay");
-            case "effect" ->
-            {
+            case "effect" -> {
                 String[] parts = value.toLowerCase(Locale.ROOT).split(":", -1);
-                if (parts.length < 1 || parts.length > 3 || Arrays.stream(parts).anyMatch(String::isBlank))
-
-                {
+                if (parts.length < 1 || parts.length > 3 || Arrays.stream(parts).anyMatch(String::isBlank)) {
                     throw new IllegalArgumentException("药水格式：effect=药水名[:等级[:秒数]]，例如 effect=slowness:1:60");
                 }
 
                 int seconds = parts.length > 2 ? integer(parts[2], "药水秒数") : 0;
-                if (parts.length > 2 && seconds == 0)
-                {
+                if (parts.length > 2 && seconds == 0) {
                     throw new IllegalArgumentException("显式药水秒数至少为 1");
                 }
 
@@ -211,45 +164,32 @@ public record DisguiseOptions(String modelId, double scale, boolean hideSelf, in
         return new DisguiseOptions(model, scale, hide, delay, showSelf, viewDistance, maxViewers, effects);
     }
 
-    private static void requireModelArgument(String[] args)
-    {
-        if (args.length < 2 || args[1].isBlank() || args[1].contains("=") || args[1].startsWith("--"))
-
-        {
+    private static void requireModelArgument(String[] args) {
+        if (args.length < 2 || args[1].isBlank() || args[1].contains("=") || args[1].startsWith("--")) {
             throw new IllegalArgumentException("用法：" + CommandLayout.PREFIX + " disguise <模型名> [参数...]；模型名必须放在参数前面");
         }
 
     }
 
-    private static boolean bool(String value, String key)
-    {
-        return switch (value.toLowerCase(Locale.ROOT))
-        {
+    private static boolean bool(String value, String key) {
+        return switch (value.toLowerCase(Locale.ROOT)) {
         case "true", "on" -> true;
         case "false", "off" -> false;
         default -> throw new IllegalArgumentException(key + " 使用 true 或 false");
         };
     }
 
-    private static int integer(String value, String name)
-    {
-        try
-        {
+    private static int integer(String value, String name) {
+        try {
             return Integer.parseInt(value);
-        }
-        catch (NumberFormatException e)
-        {
+        } catch (NumberFormatException e) {
             throw new IllegalArgumentException(name + " 请输入整数");
         }
     }
 
-    public void requireEffects(Predicate<String> supported)
-    {
-        for (Effect effect : this.effects)
-        {
-            if (!supported.test(effect.id()))
-
-            {
+    public void requireEffects(Predicate<String> supported) {
+        for (Effect effect : this.effects) {
+            if (!supported.test(effect.id())) {
                 throw new IllegalArgumentException("服务器未注册缓慢药水：" + effect.id());
             }
 
@@ -257,73 +197,57 @@ public record DisguiseOptions(String modelId, double scale, boolean hideSelf, in
 
     }
 
-    public String description()
-    {
+    public String description() {
         return "缩放 " + this.scale + "；隐藏原人物 " + this.hideSelf + "；视觉延迟 " + this.visualDelay + " tick" + "；自己可见 "
                 + this.showSelf + "；可视距离 < " + this.viewDistance + " 格；最多其他观众 " + this.maxViewers
                 + (this.effects.isEmpty() ? ""
                         : "；药水 " + String.join(", ", this.effects.stream().map(Effect::display).toList()));
     }
 
-    public static List<String> suggestions(String[] args, List<String> models, List<String> effects)
-    {
-        if (args.length < 2)
-        {
+    public static List<String> suggestions(String[] args, List<String> models, List<String> effects) {
+        if (args.length < 2) {
             return List.of();
         }
 
         String current = args[args.length - 1].toLowerCase(Locale.ROOT);
-        if (args.length == 2)
-        {
+        if (args.length == 2) {
             return models.stream().filter(s -> s.startsWith(current)).sorted().toList();
         }
 
-        if (args[1].contains("=") || args[1].startsWith("--"))
-        {
+        if (args[1].contains("=") || args[1].startsWith("--")) {
             return List.of();
         }
 
         List<String> result = new ArrayList<>();
         String valueKey = args.length > 2 && args[args.length - 2].startsWith("--")
                 && !args[args.length - 2].contains("=") ? args[args.length - 2].substring(2) : "";
-        if (!valueKey.isEmpty())
-        {
+        if (!valueKey.isEmpty()) {
             result.addAll(values(valueKey, "", effects));
         }
 
-        else
-        {
+        else {
             String withoutDashes = current.startsWith("--") ? current.substring(2) : current;
             int equals = withoutDashes.indexOf('=');
-            if (equals >= 0)
-            {
+            if (equals >= 0) {
                 result.addAll(values(withoutDashes.substring(0, equals),
                         (current.startsWith("--") ? "--" : "") + withoutDashes.substring(0, equals + 1), effects));
             }
 
-            else
-            {
+            else {
                 Set<String> used = new HashSet<>();
-                for (int i = 2; i < args.length - 1; i++)
-                {
+                for (int i = 2; i < args.length - 1; i++) {
                     String previous = args[i].replaceFirst("^--", "");
-                    if (previous.contains("="))
-                    {
+                    if (previous.contains("=")) {
                         used.add(previous.substring(0, previous.indexOf('=')));
                     }
 
-                    else if (args[i].startsWith("--"))
-                    {
+                    else if (args[i].startsWith("--")) {
                         used.add(previous);
                     }
 
                 }
-                for (String key : KEYS)
-
-                {
-                    if (!used.contains(key) && (!key.equals("effect") || effects.contains("slowness")))
-
-                    {
+                for (String key : KEYS) {
+                    if (!used.contains(key) && (!key.equals("effect") || effects.contains("slowness"))) {
                         result.add(current.startsWith("--") ? "--" + key : key + "=");
                     }
 
@@ -334,10 +258,8 @@ public record DisguiseOptions(String modelId, double scale, boolean hideSelf, in
         return result.stream().distinct().filter(s -> s.toLowerCase(Locale.ROOT).startsWith(current)).sorted().toList();
     }
 
-    private static List<String> values(String key, String prefix, List<String> effects)
-    {
-        List<String> values = switch (key)
-        {
+    private static List<String> values(String key, String prefix, List<String> effects) {
+        List<String> values = switch (key) {
         case "scale" -> List.of("0.5", "0.8", "1.0", "1.2", "1.5", "2.0");
         case "hide-self", "show-self" -> List.of("true", "false");
         case "view-distance" -> List.of("4", "8", "16", "32");

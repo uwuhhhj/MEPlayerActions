@@ -9,11 +9,9 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NativeEquipmentLocatorTest
-{
+class NativeEquipmentLocatorTest {
     @Test
-    void importedEquipmentChainPreservesEveryPivotAndRotationWhileIgnoringParentAndLocatorScale() throws Exception
-    {
+    void importedEquipmentChainPreservesEveryPivotAndRotationWhileIgnoringParentAndLocatorScale() throws Exception {
         byte[] source = NativeBbModelTest.source().toString().getBytes(StandardCharsets.UTF_8);
         YsmFolderModel.Imported imported = NativeBbModel.read(source, Map.of("model.bbmodel", source), null);
         assertTrue(imported.profile().isImportedBbModel());
@@ -41,12 +39,10 @@ class NativeEquipmentLocatorTest
         assertMatrix(expected, model.equipmentLocatorTransforms(scaled).get("RightHandLocator"));
     }
 
-    private static void assertMatrix(Matrix4f expected, Matrix4f actual)
-    {
+    private static void assertMatrix(Matrix4f expected, Matrix4f actual) {
         assertNotNull(expected);
         float[] first = expected.get(new float[16]), second = actual.get(new float[16]);
-        for (int i = 0; i < first.length; i++)
-        {
+        for (int i = 0; i < first.length; i++) {
             assertEquals(first[i], second[i], 1e-6, "Matrix element " + i);
         }
 

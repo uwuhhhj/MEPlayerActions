@@ -3,11 +3,9 @@ package com.simmc.meplayeractions.me;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
-class LocalRenderingDiagnosisTest
-{
+class LocalRenderingDiagnosisTest {
     @Test
-    void oneOwnedConnectedModelWithAudienceMayRequestLocalRendering()
-    {
+    void oneOwnedConnectedModelWithAudienceMayRequestLocalRendering() {
         ModelEngineBridge.LocalRenderingDiagnosis diagnosis = ModelEngineBridge.diagnoseLocalRendering(true, true, true,
                 1);
         assertTrue(diagnosis.allowed());
@@ -17,8 +15,7 @@ class LocalRenderingDiagnosisTest
     }
 
     @Test
-    void attachedForeignModelsRetainOwnershipProtectionEvenWhenSingleAndVisible()
-    {
+    void attachedForeignModelsRetainOwnershipProtectionEvenWhenSingleAndVisible() {
         ModelEngineBridge.LocalRenderingDiagnosis diagnosis = ModelEngineBridge.diagnoseLocalRendering(true, false,
                 true, 1);
         assertFalse(diagnosis.allowed());
@@ -28,8 +25,7 @@ class LocalRenderingDiagnosisTest
     }
 
     @Test
-    void missingConnectionOrAudienceHasAnExplicitFailureReason()
-    {
+    void missingConnectionOrAudienceHasAnExplicitFailureReason() {
         ModelEngineBridge.LocalRenderingDiagnosis disconnected = ModelEngineBridge.diagnoseLocalRendering(false, true,
                 true, 1);
         assertFalse(disconnected.allowed());
@@ -41,11 +37,8 @@ class LocalRenderingDiagnosisTest
     }
 
     @Test
-    void zeroOrMultipleModelsFailTheExactlyOneGateWithoutHidingForeignModels()
-    {
-        for (int count : new int[]
-        { 0, 2, 3 })
-        {
+    void zeroOrMultipleModelsFailTheExactlyOneGateWithoutHidingForeignModels() {
+        for (int count : new int[] { 0, 2, 3 }) {
             ModelEngineBridge.LocalRenderingDiagnosis diagnosis = ModelEngineBridge.diagnoseLocalRendering(true, true,
                     true, count);
             assertFalse(diagnosis.allowed());

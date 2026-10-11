@@ -16,23 +16,19 @@ import java.util.function.BooleanSupplier;
 import java.util.function.DoublePredicate;
 
 /** Yarn port of OpenYSM ConfigCheckBox / AnimationSlider, shared by wheel and settings. */
-public final class AuthorFormWidgets
-{
+public final class AuthorFormWidgets {
     private static final Identifier ATLAS = Identifier.of("meplayeractions", "textures/gui/roulette.png");
 
-    private AuthorFormWidgets()
-    {
+    private AuthorFormWidgets() {
     }
 
-    public static final class Check extends ButtonWidget
-    {
+    public static final class Check extends ButtonWidget {
         private final TextRenderer textRenderer;
         private final BooleanSupplier selected;
         private final BiPredicate<Double, Double> viewport;
 
         public Check(TextRenderer textRenderer, int x, int y, int width, int height, String label,
-                BooleanSupplier selected, Runnable action, BiPredicate<Double, Double> viewport)
-        {
+                BooleanSupplier selected, Runnable action, BiPredicate<Double, Double> viewport) {
             super(x, y, Math.max(20, width), height, net.minecraft.text.Text.literal(label), button -> action.run(),
                     narration -> narration.get());
             this.textRenderer = textRenderer;
@@ -40,20 +36,17 @@ public final class AuthorFormWidgets
             this.viewport = viewport;
         }
 
-        public boolean selected()
-        {
+        public boolean selected() {
             return this.selected.getAsBoolean();
         }
 
         @Override
-        protected void drawIcon(DrawContext context, int mouseX, int mouseY, float delta)
-        {
+        protected void drawIcon(DrawContext context, int mouseX, int mouseY, float delta) {
             int y = getY() + (getHeight() - 12) / 2;
             context.fill(getX(), getY(), getRight(), getBottom(), 0xcf000000);
             context.drawTexture(RenderPipelines.GUI_TEXTURED, ATLAS, getX(), y, this.selected.getAsBoolean() ? 128 : 0,
                     isHovered() ? 12 : 0, Math.min(128, getWidth()), 12, 256, 256);
-            if (isHovered() || isFocused())
-            {
+            if (isHovered() || isFocused()) {
                 context.drawStrokedRectangle(getX(), getY(), getWidth(), getHeight(), -790560);
             }
 
@@ -63,14 +56,12 @@ public final class AuthorFormWidgets
         }
 
         @Override
-        public boolean mouseClicked(Click click, boolean doubled)
-        {
+        public boolean mouseClicked(Click click, boolean doubled) {
             return this.viewport.test(click.x(), click.y()) && super.mouseClicked(click, doubled);
         }
     }
 
-    public static final class Range extends SliderWidget
-    {
+    public static final class Range extends SliderWidget {
         public final ModelConfigSchema.Form form;
         private final TextRenderer textRenderer;
         private final DoublePredicate apply;
@@ -78,8 +69,7 @@ public final class AuthorFormWidgets
         private double applied;
 
         public Range(TextRenderer textRenderer, int x, int y, int width, int height, ModelConfigSchema.Form form,
-                double current, DoublePredicate apply, BiPredicate<Double, Double> viewport)
-        {
+                double current, DoublePredicate apply, BiPredicate<Double, Double> viewport) {
             super(x, y, Math.max(20, width), height, Text.empty(), fraction(form, form.snap(current)));
             this.textRenderer = textRenderer;
             this.form = form;
@@ -90,49 +80,40 @@ public final class AuthorFormWidgets
             updateMessage();
         }
 
-        private static double fraction(ModelConfigSchema.Form form, double value)
-        {
+        private static double fraction(ModelConfigSchema.Form form, double value) {
             return form.maximum() == form.minimum() ? 0 : (value - form.minimum()) / (form.maximum() - form.minimum());
         }
 
-        private double requested()
-        {
+        private double requested() {
             return this.form.snap(this.form.minimum() + super.value * (this.form.maximum() - this.form.minimum()));
         }
 
-        public double currentValue()
-        {
+        public double currentValue() {
             return this.applied;
         }
 
-        public void syncValue(double current)
-        {
+        public void syncValue(double current) {
             this.applied = this.form.snap(current);
             super.value = fraction(this.form, this.applied);
             updateMessage();
         }
 
         @Override
-        protected void updateMessage()
-        {
-            if (this.form != null)
-            {
+        protected void updateMessage() {
+            if (this.form != null) {
                 setMessage(Text.literal(this.form.title() + ": " + number(requested())));
             }
 
         }
 
         @Override
-        protected void applyValue()
-        {
+        protected void applyValue() {
             double requested = requested();
-            if (requested != this.applied && !this.apply.test(requested))
-            {
+            if (requested != this.applied && !this.apply.test(requested)) {
                 super.value = fraction(this.form, this.applied);
             }
 
-            else
-            {
+            else {
                 this.applied = requested;
                 super.value = fraction(this.form, requested);
             }
@@ -140,10 +121,8 @@ public final class AuthorFormWidgets
         }
 
         @Override
-        public boolean keyPressed(KeyInput input)
-        {
-            if (super.active && (input.key() == GLFW.GLFW_KEY_LEFT || input.key() == GLFW.GLFW_KEY_RIGHT))
-            {
+        public boolean keyPressed(KeyInput input) {
+            if (super.active && (input.key() == GLFW.GLFW_KEY_LEFT || input.key() == GLFW.GLFW_KEY_RIGHT)) {
                 double step = this.form.step() > 0
                         ? this.form.step() * Math.signum(this.form.maximum() - this.form.minimum())
                         : (this.form.maximum() - this.form.minimum()) / Math.max(1, getWidth() - 8);
@@ -156,8 +135,7 @@ public final class AuthorFormWidgets
         }
 
         @Override
-        public void renderWidget(DrawContext context, int mouseX, int mouseY, float delta)
-        {
+        public void renderWidget(DrawContext context, int mouseX, int mouseY, float delta) {
             int y = getY() + (getHeight() - 15) / 2;
             context.drawTexture(RenderPipelines.GUI_TEXTURED, ATLAS, getX(), y, 0, 24, getWidth() - 4, 15, 256, 256);
             context.drawTexture(RenderPipelines.GUI_TEXTURED, ATLAS, getRight() - 4, y, 196, 24, 4, 15, 256, 256);
@@ -170,14 +148,12 @@ public final class AuthorFormWidgets
         }
 
         @Override
-        public boolean mouseClicked(Click click, boolean doubled)
-        {
+        public boolean mouseClicked(Click click, boolean doubled) {
             return this.viewport.test(click.x(), click.y()) && super.mouseClicked(click, doubled);
         }
     }
 
-    public static String number(double value)
-    {
+    public static String number(double value) {
         return BigDecimal.valueOf(value).stripTrailingZeros().toPlainString();
     }
 }

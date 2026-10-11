@@ -6,11 +6,9 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class YsmModelEffectsTest
-{
+class YsmModelEffectsTest {
     @Test
-    void nativeSoundFunctionsUseIdThenNameAndMatureRangesWithoutChangingBbmodelShorthand()
-    {
+    void nativeSoundFunctionsUseIdThenNameAndMatureRangesWithoutChangingBbmodelShorthand() {
         assertThrows(IllegalArgumentException.class,
                 () -> YsmModelEffects.SoundRequest.parseNative(List.of("minecraft:entity.cat.ambient")));
         YsmModelEffects.SoundRequest nativeSound = YsmModelEffects.SoundRequest
@@ -27,8 +25,7 @@ class YsmModelEffectsTest
     }
 
     @Test
-    void localSoundIdsBelongToTheAuthorControllerAndGlobalUsesTheEntityFallbackManager()
-    {
+    void localSoundIdsBelongToTheAuthorControllerAndGlobalUsesTheEntityFallbackManager() {
         assertNotEquals(YsmModelEffects.soundScope(true, false, "player.main"),
                 YsmModelEffects.soundScope(true, false, "player.extra"));
         assertEquals(YsmModelEffects.soundScope(true, true, "player.main"),
@@ -39,8 +36,7 @@ class YsmModelEffectsTest
     }
 
     @Test
-    void soundParametersKeepAuthorFlagsAndKeyframeShorthand()
-    {
+    void soundParametersKeepAuthorFlagsAndKeyframeShorthand() {
         YsmModelEffects.SoundRequest sound = YsmModelEffects.SoundRequest
                 .parse(List.of("voice", "music", 7d, 1000d, .001d));
         assertEquals("s:voice", sound.key());
@@ -61,20 +57,16 @@ class YsmModelEffectsTest
     }
 
     @Test
-    void malformedSoundsCannotUsePathsNonfiniteNumbersOrUnsupportedFlags()
-    {
+    void malformedSoundsCannotUsePathsNonfiniteNumbersOrUnsupportedFlags() {
         for (List<Object> args : List.<List<Object>>of(List.of(1d, "../secret"), List.of(1d, "sub/secret"),
-                List.of(1d, "music", 8d), List.of(-1d, "music"), List.of(1d, "music", 0d, Double.NaN)))
-
-        {
+                List.of(1d, "music", 8d), List.of(-1d, "music"), List.of(1d, "music", 0d, Double.NaN))) {
             assertThrows(IllegalArgumentException.class, () -> YsmModelEffects.SoundRequest.parse(args));
         }
 
     }
 
     @Test
-    void particleSignatureMatchesOffsetDeltaSpeedCountLifetimeWithBoundedDefaults()
-    {
+    void particleSignatureMatchesOffsetDeltaSpeedCountLifetimeWithBoundedDefaults() {
         YsmModelEffects.ParticleSpec defaults = YsmModelEffects.ParticleSpec.parse(List.of("minecraft:flame"));
         assertEquals(0, defaults.count());
         assertEquals(20, defaults.lifetime());
@@ -98,21 +90,16 @@ class YsmModelEffectsTest
     }
 
     @Test
-    void absoluteOffsetsStillUseOwnerOriginButSkipYawRotation()
-    {
+    void absoluteOffsetsStillUseOwnerOriginButSkipYawRotation() {
         double[] relative = YsmModelEffects.rotate(0, 2, 1, 90, false);
-        assertArrayEquals(new double[]
-        { -1, 2, 0 }, relative, .00001);
-        assertArrayEquals(new double[]
-        { 0, 2, 1 }, YsmModelEffects.rotate(0, 2, 1, 90, true), .00001);
+        assertArrayEquals(new double[] { -1, 2, 0 }, relative, .00001);
+        assertArrayEquals(new double[] { 0, 2, 1 }, YsmModelEffects.rotate(0, 2, 1, 90, true), .00001);
     }
 
     @Test
-    void soundAttemptBudgetDoesNotResetOnReleaseOrBindingReplacement()
-    {
+    void soundAttemptBudgetDoesNotResetOnReleaseOrBindingReplacement() {
         YsmModelEffects.Budget budget = new YsmModelEffects.Budget();
-        for (int i = 0; i < 8; i++)
-        {
+        for (int i = 0; i < 8; i++) {
             assertTrue(budget.acquire(true, 0));
             budget.release();
         }
@@ -124,24 +111,20 @@ class YsmModelEffectsTest
     }
 
     @Test
-    void aggregateLiveCapAndParticleRateRemainSeparate()
-    {
+    void aggregateLiveCapAndParticleRateRemainSeparate() {
         YsmModelEffects.Budget budget = new YsmModelEffects.Budget();
-        for (int i = 0; i < 64; i++)
-        {
+        for (int i = 0; i < 64; i++) {
             assertTrue(budget.acquire(false, 0));
         }
 
         assertFalse(budget.acquire(false, 0));
         assertEquals(64, budget.live());
-        for (int i = 0; i < 32; i++)
-        {
+        for (int i = 0; i < 32; i++) {
             budget.release();
         }
 
         assertFalse(budget.acquire(false, 0));
-        for (int i = 0; i < 32; i++)
-        {
+        for (int i = 0; i < 32; i++) {
             assertTrue(budget.acquire(false, 1_000_000_000));
         }
 

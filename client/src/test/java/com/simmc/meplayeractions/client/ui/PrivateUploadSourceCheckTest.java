@@ -20,14 +20,12 @@ import javax.imageio.ImageIO;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class PrivateUploadSourceCheckTest
-{
+class PrivateUploadSourceCheckTest {
     @TempDir
     Path directory;
 
     @Test
-    void changedDiskModelCannotRestoreAnOldArchiveDespiteTheSessionSourceCache() throws Exception
-    {
+    void changedDiskModelCannotRestoreAnOldArchiveDespiteTheSessionSourceCache() throws Exception {
         JsonObject source = source();
         JsonObject texture = source.getAsJsonArray("textures").get(0).getAsJsonObject();
         texture.addProperty("source", "data:image/png;base64," + Base64.getEncoder().encodeToString(png(0xff224466)));
@@ -48,8 +46,7 @@ class PrivateUploadSourceCheckTest
     }
 
     @Test
-    void unchangedModelWithChangedCompanionTextureCannotRestoreTheSavedBundle() throws Exception
-    {
+    void unchangedModelWithChangedCompanionTextureCannotRestoreTheSavedBundle() throws Exception {
         JsonObject source = source();
         JsonObject texture = source.getAsJsonArray("textures").get(0).getAsJsonObject();
         texture.addProperty("source", "");
@@ -68,8 +65,7 @@ class PrivateUploadSourceCheckTest
     }
 
     @Test
-    void builtinRestoreUsesItsCompleteSourceAndRejectsAnIncorrectFormatReceipt() throws Exception
-    {
+    void builtinRestoreUsesItsCompleteSourceAndRejectsAnIncorrectFormatReceipt() throws Exception {
         byte[] original = new LocalModelLibrary(this.directory).sourceBundle("openysm_default");
         PrivateUploadCatalogSnapshot.Model expected = archive("openysm_default", original);
         assertTrue(PrivateUploadSourceCheck.matches(this.directory, expected));
@@ -77,14 +73,12 @@ class PrivateUploadSourceCheckTest
                 expected.modelId(), expected.hash(), "bbmodel", expected.bytes())));
     }
 
-    private static PrivateUploadCatalogSnapshot.Model archive(String id, byte[] bytes) throws IOException
-    {
+    private static PrivateUploadCatalogSnapshot.Model archive(String id, byte[] bytes) throws IOException {
         return new PrivateUploadCatalogSnapshot.Model(id, AssetTransfer.hash(bytes),
                 NativeModelBundle.validate(bytes).kind(), bytes.length);
     }
 
-    private static JsonObject source()
-    {
+    private static JsonObject source() {
         return JsonParser.parseString("""
                 {"name":"author","resolution":{"width":1,"height":1},
                  "elements":[{"uuid":"cube","type":"cube","from":[0,0,0],"to":[1,1,1],
@@ -95,8 +89,7 @@ class PrivateUploadSourceCheckTest
                 """).getAsJsonObject();
     }
 
-    private static byte[] png(int color) throws IOException
-    {
+    private static byte[] png(int color) throws IOException {
         BufferedImage pixels = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
         pixels.setRGB(0, 0, color);
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();

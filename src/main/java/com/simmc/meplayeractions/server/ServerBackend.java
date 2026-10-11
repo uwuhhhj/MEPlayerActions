@@ -6,10 +6,8 @@ import org.bukkit.entity.Player;
 import java.util.List;
 
 /** Bootstrap boundary: implementations with optional APIs are loaded only after dependency checks. */
-public interface ServerBackend extends AutoCloseable
-{
-    default boolean modelEngine()
-    {
+public interface ServerBackend extends AutoCloseable {
+    default boolean modelEngine() {
         return false;
     }
 
@@ -19,8 +17,7 @@ public interface ServerBackend extends AutoCloseable
 
     void status(CommandSender sender);
 
-    default void playerStatus(CommandSender sender, Player player)
-    {
+    default void playerStatus(CommandSender sender, Player player) {
         status(sender);
     }
 

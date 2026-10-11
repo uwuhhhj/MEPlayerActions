@@ -6,14 +6,11 @@ import java.util.Collection;
 import java.util.List;
 
 /** Short, structured chat lines distinguish ME appearances from optional client rendering resources. */
-public final class ServerMessages
-{
-    private ServerMessages()
-    {
+public final class ServerMessages {
+    private ServerMessages() {
     }
 
-    public static List<String> disguise(DisguiseOptions options)
-    {
+    public static List<String> disguise(DisguiseOptions options) {
         List<String> lines = new ArrayList<>();
         lines.add("§a已启用服务器伪装：§f" + options.modelId() + " §7（ModelEngine 蓝图）");
         lines.add("§7外观：缩放 §f" + options.scale() + "§7；隐藏原人物 §f" + yes(options.hideSelf()) + "§7；本人可见 §f"
@@ -26,47 +23,38 @@ public final class ServerMessages
         return List.copyOf(lines);
     }
 
-    private static String yes(boolean value)
-    {
+    private static String yes(boolean value) {
         return value ? "是" : "否";
     }
 
-    public static List<String> modelResource(String id, String state, String source, String reason, boolean eligible)
-    {
+    public static List<String> modelResource(String id, String state, String source, String reason, boolean eligible) {
         List<String> lines = new ArrayList<>();
         lines.add("§7MPA 客户端资源：§f" + id + "§7；来源：§f" + resourceSource(source));
-        if (!eligible)
-        {
+        if (!eligible) {
             lines.add("§e本次伪装不允许客户端接管；仍由 ModelEngine 渲染。");
             return List.copyOf(lines);
         }
-        switch (state)
-        {
-        case "ready" ->
-        {
+        switch (state) {
+        case "ready" -> {
             lines.add("§a客户端资源已准备；观看者取得并验证资源后，服务器确认接管。");
             lines.add("§7可复用本地有效缓存；资源就绪不代表已开始接管。");
-            if (source.equals("modelengine"))
-            {
+            if (source.equals("modelengine")) {
                 lines.add("§eME 蓝图可能已烘焙；作者公式是否完整取决于原始蓝图。");
             }
 
         }
         case "pending" -> lines.add("§e客户端资源正在准备或等待请求；ModelEngine 伪装照常显示。");
-        case "missing" ->
-        {
+        case "missing" -> {
             lines.add("§eMPA models/ 未发布此模型；ModelEngine 伪装照常显示。");
             lines.add("§7不会下载 ME 蓝图或内置文件；本地接管不可用。");
             lines.add("§7如需本地接管，由管理员在 MPA models/ 放入同名完整原文件，再重载 MPA。");
         }
-        case "invalid" ->
-        {
+        case "invalid" -> {
             lines.add("§c客户端资源无效；ModelEngine 伪装照常显示。");
             lines.addAll(wrapped("§7原因：", reason));
             lines.add("§7修正所选资源后重载 MPA；不会改用另一来源掩盖无效文件。");
         }
-        default ->
-        {
+        default -> {
             lines.add("§e客户端资源暂不可用；ModelEngine 伪装照常显示。");
             lines.addAll(wrapped("§7原因：", reason));
         }
@@ -74,10 +62,8 @@ public final class ServerMessages
         return List.copyOf(lines);
     }
 
-    private static String resourceSource(String source)
-    {
-        return switch (source)
-        {
+    private static String resourceSource(String source) {
+        return switch (source) {
         case "own" -> "MPA models/";
         case "jar" -> "插件内置资源";
         case "modelengine" -> "ModelEngine 蓝图（可能已烘焙）";
@@ -87,46 +73,37 @@ public final class ServerMessages
         };
     }
 
-    public static List<String> list(String title, Collection<String> entries)
-    {
+    public static List<String> list(String title, Collection<String> entries) {
         List<String> lines = new ArrayList<>();
         lines.add(title + "§7（" + entries.size() + " 个）");
-        if (entries.isEmpty())
-        {
+        if (entries.isEmpty()) {
             lines.add("§7暂无。");
             return List.copyOf(lines);
         }
         StringBuilder line = new StringBuilder("§f");
-        for (String entry : entries)
-        {
-            if (line.length() > 2 && line.length() + entry.length() + 2 > 76)
-            {
+        for (String entry : entries) {
+            if (line.length() > 2 && line.length() + entry.length() + 2 > 76) {
                 lines.add(line.toString());
                 line = new StringBuilder("§f");
             }
-            if (line.length() > 2)
-            {
+            if (line.length() > 2) {
                 line.append("、");
             }
 
             line.append(entry);
         }
-        if (line.length() > 2)
-        {
+        if (line.length() > 2) {
             lines.add(line.toString());
         }
 
         return List.copyOf(lines);
     }
 
-    public static List<String> wrapped(String prefix, String text)
-    {
+    public static List<String> wrapped(String prefix, String text) {
         List<String> lines = new ArrayList<>();
         String value = text == null || text.isBlank() ? "未提供" : text;
-        for (String paragraph : value.split("\\R"))
-        {
-            for (int start = 0; start < paragraph.length();)
-            {
+        for (String paragraph : value.split("\\R")) {
+            for (int start = 0; start < paragraph.length();) {
                 int end = paragraph.offsetByCodePoints(start,
                         Math.min(64, paragraph.codePointCount(start, paragraph.length())));
                 lines.add((start == 0 ? prefix : "§7  ") + paragraph.substring(start, end));

@@ -13,15 +13,12 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 import com.ticxo.modelengine.api.animation.BlueprintAnimation.LoopMode;
 
-class SettingsTest
-{
+class SettingsTest {
     @Test
-    void bedAndGsitLayUseTheHorizontalClipButRetainIndependentMappings() throws IOException
-    {
+    void bedAndGsitLayUseTheHorizontalClipButRetainIndependentMappings() throws IOException {
         YamlConfiguration config = configuration();
         Settings settings = Settings.load(config);
-        for (ActionState state : List.of(ActionState.BED_SLEEP, ActionState.SLEEP))
-        {
+        for (ActionState state : List.of(ActionState.BED_SLEEP, ActionState.SLEEP)) {
             assertEquals("bed_sleep", settings.animation("ysm_01_jk", state, List.of("sleep", "bed_sleep")));
             assertEquals("sleep", settings.animation("ysm_01_jk", state, List.of("sleep")));
         }
@@ -32,11 +29,9 @@ class SettingsTest
     }
 
     @Test
-    void audienceDefaultsWorkWithOldConfigurationAndExplicitOverrides() throws IOException
-    {
+    void audienceDefaultsWorkWithOldConfigurationAndExplicitOverrides() throws IOException {
         YamlConfiguration config = configuration();
-        for (String key : List.of("show-self", "view-distance", "max-viewers"))
-        {
+        for (String key : List.of("show-self", "view-distance", "max-viewers")) {
             config.set("disguise." + key, null);
         }
 
@@ -54,24 +49,19 @@ class SettingsTest
     }
 
     @Test
-    void audienceConfigurationRejectsInvalidDistancesAndCaps()
-    {
-        for (Object distance : List.of(Double.NaN, Double.POSITIVE_INFINITY, 0, 256.1))
-
-        {
+    void audienceConfigurationRejectsInvalidDistancesAndCaps() {
+        for (Object distance : List.of(Double.NaN, Double.POSITIVE_INFINITY, 0, 256.1)) {
             assertThrows(IllegalArgumentException.class, () -> loadWith("disguise.view-distance", distance));
         }
 
-        for (int cap : List.of(-1, 1001))
-        {
+        for (int cap : List.of(-1, 1001)) {
             assertThrows(IllegalArgumentException.class, () -> loadWith("disguise.max-viewers", cap));
         }
 
     }
 
     @Test
-    void animationCandidatesUseAvailableFallbackWithoutInventingMissingTracks() throws IOException
-    {
+    void animationCandidatesUseAvailableFallbackWithoutInventingMissingTracks() throws IOException {
         Settings settings = Settings.load(configuration());
 
         assertAll(() -> assertEquals("run", settings.animation("ysm_01_jk", ActionState.RUN, List.of("walk", "run"))),
@@ -81,8 +71,7 @@ class SettingsTest
     }
 
     @Test
-    void explicitNpcCrawlDisableOverridesDefaultsEvenIfSimilarTracksExist() throws IOException
-    {
+    void explicitNpcCrawlDisableOverridesDefaultsEvenIfSimilarTracksExist() throws IOException {
         YamlConfiguration config = configuration();
         config.set("animations.models.ysm_02_jk.crawl-idle", List.of());
         config.set("animations.models.ysm_02_jk.crawl-walk", List.of());
@@ -97,8 +86,7 @@ class SettingsTest
     }
 
     @Test
-    void newNpcDefaultsResolveCrawlAndVisualTimingIsBounded() throws IOException
-    {
+    void newNpcDefaultsResolveCrawlAndVisualTimingIsBounded() throws IOException {
         Settings settings = Settings.load(configuration());
         assertEquals("crawl_idle", settings.animation("ysm_02_jk", ActionState.CRAWL_IDLE, List.of("crawl_idle")));
         assertEquals("crawl_walk", settings.animation("ysm_02_jk", ActionState.CRAWL_WALK, List.of("crawl_walk")));
@@ -113,8 +101,7 @@ class SettingsTest
     }
 
     @Test
-    void legacyModelRegistrationConfigurationDoesNotLimitModelEngineDisguises() throws IOException
-    {
+    void legacyModelRegistrationConfigurationDoesNotLimitModelEngineDisguises() throws IOException {
         YamlConfiguration withoutModels = configuration();
         withoutModels.set("models", null);
         assertAll(() -> assertDoesNotThrow(() -> Settings.load(withoutModels)),
@@ -125,8 +112,7 @@ class SettingsTest
     }
 
     @Test
-    void nonFiniteConfigurationValuesAreRejectedBeforeSchedulingTheController()
-    {
+    void nonFiniteConfigurationValuesAreRejectedBeforeSchedulingTheController() {
         assertAll(() -> assertThrows(IllegalArgumentException.class, () -> loadWith("disguise.scale", Double.NaN)),
                 () -> assertThrows(IllegalArgumentException.class,
                         () -> loadWith("controller.movement-threshold", Double.POSITIVE_INFINITY)),
@@ -135,8 +121,7 @@ class SettingsTest
     }
 
     @Test
-    void animationLayersRequireStrictPostureInteractionManualOrder()
-    {
+    void animationLayersRequireStrictPostureInteractionManualOrder() {
         assertAll(() -> assertThrows(IllegalArgumentException.class, () -> loadWith("controller.manual-priority", 100)),
                 () -> assertThrows(IllegalArgumentException.class, () -> loadWith("controller.manual-priority", 99)),
                 () -> assertThrows(IllegalArgumentException.class, () -> loadWith("controller.manual-priority", 150)),
@@ -147,8 +132,7 @@ class SettingsTest
     }
 
     @Test
-    void manualSpeedBoundsApplyToCommandsAndConfiguredCustomActions() throws IOException
-    {
+    void manualSpeedBoundsApplyToCommandsAndConfiguredCustomActions() throws IOException {
         Settings settings = Settings.load(configuration());
 
         assertAll(() -> assertDoesNotThrow(() -> settings.validateSpeed(0.1)),
@@ -165,8 +149,7 @@ class SettingsTest
     }
 
     @Test
-    void flightSpeedMustStayInsideBukkitsSupportedRange()
-    {
+    void flightSpeedMustStayInsideBukkitsSupportedRange() {
         assertAll(() -> assertThrows(IllegalArgumentException.class, () -> loadWith("gameplay.flight-speed", 0.0)),
                 () -> assertThrows(IllegalArgumentException.class, () -> loadWith("gameplay.flight-speed", 1.01)),
                 () -> assertThrows(IllegalArgumentException.class, () -> loadWith("gameplay.flight-speed", Double.NaN)),
@@ -174,8 +157,7 @@ class SettingsTest
     }
 
     @Test
-    void identifiersRejectDotsBeforeBukkitCanTreatThemAsPaths()
-    {
+    void identifiersRejectDotsBeforeBukkitCanTreatThemAsPaths() {
         assertAll(() -> assertEquals("ysm_01_jk-player", Settings.id("ysm_01_jk-player")),
                 () -> assertThrows(IllegalArgumentException.class, () -> Settings.id("fox.v1")),
                 () -> assertThrows(IllegalArgumentException.class, () -> Settings.id("wave.happy")),
@@ -184,8 +166,7 @@ class SettingsTest
     }
 
     @Test
-    void dottedYamlActionNameIsRejectedInsteadOfSilentlyBecomingAnotherAction() throws Exception
-    {
+    void dottedYamlActionNameIsRejectedInsteadOfSilentlyBecomingAnotherAction() throws Exception {
         YamlConfiguration configuration = configuration();
         configuration.set("custom-actions", null);
         configuration.loadFromString(
@@ -200,8 +181,7 @@ class SettingsTest
     }
 
     @Test
-    void dottedYamlModelProfileIsRejectedInsteadOfSilentlyLosingItsStateMap() throws Exception
-    {
+    void dottedYamlModelProfileIsRejectedInsteadOfSilentlyLosingItsStateMap() throws Exception {
         YamlConfiguration configuration = configuration();
         configuration.set("animations.models", null);
         YamlConfiguration dotted = new YamlConfiguration();
@@ -216,11 +196,9 @@ class SettingsTest
     }
 
     @Test
-    void unknownActionAndAnimationFieldsAreRejectedEvenForDisabledActions()
-    {
+    void unknownActionAndAnimationFieldsAreRejectedEvenForDisabledActions() {
         assertAll(() -> assertThrows(IllegalArgumentException.class, () -> loadWith("custom-actions.wave.sped", 1)),
-                () -> assertThrows(IllegalArgumentException.class, () ->
-                {
+                () -> assertThrows(IllegalArgumentException.class, () -> {
                     YamlConfiguration configuration = configuration();
                     configuration.set("custom-actions.wave.enabled", false);
                     configuration.set("custom-actions.wave.happy.animation", "wave");
@@ -235,8 +213,7 @@ class SettingsTest
     }
 
     @Test
-    void clientPayloadLimitMatchesTheServiceMinimum()
-    {
+    void clientPayloadLimitMatchesTheServiceMinimum() {
         assertAll(
                 () -> assertThrows(IllegalArgumentException.class,
                         () -> loadWith("client-sync.max-payload-bytes", 512)),
@@ -246,8 +223,7 @@ class SettingsTest
     }
 
     @Test
-    void legacySamplingSettingSurvivesWithoutNewKeysAndExplicitNewKeyWins() throws IOException
-    {
+    void legacySamplingSettingSurvivesWithoutNewKeysAndExplicitNewKeyWins() throws IOException {
         YamlConfiguration config = configuration();
         config.set("controller.sample-interval-ticks", null);
         config.set("controller.interval-ticks", 4);
@@ -257,8 +233,7 @@ class SettingsTest
     }
 
     @Test
-    void retainedLegacyConfigGetsNewMappingsButExplicitEmptyListsStillDisable() throws IOException
-    {
+    void retainedLegacyConfigGetsNewMappingsButExplicitEmptyListsStillDisable() throws IOException {
         YamlConfiguration config = configuration();
         config.set("animations.defaults.sleep", null);
         assertEquals("sleep", Settings.load(config).animation("ysm_01_jk", ActionState.SLEEP, List.of("sleep")));
@@ -269,8 +244,7 @@ class SettingsTest
     }
 
     @Test
-    void vehicleFallbackAndPartialArmTracksOnlyUseAvailableAnimations() throws IOException
-    {
+    void vehicleFallbackAndPartialArmTracksOnlyUseAvailableAnimations() throws IOException {
         Settings settings = Settings.load(configuration());
         assertAll(() -> assertEquals("sit", settings.animation("ysm_01_jk", ActionState.MINECART, List.of("sit"))),
                 () -> assertEquals("boat", settings.animation("ysm_01_jk", ActionState.BOAT, List.of("sit", "boat"))),
@@ -281,8 +255,7 @@ class SettingsTest
     }
 
     @Test
-    void staticPosturesHoldWhileMiningLoopsAndSwingIsOneShot() throws IOException
-    {
+    void staticPosturesHoldWhileMiningLoopsAndSwingIsOneShot() throws IOException {
         Settings settings = Settings.load(configuration());
         assertEquals(LoopMode.HOLD, settings.playback(ActionState.SLEEP).loop());
         assertEquals(LoopMode.HOLD, settings.playback(ActionState.SIT).loop());
@@ -291,8 +264,7 @@ class SettingsTest
     }
 
     @Test
-    void statePlaybackOverridesAreValidatedAndInheritGlobalTransitions() throws IOException
-    {
+    void statePlaybackOverridesAreValidatedAndInheritGlobalTransitions() throws IOException {
         YamlConfiguration config = configuration();
         config.set("animation-settings.boat.speed", 1.5);
         config.set("animation-settings.boat.transition-in-ticks", 0);
@@ -320,8 +292,7 @@ class SettingsTest
     }
 
     @Test
-    void privatePublishingRemainsDisabledForBothNewAndRetainedConfigurations() throws IOException
-    {
+    void privatePublishingRemainsDisabledForBothNewAndRetainedConfigurations() throws IOException {
         YamlConfiguration config = configuration();
         assertFalse(Settings.load(config).privateModels.enabled());
         config.set("client-sync.private-models", null);
@@ -338,8 +309,7 @@ class SettingsTest
     }
 
     @Test
-    void privateCacheSettingsAreValidatedWithoutEnablingSharing() throws IOException
-    {
+    void privateCacheSettingsAreValidatedWithoutEnablingSharing() throws IOException {
         YamlConfiguration config = configuration();
         config.set("client-sync.private-models.cache-enabled", true);
         config.set("client-sync.private-models.max-cache-bytes", 134217728);
@@ -357,19 +327,16 @@ class SettingsTest
                         () -> loadWith("client-sync.private-models.cache-enabld", true)));
     }
 
-    private static Settings loadWith(String path, Object value) throws IOException
-    {
+    private static Settings loadWith(String path, Object value) throws IOException {
         YamlConfiguration configuration = configuration();
         configuration.set(path, value);
         return Settings.load(configuration);
     }
 
-    private static YamlConfiguration configuration() throws IOException
-    {
+    private static YamlConfiguration configuration() throws IOException {
         InputStream resource = SettingsTest.class.getResourceAsStream("/config.yml");
         assertNotNull(resource, "The plugin's packaged config.yml must be on the test classpath");
-        try (InputStreamReader reader = new InputStreamReader(resource, StandardCharsets.UTF_8))
-        {
+        try (InputStreamReader reader = new InputStreamReader(resource, StandardCharsets.UTF_8)) {
             return YamlConfiguration.loadConfiguration(reader);
         }
     }

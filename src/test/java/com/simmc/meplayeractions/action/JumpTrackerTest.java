@@ -3,11 +3,9 @@ package com.simmc.meplayeractions.action;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
-class JumpTrackerTest
-{
+class JumpTrackerTest {
     @Test
-    void landingDoesNotCutShortPoseAndTailExpires()
-    {
+    void landingDoesNotCutShortPoseAndTailExpires() {
         JumpTracker j = new JumpTracker();
         j.sample(true, 0, false, 0, 16, 6);
         j.signal(1);
@@ -18,8 +16,7 @@ class JumpTrackerTest
     }
 
     @Test
-    void walkingOffLedgeIsFallingAndLongJumpChangesToFalling()
-    {
+    void walkingOffLedgeIsFallingAndLongJumpChangesToFalling() {
         JumpTracker j = new JumpTracker();
         j.sample(true, 0, false, 0, 16, 6);
         assertEquals(ActionState.FALL, j.sample(false, -0.2, false, 1, 16, 6));
@@ -29,8 +26,7 @@ class JumpTrackerTest
     }
 
     @Test
-    void takeoffFallbackAndRepeatedJumpsGetDifferentCycles()
-    {
+    void takeoffFallbackAndRepeatedJumpsGetDifferentCycles() {
         JumpTracker j = new JumpTracker();
         j.sample(true, 0, false, 0, 16, 6);
         assertEquals(ActionState.JUMP, j.sample(false, 0.4, false, 1, 16, 6));
@@ -41,8 +37,7 @@ class JumpTrackerTest
     }
 
     @Test
-    void otherPosturesInterruptAndAnUnconfirmedTakeoffCannotStick()
-    {
+    void otherPosturesInterruptAndAnUnconfirmedTakeoffCannotStick() {
         JumpTracker j = new JumpTracker();
         j.signal(1);
         assertNull(j.sample(false, 0.4, true, 2, 16, 6));
@@ -52,8 +47,7 @@ class JumpTrackerTest
     }
 
     @Test
-    void lowCeilingLandingTailIsCapped()
-    {
+    void lowCeilingLandingTailIsCapped() {
         JumpTracker j = new JumpTracker();
         j.signal(1);
         j.sample(false, 0.2, false, 2, 30, 6);

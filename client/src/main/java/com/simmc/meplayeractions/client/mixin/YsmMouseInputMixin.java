@@ -10,14 +10,11 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(Mouse.class)
-public abstract class YsmMouseInputMixin
-{
+public abstract class YsmMouseInputMixin {
     @Inject(method = "onMouseButton", at = @At("HEAD"))
-    private void mpa$observeNativeMouse(long window, MouseInput input, int action, CallbackInfo callback)
-    {
+    private void mpa$observeNativeMouse(long window, MouseInput input, int action, CallbackInfo callback) {
         MinecraftClient client = MinecraftClient.getInstance();
-        if (window == client.getWindow().getHandle())
-        {
+        if (window == client.getWindow().getHandle()) {
             YsmNativeInputState.mouseButton(client, input.button(), action);
         }
 

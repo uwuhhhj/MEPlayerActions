@@ -9,17 +9,14 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
-class YsmAnimationMetadataBoundsTest
-{
+class YsmAnimationMetadataBoundsTest {
     @Test
-    void nativeTimelineRunsTwoHundredFiftySixIndependentProgramsInOrderAndRejectsTheNext() throws Exception
-    {
+    void nativeTimelineRunsTwoHundredFiftySixIndependentProgramsInOrderAndRejectsTheNext() throws Exception {
         JsonObject raw = fixture(65535);
         JsonObject clip = clip(raw, "parallel0", .01, "LOOP");
         ArrayList<String> scripts = new ArrayList<String>();
         scripts.add("v.n+=1;return 99;");
-        for (int i = 1; i < 256; i++)
-        {
+        for (int i = 1; i < 256; i++) {
             scripts.add("v.n+=1;v.last=" + i + ";");
         }
 
@@ -34,8 +31,7 @@ class YsmAnimationMetadataBoundsTest
     }
 
     @Test
-    void nativeExplicitDurationIsFiniteAndIndependentOfLaterAuthoredKeysAndEvents() throws Exception
-    {
+    void nativeExplicitDurationIsFiniteAndIndependentOfLaterAuthoredKeysAndEvents() throws Exception {
         JsonObject raw = fixture(65535);
         JsonObject longHold = clip(raw, "hold_mainhand:spear", 10000, "HOLD");
         position(longHold, 0, 0, 1.5, 16);
@@ -58,8 +54,7 @@ class YsmAnimationMetadataBoundsTest
     }
 
     @Test
-    void timelineAggregateUtf8BudgetAndExistingRawByteBudgetRemainBounded() throws Exception
-    {
+    void timelineAggregateUtf8BudgetAndExistingRawByteBudgetRemainBounded() throws Exception {
         JsonObject raw = fixture(65535);
         JsonObject clip = clip(raw, "parallel0", 0, "LOOP");
         effect(clip, "timeline", 0, Collections.nCopies(64, "/*" + "字".repeat(100) + "*/v.n+=1;"));
@@ -72,8 +67,7 @@ class YsmAnimationMetadataBoundsTest
     }
 
     @Test
-    void ordinaryBbModelAndSoundParticleLimitsDoNotInheritNativeTimelineAllowance() throws Exception
-    {
+    void ordinaryBbModelAndSoundParticleLimitsDoNotInheritNativeTimelineAllowance() throws Exception {
         JsonObject ordinary = fixture(0);
         JsonObject clip = clip(ordinary, "parallel0", 0, "LOOP");
         effect(clip, "timeline", 0, Collections.nCopies(33, "v.n+=1;"));
@@ -84,8 +78,7 @@ class YsmAnimationMetadataBoundsTest
         clip.addProperty("length", 1);
         position(clip, 0, 0, 2, 16);
         assertThrows(IllegalArgumentException.class, () -> parse(ordinary));
-        for (String channel : List.of("sound", "particle"))
-        {
+        for (String channel : List.of("sound", "particle")) {
             JsonObject nativeRaw = fixture(65535);
             JsonObject nativeClip = clip(nativeRaw, "parallel0", 0, "LOOP");
             effect(nativeClip, channel, 0, Collections.nCopies(32, "minecraft:test"));
@@ -96,44 +89,19 @@ class YsmAnimationMetadataBoundsTest
     }
 
     @Test
-    void flaggedNativeFoxcarSignedCubeKeepsAllThreeFacesTheirCornerOrderUvsAndNormals() throws Exception
-    {
+    void flaggedNativeFoxcarSignedCubeKeepsAllThreeFacesTheirCornerOrderUvsAndNormals() throws Exception {
         JsonObject raw = foxcarSignedFixture();
         List<BbModel.Vertex> vertices = parse(raw).basisVertices();
         assertEquals(12, vertices.size());
         // Original 01_taisho_maid/models/foxcar.json eyes2.cubes[0]: size [4.788, 2.388, -.252].
         double x0 = 7.60139 / 16, x1 = 12.38939 / 16, y0 = 23.806 / 16, y1 = 26.194 / 16;
         double z0 = 16.8984 / 16, z1 = 16.6464 / 16;
-        double[][] corners =
-        {
-                { x1, y1, z0 },
-                { x1, y0, z0 },
-                { x0, y0, z0 },
-                { x0, y1, z0 },
-                { x1, y1, z1 },
-                { x1, y0, z1 },
-                { x1, y0, z0 },
-                { x1, y1, z0 },
-                { x0, y1, z0 },
-                { x0, y0, z0 },
-                { x0, y0, z1 },
+        double[][] corners = { { x1, y1, z0 }, { x1, y0, z0 }, { x0, y0, z0 }, { x0, y1, z0 }, { x1, y1, z1 },
+                { x1, y0, z1 }, { x1, y0, z0 }, { x1, y1, z0 }, { x0, y1, z0 }, { x0, y0, z0 }, { x0, y0, z1 },
                 { x0, y1, z1 } };
-        double[][] uv =
-        {
-                { 16, 425 },
-                { 16, 429 },
-                { 24, 429 },
-                { 24, 425 },
-                { 16, 425 },
-                { 16, 429 },
-                { 17, 429 },
-                { 17, 425 },
-                { 23, 425 },
-                { 23, 429 },
-                { 24, 429 },
-                { 24, 425 } };
-        for (int i = 0; i < vertices.size(); i++)
-        {
+        double[][] uv = { { 16, 425 }, { 16, 429 }, { 24, 429 }, { 24, 425 }, { 16, 425 }, { 16, 429 }, { 17, 429 },
+                { 17, 425 }, { 23, 425 }, { 23, 429 }, { 24, 429 }, { 24, 425 } };
+        for (int i = 0; i < vertices.size(); i++) {
             BbModel.Vertex vertex = vertices.get(i);
             assertEquals(corners[i][0], vertex.x(), 1e-6);
             assertEquals(corners[i][1], vertex.y(), 1e-6);
@@ -148,8 +116,7 @@ class YsmAnimationMetadataBoundsTest
     }
 
     @Test
-    void signedCubeAllowanceRequiresNativeFormatAndExplicitFlagAndKeepsFiniteBounds() throws Exception
-    {
+    void signedCubeAllowanceRequiresNativeFormatAndExplicitFlagAndKeepsFiniteBounds() throws Exception {
         JsonObject raw = foxcarSignedFixture();
         JsonObject cube = raw.getAsJsonArray("elements").get(0).getAsJsonObject();
         cube.remove("ysm_signed_cube");
@@ -168,8 +135,7 @@ class YsmAnimationMetadataBoundsTest
         assertThrows(IllegalArgumentException.class, () -> parse(raw));
     }
 
-    private static JsonObject foxcarSignedFixture() throws Exception
-    {
+    private static JsonObject foxcarSignedFixture() throws Exception {
         JsonObject raw = fixture(65535);
         raw.add("resolution", JsonParser.parseString("{\"width\":512,\"height\":512}"));
         JsonObject cube = raw.getAsJsonArray("elements").get(0).getAsJsonObject();
@@ -183,13 +149,11 @@ class YsmAnimationMetadataBoundsTest
         return raw;
     }
 
-    private static BbModel parse(JsonObject raw)
-    {
+    private static BbModel parse(JsonObject raw) {
         return BbModel.parse(raw.toString().getBytes(StandardCharsets.UTF_8));
     }
 
-    private static JsonObject clip(JsonObject raw, String name, double length, String loop)
-    {
+    private static JsonObject clip(JsonObject raw, String name, double length, String loop) {
         JsonObject clip = new JsonObject();
         clip.addProperty("name", name);
         clip.addProperty("length", length);
@@ -199,8 +163,7 @@ class YsmAnimationMetadataBoundsTest
         return clip;
     }
 
-    private static void effect(JsonObject clip, String channel, double time, List<String> values)
-    {
+    private static void effect(JsonObject clip, String channel, double time, List<String> values) {
         JsonObject animator = new JsonObject();
         animator.addProperty("type", "effect");
         JsonArray frames = new JsonArray();
@@ -210,8 +173,7 @@ class YsmAnimationMetadataBoundsTest
         frame.addProperty("time", time);
         JsonArray points = new JsonArray();
         frame.add("data_points", points);
-        for (String value : values)
-        {
+        for (String value : values) {
             JsonObject point = new JsonObject();
             point.addProperty(channel.equals("timeline") ? "script" : "effect", value);
             points.add(point);
@@ -220,15 +182,11 @@ class YsmAnimationMetadataBoundsTest
         clip.getAsJsonObject("animators").add("effects", animator);
     }
 
-    private static void position(JsonObject clip, double firstTime, double firstX, double lastTime, double lastX)
-    {
+    private static void position(JsonObject clip, double firstTime, double firstX, double lastTime, double lastX) {
         JsonObject animator = new JsonObject();
         JsonArray frames = new JsonArray();
         animator.add("keyframes", frames);
-        for (double[] value : List.of(new double[]
-        { firstTime, firstX }, new double[]
-        { lastTime, lastX }))
-        {
+        for (double[] value : List.of(new double[] { firstTime, firstX }, new double[] { lastTime, lastX })) {
             JsonObject point = new JsonObject();
             point.addProperty("x", value[1]);
             point.addProperty("y", 0);
@@ -244,8 +202,7 @@ class YsmAnimationMetadataBoundsTest
         clip.getAsJsonObject("animators").add("bone", animator);
     }
 
-    private static JsonObject fixture(int version) throws Exception
-    {
+    private static JsonObject fixture(int version) throws Exception {
         JsonObject raw = JsonParser
                 .parseString(
                         """

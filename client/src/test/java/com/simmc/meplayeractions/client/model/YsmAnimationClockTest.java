@@ -5,11 +5,9 @@ import org.junit.jupiter.api.Test;
 import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
-class YsmAnimationClockTest
-{
+class YsmAnimationClockTest {
     @Test
-    void timeUpdateReturnsAbsoluteSecondsAndDoesNotAccumulateConstants()
-    {
+    void timeUpdateReturnsAbsoluteSecondsAndDoesNotAccumulateConstants() {
         Molang.Context context = new Molang.Context();
         YsmAnimationClock clock = clock("HOLD", 40, 1, 0, "v.calls+=1;return .75;", null, null);
         assertEquals(15, clock.advance(0, context).timeTicks(), 1e-9);
@@ -20,8 +18,7 @@ class YsmAnimationClockTest
     }
 
     @Test
-    void updateReceivesSpeedAdjustedRealDeltaAndSameTickNeverEvaluatesAgain()
-    {
+    void updateReceivesSpeedAdjustedRealDeltaAndSameTickNeverEvaluatesAgain() {
         Molang.Context context = new Molang.Context();
         YsmAnimationClock clock = clock("HOLD", 100, 2, 0,
                 "v.calls+=1;v.delta=q.delta_time;return q.anim_time+q.delta_time;", null, null);
@@ -36,8 +33,7 @@ class YsmAnimationClockTest
     }
 
     @Test
-    void startDelayEvaluatesAtActivationOnceAndStartsAfterBeginningBlend()
-    {
+    void startDelayEvaluatesAtActivationOnceAndStartsAfterBeginningBlend() {
         Molang.Context context = new Molang.Context();
         YsmAnimationClock clock = clock("HOLD", 100, 2, 30, null, "v.starts+=1;v.initial=q.anim_time;return .5;", null);
         clock.initialize(context);
@@ -51,8 +47,7 @@ class YsmAnimationClockTest
     }
 
     @Test
-    void loopDelayEvaluatesOnlyAtEachBoundaryAndRestartsAtZeroAfterWaiting()
-    {
+    void loopDelayEvaluatesOnlyAtEachBoundaryAndRestartsAtZeroAfterWaiting() {
         Molang.Context context = new Molang.Context();
         YsmAnimationClock clock = clock("LOOP", 20, 1, 0, null, null, "v.delays+=1;v.end=q.anim_time;return .5;");
         clock.advance(0, context);
@@ -80,8 +75,7 @@ class YsmAnimationClockTest
     }
 
     @Test
-    void onceAndHoldIgnoreLoopDelayAndUseTheirOriginalBoundaryOperators()
-    {
+    void onceAndHoldIgnoreLoopDelayAndUseTheirOriginalBoundaryOperators() {
         Molang.Context context = new Molang.Context();
         YsmAnimationClock once = clock("ONCE", 20, 1, 0, null, null, "v.delays+=1;return 1;");
         YsmAnimationClock hold = clock("HOLD", 20, 1, 0, null, null, "v.delays+=1;return 1;");
@@ -100,8 +94,7 @@ class YsmAnimationClockTest
     }
 
     @Test
-    void fieldFreeLoopKeepsNativeModuloAndProcessesOneSkippedCycleBoundary()
-    {
+    void fieldFreeLoopKeepsNativeModuloAndProcessesOneSkippedCycleBoundary() {
         Molang.Context context = new Molang.Context();
         YsmAnimationClock clock = clock("LOOP", 20, 1, 0, null, null, null);
         assertTrue(clock.advance(0, context).beforeTimeTicks() < 0);
@@ -118,8 +111,7 @@ class YsmAnimationClockTest
     }
 
     @Test
-    void authoredAbsoluteTimeCanRewindAndReportsThePreviousTimeForEventSeeking()
-    {
+    void authoredAbsoluteTimeCanRewindAndReportsThePreviousTimeForEventSeeking() {
         Molang.Context context = new Molang.Context();
         YsmAnimationClock clock = clock("HOLD", 100, 1, 0, "q.target", null, null);
         context.query("q.target", .75);
@@ -140,8 +132,7 @@ class YsmAnimationClockTest
     }
 
     @Test
-    void authoredHoldKeepsUpdatingAfterItsEndAndMaySeekBackWhileFinishedStaysSticky()
-    {
+    void authoredHoldKeepsUpdatingAfterItsEndAndMaySeekBackWhileFinishedStaysSticky() {
         Molang.Context context = new Molang.Context();
         YsmAnimationClock clock = clock("HOLD", 20, 1, 0, "v.calls+=1;return q.target;", null, null);
         context.query("q.target", 1);
@@ -170,8 +161,7 @@ class YsmAnimationClockTest
     }
 
     @Test
-    void timingEvaluationRestoresAllQueriesButKeepsCallerOwnedScope()
-    {
+    void timingEvaluationRestoresAllQueriesButKeepsCallerOwnedScope() {
         Molang.Context context = new Molang.Context();
         context.query("q.anim_time", 77);
         context.query("q.delta_time", 88);
@@ -189,8 +179,7 @@ class YsmAnimationClockTest
     }
 
     @Test
-    void zeroLengthAndHugeTimeJumpsRemainBoundedAndFinite()
-    {
+    void zeroLengthAndHugeTimeJumpsRemainBoundedAndFinite() {
         Molang.Context context = new Molang.Context();
         YsmAnimationClock zero = clock("LOOP", 0, 1, 0, "1000000000", null, "v.delays+=1;return .1;");
         assertTrue(zero.advance(0, context).crossedBoundary());
@@ -203,8 +192,7 @@ class YsmAnimationClockTest
     }
 
     @Test
-    void missingNativeAnimationLengthUsesAnInfiniteEndWithoutCompleting()
-    {
+    void missingNativeAnimationLengthUsesAnInfiniteEndWithoutCompleting() {
         Molang.Context context = new Molang.Context();
         YsmAnimationClock nativeClock = clock("HOLD", Double.POSITIVE_INFINITY, 2, 0, null, null, null);
         assertEquals(20, nativeClock.advance(10, context).timeTicks(), 1e-9);
@@ -218,8 +206,7 @@ class YsmAnimationClockTest
     }
 
     @Test
-    void zeroSpeedRemainsStoppedEvenWhenTheRealTickDifferenceOverflows()
-    {
+    void zeroSpeedRemainsStoppedEvenWhenTheRealTickDifferenceOverflows() {
         Molang.Context context = new Molang.Context();
         YsmAnimationClock clock = clock("LOOP", 20, 0, -Double.MAX_VALUE, null, null, null);
         YsmAnimationClock.Step sampled = clock.advance(Double.MAX_VALUE, context);
@@ -229,8 +216,7 @@ class YsmAnimationClockTest
     }
 
     @Test
-    void cancelDiscardsPlaybackAndRestartGetsANewActivationDelay()
-    {
+    void cancelDiscardsPlaybackAndRestartGetsANewActivationDelay() {
         Molang.Context context = new Molang.Context();
         YsmAnimationClock clock = clock("LOOP", 20, 1, 0, null, "v.starts+=1;return .5;", null);
         clock.initialize(context);
@@ -250,8 +236,7 @@ class YsmAnimationClockTest
     }
 
     @Test
-    void expressionReentryFailsAndStillRestoresQueryBindings()
-    {
+    void expressionReentryFailsAndStillRestoresQueryBindings() {
         Molang.Context context = new Molang.Context();
         context.query("q.anim_time", 77);
         Map<String, Object> queries = context.queryValues();
@@ -264,14 +249,12 @@ class YsmAnimationClockTest
     }
 
     @Test
-    void failedStartDelayCanBeRetriedWithoutLosingTheDelay()
-    {
+    void failedStartDelayCanBeRetriedWithoutLosingTheDelay() {
         Molang.Context context = new Molang.Context();
         context.query("q.anim_time", 77);
         Map<String, Object> queries = context.queryValues();
         YsmAnimationClock clock = clock("HOLD", 100, 1, 0, null, "fn.delay()", null);
-        context.functions((name, args) ->
-        {
+        context.functions((name, args) -> {
             throw new IllegalArgumentException("unavailable");
         });
         assertThrows(IllegalArgumentException.class, () -> clock.initialize(context));
@@ -283,14 +266,12 @@ class YsmAnimationClockTest
     }
 
     private static YsmAnimationClock clock(String loop, double lengthTicks, double speed, double startTick,
-            String update, String startDelay, String loopDelay)
-    {
+            String update, String startDelay, String loopDelay) {
         return new YsmAnimationClock(loop, lengthTicks, speed, startTick, program(update), program(startDelay),
                 program(loopDelay));
     }
 
-    private static Molang.Program program(String expression)
-    {
+    private static Molang.Program program(String expression) {
         return expression == null ? null : Molang.compile(expression);
     }
 }

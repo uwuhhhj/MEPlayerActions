@@ -8,11 +8,9 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class GalleryPreviewSelectionTest
-{
+class GalleryPreviewSelectionTest {
     @Test
-    void clickingNewYearPreviewsItWhileTaishoRemainsTheCurrentAppearance()
-    {
+    void clickingNewYearPreviewsItWhileTaishoRemainsTheCurrentAppearance() {
         String currentId = BuiltinYsmModels.TAISHO_MAID_ID;
         GalleryPreviewSelection selection = new GalleryPreviewSelection(currentId);
         assertEquals(new GalleryPreviewSelection.Target(GalleryPreviewSelection.Source.CURRENT, currentId),
@@ -27,8 +25,7 @@ class GalleryPreviewSelectionTest
     }
 
     @Test
-    void unloadedOrFailedSelectionNeverFallsBackToTheOldEnabledModel()
-    {
+    void unloadedOrFailedSelectionNeverFallsBackToTheOldEnabledModel() {
         GalleryPreviewSelection selection = new GalleryPreviewSelection(BuiltinYsmModels.TAISHO_MAID_ID);
         selection.browse(BuiltinYsmModels.NEW_YEAR_ID);
         assertEquals(
@@ -42,8 +39,7 @@ class GalleryPreviewSelectionTest
     }
 
     @Test
-    void olderAsyncCompletionCannotRestartANewerOrReselectedPreview()
-    {
+    void olderAsyncCompletionCannotRestartANewerOrReselectedPreview() {
         GalleryPreviewSelection selection = new GalleryPreviewSelection(BuiltinYsmModels.TAISHO_MAID_ID);
         selection.browse(BuiltinYsmModels.NEW_YEAR_ID);
         GalleryPreviewSelection.Request first = selection.request(BuiltinYsmModels.NEW_YEAR_ID);
@@ -58,8 +54,7 @@ class GalleryPreviewSelectionTest
     }
 
     @Test
-    void currentLabelRequiresTheAppliedContentHashRatherThanOnlyTheSameModelId()
-    {
+    void currentLabelRequiresTheAppliedContentHashRatherThanOnlyTheSameModelId() {
         GalleryPreviewSelection selection = new GalleryPreviewSelection(BuiltinYsmModels.NEW_YEAR_ID);
         selection.browse(BuiltinYsmModels.NEW_YEAR_ID);
         assertEquals(GalleryPreviewSelection.Source.SELECTED,
@@ -70,8 +65,7 @@ class GalleryPreviewSelectionTest
     }
 
     @Test
-    void savedDefaultIsNotDisplayedAsEnabledBeforeAnyCardWasBrowsed()
-    {
+    void savedDefaultIsNotDisplayedAsEnabledBeforeAnyCardWasBrowsed() {
         GalleryPreviewSelection selection = new GalleryPreviewSelection(BuiltinYsmModels.DEFAULT_ID);
         assertEquals(GalleryPreviewSelection.Source.VANILLA, selection.target("", "", "default").source());
         assertEquals(
@@ -81,8 +75,7 @@ class GalleryPreviewSelectionTest
     }
 
     @Test
-    void removingTheSelectedModelDiscardsItsAsyncTokenWithoutApplyingTheFallback()
-    {
+    void removingTheSelectedModelDiscardsItsAsyncTokenWithoutApplyingTheFallback() {
         GalleryPreviewSelection selection = new GalleryPreviewSelection(BuiltinYsmModels.NEW_YEAR_ID);
         selection.browse(BuiltinYsmModels.NEW_YEAR_ID);
         GalleryPreviewSelection.Request removed = selection.request(BuiltinYsmModels.NEW_YEAR_ID);

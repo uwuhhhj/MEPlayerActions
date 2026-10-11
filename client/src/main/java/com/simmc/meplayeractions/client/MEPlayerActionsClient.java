@@ -25,15 +25,13 @@ import org.slf4j.*;
 
 import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.*;
 
-public final class MEPlayerActionsClient implements ClientModInitializer
-{
+public final class MEPlayerActionsClient implements ClientModInitializer {
     public static final Logger LOGGER = LoggerFactory.getLogger("MEPlayerActions/Client");
     public static ClientRuntime runtime;
     public static KeyBinding actionWheelKey;
 
     @Override
-    public void onInitializeClient()
-    {
+    public void onInitializeClient() {
         NativeGuiRenderBackend.register();
         MinecraftClient client = MinecraftClient.getInstance();
         runtime = new ClientRuntime(client);
@@ -46,8 +44,7 @@ public final class MEPlayerActionsClient implements ClientModInitializer
         ClientPlayNetworking.registerGlobalReceiver(PrivateModelPayload.ID,
                 (payload, context) -> context.client().execute(() -> runtime.receivePrivate(payload.data())));
         ClientPlayConnectionEvents.JOIN.register((handler, sender, mc) -> runtime.joined());
-        ClientPlayConnectionEvents.DISCONNECT.register((handler, mc) ->
-        {
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, mc) -> {
             YsmNativeInputState.reset();
             runtime.reset();
         });
@@ -56,14 +53,11 @@ public final class MEPlayerActionsClient implements ClientModInitializer
         actionWheelKey = KeyBindingHelper
                 .registerKeyBinding(new KeyBinding("key.meplayeractions.action_wheel", InputUtil.Type.KEYSYM,
                         GLFW.GLFW_KEY_J, KeyBinding.Category.create(Identifier.of("meplayeractions", "actions"))));
-        ClientTickEvents.END_CLIENT_TICK.register(mc ->
-        {
+        ClientTickEvents.END_CLIENT_TICK.register(mc -> {
             YsmNativeInputState.tick(mc);
             runtime.tick();
-            while (actionWheelKey.wasPressed())
-            {
-                if (mc.world != null && mc.currentScreen == null)
-                {
+            while (actionWheelKey.wasPressed()) {
+                if (mc.world != null && mc.currentScreen == null) {
                     AnimationWheelScreen screen = new AnimationWheelScreen(runtime);
                     screen.setReleaseKey(KeyBindingHelper.getBoundKeyOf(actionWheelKey));
                     mc.setScreen(screen);
@@ -72,70 +66,55 @@ public final class MEPlayerActionsClient implements ClientModInitializer
 
         });
         ClientCommandRegistrationCallback.EVENT
-                .register((dispatcher, registry) -> dispatcher.register(literal("mpaclient").executes(ctx ->
-                {
+                .register((dispatcher, registry) -> dispatcher.register(literal("mpaclient").executes(ctx -> {
                     client.setScreen(new PlayerModelScreen(runtime));
                     return 1;
-                }).then(literal("settings").executes(ctx ->
-                {
+                }).then(literal("settings").executes(ctx -> {
                     client.setScreen(new PlayerModelScreen(runtime));
                     return 1;
-                })).then(literal("local").executes(ctx ->
-                {
+                })).then(literal("local").executes(ctx -> {
                     client.setScreen(new PlayerModelScreen(runtime));
                     return 1;
-                }).then(literal("off").executes(ctx ->
-                {
+                }).then(literal("off").executes(ctx -> {
                     runtime.disableLocalAppearance();
                     return 1;
-                })).then(literal("reset").executes(ctx ->
-                {
+                })).then(literal("reset").executes(ctx -> {
                     runtime.updateLocalAppearance(LocalAppearanceSettings.defaults());
                     return 1;
-                })).then(literal("stop").executes(ctx ->
-                {
+                })).then(literal("stop").executes(ctx -> {
                     runtime.stopLocal();
                     return 1;
                 })).then(literal("model")
-                        .then(argument("model", StringArgumentType.greedyString()).suggests((ctx, builder) ->
-                        {
+                        .then(argument("model", StringArgumentType.greedyString()).suggests((ctx, builder) -> {
                             runtime.localModels().forEach(model -> builder.suggest(model.id()));
                             return builder.buildFuture();
-                        }).executes(ctx ->
-                        {
+                        }).executes(ctx -> {
                             runtime.selectLocalModel(StringArgumentType.getString(ctx, "model"));
                             return 1;
                         }))).then(literal("play")
-                                .then(argument("animation", StringArgumentType.word()).suggests((ctx, builder) ->
-                                {
+                                .then(argument("animation", StringArgumentType.word()).suggests((ctx, builder) -> {
                                     runtime.localActions().forEach(action -> builder.suggest(action.id()));
                                     return builder.buildFuture();
-                                }).executes(ctx ->
-                                {
+                                }).executes(ctx -> {
                                     boolean played = runtime.playLocal(StringArgumentType.getString(ctx, "animation"));
-                                    if (!played)
-                                    {
+                                    if (!played) {
                                         ctx.getSource().sendFeedback(Text.literal("先启用本地外观，并选择可用动作"));
                                     }
                                     return played ? 1 : 0;
                                 }))))
-                        .then(literal("status").executes(ctx ->
-                        {
+                        .then(literal("status").executes(ctx -> {
                             runtime.status().forEach(line -> ctx.getSource().sendFeedback(Text.literal(line)));
                             return 1;
-                        })).then(literal("toggle").executes(ctx ->
-                        {
+                        })).then(literal("toggle").executes(ctx -> {
                             runtime.toggleEnabled();
                             return 1;
                         })).then(literal("preview")
-                                .then(argument("model", StringArgumentType.word()).suggests((ctx, builder) ->
-                                {
+                                .then(argument("model", StringArgumentType.word()).suggests((ctx, builder) -> {
                                     builder.suggest("ysm_02_jk");
                                     builder.suggest("ysm_01_jk");
                                     builder.suggest("off");
                                     return builder.buildFuture();
-                                }).executes(ctx ->
-                                {
+                                }).executes(ctx -> {
                                     runtime.preview(StringArgumentType.getString(ctx, "model"));
                                     return 1;
                                 })))));

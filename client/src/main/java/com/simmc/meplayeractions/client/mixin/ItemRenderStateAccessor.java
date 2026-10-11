@@ -7,8 +7,7 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 
 /** Read the actual resolved layers; no native inventory reference is retained. */
 @Mixin(ItemRenderState.class)
-public interface ItemRenderStateAccessor
-{
+public interface ItemRenderStateAccessor {
     @Accessor("layerCount")
     int meplayeractions$getLayerCount();
 

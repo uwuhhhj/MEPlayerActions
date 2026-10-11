@@ -7,19 +7,16 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.util.List;
 
 /** Authorization and lifecycle regression tests without trusting client-selected model keys. */
-class PushAssetOffersTest
-{
+class PushAssetOffersTest {
     private static final UUID OWNER = new UUID(0, 1), INSTANCE = new UUID(0, 2);
     private static final String HASH = "a".repeat(64);
 
-    private static PushAssetOffers.Offer issue(PushAssetOffers offers, String hash, long tick)
-    {
+    private static PushAssetOffers.Offer issue(PushAssetOffers offers, String hash, long tick) {
         return offers.issue(OWNER, INSTANCE, "ysm_01_jk", hash, tick);
     }
 
     @Test
-    void feedbackRequiresExactIssuedTokenAndHashAndIsConsumedOnlyOnce()
-    {
+    void feedbackRequiresExactIssuedTokenAndHashAndIsConsumedOnlyOnce() {
         PushAssetOffers offers = new PushAssetOffers();
         PushAssetOffers.Offer offer = issue(offers, HASH, 0);
         assertEquals(PushAssetOffers.Feedback.INVALID, offers.feedback(UUID.randomUUID(), HASH, "missing", 1));
@@ -35,8 +32,7 @@ class PushAssetOffersTest
     }
 
     @Test
-    void cachedDoesNotFreePendingSlotOrCreateATransferOrReplaceRenderAcknowledgment()
-    {
+    void cachedDoesNotFreePendingSlotOrCreateATransferOrReplaceRenderAcknowledgment() {
         PushAssetOffers offers = new PushAssetOffers();
         PushAssetOffers.Offer first = issue(offers, HASH, 0);
         PushAssetOffers.Offer second = issue(offers, "b".repeat(64), 10);
@@ -52,8 +48,7 @@ class PushAssetOffersTest
     }
 
     @Test
-    void sameContentAliasesShareOneOfferUntilTheFinalVisibleBindingLeaves()
-    {
+    void sameContentAliasesShareOneOfferUntilTheFinalVisibleBindingLeaves() {
         PushAssetOffers offers = new PushAssetOffers();
         PushAssetOffers.Offer offer = issue(offers, HASH, 0);
         assertNull(offers.issue(new UUID(0, 3), new UUID(0, 4), "alias", HASH, 1));
@@ -68,8 +63,7 @@ class PushAssetOffersTest
     }
 
     @Test
-    void rejectedAndExpiredTokensCannotAuthorizeAReplacementOffer()
-    {
+    void rejectedAndExpiredTokensCannotAuthorizeAReplacementOffer() {
         PushAssetOffers offers = new PushAssetOffers();
         PushAssetOffers.Offer old = issue(offers, HASH, 0);
         assertEquals(PushAssetOffers.Feedback.REJECTED, offers.feedback(old.id(), HASH, "rejected", 1));
@@ -82,14 +76,12 @@ class PushAssetOffersTest
     }
 
     @Test
-    void steadyProgressSurvivesTheFormerThirtySecondCutoffButHasAnAbsoluteDeadline()
-    {
+    void steadyProgressSurvivesTheFormerThirtySecondCutoffButHasAnAbsoluteDeadline() {
         PushAssetOffers offers = new PushAssetOffers();
         PushAssetOffers.Offer offer = issue(offers, HASH, 0);
         offers.feedback(offer.id(), HASH, "missing", 1);
         assertTrue(offers.start(offer));
-        for (int tick = 250; tick <= 1000; tick += 250)
-        {
+        for (int tick = 250; tick <= 1000; tick += 250) {
             offers.progress(offer, tick);
             assertTrue(offers.expire(tick, authorization -> true).isEmpty());
         }
@@ -99,8 +91,7 @@ class PushAssetOffersTest
     }
 
     @Test
-    void QueueAndStreamingIdleTimeoutsDoNotExtendOnInvalidFeedback()
-    {
+    void QueueAndStreamingIdleTimeoutsDoNotExtendOnInvalidFeedback() {
         PushAssetOffers offers = new PushAssetOffers();
         PushAssetOffers.Offer offer = issue(offers, HASH, 0);
         offers.feedback(offer.id(), HASH, "missing", 10);
@@ -116,16 +107,12 @@ class PushAssetOffersTest
     }
 
     @Test
-    void deliveredOrCachedAssetsTimeOutWithoutARealRenderReady()
-    {
-        for (boolean cached : new boolean[]
-        { false, true })
-        {
+    void deliveredOrCachedAssetsTimeOutWithoutARealRenderReady() {
+        for (boolean cached : new boolean[] { false, true }) {
             PushAssetOffers offers = new PushAssetOffers();
             PushAssetOffers.Offer offer = issue(offers, HASH, 0);
             offers.feedback(offer.id(), HASH, cached ? "cached" : "missing", 1);
-            if (!cached)
-            {
+            if (!cached) {
                 offers.start(offer);
                 offers.delivered(offer, 1);
             }
@@ -135,11 +122,9 @@ class PushAssetOffersTest
     }
 
     @Test
-    void completedHistoryIsBoundedAndSessionEndInvalidatesAllTokens()
-    {
+    void completedHistoryIsBoundedAndSessionEndInvalidatesAllTokens() {
         PushAssetOffers offers = new PushAssetOffers();
-        for (int i = 0; i < PushAssetOffers.MAX_RECORDS; i++)
-        {
+        for (int i = 0; i < PushAssetOffers.MAX_RECORDS; i++) {
             String hash = String.format("%064x", i);
             assertNotNull(issue(offers, hash, i));
             offers.ready(hash);
@@ -152,8 +137,7 @@ class PushAssetOffersTest
     }
 
     @Test
-    void deadlinesHandleUnsignedServerTickWrap()
-    {
+    void deadlinesHandleUnsignedServerTickWrap() {
         PushAssetOffers offers = new PushAssetOffers();
         PushAssetOffers.Offer offer = issue(offers, HASH, 0xfffffff0L);
         assertTrue(offers.expire(0x53, authorization -> true).isEmpty());
@@ -162,8 +146,7 @@ class PushAssetOffersTest
     }
 
     @Test
-    void configuredQueueStreamingTotalAndReadyDeadlinesAreIndependent()
-    {
+    void configuredQueueStreamingTotalAndReadyDeadlinesAreIndependent() {
         ResourceSettings.Network d = ResourceSettings.defaults().network();
         ResourceSettings.Network policy = new ResourceSettings.Network(d.globalUploadBytesPerSecond(),
                 d.globalDownloadBytesPerSecond(), d.uploadBytesPerSecond(), d.downloadBytesPerSecond(),

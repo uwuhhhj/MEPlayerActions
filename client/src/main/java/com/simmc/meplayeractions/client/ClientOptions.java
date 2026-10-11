@@ -15,8 +15,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-public final class ClientOptions
-{
+public final class ClientOptions {
     private static final Logger LOGGER = LoggerFactory.getLogger("MEPlayerActions/Options");
     /** Local rendering toggle; server action networking and catalogues remain connected. */
     public boolean enabled = true, showSelf = true, followServerTimeline = false;
@@ -43,68 +42,54 @@ public final class ClientOptions
     private WheelPreferences wheelPreferences = WheelPreferences.defaults();
     private boolean roamingVariablesDirty;
 
-    public ClientOptions(Path path)
-    {
+    public ClientOptions(Path path) {
         this.path = Objects.requireNonNull(path);
-        try
-        {
+        try {
             JsonObject json = read();
-            if (json != null)
-            {
-                if (json.has("enabled"))
-                {
+            if (json != null) {
+                if (json.has("enabled")) {
                     this.enabled = json.get("enabled").getAsBoolean();
                 }
 
-                if (json.has("showSelf"))
-                {
+                if (json.has("showSelf")) {
                     this.showSelf = json.get("showSelf").getAsBoolean();
                 }
 
-                if (json.has("hideVanillaPlayer"))
-                {
+                if (json.has("hideVanillaPlayer")) {
                     this.hideVanillaPlayer = json.get("hideVanillaPlayer").getAsBoolean();
                 }
 
-                if (json.has("hideVanillaEquipment"))
-                {
+                if (json.has("hideVanillaEquipment")) {
                     this.hideVanillaEquipment = json.get("hideVanillaEquipment").getAsBoolean();
                 }
 
                 // The old ambiguous "self" toggle hid the disguise; the new GUI names all three layers.
-                if (!json.has("hideVanillaPlayer") && !json.has("hideVanillaEquipment"))
-                {
+                if (!json.has("hideVanillaPlayer") && !json.has("hideVanillaEquipment")) {
                     this.showSelf = true;
                 }
 
-                if (json.has("followServerTimeline"))
-                {
+                if (json.has("followServerTimeline")) {
                     this.followServerTimeline = json.get("followServerTimeline").getAsBoolean();
                 }
 
-                if (json.has("interpolationTicks"))
-                {
+                if (json.has("interpolationTicks")) {
                     this.interpolationTicks = Math.max(0, Math.min(6, json.get("interpolationTicks").getAsInt()));
                 }
 
                 this.localAppearance = readAppearance(json);
-                if (json.has("showModelIds"))
-                {
+                if (json.has("showModelIds")) {
                     this.showModelIds = json.get("showModelIds").getAsBoolean();
                 }
 
-                if (json.has("defaultHeaddress"))
-                {
+                if (json.has("defaultHeaddress")) {
                     this.defaultHeaddress = json.get("defaultHeaddress").getAsBoolean();
                 }
 
-                if (json.has("defaultBlueTexture"))
-                {
+                if (json.has("defaultBlueTexture")) {
                     this.defaultBlueTexture = json.get("defaultBlueTexture").getAsBoolean();
                 }
 
-                if (json.has("localActionLocked"))
-                {
+                if (json.has("localActionLocked")) {
                     this.localActionLocked = json.get("localActionLocked").getAsBoolean();
                 }
 
@@ -117,52 +102,41 @@ public final class ClientOptions
                 this.wheelPreferences = readWheelPreferences(json);
                 readProfiles(json);
                 readServerDisguiseProfiles(json);
-                if (json.has("favorites") && json.get("favorites").isJsonArray())
-                {
-                    for (JsonElement value : json.getAsJsonArray("favorites"))
-                    {
-                        if (this.favorites.size() >= 64)
-                        {
+                if (json.has("favorites") && json.get("favorites").isJsonArray()) {
+                    for (JsonElement value : json.getAsJsonArray("favorites")) {
+                        if (this.favorites.size() >= 64) {
                             break;
                         }
 
                         if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()
-                                && LocalAppearanceSettings.isValidModelId(value.getAsString()))
-                        {
+                                && LocalAppearanceSettings.isValidModelId(value.getAsString())) {
                             this.favorites.add(value.getAsString());
                         }
 
                     }
                 }
             }
-        }
-        catch (IOException | RuntimeException exception)
-        {
+        } catch (IOException | RuntimeException exception) {
             LOGGER.warn("Could not read client options; using defaults", exception);
         }
     }
 
-    public LocalAppearanceSettings localAppearance()
-    {
+    public LocalAppearanceSettings localAppearance() {
         return this.localAppearance;
     }
 
-    public void setLocalAppearance(LocalAppearanceSettings settings)
-    {
+    public void setLocalAppearance(LocalAppearanceSettings settings) {
         this.localAppearance = Objects.requireNonNull(settings);
     }
 
-    public boolean updatePrivateAppearancePaused(boolean paused)
-    {
-        if (this.privateAppearancePaused == paused)
-        {
+    public boolean updatePrivateAppearancePaused(boolean paused) {
+        if (this.privateAppearancePaused == paused) {
             return true;
         }
 
         boolean previous = this.privateAppearancePaused;
         this.privateAppearancePaused = paused;
-        if (write())
-        {
+        if (write()) {
             return true;
         }
 
@@ -170,114 +144,87 @@ public final class ClientOptions
         return false;
     }
 
-    public ServerDisguisePreferences serverDisguisePreferences(String id)
-    {
+    public ServerDisguisePreferences serverDisguisePreferences(String id) {
         return this.serverDisguiseProfiles.getOrDefault(id, ServerDisguisePreferences.defaults());
     }
 
-    public boolean updateServerDisguisePreferences(String id, ServerDisguisePreferences preferences)
-    {
-        if (id == null || !id.matches("[a-z0-9_-]{1,64}") || preferences == null)
-        {
+    public boolean updateServerDisguisePreferences(String id, ServerDisguisePreferences preferences) {
+        if (id == null || !id.matches("[a-z0-9_-]{1,64}") || preferences == null) {
             return false;
         }
 
-        try
-        {
+        try {
             preferences.command(id);
-        }
-        catch (IllegalArgumentException invalid)
-        {
+        } catch (IllegalArgumentException invalid) {
             return false;
         }
         ServerDisguisePreferences previous = this.serverDisguiseProfiles.get(id);
         if (!preferences.isDefault() && previous == null
-                && this.serverDisguiseProfiles.size() >= MAX_SERVER_DISGUISE_PROFILES)
-        {
+                && this.serverDisguiseProfiles.size() >= MAX_SERVER_DISGUISE_PROFILES) {
             return false;
         }
 
-        if (preferences.isDefault())
-        {
+        if (preferences.isDefault()) {
             this.serverDisguiseProfiles.remove(id);
-        }
-        else
-        {
+        } else {
             this.serverDisguiseProfiles.put(id, preferences);
         }
 
-        if (write())
-        {
+        if (write()) {
             return true;
         }
 
-        if (previous == null)
-        {
+        if (previous == null) {
             this.serverDisguiseProfiles.remove(id);
-        }
-        else
-        {
+        } else {
             this.serverDisguiseProfiles.put(id, previous);
         }
 
         return false;
     }
 
-    public boolean resetServerDisguisePreferences(String id)
-    {
+    public boolean resetServerDisguisePreferences(String id) {
         return updateServerDisguisePreferences(id, ServerDisguisePreferences.defaults());
     }
 
-    private void readServerDisguiseProfiles(JsonObject json)
-    {
+    private void readServerDisguiseProfiles(JsonObject json) {
         JsonElement entries = json.get("serverDisguiseProfiles");
-        if (entries == null || !entries.isJsonObject())
-        {
+        if (entries == null || !entries.isJsonObject()) {
             return;
         }
 
-        for (Map.Entry<String, JsonElement> entry : entries.getAsJsonObject().entrySet())
-        {
-            if (this.serverDisguiseProfiles.size() >= MAX_SERVER_DISGUISE_PROFILES)
-            {
+        for (Map.Entry<String, JsonElement> entry : entries.getAsJsonObject().entrySet()) {
+            if (this.serverDisguiseProfiles.size() >= MAX_SERVER_DISGUISE_PROFILES) {
                 break;
             }
 
-            if (!entry.getKey().matches("[a-z0-9_-]{1,64}") || !entry.getValue().isJsonObject())
-            {
+            if (!entry.getKey().matches("[a-z0-9_-]{1,64}") || !entry.getValue().isJsonObject()) {
                 continue;
             }
 
-            try
-            {
+            try {
                 ServerDisguisePreferences preferences = ServerDisguisePreferences
                         .fromJson(entry.getValue().getAsJsonObject());
                 preferences.command(entry.getKey());
-                if (!preferences.isDefault())
-                {
+                if (!preferences.isDefault()) {
                     this.serverDisguiseProfiles.put(entry.getKey(), preferences);
                 }
 
-            }
-            catch (RuntimeException invalid)
-            {
+            } catch (RuntimeException invalid) {
                 LOGGER.warn("Invalid server disguise preferences for {}", entry.getKey());
             }
         }
     }
 
-    public WheelPreferences wheelPreferences()
-    {
+    public WheelPreferences wheelPreferences() {
         return this.wheelPreferences;
     }
 
     /** Persist wheel memory atomically, retaining the previous memory on budget or IO failure. */
-    public boolean updateWheelPreferences(WheelPreferences preferences)
-    {
+    public boolean updateWheelPreferences(WheelPreferences preferences) {
         WheelPreferences previous = this.wheelPreferences;
         this.wheelPreferences = Objects.requireNonNull(preferences);
-        if (write())
-        {
+        if (write()) {
             return true;
         }
 
@@ -285,25 +232,20 @@ public final class ClientOptions
         return false;
     }
 
-    public Path path()
-    {
+    public Path path() {
         return this.path;
     }
 
-    public boolean isFavorite(String id)
-    {
+    public boolean isFavorite(String id) {
         return this.favorites.contains(id);
     }
 
-    public void toggleFavorite(String id)
-    {
-        if (!LocalAppearanceSettings.isValidModelId(id))
-        {
+    public void toggleFavorite(String id) {
+        if (!LocalAppearanceSettings.isValidModelId(id)) {
             return;
         }
 
-        if (!this.favorites.remove(id) && this.favorites.size() < 64)
-        {
+        if (!this.favorites.remove(id) && this.favorites.size() < 64) {
             this.favorites.add(id);
         }
 
@@ -311,197 +253,149 @@ public final class ClientOptions
     }
 
     /** Reload only the private appearance without changing live server-render options. */
-    public void reloadLocalAppearance()
-    {
+    public void reloadLocalAppearance() {
         this.localAppearance = LocalAppearanceSettings.defaults();
-        try
-        {
+        try {
             JsonObject json = read();
-            if (json != null)
-            {
+            if (json != null) {
                 this.localAppearance = readAppearance(json);
             }
 
-        }
-        catch (IOException | RuntimeException exception)
-        {
+        } catch (IOException | RuntimeException exception) {
             LOGGER.warn("Could not reload local appearance; using defaults", exception);
         }
     }
 
-    private JsonObject read() throws IOException
-    {
-        if (!Files.exists(this.path))
-        {
+    private JsonObject read() throws IOException {
+        if (!Files.exists(this.path)) {
             return null;
         }
 
-        if (Files.size(this.path) >= 65_536)
-        {
+        if (Files.size(this.path) >= 65_536) {
             throw new IOException("Client options exceed size limit");
         }
 
         return JsonParser.parseString(Files.readString(this.path)).getAsJsonObject();
     }
 
-    private static LocalAppearanceSettings readAppearance(JsonObject json)
-    {
-        if (!json.has("localAppearance"))
-        {
+    private static LocalAppearanceSettings readAppearance(JsonObject json) {
+        if (!json.has("localAppearance")) {
             return LocalAppearanceSettings.defaults();
         }
 
-        try
-        {
+        try {
             JsonObject value = json.getAsJsonObject("localAppearance");
             JsonPrimitive enabled = value.getAsJsonPrimitive("enabled"), model = value.getAsJsonPrimitive("modelId");
-            if (!enabled.isBoolean() || !model.isString())
-            {
+            if (!enabled.isBoolean() || !model.isString()) {
                 throw new IllegalArgumentException("Appearance field type");
             }
 
-            for (String field : new String[]
-            { "scale", "offsetX", "offsetY", "offsetZ" })
-
-            {
-                if (!value.getAsJsonPrimitive(field).isNumber())
-                {
+            for (String field : new String[] { "scale", "offsetX", "offsetY", "offsetZ" }) {
+                if (!value.getAsJsonPrimitive(field).isNumber()) {
                     throw new IllegalArgumentException("Appearance number type");
                 }
 
             }
 
             // Removed bundled server models must not silently become another enabled appearance.
-            if (model.getAsString().equals("ysm_01_jk") || model.getAsString().equals("ysm_02_jk"))
-
-            {
+            if (model.getAsString().equals("ysm_01_jk") || model.getAsString().equals("ysm_02_jk")) {
                 return LocalAppearanceSettings.defaults();
             }
 
             return new LocalAppearanceSettings(enabled.getAsBoolean(), model.getAsString(),
                     value.get("scale").getAsFloat(), value.get("offsetX").getAsDouble(),
                     value.get("offsetY").getAsDouble(), value.get("offsetZ").getAsDouble());
-        }
-        catch (RuntimeException invalid)
-        {
+        } catch (RuntimeException invalid) {
             LOGGER.warn("Invalid local appearance; leaving it disabled: {}", invalid.toString());
             return LocalAppearanceSettings.defaults();
         }
     }
 
-    private static WheelPreferences readWheelPreferences(JsonObject json)
-    {
-        if (!json.has("wheelPreferences"))
-        {
+    private static WheelPreferences readWheelPreferences(JsonObject json) {
+        if (!json.has("wheelPreferences")) {
             return WheelPreferences.defaults();
         }
 
-        try
-        {
+        try {
             JsonObject value = json.getAsJsonObject("wheelPreferences");
             return new WheelPreferences(readWheelSource(value), readWheelPage(value, "clientPage"),
                     readWheelPage(value, "serverPage"), readWheelKeepOpen(value));
-        }
-        catch (RuntimeException invalid)
-        {
+        } catch (RuntimeException invalid) {
             LOGGER.warn("Invalid wheel preferences; using wheel defaults: {}", invalid.toString());
             return WheelPreferences.defaults();
         }
     }
 
-    private static WheelPreferences.Source readWheelSource(JsonObject value)
-    {
+    private static WheelPreferences.Source readWheelSource(JsonObject value) {
         JsonElement selected = value.get("source");
         if (selected != null && selected.isJsonPrimitive() && selected.getAsJsonPrimitive().isString()
-                && selected.getAsString().equals("server"))
-        {
+                && selected.getAsString().equals("server")) {
             return WheelPreferences.Source.SERVER;
         }
 
         return WheelPreferences.Source.CLIENT;
     }
 
-    private static boolean readWheelKeepOpen(JsonObject value)
-    {
+    private static boolean readWheelKeepOpen(JsonObject value) {
         JsonElement selected = value.get("keepOpen");
         return selected != null && selected.isJsonPrimitive() && selected.getAsJsonPrimitive().isBoolean()
                 && selected.getAsBoolean();
     }
 
-    private static int readWheelPage(JsonObject value, String key)
-    {
-        try
-        {
+    private static int readWheelPage(JsonObject value, String key) {
+        try {
             JsonElement page = value.get(key);
-            if (page == null || !page.isJsonPrimitive() || !page.getAsJsonPrimitive().isNumber())
-            {
+            if (page == null || !page.isJsonPrimitive() || !page.getAsJsonPrimitive().isNumber()) {
                 return 0;
             }
 
             int integer = page.getAsBigDecimal().intValueExact();
             return integer >= 0 && integer <= WheelPreferences.MAX_PAGE ? integer : 0;
-        }
-        catch (RuntimeException invalid)
-        {
+        } catch (RuntimeException invalid) {
             return 0;
         }
     }
 
     /** Only authored configuration variables belong here; physics/query state is never persisted. */
-    public record ModelProfile(String textureId, Map<String, Double> variables, Map<String, Integer> radioSelections)
-    {
-        public ModelProfile
-        {
+    public record ModelProfile(String textureId, Map<String, Double> variables, Map<String, Integer> radioSelections) {
+        public ModelProfile {
             textureId = textureId == null ? "" : textureId;
             if (textureId.length() > 128 || textureId.contains("/") || textureId.contains("\\")
-                    || textureId.contains("..") || textureId.chars().anyMatch(Character::isISOControl))
-            {
+                    || textureId.contains("..") || textureId.chars().anyMatch(Character::isISOControl)) {
                 throw new IllegalArgumentException("Texture id");
             }
 
             Objects.requireNonNull(variables);
             Objects.requireNonNull(radioSelections);
-            if (variables.size() > MAX_MODEL_VARIABLES || radioSelections.size() > MAX_RADIO_SELECTIONS)
-
-            {
+            if (variables.size() > MAX_MODEL_VARIABLES || radioSelections.size() > MAX_RADIO_SELECTIONS) {
                 throw new IllegalArgumentException("Model profile count");
             }
 
             Map<String, Double> copied = new LinkedHashMap<>();
-            variables.forEach((key, value) ->
-            {
+            variables.forEach((key, value) -> {
                 String normalized = normalizeModelVariable(key);
                 if (normalized.equals("variable.roaming")
-                        || normalized.startsWith(ROAMING_PREFIX) && !isRoamingVariable(normalized))
-
-                {
+                        || normalized.startsWith(ROAMING_PREFIX) && !isRoamingVariable(normalized)) {
                     throw new IllegalArgumentException("Roaming variable name");
                 }
 
-                if (value == null || !Double.isFinite(value) || Math.abs(value) > 1_000_000)
-
-                {
+                if (value == null || !Double.isFinite(value) || Math.abs(value) > 1_000_000) {
                     throw new IllegalArgumentException("Model variable value");
                 }
 
-                if (copied.put(normalized, value) != null)
-                {
+                if (copied.put(normalized, value) != null) {
                     throw new IllegalArgumentException("Duplicate model variable");
                 }
 
             });
-            if (copied.keySet().stream().filter(ClientOptions::isRoamingVariable).count() > MAX_ROAMING_VARIABLES)
-
-            {
+            if (copied.keySet().stream().filter(ClientOptions::isRoamingVariable).count() > MAX_ROAMING_VARIABLES) {
                 throw new IllegalArgumentException("Roaming variable count");
             }
 
             Map<String, Integer> radios = new LinkedHashMap<>();
-            radioSelections.forEach((key, value) ->
-            {
+            radioSelections.forEach((key, value) -> {
                 if (key == null || key.isBlank() || key.length() > 192 || key.chars().anyMatch(Character::isISOControl)
-                        || value == null || value < 0 || value >= 64)
-                {
+                        || value == null || value < 0 || value >= 64) {
                     throw new IllegalArgumentException("Radio selection");
                 }
 
@@ -511,60 +405,47 @@ public final class ClientOptions
             radioSelections = Collections.unmodifiableMap(radios);
         }
 
-        public static ModelProfile defaults()
-        {
+        public static ModelProfile defaults() {
             return new ModelProfile("", Map.of(), Map.of());
         }
     }
 
-    public static String normalizeModelVariable(String key)
-    {
-        if (key == null)
-        {
+    public static String normalizeModelVariable(String key) {
+        if (key == null) {
             throw new IllegalArgumentException("Model variable name");
         }
 
         String normalized = key.toLowerCase(Locale.ROOT);
-        if (normalized.startsWith("v."))
-        {
+        if (normalized.startsWith("v.")) {
             normalized = "variable." + normalized.substring(2);
         }
 
         if (normalized.length() > 128
-                || !normalized.matches("variable\\.[\\p{L}_][\\p{L}\\p{N}_]*(?:\\.[\\p{L}_][\\p{L}\\p{N}_]*)*"))
-
-        {
+                || !normalized.matches("variable\\.[\\p{L}_][\\p{L}\\p{N}_]*(?:\\.[\\p{L}_][\\p{L}\\p{N}_]*)*")) {
             throw new IllegalArgumentException("Model variable name");
         }
 
         return normalized;
     }
 
-    public ModelProfile modelProfile(String id)
-    {
+    public ModelProfile modelProfile(String id) {
         return this.modelProfiles.getOrDefault(id, ModelProfile.defaults());
     }
 
     /** A canonical numeric roaming field, matching the native parser's single identifier syntax. */
-    public static boolean isRoamingVariable(String key)
-    {
-        if (key == null || !key.startsWith(ROAMING_PREFIX))
-        {
+    public static boolean isRoamingVariable(String key) {
+        if (key == null || !key.startsWith(ROAMING_PREFIX)) {
             return false;
         }
 
         String name = key.substring(ROAMING_PREFIX.length());
         if (name.isEmpty() || name.length() > MAX_ROAMING_VARIABLE_NAME_LENGTH
-                || !(Character.isLetter(name.charAt(0)) || name.charAt(0) == '_'))
-        {
+                || !(Character.isLetter(name.charAt(0)) || name.charAt(0) == '_')) {
             return false;
         }
 
-        for (int index = 1; index < name.length(); index++)
-
-        {
-            if (!(Character.isLetterOrDigit(name.charAt(index)) || name.charAt(index) == '_'))
-            {
+        for (int index = 1; index < name.length(); index++) {
+            if (!(Character.isLetterOrDigit(name.charAt(index)) || name.charAt(index) == '_')) {
                 return false;
             }
 
@@ -577,30 +458,24 @@ public final class ClientOptions
      * Merge a validated author dirty batch in memory. True means values changed; false is a no-op or rejected batch.
      * Ordinary form variables, skins and radio selections are retained. Rendering never performs disk IO here.
      */
-    public boolean updateRoamingVariables(String id, Map<String, Double> values)
-    {
+    public boolean updateRoamingVariables(String id, Map<String, Double> values) {
         if (!LocalAppearanceSettings.isValidModelId(id) || values == null || values.isEmpty()
-                || values.size() > MAX_ROAMING_VARIABLES)
-        {
+                || values.size() > MAX_ROAMING_VARIABLES) {
             return false;
         }
 
         ModelProfile previous = this.modelProfiles.get(id);
-        if (previous == null && this.modelProfiles.size() >= MAX_MODEL_PROFILES)
-        {
+        if (previous == null && this.modelProfiles.size() >= MAX_MODEL_PROFILES) {
             return false;
         }
 
-        try
-        {
+        try {
             Map<String, Double> normalized = new LinkedHashMap<>();
-            for (Map.Entry<String, Double> entry : values.entrySet())
-            {
+            for (Map.Entry<String, Double> entry : values.entrySet()) {
                 String name = normalizeModelVariable(entry.getKey());
                 Double value = entry.getValue();
                 if (!isRoamingVariable(name) || value == null || !Double.isFinite(value) || Math.abs(value) > 1_000_000
-                        || normalized.put(name, value) != null)
-                {
+                        || normalized.put(name, value) != null) {
                     return false;
                 }
 
@@ -609,74 +484,59 @@ public final class ClientOptions
             Map<String, Double> merged = new LinkedHashMap<>(base.variables());
             merged.putAll(normalized);
             ModelProfile next = new ModelProfile(base.textureId(), merged, base.radioSelections());
-            if (next.equals(base))
-            {
+            if (next.equals(base)) {
                 return false;
             }
 
             this.modelProfiles.put(id, next);
             this.roamingVariablesDirty = true;
             return true;
-        }
-        catch (IllegalArgumentException invalid)
-        {
+        } catch (IllegalArgumentException invalid) {
             return false;
         }
     }
 
-    public boolean hasPendingRoamingVariables()
-    {
+    public boolean hasPendingRoamingVariables() {
         return this.roamingVariablesDirty;
     }
 
     /** One atomic options write for all pending models; a failed write retains their memory and dirty flag. */
-    public boolean flushRoamingVariables()
-    {
+    public boolean flushRoamingVariables() {
         return !this.roamingVariablesDirty || write();
     }
 
     /** Roll back both memory and disk on validation, budget or IO failure. */
-    public boolean updateModelProfile(String id, ModelProfile profile)
-    {
-        if (!LocalAppearanceSettings.isValidModelId(id) || profile == null)
-        {
+    public boolean updateModelProfile(String id, ModelProfile profile) {
+        if (!LocalAppearanceSettings.isValidModelId(id) || profile == null) {
             return false;
         }
 
         ModelProfile previous = this.modelProfiles.get(id);
-        if (previous == null && this.modelProfiles.size() >= MAX_MODEL_PROFILES)
-        {
+        if (previous == null && this.modelProfiles.size() >= MAX_MODEL_PROFILES) {
             return false;
         }
 
         this.modelProfiles.put(id, profile);
-        if (write())
-        {
+        if (write()) {
             return true;
         }
 
-        if (previous == null)
-        {
+        if (previous == null) {
             this.modelProfiles.remove(id);
-        }
-        else
-        {
+        } else {
             this.modelProfiles.put(id, previous);
         }
 
         return false;
     }
 
-    public boolean resetModelProfile(String id)
-    {
+    public boolean resetModelProfile(String id) {
         ModelProfile previous = this.modelProfiles.remove(id);
-        if (previous == null)
-        {
+        if (previous == null) {
             return true;
         }
 
-        if (write())
-        {
+        if (write()) {
             return true;
         }
 
@@ -684,49 +544,37 @@ public final class ClientOptions
         return false;
     }
 
-    private void readProfiles(JsonObject json)
-    {
-        if (!json.has("modelProfiles"))
-        {
+    private void readProfiles(JsonObject json) {
+        if (!json.has("modelProfiles")) {
             return;
         }
 
-        try
-        {
+        try {
             JsonObject entries = json.getAsJsonObject("modelProfiles");
-            if (entries.size() > MAX_MODEL_PROFILES)
-            {
+            if (entries.size() > MAX_MODEL_PROFILES) {
                 throw new IllegalArgumentException("Profile count");
             }
 
             Map<String, ModelProfile> parsed = new LinkedHashMap<>();
-            for (Map.Entry<String, JsonElement> entry : entries.entrySet())
-            {
-                if (!LocalAppearanceSettings.isValidModelId(entry.getKey()))
-                {
+            for (Map.Entry<String, JsonElement> entry : entries.entrySet()) {
+                if (!LocalAppearanceSettings.isValidModelId(entry.getKey())) {
                     throw new IllegalArgumentException("Profile model id");
                 }
 
                 JsonObject value = entry.getValue().getAsJsonObject();
                 String texture = "";
-                if (value.has("textureId"))
-                {
-                    if (!value.getAsJsonPrimitive("textureId").isString())
-                    {
+                if (value.has("textureId")) {
+                    if (!value.getAsJsonPrimitive("textureId").isString()) {
                         throw new IllegalArgumentException("Texture type");
                     }
 
                     texture = value.get("textureId").getAsString();
                 }
                 Map<String, Double> variables = new LinkedHashMap<>();
-                if (value.has("variables"))
-                {
-                    for (Map.Entry<String, JsonElement> variable : value.getAsJsonObject("variables").entrySet())
-                    {
+                if (value.has("variables")) {
+                    for (Map.Entry<String, JsonElement> variable : value.getAsJsonObject("variables").entrySet()) {
                         if (!variable.getValue().isJsonPrimitive()
-                                || !variable.getValue().getAsJsonPrimitive().isNumber())
-
-                        {
+                                || !variable.getValue().getAsJsonPrimitive().isNumber()) {
                             throw new IllegalArgumentException("Variable type");
                         }
 
@@ -735,13 +583,10 @@ public final class ClientOptions
                 }
 
                 Map<String, Integer> radios = new LinkedHashMap<>();
-                if (value.has("radioSelections"))
-                {
-                    for (Map.Entry<String, JsonElement> radio : value.getAsJsonObject("radioSelections").entrySet())
-                    {
+                if (value.has("radioSelections")) {
+                    for (Map.Entry<String, JsonElement> radio : value.getAsJsonObject("radioSelections").entrySet()) {
                         if (!radio.getValue().isJsonPrimitive() || !radio.getValue().getAsJsonPrimitive().isNumber()
-                                || radio.getValue().getAsDouble() != radio.getValue().getAsInt())
-                        {
+                                || radio.getValue().getAsDouble() != radio.getValue().getAsInt()) {
                             throw new IllegalArgumentException("Radio type");
                         }
 
@@ -752,16 +597,13 @@ public final class ClientOptions
                 parsed.put(entry.getKey(), new ModelProfile(texture, variables, radios));
             }
             this.modelProfiles.putAll(parsed);
-        }
-        catch (RuntimeException invalid)
-        {
+        } catch (RuntimeException invalid) {
             this.modelProfiles.clear();
             LOGGER.warn("Invalid model profiles; ignoring private configuration: {}", invalid.toString());
         }
     }
 
-    private JsonObject json()
-    {
+    private JsonObject json() {
         JsonObject json = new JsonObject();
         json.addProperty("enabled", this.enabled);
         json.addProperty("showSelf", this.showSelf);
@@ -793,8 +635,7 @@ public final class ClientOptions
         appearance.addProperty("offsetZ", this.localAppearance.offsetZ());
         json.add("localAppearance", appearance);
         JsonObject profiles = new JsonObject();
-        this.modelProfiles.forEach((id, profile) ->
-        {
+        this.modelProfiles.forEach((id, profile) -> {
             JsonObject data = new JsonObject(), variables = new JsonObject(), radios = new JsonObject();
             data.addProperty("textureId", profile.textureId());
             profile.variables().forEach(variables::addProperty);
@@ -810,20 +651,16 @@ public final class ClientOptions
         return json;
     }
 
-    public void save()
-    {
+    public void save() {
         write();
     }
 
-    private boolean write()
-    {
+    private boolean write() {
         Path temporary = null;
-        try
-        {
+        try {
             byte[] data = new GsonBuilder().setPrettyPrinting().create().toJson(json())
                     .getBytes(StandardCharsets.UTF_8);
-            if (data.length >= 65_536)
-            {
+            if (data.length >= 65_536) {
                 throw new IOException("Client options exceed size limit");
             }
 
@@ -834,22 +671,14 @@ public final class ClientOptions
             Files.move(temporary, absolute, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
             this.roamingVariablesDirty = false;
             return true;
-        }
-        catch (IOException | RuntimeException exception)
-        {
+        } catch (IOException | RuntimeException exception) {
             LOGGER.warn("Could not save client options", exception);
             return false;
-        }
-        finally
-        {
-            if (temporary != null)
-            {
-                try
-                {
+        } finally {
+            if (temporary != null) {
+                try {
                     Files.deleteIfExists(temporary);
-                }
-                catch (IOException ignored)
-                {
+                } catch (IOException ignored) {
                 }
             }
         }

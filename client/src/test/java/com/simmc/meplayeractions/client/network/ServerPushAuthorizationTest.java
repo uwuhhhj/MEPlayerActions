@@ -10,22 +10,19 @@ import java.util.zip.GZIPOutputStream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class ServerPushAuthorizationTest
-{
+class ServerPushAuthorizationTest {
     private final byte[] raw = "{\"valid\":\"asset\"}".getBytes(StandardCharsets.UTF_8);
     private final String hash = AssetTransfer.hash(this.raw);
     private final ServerPushAuthorization.Identity identity = identity(UUID.randomUUID(), this.hash);
     private final ServerPushAuthorization.Offer offer = new ServerPushAuthorization.Offer(UUID.randomUUID(),
             this.identity);
 
-    private static ServerPushAuthorization.Identity identity(UUID owner, String hash)
-    {
+    private static ServerPushAuthorization.Identity identity(UUID owner, String hash) {
         return new ServerPushAuthorization.Identity(owner, UUID.randomUUID().toString(), "sample", hash);
     }
 
     @Test
-    void handshakeMustEchoThePushModeAndBothCapabilities()
-    {
+    void handshakeMustEchoThePushModeAndBothCapabilities() {
         assertTrue(
                 ServerPushAuthorization.acceptsHandshake("server-push", List.of("local_render", "server_push_models")));
         assertFalse(ServerPushAuthorization.acceptsHandshake("resource-pack",
@@ -37,8 +34,7 @@ class ServerPushAuthorizationTest
     }
 
     @Test
-    void issuanceRequiresExactCurrentOwnerInstanceModelAndHash()
-    {
+    void issuanceRequiresExactCurrentOwnerInstanceModelAndHash() {
         ServerPushAuthorization authorization = new ServerPushAuthorization();
         for (ServerPushAuthorization.Identity wrong : List.of(identity(UUID.randomUUID(), this.hash),
                 new ServerPushAuthorization.Identity(this.identity.owner(), UUID.randomUUID().toString(), "sample",
@@ -46,9 +42,7 @@ class ServerPushAuthorizationTest
                 new ServerPushAuthorization.Identity(this.identity.owner(), this.identity.instance(), "another",
                         this.hash),
                 new ServerPushAuthorization.Identity(this.identity.owner(), this.identity.instance(), "sample",
-                        "b".repeat(64))))
-
-        {
+                        "b".repeat(64)))) {
             assertThrows(IllegalArgumentException.class, () -> authorization.offer(this.offer, List.of(wrong), 0));
         }
 
@@ -57,8 +51,7 @@ class ServerPushAuthorizationTest
     }
 
     @Test
-    void bytesRequireAnIssuedMissingOfferAndExactTokenHashAndModel() throws Exception
-    {
+    void bytesRequireAnIssuedMissingOfferAndExactTokenHashAndModel() throws Exception {
         ServerPushAuthorization authorization = new ServerPushAuthorization();
         List<ServerPushAuthorization.Identity> bindings = List.of(this.identity);
         byte[] gzip = gzip(this.raw);
@@ -84,8 +77,7 @@ class ServerPushAuthorizationTest
     }
 
     @Test
-    void aRemainingVisibleBindingCanFinishTheSameContentAfterFirstOwnerLeaves() throws Exception
-    {
+    void aRemainingVisibleBindingCanFinishTheSameContentAfterFirstOwnerLeaves() throws Exception {
         ServerPushAuthorization authorization = new ServerPushAuthorization();
         ServerPushAuthorization.Identity other = identity(UUID.randomUUID(), this.hash);
         byte[] gzip = gzip(this.raw);
@@ -102,8 +94,7 @@ class ServerPushAuthorizationTest
     }
 
     @Test
-    void expiryCancelAndWorldResetInvalidateEvenAsynchronousCacheResults()
-    {
+    void expiryCancelAndWorldResetInvalidateEvenAsynchronousCacheResults() {
         ServerPushAuthorization authorization = new ServerPushAuthorization();
         authorization.offer(this.offer, List.of(this.identity), 0);
         assertFalse(authorization.current(this.offer, List.of(this.identity), ServerPushAuthorization.IDLE_TIMEOUT));
@@ -120,8 +111,7 @@ class ServerPushAuthorizationTest
     }
 
     @Test
-    void duplicateOfferCannotRestartTheIdleTimeout()
-    {
+    void duplicateOfferCannotRestartTheIdleTimeout() {
         ServerPushAuthorization authorization = new ServerPushAuthorization();
         List<ServerPushAuthorization.Identity> bindings = List.of(this.identity);
         authorization.offer(this.offer, bindings, 0);
@@ -131,8 +121,7 @@ class ServerPushAuthorizationTest
     }
 
     @Test
-    void validChunkProgressCannotExtendTheAbsoluteLifetime() throws Exception
-    {
+    void validChunkProgressCannotExtendTheAbsoluteLifetime() throws Exception {
         ServerPushAuthorization authorization = new ServerPushAuthorization();
         List<ServerPushAuthorization.Identity> bindings = List.of(this.identity);
         byte[] gzip = gzip(this.raw);
@@ -140,8 +129,7 @@ class ServerPushAuthorizationTest
         authorization.missing(this.offer, bindings, 1);
         authorization.begin(this.offer.offerId(), this.hash, "sample", this.raw.length, gzip.length, 1, bindings, 2);
         String encoded = Base64.getEncoder().encodeToString(gzip);
-        for (long now = 10_000_000_000L; now < ServerPushAuthorization.MAX_LIFETIME; now += 10_000_000_000L)
-        {
+        for (long now = 10_000_000_000L; now < ServerPushAuthorization.MAX_LIFETIME; now += 10_000_000_000L) {
             authorization.chunk(this.offer.offerId(), this.hash, 0, encoded, bindings, now);
             assertTrue(authorization.current(this.offer, bindings, now));
         }
@@ -151,8 +139,7 @@ class ServerPushAuthorizationTest
     }
 
     @Test
-    void completedOrCancelledTokensCannotBeReissuedOrReboundToAnotherModel()
-    {
+    void completedOrCancelledTokensCannotBeReissuedOrReboundToAnotherModel() {
         ServerPushAuthorization authorization = new ServerPushAuthorization();
         List<ServerPushAuthorization.Identity> bindings = List.of(this.identity);
         authorization.offer(this.offer, bindings, 0);
@@ -167,13 +154,10 @@ class ServerPushAuthorizationTest
     }
 
     @Test
-    void concurrencyAndTransferMetadataAreBoundedWithoutEvictingAuthorizedWork()
-    {
+    void concurrencyAndTransferMetadataAreBoundedWithoutEvictingAuthorizedWork() {
         ServerPushAuthorization authorization = new ServerPushAuthorization();
         List<ServerPushAuthorization.Identity> bindings = List.of(this.identity);
-        for (int i = 0; i < ServerPushAuthorization.MAX_OFFERS; i++)
-
-        {
+        for (int i = 0; i < ServerPushAuthorization.MAX_OFFERS; i++) {
             authorization.offer(new ServerPushAuthorization.Offer(UUID.randomUUID(), this.identity), bindings, 0);
         }
 
@@ -190,8 +174,7 @@ class ServerPushAuthorizationTest
     }
 
     @Test
-    void corruptAndConflictingChunksNeverProduceValidatedBytes() throws Exception
-    {
+    void corruptAndConflictingChunksNeverProduceValidatedBytes() throws Exception {
         ServerPushAuthorization authorization = new ServerPushAuthorization();
         List<ServerPushAuthorization.Identity> bindings = List.of(this.identity);
         byte[] gzip = gzip(this.raw);
@@ -209,8 +192,7 @@ class ServerPushAuthorizationTest
     }
 
     @Test
-    void incompleteTransferAndLastBindingHashChangeCannotAuthorizeInstallation() throws Exception
-    {
+    void incompleteTransferAndLastBindingHashChangeCannotAuthorizeInstallation() throws Exception {
         ServerPushAuthorization authorization = new ServerPushAuthorization();
         List<ServerPushAuthorization.Identity> bindings = List.of(this.identity);
         byte[] gzip = gzip(this.raw);
@@ -225,11 +207,9 @@ class ServerPushAuthorizationTest
         assertFalse(authorization.current(this.offer, bindings, 6));
     }
 
-    private static byte[] gzip(byte[] raw) throws Exception
-    {
+    private static byte[] gzip(byte[] raw) throws Exception {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
-        try (GZIPOutputStream gzip = new GZIPOutputStream(output))
-        {
+        try (GZIPOutputStream gzip = new GZIPOutputStream(output)) {
             gzip.write(raw);
         }
         return output.toByteArray();

@@ -12,15 +12,11 @@ import java.util.UUID;
 import java.lang.reflect.Proxy;
 import static org.junit.jupiter.api.Assertions.*;
 
-class BedAnchorTest
-{
+class BedAnchorTest {
     @Test
-    void eitherBedHalfProducesTheSameSurfaceCenterInAllFourDirections()
-    {
+    void eitherBedHalfProducesTheSameSurfaceCenterInAllFourDirections() {
         UUID world = UUID.randomUUID();
-        for (BlockFace facing : new BlockFace[]
-        { BlockFace.SOUTH, BlockFace.WEST, BlockFace.NORTH, BlockFace.EAST })
-        {
+        for (BlockFace facing : new BlockFace[] { BlockFace.SOUTH, BlockFace.WEST, BlockFace.NORTH, BlockFace.EAST }) {
             BedAnchor foot = BedAnchor.of(world, -10, -60, 20, Bed.Part.FOOT, facing);
             BedAnchor head = BedAnchor.of(world, -10 + facing.getModX(), -60, 20 + facing.getModZ(), Bed.Part.HEAD,
                     facing);
@@ -35,42 +31,35 @@ class BedAnchorTest
     }
 
     @Test
-    void nonBedDirectionIsRejected()
-    {
+    void nonBedDirectionIsRejected() {
         assertThrows(IllegalArgumentException.class,
                 () -> BedAnchor.of(UUID.randomUUID(), 0, 0, 0, Bed.Part.FOOT, BlockFace.UP));
     }
 
     @Test
-    void aGsitVirtualSleepingPoseIsNeverClassifiedAsANativeBed()
-    {
-        World world = (World) Proxy.newProxyInstance(getClass().getClassLoader(), new Class[]
-        { World.class }, (proxy, method, args) ->
-        {
-            if (method.getName().equals("getBlockAt"))
-            {
-                return Proxy.newProxyInstance(getClass().getClassLoader(), new Class[]
-                { Block.class }, (block, blockMethod, blockArgs) ->
-                {
-                    if (blockMethod.getName().equals("getBlockData"))
-                    {
-                        return Proxy.newProxyInstance(getClass().getClassLoader(), new Class[]
-                        { BlockData.class }, (data, dataMethod, dataArgs) -> null);
+    void aGsitVirtualSleepingPoseIsNeverClassifiedAsANativeBed() {
+        World world = (World) Proxy.newProxyInstance(getClass().getClassLoader(), new Class[] { World.class },
+                (proxy, method, args) -> {
+                    if (method.getName().equals("getBlockAt")) {
+                        return Proxy.newProxyInstance(getClass().getClassLoader(), new Class[] { Block.class },
+                                (block, blockMethod, blockArgs) -> {
+                                    if (blockMethod.getName().equals("getBlockData")) {
+                                        return Proxy.newProxyInstance(getClass().getClassLoader(),
+                                                new Class[] { BlockData.class }, (data, dataMethod, dataArgs) -> null);
+                                    }
+
+                                    return null;
+                                });
                     }
 
                     return null;
                 });
-            }
-
-            return null;
-        });
-        Player virtualSleeper = (Player) Proxy.newProxyInstance(getClass().getClassLoader(), new Class[]
-        { Player.class }, (proxy, method, args) -> switch (method.getName())
-        {
-        case "isSleeping" -> true;
-        case "getBedLocation" -> new Location(world, 2, -60, 2);
-        default -> null;
-        });
+        Player virtualSleeper = (Player) Proxy.newProxyInstance(getClass().getClassLoader(),
+                new Class[] { Player.class }, (proxy, method, args) -> switch (method.getName()) {
+                case "isSleeping" -> true;
+                case "getBedLocation" -> new Location(world, 2, -60, 2);
+                default -> null;
+                });
         assertNull(BedAnchor.observe(virtualSleeper));
     }
 }

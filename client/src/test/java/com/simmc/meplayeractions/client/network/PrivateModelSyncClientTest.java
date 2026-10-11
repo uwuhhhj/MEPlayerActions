@@ -21,13 +21,11 @@ import javax.imageio.ImageIO;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Real bundle decoding with a deterministic host clock; no game, network or sleeps. */
-class PrivateModelSyncClientTest
-{
+class PrivateModelSyncClientTest {
     private static final long NOW = 10_000_000_000L, SECOND = 1_000_000_000L;
 
     @Test
-    void pausedViewerNegotiatesItsIntentWithoutLoadingOffersOrClaimingReadiness() throws Exception
-    {
+    void pausedViewerNegotiatesItsIntentWithoutLoadingOffersOrClaimingReadiness() throws Exception {
         Rig rig = new Rig();
         rig.host.viewEnabled = false;
         rig.client.tick(NOW);
@@ -49,8 +47,8 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void viewingPauseCancelsReceiverCallbacksButKeepsOwnPublicationAndResumesWithoutRejectingTheOwner() throws Exception
-    {
+    void viewingPauseCancelsReceiverCallbacksButKeepsOwnPublicationAndResumesWithoutRejectingTheOwner()
+            throws Exception {
         Rig rig = new Rig();
         rig.acknowledgeViewState(true, true);
         rig.host.explicitLocal = true;
@@ -94,8 +92,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void viewerStateRetriesCongestedControlAndLegacyServersReceiveOnlyTheirOriginalHeartbeatFields() throws Exception
-    {
+    void viewerStateRetriesCongestedControlAndLegacyServersReceiveOnlyTheirOriginalHeartbeatFields() throws Exception {
         Rig current = new Rig();
         current.acknowledgeViewState(false, true);
         current.host.blockedTypes.add("private_heartbeat");
@@ -132,8 +129,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void malformedViewerStateEchoCannotRevokePermissionOrCancelTheActiveReceipt() throws Exception
-    {
+    void malformedViewerStateEchoCannotRevokePermissionOrCancelTheActiveReceipt() throws Exception {
         Rig rig = new Rig();
         rig.acknowledgeViewState(false, true);
         rig.host.cached = CompletableFuture.completedFuture(rig.bundle);
@@ -149,8 +145,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void receivingDiagnosticsSeparateChecksumCacheHitReadinessAcknowledgementAndExactRenderFailure() throws Exception
-    {
+    void receivingDiagnosticsSeparateChecksumCacheHitReadinessAcknowledgementAndExactRenderFailure() throws Exception {
         Rig rig = new Rig();
         rig.acknowledgeViewState(false, true);
         Offer offer = rig.offer();
@@ -186,8 +181,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void liveReceivingMetadataCannotUseUnsafeSourceIdsOrTurnGalleryQueriesIntoUploads() throws Exception
-    {
+    void liveReceivingMetadataCannotUseUnsafeSourceIdsOrTurnGalleryQueriesIntoUploads() throws Exception {
         Rig rig = new Rig();
         rig.acknowledgeViewState(true, true);
         Offer offer = rig.offer();
@@ -199,8 +193,7 @@ class PrivateModelSyncClientTest
         assertEquals(0, rig.host.cacheReads);
         rig.receive(offer.packet(), NOW);
         rig.host.drain();
-        for (int i = 0; i < 5; i++)
-        {
+        for (int i = 0; i < 5; i++) {
             rig.client.receivedModels();
         }
 
@@ -212,8 +205,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void negotiatedUploadWindowWaitsForMatchingAbsoluteCreditAndDuplicateGrantsCannotSendAhead() throws Exception
-    {
+    void negotiatedUploadWindowWaitsForMatchingAbsoluteCreditAndDuplicateGrantsCannotSendAhead() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(true, false, false, true);
         rig.host.explicitLocal = true;
@@ -249,8 +241,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void structuredTerminalErrorsDoNotRetryAndBusyRetryStopsAfterThreeFailures() throws Exception
-    {
+    void structuredTerminalErrorsDoNotRetryAndBusyRetryStopsAfterThreeFailures() throws Exception {
         Rig terminal = new Rig();
         terminal.acknowledge(true, false);
         terminal.host.explicitLocal = true;
@@ -277,8 +268,7 @@ class PrivateModelSyncClientTest
         rejected.addProperty("stage", "upload");
         rejected.addProperty("retryable", true);
         rejected.addProperty("retryAfter", 2);
-        for (int attempt = 0; attempt < 3; attempt++)
-        {
+        for (int attempt = 0; attempt < 3; attempt++) {
             long now = NOW + attempt * 3 * SECOND;
             busy.receive(heartbeat(), now);
             busy.client.tick(now);
@@ -292,10 +282,8 @@ class PrivateModelSyncClientTest
     }
 
     @ParameterizedTest(name = "{0} failure waits for explicit sharing retry")
-    @ValueSource(strings =
-    { "terminal", "busy" })
-    void explicitRestartUnlocksTheSavedModelAfterFailureWithoutAcceptingTheOldGeneration(String mode) throws Exception
-    {
+    @ValueSource(strings = { "terminal", "busy" })
+    void explicitRestartUnlocksTheSavedModelAfterFailureWithoutAcceptingTheOldGeneration(String mode) throws Exception {
         Rig rig = new Rig();
         rig.acknowledgeCatalog();
         String id = rig.host.local.modelId();
@@ -308,8 +296,7 @@ class PrivateModelSyncClientTest
         int attempts = mode.equals("busy") ? 3 : 1;
         PrivateModelSyncClient.PublicationIdentity blocked = null;
         JsonObject oldCommit = null;
-        for (int i = 0; i < attempts; i++)
-        {
+        for (int i = 0; i < attempts; i++) {
             long now = NOW + i * 3 * SECOND;
             rig.receive(heartbeat(), now);
             rig.client.tick(now);
@@ -368,8 +355,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void serverFlightStateWorksWithCachedAssetsAndChangesWithoutReplacingTheRemoteOrExtraAction() throws Exception
-    {
+    void serverFlightStateWorksWithCachedAssetsAndChangesWithoutReplacingTheRemoteOrExtraAction() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(false, true);
         rig.host.cached = CompletableFuture.completedFuture(rig.bundle);
@@ -412,8 +398,8 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void legacyOfferAndStateDefaultToNoAuthoritativeFlightAndMalformedFlightCannotChangeCurrentState() throws Exception
-    {
+    void legacyOfferAndStateDefaultToNoAuthoritativeFlightAndMalformedFlightCannotChangeCurrentState()
+            throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(false, true);
         rig.host.cached = CompletableFuture.completedFuture(rig.bundle);
@@ -425,8 +411,7 @@ class PrivateModelSyncClientTest
         rig.receive(flying, NOW);
         assertTrue(rig.client.isFlying(offer.owner));
         for (String invalid : List.of("{\"flying\":1}", "{\"flying\":\"true\"}", "{\"flying\":true,\"positionX\":10}",
-                "[]"))
-        {
+                "[]")) {
             JsonObject state = offer.state(2, 1);
             state.add("state", JsonParser.parseString(invalid));
             rig.receive(state, NOW);
@@ -442,8 +427,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void anUnnegotiatedOrUnauthorizedOfferCannotLoadOrRenderAModel() throws Exception
-    {
+    void anUnnegotiatedOrUnauthorizedOfferCannotLoadOrRenderAModel() throws Exception {
         Rig rig = new Rig();
         Offer offer = rig.offer();
         rig.receive(offer.packet(), NOW);
@@ -462,8 +446,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void aValidatedCacheStillWaitsForMatchingServerAcknowledgement() throws Exception
-    {
+    void aValidatedCacheStillWaitsForMatchingServerAcknowledgement() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(false, true);
         Offer offer = rig.offer();
@@ -487,8 +470,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void cachedFeedbackAndReadinessRetryOncePerSecondUntilTheExactAcknowledgement() throws Exception
-    {
+    void cachedFeedbackAndReadinessRetryOncePerSecondUntilTheExactAcknowledgement() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(false, true);
         rig.host.cached = CompletableFuture.completedFuture(rig.bundle);
@@ -528,8 +510,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void missingFeedbackSurvivesCongestionWithoutRequestingAnotherModelOrDecodingUnsentBytes() throws Exception
-    {
+    void missingFeedbackSurvivesCongestionWithoutRequestingAnotherModelOrDecodingUnsentBytes() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(false, true);
         rig.host.blockedTypes.add("private_status");
@@ -547,8 +528,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void successfulTransportWritesRetryFeedbackUntilTheServerConfirmsTheirMeaning() throws Exception
-    {
+    void successfulTransportWritesRetryFeedbackUntilTheServerConfirmsTheirMeaning() throws Exception {
         Rig missing = new Rig();
         missing.acknowledge(false, true);
         Offer download = missing.offer();
@@ -578,8 +558,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void publicationOffersAndEndsRetryTheirExactIdentityAndDuplicateAcceptNeverRestartsChunks() throws Exception
-    {
+    void publicationOffersAndEndsRetryTheirExactIdentityAndDuplicateAcceptNeverRestartsChunks() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(true, false);
         rig.host.explicitLocal = true;
@@ -603,8 +582,7 @@ class PrivateModelSyncClientTest
         rig.receive(accept, NOW + 2 * SECOND);
         rig.client.tick(NOW + 2 * SECOND);
         assertEquals(1, rig.host.sent("upload_chunk").getLast().get("index").getAsInt());
-        for (int i = 0; i < rig.bundle.length / 128 + 2; i++)
-        {
+        for (int i = 0; i < rig.bundle.length / 128 + 2; i++) {
             rig.client.tick(NOW + 2 * SECOND);
         }
 
@@ -626,14 +604,12 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void sixteenOfferedModelsShareABoundedControlBudgetAndLaterOwnersStillBecomeReady() throws Exception
-    {
+    void sixteenOfferedModelsShareABoundedControlBudgetAndLaterOwnersStillBecomeReady() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(false, true);
         rig.host.cached = CompletableFuture.completedFuture(rig.bundle);
         List<Offer> offers = new ArrayList<>();
-        for (int i = 0; i < 16; i++)
-        {
+        for (int i = 0; i < 16; i++) {
             Offer offer = rig.offer();
             offers.add(offer);
             rig.receive(offer.packet(), NOW);
@@ -643,14 +619,12 @@ class PrivateModelSyncClientTest
         assertEquals(8, rig.host.controlTimes.stream()
                 .filter(value -> controls.contains(value.type) && value.time == NOW).count());
         Set<UUID> acknowledged = new HashSet<>();
-        for (int frame = 1; frame <= 80; frame++)
-        {
+        for (int frame = 1; frame <= 80; frame++) {
             long now = NOW + frame * 50_000_000L;
             rig.host.now = now;
             JsonObject heartbeat = heartbeat();
             JsonArray bindings = heartbeat.getAsJsonArray("bindings");
-            for (Offer offer : offers)
-            {
+            for (Offer offer : offers) {
                 JsonObject value = offer.identity("heartbeat");
                 value.remove("protocol");
                 value.remove("type");
@@ -658,11 +632,9 @@ class PrivateModelSyncClientTest
             }
             rig.receive(heartbeat, now);
             rig.client.tick(now);
-            for (JsonObject packet : rig.host.sent("private_ready"))
-            {
+            for (JsonObject packet : rig.host.sent("private_ready")) {
                 UUID owner = UUID.fromString(packet.get("owner").getAsString());
-                if (acknowledged.add(owner))
-                {
+                if (acknowledged.add(owner)) {
                     rig.receive(offers.stream().filter(value -> value.owner.equals(owner)).findFirst().orElseThrow()
                             .identity("private_ack"), now);
                 }
@@ -673,9 +645,7 @@ class PrivateModelSyncClientTest
         assertEquals(16, rig.host.visible.size());
         List<FakeHost.TimedControl> attempts = rig.host.controlTimes.stream()
                 .filter(value -> controls.contains(value.type)).toList();
-        for (FakeHost.TimedControl attempt : attempts)
-
-        {
+        for (FakeHost.TimedControl attempt : attempts) {
             assertTrue(attempts.stream()
                     .filter(value -> value.time >= attempt.time && value.time < attempt.time + SECOND).count() <= 16,
                     "One-second handshake budget exceeded");
@@ -684,8 +654,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void heartbeatPermissionsRevokeUploadsAndViewingIndependentlyWithoutLosingTheUsersShareIntent() throws Exception
-    {
+    void heartbeatPermissionsRevokeUploadsAndViewingIndependentlyWithoutLosingTheUsersShareIntent() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(true, true);
         rig.host.explicitLocal = true;
@@ -728,8 +697,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void legacyHeartbeatsPreserveNegotiatedPermissionsAndViewingDoesNotRequirePublishing() throws Exception
-    {
+    void legacyHeartbeatsPreserveNegotiatedPermissionsAndViewingDoesNotRequirePublishing() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(false, true);
         rig.receive(heartbeat(), NOW);
@@ -744,8 +712,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void aServerCachedPublicationCommitsWithoutAnUploadAcceptOrDuplicateBytes() throws Exception
-    {
+    void aServerCachedPublicationCommitsWithoutAnUploadAcceptOrDuplicateBytes() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(true, false);
         rig.host.explicitLocal = true;
@@ -765,8 +732,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void explicitSharingAgainReusesSavedMatchingBytesWithANewGenerationAndIgnoresThePreviousCommit() throws Exception
-    {
+    void explicitSharingAgainReusesSavedMatchingBytesWithANewGenerationAndIgnoresThePreviousCommit() throws Exception {
         Rig rig = new Rig();
         rig.acknowledgeCatalog();
         rig.host.explicitLocal = true;
@@ -787,8 +753,7 @@ class PrivateModelSyncClientTest
 
         rig.host.explicitLocal = false;
         rig.client.stopPublishing();
-        for (int i = 1; i <= 3; i++)
-        {
+        for (int i = 1; i <= 3; i++) {
             long now = NOW + i * SECOND / 8;
             rig.receive(heartbeat(), now);
             rig.client.tick(now);
@@ -838,8 +803,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void theLastPublishedAppearanceRetriesEveryTwoSecondsWithoutStartingTheActionAgain() throws Exception
-    {
+    void theLastPublishedAppearanceRetriesEveryTwoSecondsWithoutStartingTheActionAgain() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(true, false);
         rig.host.explicitLocal = true;
@@ -861,8 +825,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void uploadProgressAndServerRejectionAreReadableWithoutClearingExplicitSharing() throws Exception
-    {
+    void uploadProgressAndServerRejectionAreReadableWithoutClearingExplicitSharing() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(true, false);
         rig.host.explicitLocal = true;
@@ -892,8 +855,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void bytesWithTheWrongChecksumAbortTheOfferAndNeverReachTheDecoder() throws Exception
-    {
+    void bytesWithTheWrongChecksumAbortTheOfferAndNeverReachTheDecoder() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(false, true);
         Offer offer = rig.offer();
@@ -917,8 +879,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void conflictingDuplicateChunksAbortRatherThanAcceptingTheEarlierChunk() throws Exception
-    {
+    void conflictingDuplicateChunksAbortRatherThanAcceptingTheEarlierChunk() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(false, true);
         Offer offer = rig.offer();
@@ -937,8 +898,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void staleGenerationsAndRepeatedStateOrEventSequencesCannotChangeTheCurrentModel() throws Exception
-    {
+    void staleGenerationsAndRepeatedStateOrEventSequencesCannotChangeTheCurrentModel() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(false, true);
         rig.host.cached = CompletableFuture.completedFuture(rig.bundle);
@@ -961,8 +921,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void stoppingALocalPublicationDoesNotCancelAnAuthorizedRemoteDecode() throws Exception
-    {
+    void stoppingALocalPublicationDoesNotCancelAnAuthorizedRemoteDecode() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(true, true);
         rig.host.cached = CompletableFuture.completedFuture(rig.bundle);
@@ -990,8 +949,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void remoteLeasesExpireEvenWhenTheServerKeepsTheTransportAliveAndLateDecodesStayCancelled() throws Exception
-    {
+    void remoteLeasesExpireEvenWhenTheServerKeepsTheTransportAliveAndLateDecodesStayCancelled() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(false, true);
         rig.host.cached = CompletableFuture.completedFuture(rig.bundle);
@@ -1018,8 +976,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void aConnectionResetInvalidatesCachedAndDecodedFuturesFromTheOldWorld() throws Exception
-    {
+    void aConnectionResetInvalidatesCachedAndDecodedFuturesFromTheOldWorld() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(false, true);
         CompletableFuture<byte[]> cache = new CompletableFuture<>();
@@ -1045,8 +1002,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void onlyExplicitLocalSharingUploadsAndOnlyMatchingCommitMakesItPublished() throws Exception
-    {
+    void onlyExplicitLocalSharingUploadsAndOnlyMatchingCommitMakesItPublished() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(true, true);
         rig.client.tick(NOW);
@@ -1088,12 +1044,10 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void galleryUploadQueriesNeverReadSourceBytesOrStartAPublication() throws Exception
-    {
+    void galleryUploadQueriesNeverReadSourceBytesOrStartAPublication() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(true, true);
-        for (int i = 0; i < 3; i++)
-        {
+        for (int i = 0; i < 3; i++) {
             PrivateModelSyncClient.UploadState state = rig.client.uploadState(rig.host.local.modelId());
             assertEquals(PrivateModelSyncClient.UploadPhase.NOT_UPLOADED, state.phase());
             assertFalse(state.uploaded());
@@ -1106,8 +1060,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void galleryUploadPhasesSeparatePublicationFromServerSavedDirectoryAfterUnsharing() throws Exception
-    {
+    void galleryUploadPhasesSeparatePublicationFromServerSavedDirectoryAfterUnsharing() throws Exception {
         Rig rig = new Rig();
         rig.acknowledgeCatalog();
         rig.host.explicitLocal = true;
@@ -1131,8 +1084,7 @@ class PrivateModelSyncClientTest
         assertEquals(rig.bundle.length, partial.totalBytes());
         assertTrue(partial.inProgress());
         assertFalse(partial.uploaded());
-        for (int i = 0; i < rig.bundle.length / 128 + 2; i++)
-        {
+        for (int i = 0; i < rig.bundle.length / 128 + 2; i++) {
             rig.client.tick(NOW);
         }
 
@@ -1160,8 +1112,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void explicitSourceReloadInvalidatesSameIdReceiptsAndLateCommitsFromOldBytes() throws Exception
-    {
+    void explicitSourceReloadInvalidatesSameIdReceiptsAndLateCommitsFromOldBytes() throws Exception {
         Rig rig = new Rig();
         rig.acknowledgeCatalog();
         rig.host.explicitLocal = true;
@@ -1191,8 +1142,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void aLateCommitCannotMarkADifferentSelectedModelAsUploadedBeforeTheNextTick() throws Exception
-    {
+    void aLateCommitCannotMarkADifferentSelectedModelAsUploadedBeforeTheNextTick() throws Exception {
         Rig rig = new Rig();
         rig.acknowledgeCatalog();
         rig.host.explicitLocal = true;
@@ -1215,8 +1165,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void galleryKeepsPerModelFailureWithoutClaimingRejectedBytesWereUploaded() throws Exception
-    {
+    void galleryKeepsPerModelFailureWithoutClaimingRejectedBytesWereUploaded() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(true, true);
         rig.host.explicitLocal = true;
@@ -1239,8 +1188,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void receiptsTrackSeveralAcknowledgedModelsWithoutStartingUploadsDuringFiltering() throws Exception
-    {
+    void receiptsTrackSeveralAcknowledgedModelsWithoutStartingUploadsDuringFiltering() throws Exception {
         Rig rig = new Rig();
         rig.acknowledgeCatalog();
         rig.host.explicitLocal = true;
@@ -1274,8 +1222,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void aTamperedCacheDoesNotSkipValidationOrGrantRendering() throws Exception
-    {
+    void aTamperedCacheDoesNotSkipValidationOrGrantRendering() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(false, true);
         byte[] corrupt = rig.bundle.clone();
@@ -1291,8 +1238,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void persistentAuthorRoamingConfigurationIsRetainedAcrossOfferAndStateUpdates() throws Exception
-    {
+    void persistentAuthorRoamingConfigurationIsRetainedAcrossOfferAndStateUpdates() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(false, true);
         rig.host.cached = CompletableFuture.completedFuture(rig.bundle);
@@ -1318,8 +1264,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void aWorldRenderFailureRevokesOnlyTheMatchingPrivateInstanceAndStopsItsHeartbeat() throws Exception
-    {
+    void aWorldRenderFailureRevokesOnlyTheMatchingPrivateInstanceAndStopsItsHeartbeat() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(false, true);
         rig.host.cached = CompletableFuture.completedFuture(rig.bundle);
@@ -1342,8 +1287,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void serverRevocationClearsTheCurrentPublicationAndRetriesWithAFreshGenerationAfterBackoff() throws Exception
-    {
+    void serverRevocationClearsTheCurrentPublicationAndRetriesWithAFreshGenerationAfterBackoff() throws Exception {
         Rig rig = new Rig();
         rig.acknowledge(true, false);
         rig.host.explicitLocal = true;
@@ -1378,8 +1322,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void reconnectRestoresOnlySavedMatchingLocalBytesWithoutStartingSharingOrDownloading() throws Exception
-    {
+    void reconnectRestoresOnlySavedMatchingLocalBytesWithoutStartingSharingOrDownloading() throws Exception {
         Rig rig = new Rig();
         rig.acknowledgeCatalog();
         String id = rig.host.local.modelId();
@@ -1404,8 +1347,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void permissionRevocationAndServerCacheEvictionRemoveBadgesWithoutDeletingLocalAppearance() throws Exception
-    {
+    void permissionRevocationAndServerCacheEvictionRemoveBadgesWithoutDeletingLocalAppearance() throws Exception {
         Rig rig = new Rig();
         rig.acknowledgeCatalog();
         String id = rig.host.local.modelId();
@@ -1431,16 +1373,13 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void localIdentityMismatchOrFailedSourceReadCannotRestoreServerSavedBadge() throws Exception
-    {
-        for (String mismatch : List.of("hash", "bytes", "kind"))
-        {
+    void localIdentityMismatchOrFailedSourceReadCannotRestoreServerSavedBadge() throws Exception {
+        for (String mismatch : List.of("hash", "bytes", "kind")) {
             Rig rig = new Rig();
             rig.acknowledgeCatalog();
             String id = rig.host.local.modelId();
             JsonObject entry = savedEntry(id, rig.bundle, "bbmodel");
-            switch (mismatch)
-            {
+            switch (mismatch) {
             case "hash" -> entry.addProperty("hash", "a".repeat(64));
             case "bytes" -> entry.addProperty("bytes", rig.bundle.length + 1);
             case "kind" -> entry.addProperty("kind", "ysm");
@@ -1462,14 +1401,12 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void savedDirectorySourceChecksStaySingleFlightAndLateCallbacksCannotCrossServers() throws Exception
-    {
+    void savedDirectorySourceChecksStaySingleFlightAndLateCallbacksCannotCrossServers() throws Exception {
         Rig rig = new Rig();
         rig.acknowledgeCatalog();
         CompletableFuture<byte[]> delayed = new CompletableFuture<>();
         rig.host.publication = delayed;
-        for (String id : List.of("local:first.bbmodel", "local:second.bbmodel", "local:third.bbmodel"))
-        {
+        for (String id : List.of("local:first.bbmodel", "local:second.bbmodel", "local:third.bbmodel")) {
             rig.savedModels.put(id, savedEntry(id, rig.bundle, "bbmodel"));
         }
 
@@ -1486,8 +1423,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void extendedHelloFallsBackOnceForLegacyServersAndNeverSendsUnnegotiatedSourceIds() throws Exception
-    {
+    void extendedHelloFallsBackOnceForLegacyServersAndNeverSendsUnnegotiatedSourceIds() throws Exception {
         Rig rig = new Rig();
         rig.client.tick(NOW);
         JsonArray caps = rig.host.sent("hello").getLast().getAsJsonArray("capabilities");
@@ -1520,8 +1456,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void savedFilesWithoutLocalSourcesRemainBrowsableAndDeleteOnlyAfterAnExactServerAck() throws Exception
-    {
+    void savedFilesWithoutLocalSourcesRemainBrowsableAndDeleteOnlyAfterAnExactServerAck() throws Exception {
         Rig rig = new Rig();
         rig.acknowledgeCatalog();
         String id = "ysm:已移走的模型.ysm";
@@ -1559,8 +1494,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void currentPublicationDeletionCannotRestartSharingBetweenRemoveAndTheSuccessfulAck() throws Exception
-    {
+    void currentPublicationDeletionCannotRestartSharingBetweenRemoveAndTheSuccessfulAck() throws Exception {
         Rig rig = new Rig();
         rig.acknowledgeCatalog();
         rig.host.explicitLocal = true;
@@ -1589,8 +1523,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void failedDeletionKeepsSavedMetadataAndRetryUsesANewRequestIdentity() throws Exception
-    {
+    void failedDeletionKeepsSavedMetadataAndRetryUsesANewRequestIdentity() throws Exception {
         Rig rig = new Rig();
         rig.acknowledgeCatalog();
         String id = rig.host.local.modelId();
@@ -1619,8 +1552,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void deletingAnOldSavedModelDoesNotStopADifferentCurrentPublication() throws Exception
-    {
+    void deletingAnOldSavedModelDoesNotStopADifferentCurrentPublication() throws Exception {
         Rig rig = new Rig();
         rig.acknowledgeCatalog();
         String old = "local:old-model.bbmodel";
@@ -1643,8 +1575,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void deletingTheLatestSavedVersionAlsoStopsAnOlderPublicationOfThatSameSource() throws Exception
-    {
+    void deletingTheLatestSavedVersionAlsoStopsAnOlderPublicationOfThatSameSource() throws Exception {
         Rig rig = new Rig();
         rig.acknowledgeCatalog();
         rig.host.explicitLocal = true;
@@ -1669,8 +1600,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void revokingUploadBeforeADeleteWasSentReleasesTheButtonAndNeverPretendsTheFileWasDeleted() throws Exception
-    {
+    void revokingUploadBeforeADeleteWasSentReleasesTheButtonAndNeverPretendsTheFileWasDeleted() throws Exception {
         Rig rig = new Rig();
         rig.acknowledgeCatalog();
         String id = rig.host.local.modelId();
@@ -1695,8 +1625,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void aConfirmationOfAnOlderSavedVersionCannotDeleteASameIdReplacement() throws Exception
-    {
+    void aConfirmationOfAnOlderSavedVersionCannotDeleteASameIdReplacement() throws Exception {
         Rig rig = new Rig();
         rig.acknowledgeCatalog();
         String id = rig.host.local.modelId();
@@ -1718,8 +1647,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void aSentDeleteExpiresWithoutClaimingSuccessAndItsLateAckStillStopsTheOriginalPublication() throws Exception
-    {
+    void aSentDeleteExpiresWithoutClaimingSuccessAndItsLateAckStillStopsTheOriginalPublication() throws Exception {
         Rig rig = new Rig();
         rig.acknowledgeCatalog();
         rig.host.explicitLocal = true;
@@ -1748,8 +1676,8 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void aLateDeleteAckCannotStopANewerPublicationOrEraseItsNewerDirectoryReceiptEvenWithTheSameHash() throws Exception
-    {
+    void aLateDeleteAckCannotStopANewerPublicationOrEraseItsNewerDirectoryReceiptEvenWithTheSameHash()
+            throws Exception {
         Rig rig = new Rig();
         rig.acknowledgeCatalog();
         rig.host.explicitLocal = true;
@@ -1781,8 +1709,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void aLateDeleteAckInTheExplicitRestartBeforeBeginGapCannotCancelTheNewSharingIntent() throws Exception
-    {
+    void aLateDeleteAckInTheExplicitRestartBeforeBeginGapCannotCancelTheNewSharingIntent() throws Exception {
         Rig rig = new Rig();
         rig.acknowledgeCatalog();
         rig.host.explicitLocal = true;
@@ -1827,8 +1754,7 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void lateDeleteHistoryIsBoundedAndIsClearedWhenTheConnectionChanges() throws Exception
-    {
+    void lateDeleteHistoryIsBoundedAndIsClearedWhenTheConnectionChanges() throws Exception {
         Rig rig = new Rig();
         rig.acknowledgeCatalog();
         String id = rig.host.local.modelId();
@@ -1837,8 +1763,7 @@ class PrivateModelSyncClientTest
         rig.host.drain();
         long now = NOW;
         List<JsonObject> requests = new ArrayList<>();
-        for (int index = 0; index < 17; index++)
-        {
+        for (int index = 0; index < 17; index++) {
             assertTrue(rig.client.requestDeleteUploadedModel(id));
             rig.client.tick(now);
             requests.add(rig.host.sent("upload_delete").getLast());
@@ -1860,18 +1785,15 @@ class PrivateModelSyncClientTest
         assertEquals(1, rig.client.uploadedModels().size());
     }
 
-    private static JsonObject deleteReply(JsonObject request)
-    {
+    private static JsonObject deleteReply(JsonObject request) {
         JsonObject ack = PrivateModelSyncClient.envelope("upload_deleted");
-        for (String key : List.of("requestId", "modelId", "hash"))
-        {
+        for (String key : List.of("requestId", "modelId", "hash")) {
             ack.add(key, request.get(key));
         }
         return ack;
     }
 
-    private static JsonObject savedEntry(String id, byte[] bundle, String kind)
-    {
+    private static JsonObject savedEntry(String id, byte[] bundle, String kind) {
         JsonObject entry = new JsonObject();
         entry.addProperty("modelId", id);
         entry.addProperty("hash", AssetTransfer.hash(bundle));
@@ -1880,8 +1802,7 @@ class PrivateModelSyncClientTest
         return entry;
     }
 
-    private static JsonObject publicationNotice(String type, UUID owner, JsonObject offer)
-    {
+    private static JsonObject publicationNotice(String type, UUID owner, JsonObject offer) {
         JsonObject packet = PrivateModelSyncClient.envelope(type);
         packet.addProperty("owner", owner.toString());
         packet.add("generation", offer.get("generation"));
@@ -1890,13 +1811,11 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void actualServerUploadRejectionsCancelIdentityAndNeverContinueSendingChunks() throws Exception
-    {
+    void actualServerUploadRejectionsCancelIdentityAndNeverContinueSendingChunks() throws Exception {
         for (String code : List.of("private_upload_denied", "private_upload_busy", "private_upload_integrity",
                 "private_upload_cooldown", "private_upload_expired", "private_storage_busy",
                 "private_generation_reused", "private_bundle_invalid", "server_model_priority",
-                "private_appearance_size"))
-        {
+                "private_appearance_size")) {
             Rig rig = new Rig();
             rig.acknowledge(true, false);
             rig.host.explicitLocal = true;
@@ -1923,8 +1842,7 @@ class PrivateModelSyncClientTest
             boolean retry = code.contains("busy") || code.contains("cooldown") || code.contains("expired")
                     || code.contains("unavailable");
             assertEquals(retry ? 2 : 1, rig.host.bundleReads, code);
-            if (retry)
-            {
+            if (retry) {
                 assertNotEquals(offer.get("generation"), rig.host.sent("upload_offer").getLast().get("generation"),
                         code);
             }
@@ -1933,11 +1851,9 @@ class PrivateModelSyncClientTest
     }
 
     @Test
-    void permittingAuthorRoamingKeepsVariableNamesFiniteValuesAndCountBudgetsEnforced() throws Exception
-    {
+    void permittingAuthorRoamingKeepsVariableNamesFiniteValuesAndCountBudgetsEnforced() throws Exception {
         for (String name : List.of("query.health", "variable.roaming.bad-name", "variable." + "x".repeat(120),
-                "variable.MixedCase", "variable.roaming." + "x".repeat(33)))
-        {
+                "variable.MixedCase", "variable.roaming." + "x".repeat(33))) {
             Rig rig = new Rig();
             rig.acknowledge(false, true);
             Offer offer = rig.offer();
@@ -1948,9 +1864,7 @@ class PrivateModelSyncClientTest
             assertNull(rig.client.remote(offer.owner));
             assertEquals(0, rig.host.decodes);
         }
-        for (double value : new double[]
-        { 1_000_001, -1_000_001 })
-        {
+        for (double value : new double[] { 1_000_001, -1_000_001 }) {
             Rig rig = new Rig();
             rig.acknowledge(false, true);
             Offer offer = rig.offer();
@@ -1962,8 +1876,7 @@ class PrivateModelSyncClientTest
             assertNull(rig.client.remote(offer.owner));
             assertEquals(0, rig.host.decodes);
         }
-        for (String overflow : List.of("1e309", "-1e309"))
-        {
+        for (String overflow : List.of("1e309", "-1e309")) {
             Rig rig = new Rig();
             rig.acknowledge(false, true);
             Offer offer = rig.offer();
@@ -1978,16 +1891,14 @@ class PrivateModelSyncClientTest
             assertNull(rig.client.remote(offer.owner));
             assertEquals(0, rig.host.decodes);
         }
-        for (String prefix : List.of("variable.roaming.", "variable."))
-        {
+        for (String prefix : List.of("variable.roaming.", "variable.")) {
             Rig rig = new Rig();
             rig.acknowledge(false, true);
             Offer offer = rig.offer();
             JsonObject packet = offer.packet();
             JsonObject variables = packet.getAsJsonObject("appearance").getAsJsonObject("variables");
             int count = prefix.equals("variable.") ? 129 : 65;
-            for (int i = 0; i < count; i++)
-            {
+            for (int i = 0; i < count; i++) {
                 variables.addProperty(prefix + "option_" + i, 0);
             }
 
@@ -1998,14 +1909,11 @@ class PrivateModelSyncClientTest
         }
     }
 
-    private record Event(UUID owner, UUID generation, List<Double> args)
-    {
+    private record Event(UUID owner, UUID generation, List<Double> args) {
     }
 
-    private record Offer(UUID owner, UUID generation, UUID offerId, String hash, int bytes)
-    {
-        JsonObject identity(String type)
-        {
+    private record Offer(UUID owner, UUID generation, UUID offerId, String hash, int bytes) {
+        JsonObject identity(String type) {
             JsonObject packet = PrivateModelSyncClient.envelope(type);
             packet.addProperty("owner", this.owner.toString());
             packet.addProperty("generation", this.generation.toString());
@@ -2013,8 +1921,7 @@ class PrivateModelSyncClientTest
             return packet;
         }
 
-        JsonObject packet()
-        {
+        JsonObject packet() {
             JsonObject packet = identity("private_offer");
             packet.addProperty("offerId", this.offerId.toString());
             packet.addProperty("kind", "bbmodel");
@@ -2024,16 +1931,14 @@ class PrivateModelSyncClientTest
             return packet;
         }
 
-        JsonObject asset(String type)
-        {
+        JsonObject asset(String type) {
             JsonObject packet = PrivateModelSyncClient.envelope(type);
             packet.addProperty("offerId", this.offerId.toString());
             packet.addProperty("hash", this.hash);
             return packet;
         }
 
-        JsonObject event(long sequence, List<Double> args)
-        {
+        JsonObject event(long sequence, List<Double> args) {
             JsonObject packet = identity("private_event");
             packet.addProperty("sequence", sequence);
             JsonArray values = new JsonArray();
@@ -2042,8 +1947,7 @@ class PrivateModelSyncClientTest
             return packet;
         }
 
-        JsonObject state(long sequence, double scale)
-        {
+        JsonObject state(long sequence, double scale) {
             JsonObject packet = identity("private_state");
             packet.addProperty("sequence", sequence);
             packet.add("appearance", appearance(scale));
@@ -2051,75 +1955,62 @@ class PrivateModelSyncClientTest
         }
     }
 
-    private static final class Rig
-    {
+    private static final class Rig {
         final byte[] bundle;
         final FakeHost host;
         final PrivateModelSyncClient client;
         long catalogRevision;
         final Map<String, JsonObject> savedModels = new LinkedHashMap<>();
 
-        Rig() throws Exception
-        {
+        Rig() throws Exception {
             this.bundle = fixtureBundle();
             this.host = new FakeHost(this.bundle);
             this.client = new PrivateModelSyncClient(this.host);
         }
 
-        Offer offer()
-        {
+        Offer offer() {
             return new Offer(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), AssetTransfer.hash(this.bundle),
                     this.bundle.length);
         }
 
-        void receive(JsonObject packet, long now)
-        {
+        void receive(JsonObject packet, long now) {
             this.client.receive(packet.toString().getBytes(StandardCharsets.UTF_8), now);
         }
 
-        void acknowledge(boolean upload, boolean view)
-        {
+        void acknowledge(boolean upload, boolean view) {
             acknowledge(upload, view, false);
         }
 
-        void acknowledgeCatalog()
-        {
+        void acknowledgeCatalog() {
             acknowledge(true, true, true);
         }
 
-        void acknowledge(boolean upload, boolean view, boolean catalogue)
-        {
+        void acknowledge(boolean upload, boolean view, boolean catalogue) {
             acknowledge(upload, view, catalogue, false);
         }
 
-        void acknowledge(boolean upload, boolean view, boolean catalogue, boolean credit)
-        {
+        void acknowledge(boolean upload, boolean view, boolean catalogue, boolean credit) {
             acknowledge(upload, view, catalogue, credit, false);
         }
 
-        void acknowledgeViewState(boolean upload, boolean view)
-        {
+        void acknowledgeViewState(boolean upload, boolean view) {
             acknowledge(upload, view, false, false, true);
         }
 
-        void acknowledge(boolean upload, boolean view, boolean catalogue, boolean credit, boolean viewState)
-        {
+        void acknowledge(boolean upload, boolean view, boolean catalogue, boolean credit, boolean viewState) {
             JsonObject packet = PrivateModelSyncClient.envelope("hello_ack");
             JsonArray caps = new JsonArray();
             caps.add("private_models_v1");
             packet.add("capabilities", caps);
-            if (catalogue)
-            {
+            if (catalogue) {
                 caps.add(PrivateUploadCatalogSnapshot.CAPABILITY);
                 packet.addProperty("uploadCatalogToken", UUID.randomUUID().toString());
             }
-            if (credit)
-            {
+            if (credit) {
                 caps.add(PrivateModelSyncClient.UPLOAD_CREDIT);
             }
 
-            if (viewState)
-            {
+            if (viewState) {
                 caps.add(PrivateModelSyncClient.VIEW_STATE);
                 packet.addProperty("viewEnabled", this.host.viewEnabled);
             }
@@ -2131,8 +2022,7 @@ class PrivateModelSyncClientTest
             receive(packet, NOW);
         }
 
-        void confirmSaved(String id, JsonObject offer, long now)
-        {
+        void confirmSaved(String id, JsonObject offer, long now) {
             this.savedModels.values().removeIf(entry -> entry.get("hash").equals(offer.get("hash")));
             JsonObject entry = new JsonObject();
             entry.addProperty("modelId", id);
@@ -2144,48 +2034,42 @@ class PrivateModelSyncClientTest
             this.host.drain();
         }
 
-        void catalog(boolean available, long now)
-        {
+        void catalog(boolean available, long now) {
             JsonObject packet = PrivateModelSyncClient.envelope("upload_catalog");
             packet.addProperty("revision", ++this.catalogRevision);
             packet.addProperty("index", 0);
             packet.addProperty("count", 1);
             packet.addProperty("available", available);
             JsonArray models = new JsonArray();
-            if (available)
-            {
+            if (available) {
                 this.savedModels.values().forEach(models::add);
             }
             packet.add("models", models);
             receive(packet, now);
         }
 
-        void begin(Offer offer)
-        {
+        void begin(Offer offer) {
             JsonObject packet = offer.asset("asset_begin");
             packet.addProperty("bytes", this.bundle.length);
             packet.addProperty("chunks", 1);
             receive(packet, NOW);
         }
 
-        void chunk(Offer offer, byte[] bytes)
-        {
+        void chunk(Offer offer, byte[] bytes) {
             JsonObject packet = offer.asset("asset_chunk");
             packet.addProperty("index", 0);
             packet.addProperty("data", Base64.getEncoder().encodeToString(bytes));
             receive(packet, NOW);
         }
 
-        void activate(Offer offer)
-        {
+        void activate(Offer offer) {
             receive(offer.packet(), NOW);
             this.host.drain();
             receive(offer.identity("private_ack"), NOW);
         }
     }
 
-    private static final class FakeHost implements PrivateModelSyncClient.Host
-    {
+    private static final class FakeHost implements PrivateModelSyncClient.Host {
         boolean channel = true, explicitLocal, viewEnabled = true;
         int cacheReads, bundleReads, decodes, prepared;
         CompletableFuture<byte[]> cached = CompletableFuture.completedFuture(null), publication;
@@ -2195,8 +2079,7 @@ class PrivateModelSyncClientTest
         final List<String> controlAttempts = new ArrayList<>();
         final Set<String> blockedTypes = new HashSet<>();
 
-        private record TimedControl(String type, long time)
-        {
+        private record TimedControl(String type, long time) {
         }
 
         final List<TimedControl> controlTimes = new ArrayList<>();
@@ -2206,154 +2089,123 @@ class PrivateModelSyncClientTest
         final List<String> deleted = new ArrayList<>();
         PrivateModelSyncClient.Local local;
 
-        FakeHost(byte[] bundle)
-        {
+        FakeHost(byte[] bundle) {
             this.publication = CompletableFuture.completedFuture(bundle);
             this.local = new PrivateModelSyncClient.Local(UUID.randomUUID(), "local:test.bbmodel", appearance(1),
                     extra());
         }
 
-        public boolean channelAvailable()
-        {
+        public boolean channelAvailable() {
             return this.channel;
         }
 
-        public boolean viewEnabled()
-        {
+        public boolean viewEnabled() {
             return this.viewEnabled;
         }
 
-        public boolean send(JsonObject packet)
-        {
+        public boolean send(JsonObject packet) {
             String type = packet.get("type").getAsString();
             this.controlAttempts.add(type);
             this.controlTimes.add(new TimedControl(type, this.now));
-            if (this.blockedTypes.contains(type))
-            {
+            if (this.blockedTypes.contains(type)) {
                 return false;
             }
             this.packets.add(packet.deepCopy());
             return true;
         }
 
-        public PrivateModelSyncClient.Local local()
-        {
+        public PrivateModelSyncClient.Local local() {
             return this.explicitLocal ? this.local : null;
         }
 
-        public CompletableFuture<byte[]> bundle(String modelId)
-        {
+        public CompletableFuture<byte[]> bundle(String modelId) {
             this.bundleReads++;
             return this.publication;
         }
 
-        public CompletableFuture<byte[]> cached(String hash)
-        {
+        public CompletableFuture<byte[]> cached(String hash) {
             this.cacheReads++;
             return this.cached;
         }
 
-        public CompletableFuture<LocalModelLibrary.Loaded> decode(byte[] bundle, String texture)
-        {
+        public CompletableFuture<LocalModelLibrary.Loaded> decode(byte[] bundle, String texture) {
             this.decodes++;
-            if (!this.decodeResults.isEmpty())
-            {
+            if (!this.decodeResults.isEmpty()) {
                 return this.decodeResults.removeFirst();
             }
 
-            try
-            {
+            try {
                 return CompletableFuture.completedFuture(NativeModelBundle.decode(bundle, texture));
-            }
-            catch (Exception invalid)
-            {
+            } catch (Exception invalid) {
                 return CompletableFuture.failedFuture(invalid);
             }
         }
 
-        public void cache(String hash, byte[] bundle)
-        {
+        public void cache(String hash, byte[] bundle) {
             assertEquals(hash, AssetTransfer.hash(bundle));
         }
 
-        public void dispatch(Runnable task)
-        {
+        public void dispatch(Runnable task) {
             this.dispatch.addLast(task);
         }
 
-        public boolean prepare(PrivateModelSyncClient.Remote remote, LocalModelLibrary.Loaded loaded)
-        {
+        public boolean prepare(PrivateModelSyncClient.Remote remote, LocalModelLibrary.Loaded loaded) {
             assertNotNull(loaded.model());
             this.prepared++;
             return true;
         }
 
-        public void remove(UUID owner, UUID generation)
-        {
+        public void remove(UUID owner, UUID generation) {
             this.visible.remove(owner, generation);
         }
 
-        public void state(PrivateModelSyncClient.Remote remote)
-        {
-            if (remote.ready && remote.active)
-            {
+        public void state(PrivateModelSyncClient.Remote remote) {
+            if (remote.ready && remote.active) {
                 this.visible.put(remote.owner, remote.generation);
-            }
-            else
-            {
+            } else {
                 this.visible.remove(remote.owner, remote.generation);
             }
         }
 
-        public void event(UUID owner, UUID generation, List<Double> args)
-        {
+        public void event(UUID owner, UUID generation, List<Double> args) {
             this.events.add(new Event(owner, generation, args));
         }
 
-        public void savedModelDeleted(String id, String hash)
-        {
+        public void savedModelDeleted(String id, String hash) {
             this.deleted.add(id);
-            if (this.local.modelId().equals(id))
-            {
+            if (this.local.modelId().equals(id)) {
                 this.explicitLocal = false;
             }
         }
 
-        void drain()
-        {
-            while (!this.dispatch.isEmpty())
-            {
+        void drain() {
+            while (!this.dispatch.isEmpty()) {
                 this.dispatch.removeFirst().run();
             }
         }
 
-        List<JsonObject> sent(String type)
-        {
+        List<JsonObject> sent(String type) {
             return this.packets.stream().filter(packet -> packet.get("type").getAsString().equals(type)).toList();
         }
 
-        long attempts(String type)
-        {
+        long attempts(String type) {
             return this.controlAttempts.stream().filter(type::equals).count();
         }
     }
 
-    private static JsonObject heartbeat()
-    {
+    private static JsonObject heartbeat() {
         JsonObject packet = PrivateModelSyncClient.envelope("heartbeat");
         packet.add("bindings", new JsonArray());
         return packet;
     }
 
-    private static JsonObject flight(boolean flying)
-    {
+    private static JsonObject flight(boolean flying) {
         JsonObject state = new JsonObject();
         state.addProperty("flying", flying);
         return state;
     }
 
-    private static JsonObject appearance(double scale)
-    {
+    private static JsonObject appearance(double scale) {
         JsonObject value = new JsonObject();
         value.addProperty("scale", scale);
         value.addProperty("offsetX", 0);
@@ -2365,8 +2217,7 @@ class PrivateModelSyncClientTest
         return value;
     }
 
-    private static JsonObject extra()
-    {
+    private static JsonObject extra() {
         JsonObject value = new JsonObject();
         value.addProperty("id", "");
         value.addProperty("loop", "ONCE");
@@ -2375,13 +2226,11 @@ class PrivateModelSyncClientTest
         return value;
     }
 
-    private static byte[] fixtureBundle() throws Exception
-    {
+    private static byte[] fixtureBundle() throws Exception {
         return fixtureBundle(0xffffffff);
     }
 
-    private static byte[] fixtureBundle(int color) throws Exception
-    {
+    private static byte[] fixtureBundle(int color) throws Exception {
         JsonObject raw = JsonParser
                 .parseString(
                         """

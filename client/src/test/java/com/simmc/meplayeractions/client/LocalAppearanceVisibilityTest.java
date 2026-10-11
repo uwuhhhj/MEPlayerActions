@@ -6,11 +6,9 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class LocalAppearanceVisibilityTest
-{
+class LocalAppearanceVisibilityTest {
     @Test
-    void independentWorldsCanRenderWhileAnAvailableBridgeWaitsForACompleteSnapshot()
-    {
+    void independentWorldsCanRenderWhileAnAvailableBridgeWaitsForACompleteSnapshot() {
         LocalAppearanceVisibility visibility = new LocalAppearanceVisibility();
         assertTrue(visibility.canRender(false, false, false));
         assertFalse(visibility.canRender(true, false, false));
@@ -23,11 +21,9 @@ class LocalAppearanceVisibilityTest
     }
 
     @Test
-    void knownServerDisguiseNeedsItsOwnTakeoverAndSurvivesFallbackUnbinds()
-    {
+    void knownServerDisguiseNeedsItsOwnTakeoverAndSurvivesFallbackUnbinds() {
         for (String reason : List.of("render_failed", "model-change", "instance_or_asset_changed",
-                "state_payload_limit", "render_lease_expired", "not_visible_or_active"))
-        {
+                "state_payload_limit", "render_lease_expired", "not_visible_or_active")) {
             LocalAppearanceVisibility visibility = withServerDisguise("first");
             assertTrue(visibility.canRender(true, true, true));
             assertFalse(visibility.canRender(true, true, false), "ME fallback must not overlap the private model");
@@ -40,11 +36,9 @@ class LocalAppearanceVisibilityTest
     }
 
     @Test
-    void explicitMatchingDisguiseRemovalAllowsIndependentRenderingAgain()
-    {
+    void explicitMatchingDisguiseRemovalAllowsIndependentRenderingAgain() {
         for (String reason : List.of("command", "external-undisguise", "plugin-close", "plugin_stopping",
-                "sync_disabled", "registration-failed", "death", "quit", "offline", "session_ended"))
-        {
+                "sync_disabled", "registration-failed", "death", "quit", "offline", "session_ended")) {
             LocalAppearanceVisibility visibility = withServerDisguise("first");
             visibility.serverUnbound("first", reason);
             assertFalse(visibility.hasServerAppearance(), reason);
@@ -53,8 +47,7 @@ class LocalAppearanceVisibilityTest
     }
 
     @Test
-    void anOldInstanceCannotRemoveTheReplacementDisguise()
-    {
+    void anOldInstanceCannotRemoveTheReplacementDisguise() {
         LocalAppearanceVisibility visibility = withServerDisguise("first");
         visibility.serverOwnState("replacement");
         visibility.serverUnbound("first", "command");
@@ -65,8 +58,7 @@ class LocalAppearanceVisibilityTest
     }
 
     @Test
-    void onlyTheMatchingCompleteSnapshotCanProveThereIsNoOwnServerDisguise()
-    {
+    void onlyTheMatchingCompleteSnapshotCanProveThereIsNoOwnServerDisguise() {
         LocalAppearanceVisibility visibility = withServerDisguise("first");
         visibility.endSnapshot(20);
         assertTrue(visibility.hasServerAppearance());
@@ -82,8 +74,7 @@ class LocalAppearanceVisibilityTest
     }
 
     @Test
-    void anOwnStateInsideTheSnapshotKeepsTheDisguiseKnown()
-    {
+    void anOwnStateInsideTheSnapshotKeepsTheDisguiseKnown() {
         LocalAppearanceVisibility visibility = withServerDisguise("first");
         visibility.beginSnapshot(30);
         visibility.serverOwnState("replacement");
@@ -94,8 +85,7 @@ class LocalAppearanceVisibilityTest
     }
 
     @Test
-    void aFailedOwnStateDeliveryDuringSnapshotDoesNotProveTheDisguiseEnded()
-    {
+    void aFailedOwnStateDeliveryDuringSnapshotDoesNotProveTheDisguiseEnded() {
         LocalAppearanceVisibility visibility = withServerDisguise("first");
         visibility.beginSnapshot(35);
         visibility.serverUnbound("first", "state_payload_limit");
@@ -109,8 +99,7 @@ class LocalAppearanceVisibilityTest
     }
 
     @Test
-    void restartingTheBridgeKeepsFallbackSuppressionUntilNewSnapshotAndWorldResetClearsIt()
-    {
+    void restartingTheBridgeKeepsFallbackSuppressionUntilNewSnapshotAndWorldResetClearsIt() {
         LocalAppearanceVisibility visibility = withServerDisguise("first");
         visibility.serverSessionStarted();
         assertTrue(visibility.hasServerAppearance());
@@ -126,8 +115,7 @@ class LocalAppearanceVisibilityTest
         assertFalse(visibility.canRender(true, true, false), "The next supported world must obtain its own snapshot");
     }
 
-    private static LocalAppearanceVisibility withServerDisguise(String instance)
-    {
+    private static LocalAppearanceVisibility withServerDisguise(String instance) {
         LocalAppearanceVisibility visibility = new LocalAppearanceVisibility();
         visibility.serverSessionStarted();
         visibility.beginSnapshot(1);

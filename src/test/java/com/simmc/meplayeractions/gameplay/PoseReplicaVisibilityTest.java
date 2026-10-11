@@ -6,24 +6,20 @@ import java.lang.reflect.Proxy;
 import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
-class PoseReplicaVisibilityTest
-{
-    private static Player viewer()
-    {
+class PoseReplicaVisibilityTest {
+    private static Player viewer() {
         UUID id = UUID.randomUUID();
-        return (Player) Proxy.newProxyInstance(PoseReplicaVisibilityTest.class.getClassLoader(), new Class[]
-        { Player.class }, (proxy, method, args) -> switch (method.getName())
-        {
-        case "hashCode" -> id.hashCode();
-        case "equals" -> proxy == args[0];
-        case "getUniqueId" -> id;
-        default -> null;
-        });
+        return (Player) Proxy.newProxyInstance(PoseReplicaVisibilityTest.class.getClassLoader(),
+                new Class[] { Player.class }, (proxy, method, args) -> switch (method.getName()) {
+                case "hashCode" -> id.hashCode();
+                case "equals" -> proxy == args[0];
+                case "getUniqueId" -> id;
+                default -> null;
+                });
     }
 
     /** Simulates the actual GSit 3.5.1 viewer loop, without packet/NMS dependencies. */
-    private static final class Pose
-    {
+    private static final class Pose {
         private Set<Player> nearbyPlayers = new HashSet<>();
         private final Set<Player> currentlyNearby = new HashSet<>();
         private List<String> equipmentSlotCache;
@@ -31,59 +27,48 @@ class PoseReplicaVisibilityTest
         int spawned, removed, equipmentUpdates;
         boolean samplingFails;
 
-        private Set<Player> getNearbyPlayers()
-        {
-            if (this.samplingFails)
-            {
+        private Set<Player> getNearbyPlayers() {
+            if (this.samplingFails) {
                 throw new IllegalStateException("Simulated GSit failure");
             }
             return Set.copyOf(this.currentlyNearby);
         }
 
-        private void removeViewerPlayer(Player player)
-        {
+        private void removeViewerPlayer(Player player) {
             this.removed++;
         }
 
-        void tick()
-        {
-            for (Player player : getNearbyPlayers())
-            {
-                if (this.nearbyPlayers.contains(player))
-                {
+        void tick() {
+            for (Player player : getNearbyPlayers()) {
+                if (this.nearbyPlayers.contains(player)) {
                     continue;
                 }
 
                 this.nearbyPlayers.add(player);
                 this.spawned++;
             }
-            for (Player player : new ArrayList<>(this.nearbyPlayers))
-            {
-                if (this.currentlyNearby.contains(player))
-                {
+            for (Player player : new ArrayList<>(this.nearbyPlayers)) {
+                if (this.currentlyNearby.contains(player)) {
                     continue;
                 }
 
                 this.nearbyPlayers.remove(player);
                 removeViewerPlayer(player);
             }
-            if (this.equipmentSlotCache != this.actualInventory)
-            {
+            if (this.equipmentSlotCache != this.actualInventory) {
                 this.equipmentSlotCache = this.actualInventory;
                 this.equipmentUpdates += this.nearbyPlayers.size();
             }
         }
 
-        void remove()
-        {
+        void remove() {
             this.nearbyPlayers.forEach(this::removeViewerPlayer);
             this.equipmentUpdates += this.nearbyPlayers.size();
         }
     }
 
     @Test
-    void hiddenReplicaCannotRespawnOnViewerJoinReentryOrEquipmentChange()
-    {
+    void hiddenReplicaCannotRespawnOnViewerJoinReentryOrEquipmentChange() {
         UUID owner = UUID.randomUUID();
         Pose pose = new Pose();
         Player first = viewer(), second = viewer();
@@ -109,8 +94,7 @@ class PoseReplicaVisibilityTest
     }
 
     @Test
-    void naturalStopRestoresNearbyViewersBeforeGsitRestoresRealEquipment()
-    {
+    void naturalStopRestoresNearbyViewersBeforeGsitRestoresRealEquipment() {
         UUID owner = UUID.randomUUID();
         Pose pose = new Pose();
         Player viewer = viewer();
@@ -128,8 +112,7 @@ class PoseReplicaVisibilityTest
     }
 
     @Test
-    void cancelledStopReestablishesTheGuardAndPoseReplacementRestoresOldCache()
-    {
+    void cancelledStopReestablishesTheGuardAndPoseReplacementRestoresOldCache() {
         UUID owner = UUID.randomUUID();
         Pose first = new Pose(), next = new Pose();
         Player viewer = viewer();
@@ -149,8 +132,7 @@ class PoseReplicaVisibilityTest
     }
 
     @Test
-    void externalCacheReplacementAndUnknownImplementationsRemainUntouched()
-    {
+    void externalCacheReplacementAndUnknownImplementationsRemainUntouched() {
         UUID owner = UUID.randomUUID();
         Pose pose = new Pose();
         PoseReplicaVisibility visibility = new PoseReplicaVisibility();
@@ -167,8 +149,7 @@ class PoseReplicaVisibilityTest
     }
 
     @Test
-    void failedNearbyHookStillRestoresSavedAndCurrentViewersBeforeRemoval()
-    {
+    void failedNearbyHookStillRestoresSavedAndCurrentViewersBeforeRemoval() {
         UUID owner = UUID.randomUUID();
         Pose pose = new Pose();
         Player old = viewer(), arrived = viewer();
@@ -185,8 +166,7 @@ class PoseReplicaVisibilityTest
     }
 
     @Test
-    void rediscoveredReplicaReceivesUnchangedActualEquipmentAfterGuardRestoration()
-    {
+    void rediscoveredReplicaReceivesUnchangedActualEquipmentAfterGuardRestoration() {
         UUID owner = UUID.randomUUID();
         Pose pose = new Pose();
         Player viewer = viewer();

@@ -13,14 +13,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /** Replace player geometry only; retain vanilla labels, fire and shadow submission. */
 @Mixin(LivingEntityRenderer.class)
-public abstract class LivingEntityGeometryVisibilityMixin
-{
+public abstract class LivingEntityGeometryVisibilityMixin {
     @Inject(method = "getRenderLayer", at = @At("HEAD"), cancellable = true)
     private void meplayeractions$hidePlayerGeometry(LivingEntityRenderState state, boolean visible, boolean translucent,
-            boolean outline, CallbackInfoReturnable<RenderLayer> cir)
-    {
-        if (hiddenPlayer(state))
-        {
+            boolean outline, CallbackInfoReturnable<RenderLayer> cir) {
+        if (hiddenPlayer(state)) {
             cir.setReturnValue(null);
         }
 
@@ -28,18 +25,15 @@ public abstract class LivingEntityGeometryVisibilityMixin
 
     @Inject(method = "shouldRenderFeatures", at = @At("HEAD"), cancellable = true)
     private void meplayeractions$hideReplacedFeatures(LivingEntityRenderState state,
-            CallbackInfoReturnable<Boolean> cir)
-    {
-        if (hiddenPlayer(state))
-        {
+            CallbackInfoReturnable<Boolean> cir) {
+        if (hiddenPlayer(state)) {
             cir.setReturnValue(false);
         }
 
     }
 
     @Unique
-    private static boolean hiddenPlayer(LivingEntityRenderState state)
-    {
+    private static boolean hiddenPlayer(LivingEntityRenderState state) {
         return state instanceof PlayerEntityRenderState && ((HiddenPlayerRenderState) state).meplayeractions$isHidden();
     }
 }

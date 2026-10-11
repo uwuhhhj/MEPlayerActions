@@ -4,20 +4,17 @@ import org.junit.jupiter.api.Test;
 import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
-class VisualTimelineTest
-{
+class VisualTimelineTest {
     private final UUID world = UUID.randomUUID();
 
-    private VisualTimeline.Frame frame(long tick, double x, double y, boolean ground, boolean crawl, ActionState air)
-    {
+    private VisualTimeline.Frame frame(long tick, double x, double y, boolean ground, boolean crawl, ActionState air) {
         StateSelector.Sample pose = new StateSelector.Sample(false, crawl, false, false, false, false, ground, false,
                 false, true);
         return new VisualTimeline.Frame(tick, this.world, x, y, 0, pose, air, 1);
     }
 
     @Test
-    void positionAndAirPoseUseTheSameDelayedFrame()
-    {
+    void positionAndAirPoseUseTheSameDelayedFrame() {
         VisualTimeline t = new VisualTimeline();
         t.sample(frame(0, 0, 0, true, false, null), 2, 2, true);
         t.sample(frame(1, 0.1, 0.4, false, false, ActionState.JUMP), 2, 2, true);
@@ -29,8 +26,7 @@ class VisualTimelineTest
     }
 
     @Test
-    void crawlingAndTeleportSnapImmediatelyAndZeroDisablesDelay()
-    {
+    void crawlingAndTeleportSnapImmediatelyAndZeroDisablesDelay() {
         VisualTimeline t = new VisualTimeline();
         t.sample(frame(0, 0, 0, true, false, null), 4, 2, true);
         assertTrue(t.sample(frame(1, 0.1, 0, true, true, null), 4, 2, true).pose().crawling());
@@ -39,8 +35,7 @@ class VisualTimelineTest
     }
 
     @Test
-    void worldChangesAndTooMuchAccumulatedLagClearHistory()
-    {
+    void worldChangesAndTooMuchAccumulatedLagClearHistory() {
         VisualTimeline t = new VisualTimeline();
         t.sample(frame(0, 0, 0, true, false, null), 20, 1, true);
         t.sample(frame(1, 0.6, 0, true, false, null), 20, 1, true);
@@ -51,8 +46,7 @@ class VisualTimelineTest
     }
 
     @Test
-    void leavingABedRetainsItsSampledSurfaceAndDirectionUntilTheDelayedPoseChanges()
-    {
+    void leavingABedRetainsItsSampledSurfaceAndDirectionUntilTheDelayedPoseChanges() {
         StateSelector.Sample bedPose = new StateSelector.Sample(false, false, false, false, false, false, false, false,
                 false, false, true, true, StateSelector.Vehicle.NONE);
         VisualTimeline.Frame bed = new VisualTimeline.Frame(0, this.world, 3, -59.4375, 2.5, bedPose, null, 0, -90, -90,

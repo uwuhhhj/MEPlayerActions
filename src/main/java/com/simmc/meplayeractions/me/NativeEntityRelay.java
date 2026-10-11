@@ -12,66 +12,55 @@ import java.util.stream.Collectors;
 import org.bukkit.entity.Player;
 
 /** Retains vanilla tracking for modded viewers while ME remains unchanged for every other viewer. */
-final class NativeEntityRelay implements AutoCloseable
-{
+final class NativeEntityRelay implements AutoCloseable {
     private static final String NAME = "meplayeractions_native_entities", ME = "model_engine_packet_handler";
     private final NativeEntityPackets packets = new NativeEntityPackets();
     private final Map<UUID, Viewer> viewers = new HashMap<>();
     private final Executor main;
     private boolean closed;
 
-    private record Owner(int entityId, boolean hiddenBase, Object lease)
-    {
+    private record Owner(int entityId, boolean hiddenBase, Object lease) {
     }
 
-    private static final class Viewer
-    {
+    private static final class Viewer {
         final Channel channel;
         final NativeEntityPacketHandler handler;
         final Map<UUID, Owner> owners = new HashMap<>();
         NativeHandlerInstallation installation;
 
-        Viewer(Channel channel, NativeEntityPacketHandler handler)
-        {
+        Viewer(Channel channel, NativeEntityPacketHandler handler) {
             this.channel = channel;
             this.handler = handler;
         }
 
-        void publish()
-        {
+        void publish() {
             this.handler.owners = this.owners.values().stream().map(Owner::entityId)
                     .collect(Collectors.toUnmodifiableSet());
         }
     }
 
-    NativeEntityRelay(Executor main)
-    {
+    NativeEntityRelay(Executor main) {
         this.main = Objects.requireNonNull(main);
     }
 
     boolean enable(UUID viewerId, UUID ownerId, int entityId, boolean hiddenBase, Object lease,
-            BooleanSupplier authorized)
-    {
-        if (this.closed || !authorized.getAsBoolean())
-        {
+            BooleanSupplier authorized) {
+        if (this.closed || !authorized.getAsBoolean()) {
             return false;
         }
 
         Channel channel = channel(viewerId);
-        if (channel == null || !channel.isActive())
-        {
+        if (channel == null || !channel.isActive()) {
             return false;
         }
 
         Viewer viewer = this.viewers.get(viewerId);
-        if (viewer != null
-                && (viewer.channel != channel || viewer.installation.state() == NativeHandlerInstallation.State.CLOSED))
-        {
+        if (viewer != null && (viewer.channel != channel
+                || viewer.installation.state() == NativeHandlerInstallation.State.CLOSED)) {
             retire(viewerId, viewer);
             viewer = null;
         }
-        if (viewer == null)
-        {
+        if (viewer == null) {
             NativeEntityPacketHandler handler = new NativeEntityPacketHandler(this.packets::belongsTo,
                     this.packets::bundle, this.packets::partitionRemoval);
             viewer = new Viewer(channel, handler);
@@ -82,8 +71,7 @@ final class NativeEntityRelay implements AutoCloseable
                             && online(viewerId),
                     () -> install(channel, handler), () -> removeHandler(channel, handler));
         }
-        if (!viewer.installation.request(ownerId, lease, authorized))
-        {
+        if (!viewer.installation.request(ownerId, lease, authorized)) {
             return false;
         }
 
@@ -93,45 +81,37 @@ final class NativeEntityRelay implements AutoCloseable
         return true;
     }
 
-    boolean pending(UUID viewerId, UUID ownerId, Object lease)
-    {
+    boolean pending(UUID viewerId, UUID ownerId, Object lease) {
         Viewer viewer = this.viewers.get(viewerId);
         return !this.closed && viewer != null && viewer.installation.pending(ownerId, lease);
     }
 
-    void disable(UUID viewerId, UUID ownerId)
-    {
+    void disable(UUID viewerId, UUID ownerId) {
         Viewer viewer = this.viewers.get(viewerId);
-        if (viewer == null)
-        {
+        if (viewer == null) {
             return;
         }
 
         Owner owner = viewer.owners.remove(ownerId);
         viewer.publish();
-        if (owner != null && owner.hiddenBase && viewer.channel.isActive())
-        {
+        if (owner != null && owner.hiddenBase && viewer.channel.isActive()) {
             viewer.channel.writeAndFlush(new ProtectedPacket(this.packets.remove(owner.entityId)));
         }
 
         viewer.installation.withdraw(ownerId);
-        if (viewer.installation.empty())
-        {
+        if (viewer.installation.empty()) {
             this.viewers.remove(viewerId, viewer);
         }
 
     }
 
-    void removeOwner(UUID ownerId)
-    {
-        for (UUID viewer : List.copyOf(this.viewers.keySet()))
-        {
+    void removeOwner(UUID ownerId) {
+        for (UUID viewer : List.copyOf(this.viewers.keySet())) {
             disable(viewer, ownerId);
         }
     }
 
-    private void retire(UUID id, Viewer viewer)
-    {
+    private void retire(UUID id, Viewer viewer) {
         this.viewers.remove(id, viewer);
         viewer.owners.clear();
         viewer.publish();
@@ -139,38 +119,31 @@ final class NativeEntityRelay implements AutoCloseable
     }
 
     @Override
-    public void close()
-    {
+    public void close() {
         this.closed = true;
-        for (Map.Entry<UUID, NativeEntityRelay.Viewer> entry : List.copyOf(this.viewers.entrySet()))
-        {
+        for (Map.Entry<UUID, NativeEntityRelay.Viewer> entry : List.copyOf(this.viewers.entrySet())) {
             retire(entry.getKey(), entry.getValue());
         }
     }
 
-    private static boolean online(UUID id)
-    {
+    private static boolean online(UUID id) {
         Player player = Bukkit.getPlayer(id);
         return player != null && player.isOnline();
     }
 
-    private static Channel channel(UUID id)
-    {
+    private static Channel channel(UUID id) {
         PipelineWrapper wrapper = ModelEngineAPI.getNetworkHandler().getPipeline(id).orElse(null);
         return wrapper == null ? null : wrapper.getChannel();
     }
 
-    private static boolean install(Channel channel, NativeEntityPacketHandler handler)
-    {
+    private static boolean install(Channel channel, NativeEntityPacketHandler handler) {
         ChannelPipeline pipeline = channel.pipeline();
         if (pipeline.get(ME) == null || pipeline.get("protected_packet_unpacker") == null
-                || pipeline.names().indexOf("protected_packet_unpacker") >= pipeline.names().indexOf(ME))
-        {
+                || pipeline.names().indexOf("protected_packet_unpacker") >= pipeline.names().indexOf(ME)) {
             return false;
         }
 
-        if (pipeline.get(NAME) != null)
-        {
+        if (pipeline.get(NAME) != null) {
             return pipeline.get(NAME) == handler;
         }
 
@@ -178,10 +151,8 @@ final class NativeEntityRelay implements AutoCloseable
         return true;
     }
 
-    private static void removeHandler(Channel channel, NativeEntityPacketHandler handler)
-    {
-        if (channel.pipeline().get(NAME) == handler)
-        {
+    private static void removeHandler(Channel channel, NativeEntityPacketHandler handler) {
+        if (channel.pipeline().get(NAME) == handler) {
             channel.pipeline().remove(NAME);
         }
     }

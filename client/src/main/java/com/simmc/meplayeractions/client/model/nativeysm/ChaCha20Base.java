@@ -9,23 +9,20 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.IntBuffer;
 
-public abstract class ChaCha20Base
-{
-    protected static final int[] SIGMA = toIntArray(new byte[]
-    { 101, 120, 112, 97, 110, 100, 32, 51, 50, 45, 98, 121, 116, 101, 32, 107 });
+public abstract class ChaCha20Base {
+    protected static final int[] SIGMA = toIntArray(
+            new byte[] { 101, 120, 112, 97, 110, 100, 32, 51, 50, 45, 98, 121, 116, 101, 32, 107 });
     public final int[] state = new int[16];
     public int rounds;
 
     protected final int[] workingState = new int[16];
     protected final byte[] keystreamBuf = new byte[64];
 
-    protected static int rotateLeft(int i, int i2)
-    {
+    protected static int rotateLeft(int i, int i2) {
         return (i >>> (-i2)) | (i << i2);
     }
 
-    public static void quarterRound(int[] x, int a, int b, int c, int d)
-    {
+    public static void quarterRound(int[] x, int a, int b, int c, int d) {
         x[a] += x[b];
         x[d] = rotateLeft(x[d] ^ x[a], 16);
         x[c] += x[d];
@@ -36,11 +33,9 @@ public abstract class ChaCha20Base
         x[b] = rotateLeft(x[b] ^ x[c], 7);
     }
 
-    public static void shuffleState(int[] x, int rounds)
-    {
+    public static void shuffleState(int[] x, int rounds) {
         int halfRounds = rounds / 2;
-        for (int i = 0; i < halfRounds; i++)
-        {
+        for (int i = 0; i < halfRounds; i++) {
             quarterRound(x, 0, 4, 8, 12);
             quarterRound(x, 1, 5, 9, 13);
             quarterRound(x, 2, 6, 10, 14);
@@ -52,31 +47,26 @@ public abstract class ChaCha20Base
         }
     }
 
-    protected static int[] toIntArray(byte[] bArr)
-    {
+    protected static int[] toIntArray(byte[] bArr) {
         IntBuffer asIntBuffer = ByteBuffer.wrap(bArr).order(ByteOrder.LITTLE_ENDIAN).asIntBuffer();
         int[] iArr = new int[asIntBuffer.remaining()];
         asIntBuffer.get(iArr);
         return iArr;
     }
 
-    public byte[] processBlock()
-    {
+    public byte[] processBlock() {
         processBlock(this.keystreamBuf);
         return this.keystreamBuf;
     }
 
-    public void processBlock(byte[] out)
-    {
+    public void processBlock(byte[] out) {
         int[] ws = this.workingState;
         System.arraycopy(this.state, 0, ws, 0, 16);
         shuffleState(ws, this.rounds);
-        for (int i = 0; i < 16; i++)
-        {
+        for (int i = 0; i < 16; i++) {
             ws[i] += this.state[i];
         }
-        for (int i = 0; i < 16; i++)
-        {
+        for (int i = 0; i < 16; i++) {
             int v = ws[i];
             int p = i << 2;
             out[p] = (byte) v;
@@ -86,11 +76,9 @@ public abstract class ChaCha20Base
         }
     }
 
-    public void incrementCounter()
-    {
+    public void incrementCounter() {
         this.state[12]++;
-        if (this.state[12] == 0)
-        {
+        if (this.state[12] == 0) {
             this.state[13]++;
         }
     }

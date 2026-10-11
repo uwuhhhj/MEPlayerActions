@@ -4,43 +4,32 @@ import com.simmc.meplayeractions.action.StateSelector.Vehicle;
 import org.bukkit.entity.Pose;
 
 /** GSit poses take precedence over their invisible vehicle and native swimming flags. */
-public final class PostureResolver
-{
-    private PostureResolver()
-    {
+public final class PostureResolver {
+    private PostureResolver() {
     }
 
-    public record Posture(boolean sitting, boolean crawling, boolean sleeping, Vehicle vehicle)
-    {
+    public record Posture(boolean sitting, boolean crawling, boolean sleeping, Vehicle vehicle) {
     }
 
     public static Posture resolve(boolean gsitSeat, boolean gsitCrawl, String gsitPose, boolean sleeping, Pose pose,
-            boolean inWater, boolean flying, boolean gliding, Vehicle vehicle)
-    {
-        if ("LAY".equals(gsitPose) || "LAY_BACK".equals(gsitPose) || "LEGS_UP".equals(gsitPose))
-
-        {
+            boolean inWater, boolean flying, boolean gliding, Vehicle vehicle) {
+        if ("LAY".equals(gsitPose) || "LAY_BACK".equals(gsitPose) || "LEGS_UP".equals(gsitPose)) {
             return new Posture(false, false, true, Vehicle.NONE);
         }
 
-        if (gsitCrawl || "BELLYFLOP".equals(gsitPose))
-
-        {
+        if (gsitCrawl || "BELLYFLOP".equals(gsitPose)) {
             return new Posture(false, true, false, Vehicle.NONE);
         }
 
-        if (sleeping || pose == Pose.SLEEPING)
-        {
+        if (sleeping || pose == Pose.SLEEPING) {
             return new Posture(false, false, true, Vehicle.NONE);
         }
 
-        if (gsitSeat)
-        {
+        if (gsitSeat) {
             return new Posture(true, false, false, Vehicle.NONE);
         }
 
-        if (vehicle != Vehicle.NONE)
-        {
+        if (vehicle != Vehicle.NONE) {
             return new Posture(false, false, false, vehicle);
         }
 

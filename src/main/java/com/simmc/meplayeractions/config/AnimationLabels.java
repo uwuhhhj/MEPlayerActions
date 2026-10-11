@@ -4,15 +4,12 @@ import java.util.Map;
 import static java.util.Map.entry;
 
 /** Built-in labels remain available when an administrator keeps an older config.yml. */
-public final class AnimationLabels
-{
-    private AnimationLabels()
-    {
+public final class AnimationLabels {
+    private AnimationLabels() {
     }
 
     /** Keep a named action identifiable while avoiding the fallback form "ID (ID)". */
-    public static String displayWithId(String id, String label)
-    {
+    public static String displayWithId(String id, String label) {
         return id.equals(label) ? id : label + " (" + id + ")";
     }
 

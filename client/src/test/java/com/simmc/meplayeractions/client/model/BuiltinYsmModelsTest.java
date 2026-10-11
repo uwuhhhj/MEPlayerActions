@@ -18,21 +18,18 @@ import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class BuiltinYsmModelsTest
-{
+class BuiltinYsmModelsTest {
     @TempDir
     Path temporary;
     private static final String WINE_ROOT = "/assets/meplayeractions/builtin/wine_fox/";
 
     @Test
-    void catalogKeepsOfficialWineFoxDefaultsAndAddsTheTwoOriginalPlayerSkinModels() throws Exception
-    {
+    void catalogKeepsOfficialWineFoxDefaultsAndAddsTheTwoOriginalPlayerSkinModels() throws Exception {
         assertEquals(List.of("openysm_default", "wine_fox_01_taisho_maid", "wine_fox_02_new_year",
                 "wine_fox_03_astronaut", "openysm_alex", "openysm_steve"), BuiltinYsmModels.ids());
         LocalModelLibrary library = new LocalModelLibrary(this.temporary.resolve("models"));
         assertEquals(BuiltinYsmModels.ids(), library.models().stream().map(LocalModelLibrary.Entry::id).toList());
-        for (BuiltinYsmModels.Model model : BuiltinYsmModels.models())
-        {
+        for (BuiltinYsmModels.Model model : BuiltinYsmModels.models()) {
             assertTrue(LocalAppearanceSettings.isValidModelId(model.id()));
             assertFalse(model.label().isBlank());
         }
@@ -40,17 +37,14 @@ class BuiltinYsmModelsTest
                 LocalAppearanceSettings.defaults());
         assertEquals(AssetTransfer.hash(YsmFolderModel.bundledDefault()), library.load("openysm_default").hash());
         for (String id : List.of("ysm_01_jk", "ysm_02_jk", "wine_fox_04_student", "wine_fox/01_taisho_maid",
-                "../01_taisho_maid"))
-
-        {
+                "../01_taisho_maid")) {
             assertThrows(IOException.class, () -> YsmFolderModel.bundledWithProfile(id, null), id);
         }
 
     }
 
     @Test
-    void taishoMaidDecodesRealGeometryAnimationsComponentsSkinsAndSounds() throws Exception
-    {
+    void taishoMaidDecodesRealGeometryAnimationsComponentsSkinsAndSounds() throws Exception {
         LocalModelLibrary.Loaded loaded = decode(BuiltinYsmModels.TAISHO_MAID_ID, "Wine Fox（酒狐）", 490, 57, 36, 8, 10);
         assertEquals(List.of("skin", "skin_white"),
                 loaded.profile().textures().stream().map(YsmModelProfile.TextureChoice::id).toList());
@@ -68,8 +62,7 @@ class BuiltinYsmModelsTest
     }
 
     @Test
-    void newYearDecodesItsOwnAuthoredPlayerAndLegacyArrow() throws Exception
-    {
+    void newYearDecodesItsOwnAuthoredPlayerAndLegacyArrow() throws Exception {
         LocalModelLibrary.Loaded loaded = decode(BuiltinYsmModels.NEW_YEAR_ID, "New Year Wine Fox（新春酒狐）", 342, 48, 14,
                 3, 2);
         assertEquals("是的", loaded.profile().extraAnimations().get("extra3"));
@@ -80,8 +73,7 @@ class BuiltinYsmModelsTest
     }
 
     @Test
-    void astronautDecodesArmAssemblyAndKeepsBlankAuthorActionLabels() throws Exception
-    {
+    void astronautDecodesArmAssemblyAndKeepsBlankAuthorActionLabels() throws Exception {
         LocalModelLibrary.Loaded loaded = decode(BuiltinYsmModels.ASTRONAUT_ID, "宇航员酒狐", 552, 108, 20, 3, 4);
         assertTrue(loaded.model().animations()
                 .containsAll(List.of("hold_mainhand:sword", "hold_offhand:shield", "swing:sword")));
@@ -92,8 +84,7 @@ class BuiltinYsmModelsTest
     }
 
     private LocalModelLibrary.Loaded decode(String id, String name, int cubes, int clips, int armCubes,
-            int componentCount, int authors) throws Exception
-    {
+            int componentCount, int authors) throws Exception {
         LocalModelLibrary.Loaded loaded = new LocalModelLibrary(this.temporary.resolve("models")).load(id);
         assertEquals(cubes, loaded.model().cubeCount(), id);
         assertEquals(clips, loaded.model().animations().size(), id);
@@ -101,8 +92,7 @@ class BuiltinYsmModelsTest
         assertEquals("gui", loaded.previewAnimation());
         assertEquals(360, loaded.model().animationLengthTicks("gui"));
         assertEquals(65535, loaded.model().animationFormatVersion());
-        for (String clip : loaded.model().animations())
-        {
+        for (String clip : loaded.model().animations()) {
             assertTrue(loaded.model().animationFromPrimaryAssembly(clip), id + "/" + clip);
         }
 
@@ -118,8 +108,7 @@ class BuiltinYsmModelsTest
         assertEquals(armCubes, loaded.profile().components().stream()
                 .filter(component -> component.kind().equals("arm")).findFirst().orElseThrow().model().cubeCount());
         assertEquals(53, arrow(loaded).model().cubeCount());
-        for (YsmModelProfile.Component component : loaded.profile().components())
-        {
+        for (YsmModelProfile.Component component : loaded.profile().components()) {
             assertEquals(65535, component.model().animationFormatVersion());
         }
 
@@ -131,8 +120,7 @@ class BuiltinYsmModelsTest
         return loaded;
     }
 
-    private static YsmModelProfile.Component arrow(LocalModelLibrary.Loaded loaded)
-    {
+    private static YsmModelProfile.Component arrow(LocalModelLibrary.Loaded loaded) {
         YsmModelProfile.Component arrow = loaded.profile().components().stream()
                 .filter(component -> component.id().equals("minecraft:arrow")).findFirst().orElseThrow();
         assertEquals("projectile", arrow.kind());
@@ -141,17 +129,14 @@ class BuiltinYsmModelsTest
     }
 
     @Test
-    void allSeventySevenOriginalResourceFilesRemainByteExactAtThePinnedRevision() throws Exception
-    {
+    void allSeventySevenOriginalResourceFilesRemainByteExactAtThePinnedRevision() throws Exception {
         Map<String, Integer> counts = new LinkedHashMap<>();
         long bytes = 0;
-        for (String line : UPSTREAM_FILES.strip().split("\n"))
-        {
+        for (String line : UPSTREAM_FILES.strip().split("\n")) {
             String[] fields = line.split("\t");
             assertEquals(4, fields.length);
             BuiltinYsmModels.Model model = BuiltinYsmModels.find(fields[0]).orElseThrow();
-            try (InputStream resource = BuiltinYsmModels.class.getResourceAsStream(model.resourceRoot() + fields[1]))
-            {
+            try (InputStream resource = BuiltinYsmModels.class.getResourceAsStream(model.resourceRoot() + fields[1])) {
                 assertNotNull(resource, line);
                 byte[] raw = resource.readAllBytes();
                 assertEquals(Integer.parseInt(fields[3]), raw.length, line);
@@ -165,8 +150,7 @@ class BuiltinYsmModelsTest
                 BuiltinYsmModels.ASTRONAUT_ID, 19), counts);
         assertEquals(4_973_579, bytes);
         try (InputStream license = BuiltinYsmModels.class
-                .getResourceAsStream(WINE_ROOT + "LICENSE.CC-BY-NC-SA-4.0.txt"))
-        {
+                .getResourceAsStream(WINE_ROOT + "LICENSE.CC-BY-NC-SA-4.0.txt")) {
             assertNotNull(license);
             byte[] raw = license.readAllBytes();
             assertEquals(20_852, raw.length);

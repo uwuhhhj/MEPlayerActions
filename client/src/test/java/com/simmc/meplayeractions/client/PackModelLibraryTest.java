@@ -12,25 +12,20 @@ import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class PackModelLibraryTest
-{
-    private record Fixture(Map<String, byte[]> resources, String hash, byte[] source)
-    {
+class PackModelLibraryTest {
+    private record Fixture(Map<String, byte[]> resources, String hash, byte[] source) {
     }
 
-    private Fixture fixture() throws Exception
-    {
+    private Fixture fixture() throws Exception {
         byte[] raw;
-        try (InputStream stream = getClass().getResourceAsStream("/ysm_02_jk.bbmodel"))
-        {
+        try (InputStream stream = getClass().getResourceAsStream("/ysm_02_jk.bbmodel")) {
             raw = stream.readAllBytes();
         }
         String text = new String(raw, StandardCharsets.UTF_8), hash = AssetTransfer.hash(raw);
         JsonObject root = JsonParser.parseString(text).getAsJsonObject();
         HashMap<String, byte[]> resources = new HashMap<String, byte[]>();
         int index = 0;
-        for (JsonElement element : root.getAsJsonArray("textures"))
-        {
+        for (JsonElement element : root.getAsJsonArray("textures")) {
             String source = element.getAsJsonObject().get("source").getAsString();
             String id = "modelengine:textures/test_" + index++ + ".png";
             resources.put(id, Base64.getDecoder().decode(source.substring("data:image/png;base64,".length())));
@@ -44,13 +39,10 @@ class PackModelLibraryTest
         return new Fixture(resources, hash, raw);
     }
 
-    private PackModelLibrary.Resources reader(Fixture f)
-    {
-        return (id, max) ->
-        {
+    private PackModelLibrary.Resources reader(Fixture f) {
+        return (id, max) -> {
             byte[] bytes = f.resources.get(id);
-            if (bytes == null || bytes.length > max)
-            {
+            if (bytes == null || bytes.length > max) {
                 throw new IOException("Missing/oversize resource");
             }
 
@@ -59,8 +51,7 @@ class PackModelLibraryTest
     }
 
     @Test
-    void sharedPackTextureRestoresOriginalHashAndModel() throws Exception
-    {
+    void sharedPackTextureRestoresOriginalHashAndModel() throws Exception {
         Fixture f = fixture();
         LocalModelLibrary.Loaded loaded = PackModelLibrary.load(reader(f), "ysm_02_jk", f.hash);
         assertEquals(f.hash, loaded.hash());
@@ -71,16 +62,14 @@ class PackModelLibraryTest
     }
 
     @Test
-    void corruptSharedTextureCannotAcquireRendering() throws Exception
-    {
+    void corruptSharedTextureCannotAcquireRendering() throws Exception {
         Fixture f = fixture();
         f.resources.get("modelengine:textures/test_0.png")[20] ^= 1;
         assertThrows(IOException.class, () -> PackModelLibrary.load(reader(f), "ysm_02_jk", f.hash));
     }
 
     @Test
-    void missingOrWrongPackVersionDoesNotLoadAnotherModel() throws Exception
-    {
+    void missingOrWrongPackVersionDoesNotLoadAnotherModel() throws Exception {
         Fixture f = fixture();
         assertThrows(IOException.class, () -> PackModelLibrary.load(reader(f), "ysm_01_jk", f.hash));
         assertThrows(IOException.class, () -> PackModelLibrary.load(reader(f), "ysm_02_jk", "0".repeat(64)));
@@ -89,12 +78,9 @@ class PackModelLibraryTest
     }
 
     @Test
-    void resourceReferencesCannotChooseUrlsOrEscapeNamespaces()
-    {
+    void resourceReferencesCannotChooseUrlsOrEscapeNamespaces() {
         for (String bad : List.of("https://server/texture.png", "file:/private.png", "test:../escape.png",
-                "test:/absolute.png", "test:a//b.png"))
-
-        {
+                "test:/absolute.png", "test:a//b.png")) {
             assertThrows(IOException.class, () -> PackModelLibrary.resource(bad), bad);
         }
 
@@ -102,8 +88,7 @@ class PackModelLibraryTest
     }
 
     @Test
-    void duplicateCatalogIdentitiesAreRejected() throws Exception
-    {
+    void duplicateCatalogIdentitiesAreRejected() throws Exception {
         Fixture f = fixture();
         JsonObject index = JsonParser
                 .parseString(new String(f.resources.get(PackModelLibrary.INDEX), StandardCharsets.UTF_8))

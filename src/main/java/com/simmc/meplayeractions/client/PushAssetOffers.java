@@ -5,38 +5,31 @@ import java.util.*;
 import java.util.function.Predicate;
 
 /** Main-thread server-issued authorizations; feedback cannot choose a model or replay a transfer. */
-final class PushAssetOffers
-{
+final class PushAssetOffers {
     static final int MAX_PENDING = 2, MAX_RECORDS = 64;
     static final int STATUS_TICKS = 100, IDLE_TICKS = 300, ABSOLUTE_TICKS = 1200, RENDER_TICKS = 200;
 
-    record Offer(UUID id, UUID owner, UUID instance, String modelId, String hash)
-    {
+    record Offer(UUID id, UUID owner, UUID instance, String modelId, String hash) {
     }
 
-    record Cancelled(Offer offer, String reason)
-    {
+    record Cancelled(Offer offer, String reason) {
     }
 
-    enum Feedback
-    {
+    enum Feedback {
         INVALID, CACHED, MISSING, REJECTED
     }
 
-    private enum Phase
-    {
+    private enum Phase {
         OFFERED, MISSING, TRANSFERRING, DELIVERED, CACHED, READY
     }
 
-    private static final class Entry
-    {
+    private static final class Entry {
         final Offer offer;
         final long created;
         Phase phase = Phase.OFFERED;
         long at;
 
-        Entry(Offer offer, long tick)
-        {
+        Entry(Offer offer, long tick) {
             this.offer = offer;
             this.created = this.at = tick;
         }
@@ -46,8 +39,7 @@ final class PushAssetOffers
     private int maxPending = MAX_PENDING, statusTicks = STATUS_TICKS, queueTicks = IDLE_TICKS, idleTicks = IDLE_TICKS,
             totalTicks = ABSOLUTE_TICKS, renderTicks = RENDER_TICKS;
 
-    void configure(ResourceSettings.Network policy)
-    {
+    void configure(ResourceSettings.Network policy) {
         this.maxPending = policy.transfersPerPlayer();
         this.statusTicks = Math.min(STATUS_TICKS, policy.transferQueueTicks());
         this.queueTicks = policy.transferQueueTicks();
@@ -56,20 +48,16 @@ final class PushAssetOffers
         this.renderTicks = policy.readyTicks();
     }
 
-    int pending()
-    {
+    int pending() {
         return (int) this.entries.values().stream().filter(e -> e.phase != Phase.READY).count();
     }
 
-    boolean canIssue(String hash)
-    {
+    boolean canIssue(String hash) {
         return !this.entries.containsKey(hash) && this.entries.size() < MAX_RECORDS && pending() < this.maxPending;
     }
 
-    Offer issue(UUID owner, UUID instance, String modelId, String hash, long tick)
-    {
-        if (!canIssue(hash))
-        {
+    Offer issue(UUID owner, UUID instance, String modelId, String hash, long tick) {
+        if (!canIssue(hash)) {
             return null;
         }
 
@@ -78,50 +66,41 @@ final class PushAssetOffers
         return offer;
     }
 
-    Feedback feedback(UUID id, String hash, String status, long tick)
-    {
+    Feedback feedback(UUID id, String hash, String status, long tick) {
         Entry entry = this.entries.get(hash);
         if (entry == null || !entry.offer.id().equals(id) || entry.phase != Phase.OFFERED
-                || distance(tick, entry.at) >= this.statusTicks)
-        {
+                || distance(tick, entry.at) >= this.statusTicks) {
             return Feedback.INVALID;
         }
 
-        Feedback result = switch (status)
-        {
+        Feedback result = switch (status) {
         case "cached" -> Feedback.CACHED;
         case "missing" -> Feedback.MISSING;
         case "rejected" -> Feedback.REJECTED;
         default -> Feedback.INVALID;
         };
-        if (result == Feedback.INVALID)
-        {
+        if (result == Feedback.INVALID) {
             return result;
         }
 
-        if (result == Feedback.REJECTED)
-        {
+        if (result == Feedback.REJECTED) {
             this.entries.remove(hash);
         }
 
-        else
-        {
+        else {
             entry.phase = result == Feedback.CACHED ? Phase.CACHED : Phase.MISSING;
             entry.at = tick;
         }
         return result;
     }
 
-    List<Offer> missing()
-    {
+    List<Offer> missing() {
         return this.entries.values().stream().filter(e -> e.phase == Phase.MISSING).map(e -> e.offer).toList();
     }
 
-    boolean start(Offer offer)
-    {
+    boolean start(Offer offer) {
         Entry entry = current(offer);
-        if (entry == null || entry.phase != Phase.MISSING)
-        {
+        if (entry == null || entry.phase != Phase.MISSING) {
             return false;
         }
 
@@ -129,100 +108,81 @@ final class PushAssetOffers
         return true;
     }
 
-    void delivered(Offer offer, long tick)
-    {
+    void delivered(Offer offer, long tick) {
         Entry entry = current(offer);
-        if (entry != null && entry.phase == Phase.TRANSFERRING)
-        {
+        if (entry != null && entry.phase == Phase.TRANSFERRING) {
             entry.phase = Phase.DELIVERED;
             entry.at = tick;
         }
     }
 
-    void progress(Offer offer, long tick)
-    {
+    void progress(Offer offer, long tick) {
         Entry entry = current(offer);
-        if (entry != null && entry.phase == Phase.TRANSFERRING)
-        {
+        if (entry != null && entry.phase == Phase.TRANSFERRING) {
             entry.at = tick;
         }
 
     }
 
-    void ready(String hash)
-    {
+    void ready(String hash) {
         Entry entry = this.entries.get(hash);
-        if (entry != null)
-        {
+        if (entry != null) {
             entry.phase = Phase.READY;
         }
     }
 
-    boolean transferring(Offer offer)
-    {
+    boolean transferring(Offer offer) {
         Entry entry = current(offer);
         return entry != null && entry.phase == Phase.TRANSFERRING;
     }
 
-    private Entry current(Offer offer)
-    {
+    private Entry current(Offer offer) {
         Entry entry = this.entries.get(offer.hash());
         return entry != null && entry.offer.equals(offer) ? entry : null;
     }
 
-    Offer find(String hash)
-    {
+    Offer find(String hash) {
         Entry entry = this.entries.get(hash);
         return entry == null ? null : entry.offer;
     }
 
-    Offer remove(String hash)
-    {
+    Offer remove(String hash) {
         Entry entry = this.entries.remove(hash);
         return entry == null ? null : entry.offer;
     }
 
-    List<Cancelled> expire(long tick, Predicate<Offer> authorized)
-    {
+    List<Cancelled> expire(long tick, Predicate<Offer> authorized) {
         List<Cancelled> cancelled = new ArrayList<>();
         Iterator<Entry> iterator = this.entries.values().iterator();
-        while (iterator.hasNext())
-        {
+        while (iterator.hasNext()) {
             Entry entry = iterator.next();
             String reason = null;
-            if (!authorized.test(entry.offer))
-            {
+            if (!authorized.test(entry.offer)) {
                 reason = "asset_not_authorized";
             }
 
-            else if (entry.phase != Phase.READY && distance(tick, entry.created) >= this.totalTicks)
-            {
+            else if (entry.phase != Phase.READY && distance(tick, entry.created) >= this.totalTicks) {
                 reason = "asset_offer_expired";
             }
 
-            else if (entry.phase == Phase.OFFERED && distance(tick, entry.at) >= this.statusTicks)
-            {
+            else if (entry.phase == Phase.OFFERED && distance(tick, entry.at) >= this.statusTicks) {
                 reason = "asset_offer_expired";
             }
 
-            else if (entry.phase == Phase.MISSING && distance(tick, entry.at) >= this.queueTicks)
-            {
+            else if (entry.phase == Phase.MISSING && distance(tick, entry.at) >= this.queueTicks) {
                 reason = "asset_queue_timeout";
             }
 
-            else if (entry.phase == Phase.TRANSFERRING && distance(tick, entry.at) >= this.idleTicks)
-            {
+            else if (entry.phase == Phase.TRANSFERRING && distance(tick, entry.at) >= this.idleTicks) {
                 reason = "asset_transfer_timeout";
             }
 
             else if ((entry.phase == Phase.DELIVERED || entry.phase == Phase.CACHED)
-                    && distance(tick, entry.at) >= this.renderTicks)
-            {
+                    && distance(tick, entry.at) >= this.renderTicks) {
                 reason = "asset_render_timeout";
             }
 
-            if (reason != null)
-            {
+            if (reason != null) {
                 iterator.remove();
                 cancelled.add(new Cancelled(entry.offer, reason));
             }
@@ -230,15 +190,13 @@ final class PushAssetOffers
         return List.copyOf(cancelled);
     }
 
-    List<Offer> clear()
-    {
+    List<Offer> clear() {
         List<Offer> result = this.entries.values().stream().map(e -> e.offer).toList();
         this.entries.clear();
         return result;
     }
 
-    private static long distance(long now, long before)
-    {
+    private static long distance(long now, long before) {
         return (now - before) & 0xffff_ffffL;
     }
 }

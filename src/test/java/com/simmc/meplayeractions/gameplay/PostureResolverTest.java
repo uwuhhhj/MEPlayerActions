@@ -6,14 +6,10 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class PostureResolverTest
-{
+class PostureResolverTest {
     @Test
-    void sleepingAndGSitLayWinOverInvisibleSeatAndSwimming()
-    {
-        for (String type : new String[]
-        { "LAY", "LAY_BACK", "LEGS_UP" })
-        {
+    void sleepingAndGSitLayWinOverInvisibleSeatAndSwimming() {
+        for (String type : new String[] { "LAY", "LAY_BACK", "LEGS_UP" }) {
             PostureResolver.Posture p = PostureResolver.resolve(true, false, type, false, Pose.STANDING, true, false,
                     false, Vehicle.OTHER);
             assertTrue(p.sleeping());
@@ -27,8 +23,7 @@ class PostureResolverTest
     }
 
     @Test
-    void GSitBellyflopAndCrawlWinOverSeatAndNativeWaterFlags()
-    {
+    void GSitBellyflopAndCrawlWinOverSeatAndNativeWaterFlags() {
         PostureResolver.Posture belly = PostureResolver.resolve(true, false, "BELLYFLOP", false, Pose.STANDING, false,
                 false, false, Vehicle.OTHER);
         assertTrue(belly.crawling());
@@ -39,8 +34,7 @@ class PostureResolverTest
     }
 
     @Test
-    void vanillaLowCeilingIsCrawlOnLandAndSwimmingInWater()
-    {
+    void vanillaLowCeilingIsCrawlOnLandAndSwimmingInWater() {
         assertTrue(PostureResolver.resolve(false, false, "", false, Pose.SWIMMING, false, false, false, Vehicle.NONE)
                 .crawling());
         assertFalse(PostureResolver.resolve(false, false, "", false, Pose.SWIMMING, true, false, false, Vehicle.NONE)
@@ -50,11 +44,8 @@ class PostureResolverTest
     }
 
     @Test
-    void vehiclesAndSeatsRemainDistinctEvenWithStaleNativePose()
-    {
-        for (Vehicle vehicle : new Vehicle[]
-        { Vehicle.BOAT, Vehicle.MINECART, Vehicle.OTHER })
-        {
+    void vehiclesAndSeatsRemainDistinctEvenWithStaleNativePose() {
+        for (Vehicle vehicle : new Vehicle[] { Vehicle.BOAT, Vehicle.MINECART, Vehicle.OTHER }) {
             PostureResolver.Posture p = PostureResolver.resolve(false, false, "", false, Pose.SWIMMING, false, false,
                     false, vehicle);
             assertEquals(vehicle, p.vehicle());
@@ -65,8 +56,7 @@ class PostureResolverTest
     }
 
     @Test
-    void explicitGSitPronePostureWinsOverStaleSleepingFlags()
-    {
+    void explicitGSitPronePostureWinsOverStaleSleepingFlags() {
         PostureResolver.Posture belly = PostureResolver.resolve(true, false, "BELLYFLOP", true, Pose.SLEEPING, false,
                 false, false, Vehicle.OTHER);
         assertTrue(belly.crawling());

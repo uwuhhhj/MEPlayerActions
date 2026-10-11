@@ -16,24 +16,20 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Fixed Sparkle RoamingStruct dirty float semantics, independent of schema/UI declarations. */
-class NativeRoamingStateTest
-{
-    private static Molang.Context context()
-    {
+class NativeRoamingStateTest {
+    private static Molang.Context context() {
         Molang.Context c = new Molang.Context();
         c.enableNativeYsm();
         c.enableNativeRoaming();
         return c;
     }
 
-    private static Object eval(Molang.Context c, String script)
-    {
+    private static Object eval(Molang.Context c, String script) {
         return Molang.compileNativeYsm(script).evaluateValue(c);
     }
 
     @Test
-    void numericChangesCoalesceAtFloatPrecisionAndBaselineValuesDoNotEcho()
-    {
+    void numericChangesCoalesceAtFloatPrecisionAndBaselineValuesDoNotEcho() {
         Molang.Context c = context();
         c.seedRoamingValues(Map.of("variable.roaming.counter", 2d));
         assertTrue(c.consumeRoamingChanges().isEmpty());
@@ -50,8 +46,7 @@ class NativeRoamingStateTest
     }
 
     @Test
-    void copyingRoamingMakesAPlainStructWhileChildEntityWritesBelongToTheOriginalChannel()
-    {
+    void copyingRoamingMakesAPlainStructWhileChildEntityWritesBelongToTheOriginalChannel() {
         Molang.Context c = context();
         eval(c, "v.roaming.counter=1;");
         c.consumeRoamingChanges();
@@ -68,11 +63,9 @@ class NativeRoamingStateTest
     }
 
     @Test
-    void sourceCumulativeNameAndWireNameBudgetsPreserveLocalValuesButBoundDirtyExport()
-    {
+    void sourceCumulativeNameAndWireNameBudgetsPreserveLocalValuesButBoundDirtyExport() {
         Molang.Context c = context();
-        for (int i = 0; i < 64; i++)
-        {
+        for (int i = 0; i < 64; i++) {
             eval(c, "v.roaming.field_" + i + "=1;");
         }
 
@@ -96,8 +89,7 @@ class NativeRoamingStateTest
     }
 
     @Test
-    void nativeFramesDoNotReplaceDynamicRoamingWithAnUnchangedPersistedProfile() throws Exception
-    {
+    void nativeFramesDoNotReplaceDynamicRoamingWithAnUnchangedPersistedProfile() throws Exception {
         AnimationPlayer player = player();
         Map<String, Double> saved = Map.of("variable.roaming.counter", 0d);
         sample(player, 0, saved);
@@ -114,8 +106,7 @@ class NativeRoamingStateTest
     }
 
     @Test
-    void configurationReadsAndDraftScriptsCannotConsumeOrDirtyTheWorldChannel() throws Exception
-    {
+    void configurationReadsAndDraftScriptsCannotConsumeOrDirtyTheWorldChannel() throws Exception {
         AnimationPlayer player = player();
         sample(player, 0, Map.of());
         player.consumeRoamingChanges();
@@ -128,13 +119,11 @@ class NativeRoamingStateTest
         assertEquals(2d, player.expressionVariables().get("variable.roaming.counter"));
     }
 
-    private static void sample(AnimationPlayer player, double tick, Map<String, Double> values)
-    {
+    private static void sample(AnimationPlayer player, double tick, Map<String, Double> values) {
         player.sample(tick, List.of(), 0, 0, Map.of(), Map.of(), values);
     }
 
-    private static AnimationPlayer player() throws Exception
-    {
+    private static AnimationPlayer player() throws Exception {
         JsonObject raw = JsonParser
                 .parseString(
                         """

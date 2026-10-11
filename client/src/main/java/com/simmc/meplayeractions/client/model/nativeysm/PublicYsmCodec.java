@@ -8,31 +8,25 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
 
-public final class PublicYsmCodec
-{
+public final class PublicYsmCodec {
     private static final long SEED_KEY_DERIVATION = 0xD017CBBA7B5D3581L, SEED_FILE_VERIFICATION = 0x9E5599DB80C67C29L,
             SEED_RES_VERIFICATION = 0xA62B1A2C43842BC3L;
 
-    private PublicYsmCodec()
-    {
+    private PublicYsmCodec() {
     }
 
-    public static byte[] decode(byte[] fileData) throws Exception
-    {
-        if (fileData.length < 8 + 24 + 32 + 8 || fileData.length > LocalModelBudget.MAX_BYTES)
-        {
+    public static byte[] decode(byte[] fileData) throws Exception {
+        if (fileData.length < 8 + 24 + 32 + 8 || fileData.length > LocalModelBudget.MAX_BYTES) {
             throw new RuntimeException("Invalid public YSM file size (local limit: 64 MiB).");
         }
 
         int headerLength = 0;
-        while (headerLength < fileData.length && fileData[headerLength] != 0x00)
-        {
+        while (headerLength < fileData.length && fileData[headerLength] != 0x00) {
             headerLength++;
         }
 
         int tailOffset = fileData.length - 64;
-        if (headerLength > 65_536 || headerLength + 7 > tailOffset)
-        {
+        if (headerLength > 65_536 || headerLength + 7 > tailOffset) {
             throw new IllegalArgumentException("Invalid YSM header");
         }
 
@@ -42,15 +36,13 @@ public final class PublicYsmCodec
 
         CityHash ch = new CityHash();
         long calculatedHash = ch.hash64WithSeed(fileData, 0, fileData.length - 8, SEED_FILE_VERIFICATION);
-        if (calculatedHash != fileHash)
-        {
+        if (calculatedHash != fileHash) {
             throw new RuntimeException("Corrupted YSM file: File hash mismatch.");
         }
 
         int ptrBinaryData = headerLength + 1;
         int crypto = ByteBuffer.wrap(fileData, ptrBinaryData, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
-        if (crypto != 3)
-        {
+        if (crypto != 3) {
             throw new RuntimeException("Invalid YSM file: Crypto version is not 3.");
         }
         ptrBinaryData += 4;
@@ -65,8 +57,7 @@ public final class PublicYsmCodec
         byte[] xorredData = chachaDecrypted;
 
         //uint16_t n = xorred_data[0] | (xorred_data[1] << 8); n &= 0x3ff;
-        if (xorredData.length < 7)
-        {
+        if (xorredData.length < 7) {
             throw new IllegalArgumentException("Invalid YSM encrypted payload");
         }
 
@@ -77,8 +68,7 @@ public final class PublicYsmCodec
     }
 
     private static byte[] modifiedChaChaDecrypt(byte[] data, int dataOff, int dataLen, byte[] key, byte[] iv, long seed)
-            throws Exception
-    {
+            throws Exception {
         byte[] keyIv = new byte[56];
         System.arraycopy(key, 0, keyIv, 0, 32);
         System.arraycopy(iv, 0, keyIv, 32, 24);
@@ -95,17 +85,14 @@ public final class PublicYsmCodec
         byte[] result = new byte[dataLen];
         int blockPointer = 0;
 
-        while (blockPointer < dataLen)
-        {
-            if (blockPointer + nextRoundSize > dataLen)
-            {
+        while (blockPointer < dataLen) {
+            if (blockPointer + nextRoundSize > dataLen) {
                 nextRoundSize = dataLen - blockPointer;
             }
             ctx.processBytes(data, dataOff + blockPointer, result, blockPointer, nextRoundSize);
             blockPointer += nextRoundSize;
 
-            if (blockPointer < dataLen)
-            {
+            if (blockPointer < dataLen) {
                 long resHash = ch.hash64WithSeed(result, blockPointer - nextRoundSize, nextRoundSize, seed);
                 nextRoundSize = ctx.updateStateYSM(resHash);
             }
@@ -114,22 +101,19 @@ public final class PublicYsmCodec
         return result;
     }
 
-    private static void mt19937XorInPlace(byte[] data, byte[] currentKeyIv, long seedDerivation)
-    {
+    private static void mt19937XorInPlace(byte[] data, byte[] currentKeyIv, long seedDerivation) {
         mt19937XorInPlace(data, 0, data.length, currentKeyIv, seedDerivation);
     }
 
-    private static void mt19937XorInPlace(byte[] data, int offset, int length, byte[] currentKeyIv, long seedDerivation)
-    {
+    private static void mt19937XorInPlace(byte[] data, int offset, int length, byte[] currentKeyIv,
+            long seedDerivation) {
         long mtSeed = new CityHash().hash64WithSeed(currentKeyIv, seedDerivation);
         MT19937 mt = new MT19937(mtSeed);
 
         int i = 0;
-        while (i < length)
-        {
+        while (i < length) {
             long rnd = mt.extract_number();
-            for (int j = 0; j < 8 && i < length; ++j)
-            {
+            for (int j = 0; j < 8 && i < length; ++j) {
                 byte keystreamByte = (byte) ((rnd >>> (j * 8)) & 0xFF);
                 data[offset + i] = (byte) (data[offset + i] ^ keystreamByte);
                 i++;

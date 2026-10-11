@@ -10,8 +10,7 @@ import org.spongepowered.asm.mixin.Unique;
 import java.util.UUID;
 
 @Mixin(EntityRenderState.class)
-public abstract class EntityRenderStateMixin implements HiddenPlayerRenderState, ComponentRenderState
-{
+public abstract class EntityRenderStateMixin implements HiddenPlayerRenderState, ComponentRenderState {
     @Unique
     private boolean meplayeractions$hidden;
     @Unique
@@ -20,38 +19,32 @@ public abstract class EntityRenderStateMixin implements HiddenPlayerRenderState,
     private float meplayeractions$tickDelta;
 
     @Override
-    public boolean meplayeractions$isHidden()
-    {
+    public boolean meplayeractions$isHidden() {
         return this.meplayeractions$hidden;
     }
 
     @Override
-    public void meplayeractions$setHidden(boolean hidden)
-    {
+    public void meplayeractions$setHidden(boolean hidden) {
         this.meplayeractions$hidden = hidden;
     }
 
     @Override
-    public UUID meplayeractions$entityUuid()
-    {
+    public UUID meplayeractions$entityUuid() {
         return this.meplayeractions$entityUuid;
     }
 
     @Override
-    public void meplayeractions$entityUuid(UUID uuid)
-    {
+    public void meplayeractions$entityUuid(UUID uuid) {
         this.meplayeractions$entityUuid = uuid;
     }
 
     @Override
-    public float meplayeractions$tickDelta()
-    {
+    public float meplayeractions$tickDelta() {
         return this.meplayeractions$tickDelta;
     }
 
     @Override
-    public void meplayeractions$tickDelta(float tickDelta)
-    {
+    public void meplayeractions$tickDelta(float tickDelta) {
         this.meplayeractions$tickDelta = tickDelta;
     }
 }

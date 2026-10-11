@@ -13,14 +13,12 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class LocalModelBudgetTest
-{
+class LocalModelBudgetTest {
     @TempDir
     Path temporary;
 
     @Test
-    void validLocalNativeAssetsAboveNetworkBudgetDoNotNeedAShareableBundle() throws Exception
-    {
+    void validLocalNativeAssetsAboveNetworkBudgetDoNotNeedAShareableBundle() throws Exception {
         YsmFolderModel.Imported original = YsmFolderModel.bundledDefaultWithProfile(null);
         LinkedHashMap<String, byte[]> files = new LinkedHashMap<>(original.sourceFiles());
         byte[] sound = new byte[AssetTransfer.MAX_RAW + 1];
@@ -30,8 +28,7 @@ class LocalModelBudgetTest
         sound[3] = 'S';
         files.put("sounds/local-only.ogg", sound);
         Path root = this.temporary.resolve("large-model");
-        for (Map.Entry<String, byte[]> asset : files.entrySet())
-        {
+        for (Map.Entry<String, byte[]> asset : files.entrySet()) {
             Path target = root.resolve(asset.getKey());
             Files.createDirectories(target.getParent());
             Files.write(target, asset.getValue());
@@ -51,8 +48,7 @@ class LocalModelBudgetTest
     }
 
     @Test
-    void explicitLocalJsonEntryRetainsTheNetworkJsonBoundAndFiniteLocalBound() throws Exception
-    {
+    void explicitLocalJsonEntryRetainsTheNetworkJsonBoundAndFiniteLocalBound() throws Exception {
         byte[] original = NativeYsmFile.importModel(NativeYsmFileTest.model(), null).raw();
         byte[] padded = java.util.Arrays.copyOf(original, AssetTransfer.MAX_RAW + 1);
         java.util.Arrays.fill(padded, original.length, padded.length, (byte) ' ');

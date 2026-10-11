@@ -6,14 +6,12 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class ModelGalleryIndexTest
-{
+class ModelGalleryIndexTest {
     private static final List<String> MODELS = List.of("ysm:root", "ysm:pack/alice.ysm", "ysm:pack/sub/bob.zip",
             "ysm:pack/sub/charlie", "local:plain.bbmodel");
 
     @Test
-    void realDirectoriesHaveImmediateCardsAndRecursiveCounts()
-    {
+    void realDirectoriesHaveImmediateCardsAndRecursiveCounts() {
         List<ModelGalleryIndex.Folder> root = ModelGalleryIndex.folders(MODELS, "ysm/");
         assertEquals(List.of(new ModelGalleryIndex.Folder("ysm/pack/", "pack", 3)), root);
         assertEquals(List.of(new ModelGalleryIndex.Folder("ysm/pack/sub/", "sub", 2)),
@@ -25,8 +23,7 @@ class ModelGalleryIndexTest
     }
 
     @Test
-    void parentNavigationReturnsOneRealDirectoryAtATime()
-    {
+    void parentNavigationReturnsOneRealDirectoryAtATime() {
         assertEquals("ysm/pack/", ModelGalleryIndex.parent("ysm/pack/sub/"));
         assertEquals("ysm/", ModelGalleryIndex.parent("ysm/pack/"));
         assertEquals("", ModelGalleryIndex.parent("ysm/"));
@@ -34,8 +31,7 @@ class ModelGalleryIndexTest
     }
 
     @Test
-    void invalidPathsCannotCreateFolderCardsAndCaseDistinctPacksStayDistinct()
-    {
+    void invalidPathsCannotCreateFolderCardsAndCaseDistinctPacksStayDistinct() {
         assertEquals(List.of(),
                 ModelGalleryIndex.folders(List.of("ysm:../escape", "ysm:pack//name", "local:dir/test.bbmodel"), ""));
         assertFalse(ModelGalleryIndex.contains("ysm/", "ysm:../escape"));

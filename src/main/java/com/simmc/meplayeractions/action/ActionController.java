@@ -41,8 +41,7 @@ import com.simmc.meplayeractions.gameplay.PostureResolver.Posture;
 import org.bukkit.entity.Pig;
 import org.bukkit.entity.Pose;
 
-public final class ActionController
-{
+public final class ActionController {
     private final JavaPlugin plugin;
     private final Settings settings;
     private final ModelEngineBridge bridge;
@@ -64,19 +63,16 @@ public final class ActionController
     private final Deque<Session> emergencyCleanup = new ArrayDeque<>();
     private int ownedSessions, adoptedSessions, relationships, cleanupSessions;
 
-    public record Statistics(int active, int owned, int adopted, int relationships, int cleanupPending)
-    {
+    public record Statistics(int active, int owned, int adopted, int relationships, int cleanupPending) {
     }
 
     /** Cached counters; status never scans players, models or disk. */
-    public Statistics statistics()
-    {
+    public Statistics statistics() {
         return new Statistics(this.ownedSessions + this.adoptedSessions, this.ownedSessions, this.adoptedSessions,
                 this.relationships, this.cleanupSessions);
     }
 
-    private static final class Session
-    {
+    private static final class Session {
         final Player player;
         final Attachment attachment;
         final UUID instance = UUID.randomUUID();
@@ -109,8 +105,7 @@ public final class ActionController
         int audienceRelationships;
 
         Session(Player player, Attachment attachment, List<String> animations, Settings settings,
-                DisguiseOptions options)
-        {
+                DisguiseOptions options) {
             this.player = player;
             this.attachment = attachment;
             this.animations = List.copyOf(animations);
@@ -122,8 +117,7 @@ public final class ActionController
         }
     }
 
-    public ActionController(JavaPlugin plugin, Settings settings, ModelEngineBridge bridge, GameplayBackend gameplay)
-    {
+    public ActionController(JavaPlugin plugin, Settings settings, ModelEngineBridge bridge, GameplayBackend gameplay) {
         this.plugin = plugin;
         this.settings = settings;
         this.bridge = bridge;
@@ -132,33 +126,27 @@ public final class ActionController
         this.admission = new DisguiseAdmission(
                 this.resources == null ? 256 : this.resources.settings().maxServerDisguises(),
                 this.resources == null ? 20 : 0);
-        if (this.resources != null)
-        {
+        if (this.resources != null) {
             this.resources.gauge("models.serverActive", () -> this.ownedSessions + this.adoptedSessions);
             this.resources.gauge("models.serverOwned", () -> this.ownedSessions);
             this.resources.gauge("models.serverAdopted", () -> this.adoptedSessions);
             this.resources.gauge("models.serverRelations", () -> this.relationships);
             this.resources.gauge("models.serverCleanupPending", () -> this.cleanupSessions);
-            bridge.configureAudienceGuard(new ModelAudience.Guard()
-            {
-                public boolean discover()
-                {
+            bridge.configureAudienceGuard(new ModelAudience.Guard() {
+                public boolean discover() {
                     return ActionController.this.resources.acceptingNewWork()
                             && ActionController.this.resources.tryWork();
                 }
 
-                public Set<UUID> admit(UUID owner, Collection<UUID> requested)
-                {
+                public Set<UUID> admit(UUID owner, Collection<UUID> requested) {
                     return ActionController.this.resources.reserveRelationships("server", owner, requested);
                 }
 
-                public void release(UUID owner)
-                {
+                public void release(UUID owner) {
                     ActionController.this.resources.releaseRelationships("server", owner);
                 }
 
-                public void worked(long nanos)
-                {
+                public void worked(long nanos) {
                     ActionController.this.resources.recordWork(nanos);
                 }
             });
@@ -169,83 +157,67 @@ public final class ActionController
         this.preferences = YamlConfiguration.loadConfiguration(this.preferenceFile);
     }
 
-    public void clients(ClientSyncService clients)
-    {
+    public void clients(ClientSyncService clients) {
         this.clients = clients;
     }
 
-    public void start()
-    {
+    public void start() {
         this.task = Bukkit.getScheduler().runTaskTimer(this.plugin, this::tick, 1, 1);
     }
 
-    public List<String> models()
-    {
+    public List<String> models() {
         return this.bridge.modelIds();
     }
 
-    public boolean controlled(Player player)
-    {
+    public boolean controlled(Player player) {
         return this.sessions.containsKey(player.getUniqueId());
     }
 
-    public String modelId(Player player)
-    {
+    public String modelId(Player player) {
         return requireSession(player).attachment.modelId();
     }
 
-    public DisguiseOptions disguiseOptions(Player player)
-    {
+    public DisguiseOptions disguiseOptions(Player player) {
         return requireSession(player).options;
     }
 
-    public List<String> animations(Player player)
-    {
+    public List<String> animations(Player player) {
         return requireSession(player).animations.stream()
                 .filter(id -> !id.startsWith("parallel") && !id.startsWith("pre_parallel")).toList();
     }
 
-    public void disguise(Player player, String modelId)
-    {
+    public void disguise(Player player, String modelId) {
         disguise(player, DisguiseOptions.defaults(modelId, this.settings));
     }
 
-    public void disguise(Player player, DisguiseOptions options)
-    {
+    public void disguise(Player player, DisguiseOptions options) {
         this.clock = Integer.toUnsignedLong(Bukkit.getCurrentTick());
-        if (!options.effects().isEmpty())
-        {
+        if (!options.effects().isEmpty()) {
             permission(player, "mact.disguise.effects");
         }
 
         options.requireEffects(PaperEffectPort::supported);
-        if (!models().contains(options.modelId()))
-        {
+        if (!models().contains(options.modelId())) {
             throw new IllegalArgumentException(
                     "ModelEngine 未加载蓝图：" + options.modelId() + "；请检查 ME 模型注册，MPA models/ 目录只用于客户端下发。");
         }
 
         Session existing = this.sessions.get(player.getUniqueId());
-        if (existing != null && !existing.cleanupReason.isEmpty())
-        {
+        if (existing != null && !existing.cleanupReason.isEmpty()) {
             throw new IllegalStateException("伪装正在解除，请稍后重试");
         }
 
-        if (existing != null && !existing.attachment.owned())
-
-        {
+        if (existing != null && !existing.attachment.owned()) {
             throw new IllegalStateException("先用 /meg undisguise 解除原生伪装，再使用 /meplayeractions disguise");
         }
 
-        if (existing != null && existing.options.equals(options) && options.effects().isEmpty())
-        {
+        if (existing != null && existing.options.equals(options) && options.effects().isEmpty()) {
             return;
         }
 
         this.bridge.prepareRuntime(options.modelId());
         admit(player, existing != null);
-        if (existing != null)
-        {
+        if (existing != null) {
             remove(player, "model-change");
         }
 
@@ -253,18 +225,14 @@ public final class ActionController
         register(player, attached, options);
     }
 
-    public void attach(Player player, String modelId)
-    {
+    public void attach(Player player, String modelId) {
         this.clock = Integer.toUnsignedLong(Bukkit.getCurrentTick());
         Settings.id(modelId);
-        if (controlled(player))
-        {
+        if (controlled(player)) {
             throw new IllegalStateException("已有动作会话；先 /meplayeractions undisguise 释放");
         }
 
-        if (!this.bridge.existingModels(player).contains(modelId))
-
-        {
+        if (!this.bridge.existingModels(player).contains(modelId)) {
             throw new IllegalArgumentException("玩家未附着该 ModelEngine 模型：" + modelId + "；attach 仅管理现有模型。");
         }
 
@@ -273,51 +241,41 @@ public final class ActionController
         register(player, this.bridge.attachExisting(player, modelId));
     }
 
-    public void attach(Player player)
-    {
+    public void attach(Player player) {
         attach(player, this.bridge.uniqueAttachedModel(player));
     }
 
-    public List<String> existingModels(Player player)
-    {
+    public List<String> existingModels(Player player) {
         return this.bridge.existingModels(player);
     }
 
-    private void admit(Player player, boolean replacing)
-    {
+    private void admit(Player player, boolean replacing) {
         DisguiseAdmission.Rejection refused = this.admission.admit(player.getUniqueId(), replacing,
                 this.sessions.size(), this.clock);
-        if (refused != null)
-        {
-            if (this.resources != null)
-            {
+        if (refused != null) {
+            if (this.resources != null) {
                 this.resources.reject(refused.code());
             }
 
             throw new ResourceRejectedException(
                     new ResourceError(refused.code(), "disguise", true, refused.retryTicks()));
         }
-        if (this.resources != null)
-        {
+        if (this.resources != null) {
             ResourceError error = this.resources.tryDisguise(player.getUniqueId());
-            if (error != null)
-            {
+            if (error != null) {
                 throw new ResourceRejectedException(error);
             }
 
         }
     }
 
-    private void register(Player player, Attachment attachment)
-    {
+    private void register(Player player, Attachment attachment) {
         register(player, attachment, DisguiseOptions.defaults(attachment.modelId(), this.settings));
     }
 
-    private void register(Player player, Attachment attachment, DisguiseOptions options)
-    {
+    private void register(Player player, Attachment attachment, DisguiseOptions options) {
         Session session;
-        try
-        {
+        try {
             session = new Session(player, attachment, this.bridge.animations(attachment), this.settings, options);
             String jumpClip = this.settings.animation(attachment.modelId(), ActionState.JUMP, session.animations);
             double length = jumpClip == null ? 0.6 : this.bridge.animationLength(attachment, jumpClip);
@@ -326,28 +284,20 @@ public final class ActionController
                     : (int) Math.max(1,
                             Math.min(100, Math.ceil(length * 20 / jumpPlayback.speed()) + jumpPlayback.inTicks()));
             session.audienceRelationships = this.bridge.relationshipCount(attachment);
-        }
-        catch (RuntimeException failure)
-        {
+        } catch (RuntimeException failure) {
             // The bridge has already reserved an audience and attached the model;
             // initialization can fail before this controller can track its cleanup.
-            try
-            {
+            try {
                 this.bridge.release(attachment);
-            }
-            catch (RuntimeException cleanup)
-            {
+            } catch (RuntimeException cleanup) {
                 failure.addSuppressed(cleanup);
             }
             throw failure;
         }
         this.sessions.put(player.getUniqueId(), session);
-        if (attachment.owned())
-        {
+        if (attachment.owned()) {
             this.ownedSessions++;
-        }
-        else
-        {
+        } else {
             this.adoptedSessions++;
         }
 
@@ -355,43 +305,33 @@ public final class ActionController
         this.ownerIds = Set.copyOf(this.sessions.keySet());
         this.adoptWarning.remove(player.getUniqueId());
         this.adoptPaused.remove(player.getUniqueId());
-        try
-        {
+        try {
             session.effects.apply(options.effects(), this.clock);
             update(player, session);
             changed(session);
-            if (!this.bridge.compatibilityAnimations(attachment).isEmpty())
-            {
+            if (!this.bridge.compatibilityAnimations(attachment).isEmpty()) {
                 String diagnosis = this.bridge.compatibilityDiagnosis(attachment);
                 player.sendMessage("§e[动作] " + diagnosis + "。");
                 this.plugin.getLogger().info(player.getName() + "：" + diagnosis);
             }
-        }
-        catch (RuntimeException failure)
-        {
-            try
-            {
+        } catch (RuntimeException failure) {
+            try {
                 remove(player, "registration-failed");
-            }
-            catch (RuntimeException cleanup)
-            {
+            } catch (RuntimeException cleanup) {
                 failure.addSuppressed(cleanup);
             }
             throw failure;
         }
     }
 
-    public boolean remove(Player player, String reason)
-    {
-        if (reason.equals("quit") || reason.equals("offline"))
-        {
+    public boolean remove(Player player, String reason) {
+        if (reason.equals("quit") || reason.equals("offline")) {
             this.adoptPaused.remove(player.getUniqueId());
             this.adoptWarning.remove(player.getUniqueId());
             this.admission.forget(player.getUniqueId());
         }
         Session s = this.sessions.get(player.getUniqueId());
-        if (s == null)
-        {
+        if (s == null) {
             return false;
         }
 
@@ -400,18 +340,14 @@ public final class ActionController
         failure = attempt(failure,
                 () -> s.effects.clear(Integer.toUnsignedLong(Bukkit.getCurrentTick()), !reason.equals("death")));
         failure = attempt(failure, () -> this.gameplay.cleanup(player));
-        failure = attempt(failure, () ->
-        {
-            if (this.clients != null)
-            {
+        failure = attempt(failure, () -> {
+            if (this.clients != null) {
                 this.clients.unbind(player.getUniqueId(), s.instance, reason);
             }
         });
         failure = attempt(failure, () -> this.bridge.release(s.attachment));
-        if (failure != null)
-        {
-            if (s.cleanupReason.isEmpty())
-            {
+        if (failure != null) {
+            if (s.cleanupReason.isEmpty()) {
                 this.cleanupSessions++;
             }
 
@@ -421,37 +357,30 @@ public final class ActionController
         }
         this.sessions.remove(player.getUniqueId(), s);
         this.adoptWarning.remove(player.getUniqueId());
-        if (owned)
-        {
+        if (owned) {
             this.ownedSessions--;
-        }
-        else
-        {
+        } else {
             this.adoptedSessions--;
         }
 
-        if (!s.cleanupReason.isEmpty())
-        {
+        if (!s.cleanupReason.isEmpty()) {
             this.cleanupSessions--;
         }
 
         this.relationships -= s.audienceRelationships;
         this.ownerIds = Set.copyOf(this.sessions.keySet());
         this.visualOffsets.remove(s.attachment.activeModel());
-        if (!owned && reason.equals("command"))
-        {
+        if (!owned && reason.equals("command")) {
             this.adoptPaused.add(player.getUniqueId());
         }
 
         return owned;
     }
 
-    public void play(Player player, String name, Double speedOverride, LoopMode loopOverride)
-    {
+    public void play(Player player, String name, Double speedOverride, LoopMode loopOverride) {
         this.clock = Integer.toUnsignedLong(Bukkit.getCurrentTick());
         Session s = requireSession(player);
-        if (this.clock < s.nextManual)
-        {
+        if (this.clock < s.nextManual) {
             throw new IllegalStateException("动作切换过快，请稍后再试");
         }
 
@@ -460,18 +389,14 @@ public final class ActionController
         double speed;
         LoopMode loop;
         int limit;
-        if (action != null)
-        {
+        if (action != null) {
             permission(player, action.permission());
             clip = action.animation();
             speed = action.speed();
             loop = action.loop();
             limit = action.maxTicks();
-        }
-        else
-        {
-            if (!this.settings.rawPlay)
-            {
+        } else {
+            if (!this.settings.rawPlay) {
                 throw new IllegalArgumentException("动作未列入 custom-actions：" + name);
             }
 
@@ -481,27 +406,23 @@ public final class ActionController
             loop = LoopMode.ONCE;
             limit = this.settings.maxManualTicks;
         }
-        if (speedOverride != null)
-        {
+        if (speedOverride != null) {
             speed = speedOverride;
         }
 
-        if (loopOverride != null)
-        {
+        if (loopOverride != null) {
             loop = loopOverride;
         }
 
         this.settings.validateSpeed(speed);
-        if (!s.animations.contains(clip))
-        {
+        if (!s.animations.contains(clip)) {
             throw new IllegalArgumentException("当前模型没有动画：" + clip);
         }
 
         // Validate before replacing the old action.
         OwnedAnimation next = this.bridge.play(s.attachment, this.settings.manualPriority, clip, this.settings.inTicks,
                 this.settings.outTicks, speed, loop, true);
-        if (s.manual != null)
-        {
+        if (s.manual != null) {
             s.manual.stop(true);
         }
 
@@ -515,23 +436,19 @@ public final class ActionController
         changed(s);
     }
 
-    public void stop(Player player)
-    {
+    public void stop(Player player) {
         Session s = requireSession(player);
-        if (s.manual != null)
-        {
+        if (s.manual != null) {
             s.manual.stop(false);
             s.manual = null;
             changed(s);
         }
     }
 
-    public void reset(Player player, boolean safeDismount)
-    {
+    public void reset(Player player, boolean safeDismount) {
         Session s = this.sessions.get(player.getUniqueId());
         RuntimeException failure = attempt(null, () -> this.gameplay.cleanup(player, safeDismount));
-        if (s != null)
-        {
+        if (s != null) {
             failure = attempt(failure, () -> stopLayers(s));
             s.state = null;
             s.sample = null;
@@ -545,38 +462,31 @@ public final class ActionController
             s.visualFrame = null;
             this.visualOffsets.remove(s.attachment.activeModel());
         }
-        if (failure != null)
-        {
+        if (failure != null) {
             throw new IllegalStateException("重置部分失败，请查看日志", failure);
         }
 
     }
 
-    public void clearDisguiseEffects(Player player)
-    {
+    public void clearDisguiseEffects(Player player) {
         Session s = this.sessions.get(player.getUniqueId());
-        if (s != null)
-        {
+        if (s != null) {
             s.effects.clear(Integer.toUnsignedLong(Bukkit.getCurrentTick()), true);
         }
 
     }
 
-    public void potionChanged(Player player, String id, boolean expiration)
-    {
+    public void potionChanged(Player player, String id, boolean expiration) {
         Session s = this.sessions.get(player.getUniqueId());
-        if (s != null)
-        {
+        if (s != null) {
             s.effects.changed(id, expiration);
         }
 
     }
 
-    public void sit(Player player)
-    {
+    public void sit(Player player) {
         Session s = requireSession(player);
-        if (syncEnabled(player, SyncFeature.SIT))
-        {
+        if (syncEnabled(player, SyncFeature.SIT)) {
             requireAnimation(s, ActionState.SIT);
         }
 
@@ -584,11 +494,9 @@ public final class ActionController
         update(player, s);
     }
 
-    public void crawl(Player player)
-    {
+    public void crawl(Player player) {
         Session s = requireSession(player);
-        if (syncEnabled(player, SyncFeature.CRAWL))
-        {
+        if (syncEnabled(player, SyncFeature.CRAWL)) {
             requireAnimation(s, ActionState.CRAWL_IDLE);
         }
 
@@ -596,124 +504,98 @@ public final class ActionController
         update(player, s);
     }
 
-    public void flight(Player player, boolean enabled)
-    {
+    public void flight(Player player, boolean enabled) {
         requireSession(player);
-        if (enabled)
-        {
+        if (enabled) {
             permission(player, "mact.flight");
-            if (!this.settings.allowFlight)
-            {
+            if (!this.settings.allowFlight) {
                 throw new IllegalStateException("管理员需开启 gameplay.allow-flight-command");
             }
 
             this.gameplay.enableFlight(player, this.settings.flightSpeed);
-        }
-        else
-        {
+        } else {
             this.gameplay.disableOwnedFlight(player);
         }
 
         update(player, requireSession(player));
     }
 
-    public void damaged(Player player)
-    {
-        if (this.settings.interruptDamage && controlled(player))
-        {
+    public void damaged(Player player) {
+        if (this.settings.interruptDamage && controlled(player)) {
             stop(player);
         }
 
     }
 
-    public void swung(Player player, EquipmentSlot hand)
-    {
+    public void swung(Player player, EquipmentSlot hand) {
         Session s = this.sessions.get(player.getUniqueId());
-        if (s != null)
-        {
+        if (s != null) {
             s.interactions.swing(hand == EquipmentSlot.OFF_HAND, Integer.toUnsignedLong(Bukkit.getCurrentTick()));
         }
 
     }
 
-    public void mining(Player player, Block block)
-    {
+    public void mining(Player player, Block block) {
         Session s = this.sessions.get(player.getUniqueId());
-        if (s != null)
-        {
+        if (s != null) {
             s.interactions.startMining(target(block), Integer.toUnsignedLong(Bukkit.getCurrentTick()));
         }
 
     }
 
-    public void miningStopped(Player player, Block block)
-    {
+    public void miningStopped(Player player, Block block) {
         Session s = this.sessions.get(player.getUniqueId());
-        if (s != null)
-        {
+        if (s != null) {
             s.interactions.stopMining(target(block));
         }
 
     }
 
-    public void clearInteractions(Player player)
-    {
+    public void clearInteractions(Player player) {
         Session s = this.sessions.get(player.getUniqueId());
-        if (s != null)
-        {
+        if (s != null) {
             s.interactions.clear();
         }
 
     }
 
-    public void jumped(Player player)
-    {
+    public void jumped(Player player) {
         Session s = this.sessions.get(player.getUniqueId());
-        if (s != null)
-        {
+        if (s != null) {
             s.jump.signal(Integer.toUnsignedLong(Bukkit.getCurrentTick()));
             s.nextSample = 0;
         }
     }
 
     /** ME can call this on its renderer thread: only immutable offsets and model data are read. */
-    public void visualTransform(BoneTransformReadEvent event)
-    {
+    public void visualTransform(BoneTransformReadEvent event) {
         ActiveModel model = event.getModelBone().getActiveModel();
         VisualOffset offset = this.visualOffsets.get(model);
-        if (offset != null)
-        {
+        if (offset != null) {
             offset.apply(event.getPosition(), model.getYBodyRot());
         }
 
     }
 
-    private static InteractionTracker.Target target(Block block)
-    {
+    private static InteractionTracker.Target target(Block block) {
         return block == null ? null
                 : new InteractionTracker.Target(block.getWorld().getUID(), block.getX(), block.getY(), block.getZ());
     }
 
-    public boolean syncEnabled(Player player, SyncFeature feature)
-    {
+    public boolean syncEnabled(Player player, SyncFeature feature) {
         return this.settings.syncEnabled && this.settings.sync(feature)
                 && this.preferences.getBoolean(player.getUniqueId() + "." + feature.key(), true);
     }
 
-    public void synchronization(Player player, SyncFeature feature, Boolean value)
-    {
+    public void synchronization(Player player, SyncFeature feature, Boolean value) {
         this.preferences.set(player.getUniqueId() + "." + feature.key(), value);
-        try
-        {
+        try {
             this.preferences.save(this.preferenceFile);
-        }
-        catch (IOException ex)
-        {
+        } catch (IOException ex) {
             throw new IllegalStateException("无法保存玩家同步偏好", ex);
         }
         Session s = this.sessions.get(player.getUniqueId());
-        if (s != null)
-        {
+        if (s != null) {
             clearPosture(s);
             clearInteraction(s);
             s.interactions.clear();
@@ -727,8 +609,7 @@ public final class ActionController
         }
     }
 
-    public List<String> debug(Player player)
-    {
+    public List<String> debug(Player player) {
         Session s = requireSession(player);
         ModelEngineBridge.LocalRenderingDiagnosis localRendering = this.bridge.localRenderingDiagnosis(s.attachment);
         List<String> lines = new ArrayList<>(List.of("§e服务器伪装（ME 蓝图）：§f" + s.attachment.modelId(),
@@ -755,39 +636,32 @@ public final class ActionController
         lines.addAll(
                 ServerMessages.wrapped("§7指令参数：", s.attachment.owned() ? s.options.description() : "保留原生 ME 伪装参数"));
         lines.add("§7受管药水：" + s.effects.activeIds());
-        if (this.clients == null)
-        {
+        if (this.clients == null) {
             lines.add("§7客户端接管服务未启用；ME 继续渲染。");
         }
 
-        else
-        {
+        else {
             lines.addAll(this.clients.statusLines(player));
         }
 
-        if (!s.failure.isEmpty())
-        {
+        if (!s.failure.isEmpty()) {
             lines.add("最近动作失败：" + s.failure);
         }
 
-        if (s.attachment.owned())
-        {
+        if (s.attachment.owned()) {
             lines.add("模型观众：" + this.bridge.viewerCount(s.attachment) + "/" + s.options.maxViewers()
                     + " 名其他玩家（最近者优先，受 ME 跟踪/剔除限制）；本人可见 " + s.options.showSelf());
         }
 
-        if (s.state != null)
-        {
+        if (s.state != null) {
             List<String> candidates = this.settings.animationCandidates(s.attachment.modelId(), s.state);
             String resolved = this.settings.animation(s.attachment.modelId(), s.state, s.animations);
             lines.add("动画映射：" + s.state.key() + " → " + candidates + "；实际命中：" + (resolved == null ? "无" : resolved));
-            if (resolved == null)
-            {
+            if (resolved == null) {
                 lines.add(candidates.isEmpty() ? "未播放原因：配置禁用了此映射" : "未播放原因：当前实例缺少全部候选动画；检查重复同名 bbmodel 和模型重载结果");
             }
 
-            else
-            {
+            else {
                 lines.add("动画来源：" + this.bridge.animationSource(s.attachment, resolved) + "；播放层："
                         + (s.posture == null ? "已退出（候选动画存在）" : s.posture.status()));
             }
@@ -797,165 +671,124 @@ public final class ActionController
         return lines;
     }
 
-    public List<StateSnapshot> snapshots()
-    {
+    public List<StateSnapshot> snapshots() {
         return this.sessions.values().stream().filter(session -> session.cleanupReason.isEmpty()).map(this::snapshot)
                 .toList();
     }
 
     /** Immutable owner membership, rebuilt only when a session is added or removed. */
-    public Set<UUID> ownerIds()
-    {
+    public Set<UUID> ownerIds() {
         return this.ownerIds;
     }
 
     /** Build only the requested owner's current state; absent sessions have no snapshot. */
-    public StateSnapshot snapshot(UUID owner)
-    {
+    public StateSnapshot snapshot(UUID owner) {
         Session session = this.sessions.get(owner);
         return session == null || !session.cleanupReason.isEmpty() ? null : snapshot(session);
     }
 
-    public boolean canView(Player viewer, UUID owner)
-    {
+    public boolean canView(Player viewer, UUID owner) {
         Session session = this.sessions.get(owner);
         return session != null && session.cleanupReason.isEmpty() && this.bridge.isAttached(session.attachment)
                 && this.bridge.canView(session.attachment, viewer.getUniqueId());
     }
 
-    public boolean localRendering(UUID viewer, UUID owner, UUID instance, boolean enabled)
-    {
+    public boolean localRendering(UUID viewer, UUID owner, UUID instance, boolean enabled) {
         Session session = this.sessions.get(owner);
-        if (session == null || !session.instance.equals(instance))
-        {
+        if (session == null || !session.instance.equals(instance)) {
             return !enabled;
         }
 
         return this.bridge.localRendering(session.attachment, viewer, enabled);
     }
 
-    private void tick()
-    {
+    private void tick() {
         this.clock = Integer.toUnsignedLong(Bukkit.getCurrentTick());
         int cleanupRemaining = (this.resources == null ? 2
                 : Math.max(1, this.resources.settings().emergencyRemovalsPerTick())) - emergencyCleanup();
-        for (Session s : List.copyOf(this.sessions.values()))
-        {
+        for (Session s : List.copyOf(this.sessions.values())) {
             Player player = Bukkit.getPlayer(s.attachment.playerId());
-            try
-            {
-                if (!s.cleanupReason.isEmpty())
-                {
-                    if (this.clock >= s.nextCleanup && cleanupRemaining-- > 0)
-                    {
+            try {
+                if (!s.cleanupReason.isEmpty()) {
+                    if (this.clock >= s.nextCleanup && cleanupRemaining-- > 0) {
                         remove(s.player, s.cleanupReason);
                     }
 
                     continue;
                 }
-                if (player == null || !player.isOnline())
-                {
+                if (player == null || !player.isOnline()) {
                     remove(s.player, "offline");
                     continue;
                 }
-                if (!this.bridge.isAttached(s.attachment))
-                {
+                if (!this.bridge.isAttached(s.attachment)) {
                     remove(player, "external-undisguise");
                     continue;
                 }
-                if (this.bridge.updateAudience(s.attachment))
-                {
+                if (this.bridge.updateAudience(s.attachment)) {
                     int count = this.bridge.relationshipCount(s.attachment);
                     this.relationships += count - s.audienceRelationships;
                     s.audienceRelationships = count;
                     changed(s);
                 }
                 long started = System.nanoTime();
-                try
-                {
+                try {
                     s.effects.tick(this.clock);
                     update(player, s, false);
                     this.bridge.updateExpressions(s.attachment, this.clock, this.settings.posturePriority,
                             this.settings.manualPriority);
-                }
-                finally
-                {
-                    if (this.resources != null)
-                    {
+                } finally {
+                    if (this.resources != null) {
                         this.resources.recordWork(System.nanoTime() - started);
                     }
                 }
-            }
-            catch (RuntimeException ex)
-            {
-                if (!Objects.equals(ex.getMessage(), s.failure))
-                {
+            } catch (RuntimeException ex) {
+                if (!Objects.equals(ex.getMessage(), s.failure)) {
                     this.plugin.getLogger().warning("动作更新失败 " + s.player.getName() + ": " + ex.getMessage());
                 }
 
                 s.failure = Objects.toString(ex.getMessage(), ex.getClass().getSimpleName());
             }
         }
-        if (this.settings.adoptOriginal && (this.resources == null || this.resources.acceptingNewWork()))
-        {
-            for (Player player : this.adoption.next(this.clock, Bukkit::getOnlinePlayers))
-            {
-                if (this.resources != null && !this.resources.tryWork())
-                {
+        if (this.settings.adoptOriginal && (this.resources == null || this.resources.acceptingNewWork())) {
+            for (Player player : this.adoption.next(this.clock, Bukkit::getOnlinePlayers)) {
+                if (this.resources != null && !this.resources.tryWork()) {
                     break;
                 }
 
                 if (!player.isOnline() || controlled(player) || this.adoptPaused.contains(player.getUniqueId())
-                        || !player.hasPermission("mact.use"))
-                {
+                        || !player.hasPermission("mact.use")) {
                     continue;
                 }
 
                 List<String> nativeModels = this.bridge.existingModels(player);
-                if (nativeModels.isEmpty())
-                {
+                if (nativeModels.isEmpty()) {
                     continue;
                 }
 
-                try
-                {
+                try {
                     this.bridge.prepareRuntime(nativeModels.getFirst());
                     admit(player, false);
-                }
-                catch (ResourceRejectedException refused)
-                {
+                } catch (ResourceRejectedException refused) {
                     continue;
                 }
                 long started = System.nanoTime();
-                try
-                {
-                    for (String model : nativeModels)
-                    {
-                        try
-                        {
+                try {
+                    for (String model : nativeModels) {
+                        try {
                             register(player, this.bridge.attachExisting(player, model));
                             break;
-                        }
-                        catch (IllegalArgumentException ignored)
-                        {
-                            /* This model is not attached. */ }
-                        catch (IllegalStateException ex)
-                        {
+                        } catch (IllegalArgumentException ignored) {
+                            /* This model is not attached. */ } catch (IllegalStateException ex) {
                             if (Objects.toString(ex.getMessage(), "").contains("state_machine")
-                                    && this.adoptWarning.add(player.getUniqueId()))
-
-                            {
+                                    && this.adoptWarning.add(player.getUniqueId())) {
                                 player.sendMessage(
                                         "§e[动作] 原生伪装不是状态机。请重新用 /meplayeractions disguise，或启用 ME 的 Use-State-Machine 后重新伪装。");
                             }
 
                         }
                     }
-                }
-                finally
-                {
-                    if (this.resources != null)
-                    {
+                } finally {
+                    if (this.resources != null) {
                         this.resources.recordWork(System.nanoTime() - started);
                     }
                 }
@@ -963,20 +796,16 @@ public final class ActionController
         }
     }
 
-    private int emergencyCleanup()
-    {
-        if (this.resources == null)
-        {
+    private int emergencyCleanup() {
+        if (this.resources == null) {
             return 0;
         }
 
         ResourceProtection.State state = this.resources.state();
-        if (state != this.previousProtection)
-        {
+        if (state != this.previousProtection) {
             this.emergencyCleanup.clear();
-            if (state == ResourceProtection.State.EMERGENCY && this.resources.settings().emergencyRemovalsPerTick() > 0)
-
-            {
+            if (state == ResourceProtection.State.EMERGENCY
+                    && this.resources.settings().emergencyRemovalsPerTick() > 0) {
                 this.sessions.values().stream().filter(session -> session.attachment.owned())
                         .sorted(Comparator
                                 .comparingInt((Session session) -> session.attachment.activeModel().getBones().size()
@@ -987,47 +816,38 @@ public final class ActionController
 
             this.previousProtection = state;
         }
-        if (state != ResourceProtection.State.EMERGENCY)
-        {
+        if (state != ResourceProtection.State.EMERGENCY) {
             return 0;
         }
 
         int attempts = 0;
         for (int remaining = this.resources.settings().emergencyRemovalsPerTick(); remaining > 0
-                && !this.emergencyCleanup.isEmpty(); remaining--)
-        {
+                && !this.emergencyCleanup.isEmpty(); remaining--) {
             Session session = this.emergencyCleanup.removeFirst();
-            if (this.sessions.get(session.player.getUniqueId()) != session)
-            {
+            if (this.sessions.get(session.player.getUniqueId()) != session) {
                 continue;
             }
 
-            if (!session.cleanupReason.isEmpty() && this.clock < session.nextCleanup)
-            {
+            if (!session.cleanupReason.isEmpty() && this.clock < session.nextCleanup) {
                 this.emergencyCleanup.addLast(session);
                 continue;
             }
             attempts++;
-            try
-            {
+            try {
                 remove(session.player, "resource-emergency");
-            }
-            catch (RuntimeException failure)
-            {
+            } catch (RuntimeException failure) {
                 this.emergencyCleanup.addLast(session);
             }
         }
         return attempts;
     }
 
-    private void update(Player player, Session s)
-    {
+    private void update(Player player, Session s) {
         this.clock = Integer.toUnsignedLong(Bukkit.getCurrentTick());
         update(player, s, true);
     }
 
-    private StateSelector.Sample sample(Player player, Session s)
-    {
+    private StateSelector.Sample sample(Player player, Session s) {
         Location now = player.getLocation();
         Input input = player.getCurrentInput();
         boolean moveInput = input.isForward() || input.isBackward() || input.isLeft() || input.isRight()
@@ -1038,8 +858,7 @@ public final class ActionController
         s.bedAnchor = BedAnchor.observe(player);
         s.gsitAnchor = this.gameplay.visualAnchor(player);
         s.inputInterrupt = input.isJump() || input.isSneak();
-        if (s.interactions.target() != null)
-        {
+        if (s.interactions.target() != null) {
             s.interactions.validateTarget(target(player.getTargetBlockExact(6)));
         }
 
@@ -1051,33 +870,28 @@ public final class ActionController
         return s.sample;
     }
 
-    private void update(Player player, Session s, boolean immediate)
-    {
+    private void update(Player player, Session s, boolean immediate) {
         this.gameplay.syncPoseReplica(player, s.attachment.owned() && s.options.hideSelf());
-        if (immediate || s.sample == null || this.clock >= s.nextSample)
-        {
+        if (immediate || s.sample == null || this.clock >= s.nextSample) {
             sample(player, s);
         }
 
         StateSelector.Sample sample = s.sample;
         if (s.manual != null && (s.manual.isFinished() || this.clock - s.manualStarted >= s.manualLimit
                 || (this.settings.interruptMove && (sample.moving() || s.inputInterrupt))
-                || (this.settings.interruptPosture && !s.manualPosture.equals(sample.postureKey()))))
-        {
+                || (this.settings.interruptPosture && !s.manualPosture.equals(sample.postureKey())))) {
             s.manual.stop(false);
             s.manual = null;
             changed(s);
         }
-        if (s.manual != null || sample.sleeping())
-        {
+        if (s.manual != null || sample.sleeping()) {
             s.interactions.clear();
         }
 
         Location location = player.getLocation();
-        if (s.lastVisualLocation != null
-                && (s.lastVisualLocation.getWorld() != location.getWorld() || s.lastVisualLocation
-                        .distanceSquared(location) > this.settings.visualMaxDistance * this.settings.visualMaxDistance))
-        {
+        if (s.lastVisualLocation != null && (s.lastVisualLocation.getWorld() != location.getWorld()
+                || s.lastVisualLocation.distanceSquared(location) > this.settings.visualMaxDistance
+                        * this.settings.visualMaxDistance)) {
             s.jump.reset();
             s.visual.clear();
         }
@@ -1107,42 +921,34 @@ public final class ActionController
                 s.visualFrame.headPitch());
         this.visualOffsets.put(s.attachment.activeModel(), new VisualOffset(s.visualFrame.x() - location.getX(),
                 s.visualFrame.y() - location.getY(), s.visualFrame.z() - location.getZ()));
-        if (!immediate && this.clock < s.nextAnimation)
-        {
+        if (!immediate && this.clock < s.nextAnimation) {
             return;
         }
 
         s.nextAnimation = this.clock + this.settings.animationInterval;
         ActionState next = StateSelector.select(s.visualFrame.pose(), f -> syncEnabled(player, f), s.visualFrame.air());
-        if ((sample.postureKey().equals("standing") || sample.postureKey().equals("sneak")) && player.isClimbing())
-
-        {
+        if ((sample.postureKey().equals("standing") || sample.postureKey().equals("sneak")) && player.isClimbing()) {
             next = syncEnabled(player, SyncFeature.MOVEMENT)
                     ? (Math.abs(rise) > this.settings.movementThreshold ? ActionState.LADDER_MOVE
                             : ActionState.LADDER_IDLE)
                     : null;
         }
 
-        if (next == ActionState.RIDE && player.getVehicle() instanceof Pig)
-        {
+        if (next == ActionState.RIDE && player.getVehicle() instanceof Pig) {
             next = ActionState.RIDE_PIG;
         }
 
         boolean newJump = next == ActionState.JUMP && s.appliedJumpCycle != s.visualFrame.jumpCycle();
         if (newJump || next != s.state
                 || (s.posture == null && next != null && this.settings.playback(next).loop() != LoopMode.ONCE
-                        && this.settings.animation(s.attachment.modelId(), next, s.animations) != null))
-        {
+                        && this.settings.animation(s.attachment.modelId(), next, s.animations) != null)) {
             String clip = next == null ? null : this.settings.animation(s.attachment.modelId(), next, s.animations);
             Settings.Playback playback = next == null ? null : this.settings.playback(next);
-            if (next != null && clip == null && s.missingMappings.add(next))
-            {
+            if (next != null && clip == null && s.missingMappings.add(next)) {
                 String reason = this.settings.animationCandidates(s.attachment.modelId(), next).isEmpty() ? "配置禁用了映射"
                         : "模型没有候选动画";
                 String message = "模型 " + s.attachment.modelId() + " 的 " + next.key() + " 未播放：" + reason;
-                if (next == ActionState.CRAWL_IDLE || next == ActionState.CRAWL_WALK)
-
-                {
+                if (next == ActionState.CRAWL_IDLE || next == ActionState.CRAWL_WALK) {
                     message += "。请更新安装包内对应 bbmodel，/meg reload models 后重新伪装；不要映射到直立 climb";
                 }
 
@@ -1150,15 +956,12 @@ public final class ActionController
                 this.plugin.getLogger().warning(message);
             }
             OwnedAnimation nextAnimation = null;
-            if (!newJump && samePlayback(s.posture, clip, playback))
-            {
+            if (!newJump && samePlayback(s.posture, clip, playback)) {
                 nextAnimation = s.posture;
             }
 
-            else
-            {
-                if (clip != null)
-                {
+            else {
+                if (clip != null) {
                     nextAnimation = this.bridge.play(s.attachment, this.settings.posturePriority, clip,
                             playback.inTicks(), playback.outTicks(), playback.speed(), playback.loop(), true);
                 }
@@ -1168,16 +971,13 @@ public final class ActionController
             }
             s.state = next;
             s.posture = nextAnimation;
-            if (next == ActionState.JUMP)
-            {
+            if (next == ActionState.JUMP) {
                 s.appliedJumpCycle = s.visualFrame.jumpCycle();
             }
 
             s.failure = "";
             changed(s);
-        }
-        else if (s.posture != null && s.posture.isFinished())
-        {
+        } else if (s.posture != null && s.posture.isFinished()) {
             s.posture.stop(false);
             s.posture = null;
             changed(s);
@@ -1185,27 +985,23 @@ public final class ActionController
         updateInteraction(player, s);
     }
 
-    private static boolean samePlayback(OwnedAnimation current, String clip, Settings.Playback playback)
-    {
+    private static boolean samePlayback(OwnedAnimation current, String clip, Settings.Playback playback) {
         return current != null && playback != null && !current.isFinished() && current.animation().equals(clip)
                 && current.speed() == playback.speed() && current.loop() == playback.loop()
                 && current.inTicks() == playback.inTicks() && current.outTicks() == playback.outTicks();
     }
 
-    private void updateInteraction(Player player, Session s)
-    {
+    private void updateInteraction(Player player, Session s) {
         ActionState next = s.interactions.select(this.clock, syncEnabled(player, SyncFeature.MINING),
                 syncEnabled(player, SyncFeature.SWING));
-        if (s.manual != null || s.sample.sleeping())
-        {
+        if (s.manual != null || s.sample.sleeping()) {
             next = null;
         }
 
         boolean finished = s.interaction != null && s.interaction.isFinished();
         boolean newSwing = s.lastSwing != s.interactions.swingSequence();
         if (next != s.interactionState || (next != null && (finished || s.interaction == null) && newSwing)
-                || (next == ActionState.MINING && finished))
-        {
+                || (next == ActionState.MINING && finished)) {
             String clip = next == null ? null : this.settings.animation(s.attachment.modelId(), next, s.animations);
             Settings.Playback playback = next == null ? null : this.settings.playback(next);
             OwnedAnimation nextAnimation = clip == null ? null
@@ -1217,133 +1013,103 @@ public final class ActionController
             s.interactionStarted = this.clock;
             s.lastSwing = s.interactions.swingSequence();
             changed(s);
-        }
-        else if (finished)
-        {
+        } else if (finished) {
             clearInteraction(s);
             changed(s);
         }
     }
 
-    private void clearInteraction(Session s)
-    {
-        if (s.interaction != null)
-        {
+    private void clearInteraction(Session s) {
+        if (s.interaction != null) {
             s.interaction.stop(false);
             s.interaction = null;
         }
     }
 
-    private void requireAnimation(Session s, ActionState state)
-    {
-        if (this.settings.animation(s.attachment.modelId(), state, s.animations) == null)
-
-        {
+    private void requireAnimation(Session s, ActionState state) {
+        if (this.settings.animation(s.attachment.modelId(), state, s.animations) == null) {
             throw new IllegalArgumentException("模型缺少 " + state.key() + " 动画；请安装玩家模型或关闭对应姿态同步");
         }
 
     }
 
-    private Session requireSession(Player player)
-    {
+    private Session requireSession(Player player) {
         Session s = this.sessions.get(player.getUniqueId());
-        if (s == null)
-        {
+        if (s == null) {
             throw new IllegalStateException("先使用 /meplayeractions disguise，或 /meplayeractions attach <模型名>");
         }
 
-        if (!s.cleanupReason.isEmpty())
-        {
+        if (!s.cleanupReason.isEmpty()) {
             throw new IllegalStateException("伪装正在解除，请稍后重试");
         }
 
-        if (!this.bridge.isAttached(s.attachment))
-        {
+        if (!this.bridge.isAttached(s.attachment)) {
             throw new IllegalStateException("伪装已被解除，请重新伪装");
         }
 
         return s;
     }
 
-    private void clearPosture(Session s)
-    {
+    private void clearPosture(Session s) {
         clearPosture(s, false);
     }
 
-    private void clearPosture(Session s, boolean immediate)
-    {
-        if (s.posture != null)
-        {
+    private void clearPosture(Session s, boolean immediate) {
+        if (s.posture != null) {
             s.posture.stop(immediate);
             s.posture = null;
         }
     }
 
-    private void stopLayers(Session s)
-    {
+    private void stopLayers(Session s) {
         RuntimeException failure = attempt(null, () -> clearPosture(s, true));
         failure = attempt(failure, () -> clearInteraction(s));
         s.interactions.clear();
         s.interactionState = null;
-        failure = attempt(failure, () ->
-        {
-            if (s.manual != null)
-            {
+        failure = attempt(failure, () -> {
+            if (s.manual != null) {
                 s.manual.stop(true);
                 s.manual = null;
             }
         });
-        if (failure != null)
-        {
+        if (failure != null) {
             throw failure;
         }
 
     }
 
-    private static RuntimeException attempt(RuntimeException first, Runnable step)
-    {
-        try
-        {
+    private static RuntimeException attempt(RuntimeException first, Runnable step) {
+        try {
             step.run();
-        }
-        catch (RuntimeException next)
-        {
-            if (first == null)
-            {
+        } catch (RuntimeException next) {
+            if (first == null) {
                 return next;
             }
-            if (first != next)
-            {
+            if (first != next) {
                 first.addSuppressed(next);
             }
         }
         return first;
     }
 
-    private void changed(Session s)
-    {
+    private void changed(Session s) {
         s.sequence++;
-        if (this.clients != null)
-        {
+        if (this.clients != null) {
             this.clients.broadcast(snapshot(s));
         }
     }
 
-    private StateSnapshot snapshot(Session s)
-    {
+    private StateSnapshot snapshot(Session s) {
         List<LayerState> layers = new ArrayList<>();
-        if (s.posture != null)
-        {
+        if (s.posture != null) {
             layers.add(layer("posture", s.posture, s.postureStarted));
         }
 
-        if (s.interaction != null)
-        {
+        if (s.interaction != null) {
             layers.add(layer("interaction", s.interaction, s.interactionStarted));
         }
 
-        if (s.manual != null)
-        {
+        if (s.manual != null) {
             layers.add(layer("manual", s.manual, s.manualStarted));
         }
 
@@ -1361,17 +1127,14 @@ public final class ActionController
                 motion(s, location), this.bridge.accessories(s.attachment));
     }
 
-    private MotionState motion(Session s, Location location)
-    {
+    private MotionState motion(Session s, Location location) {
         List<String> features = Arrays.stream(SyncFeature.values()).filter(f -> syncEnabled(s.player, f))
                 .map(SyncFeature::key).toList();
         List<LayerState> clips = new ArrayList<>();
-        for (ActionState state : ActionState.values())
-        {
+        for (ActionState state : ActionState.values()) {
             String animation = this.settings.animation(s.attachment.modelId(), state, s.animations);
             Settings.Playback playback = this.settings.playback(state);
-            if (animation != null)
-            {
+            if (animation != null) {
                 clips.add(new LayerState(state.key(), animation, 0, playback.speed(), playback.loop().name(),
                         playback.inTicks(), playback.outTicks()));
             }
@@ -1394,35 +1157,26 @@ public final class ActionController
                 anchored ? anchor.z() - location.getZ() : 0, anchored ? anchor.bodyYaw() : 0);
     }
 
-    private static LayerState layer(String name, OwnedAnimation a, long tick)
-    {
+    private static LayerState layer(String name, OwnedAnimation a, long tick) {
         return new LayerState(name, a.animation(), tick, a.speed(), a.loop().name(), a.inTicks(), a.outTicks());
     }
 
-    public static void permission(Player player, String node)
-    {
-        if (!node.isEmpty() && !player.hasPermission(node))
-        {
+    public static void permission(Player player, String node) {
+        if (!node.isEmpty() && !player.hasPermission(node)) {
             throw new IllegalStateException("缺少权限：" + node);
         }
 
     }
 
-    public void close()
-    {
-        if (this.task != null)
-        {
+    public void close() {
+        if (this.task != null) {
             this.task.cancel();
         }
 
-        for (Session s : List.copyOf(this.sessions.values()))
-        {
-            try
-            {
+        for (Session s : List.copyOf(this.sessions.values())) {
+            try {
                 remove(s.player, "plugin-close");
-            }
-            catch (RuntimeException ex)
-            {
+            } catch (RuntimeException ex) {
                 this.plugin.getLogger().warning("会话清理失败：" + ex.getMessage());
             }
         }

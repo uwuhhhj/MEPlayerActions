@@ -4,27 +4,21 @@ import java.util.*;
 import java.util.function.Consumer;
 
 /** Bounded Molang evaluator. Whitelisted bindings never execute host-language code. */
-public final class Molang
-{
-    private Molang()
-    {
+public final class Molang {
+    private Molang() {
     }
 
-    private interface Node
-    {
+    private interface Node {
         Object eval(Context context);
     }
 
     @FunctionalInterface
-    public interface FunctionResolver
-    {
+    public interface FunctionResolver {
         Object call(String name, List<Object> arguments);
     }
 
-    public record VectorValue(double x, double y, double z)
-    {
-        public VectorValue
-        {
+    public record VectorValue(double x, double y, double z) {
+        public VectorValue {
             x = finite(x);
             y = finite(y);
             z = finite(z);
@@ -32,8 +26,7 @@ public final class Molang
     }
 
     /** Author structs, including live bone vectors. These are bindings, never arbitrary host objects. */
-    public interface StructValue
-    {
+    public interface StructValue {
         Object getProperty(String name);
 
         void putProperty(String name, Object value);
@@ -43,104 +36,85 @@ public final class Molang
 
     /** A query such as projectile_owner can explicitly expose a bounded child query context. */
     @FunctionalInterface
-    public interface ContextValue
-    {
+    public interface ContextValue {
         Context context();
     }
 
-    public static final class MapStruct implements StructValue
-    {
+    public static final class MapStruct implements StructValue {
         private final Map<String, Object> properties = new HashMap<>();
 
-        public Object getProperty(String name)
-        {
+        public Object getProperty(String name) {
             return this.properties.get(name);
         }
 
-        public void putProperty(String name, Object value)
-        {
-            if (value instanceof StructValue)
-            {
+        public void putProperty(String name, Object value) {
+            if (value instanceof StructValue) {
                 return;
             }
             // Upstream forbids nested author structs.
-            if (!this.properties.containsKey(name) && this.properties.size() >= 256)
-            {
+            if (!this.properties.containsKey(name) && this.properties.size() >= 256) {
                 throw invalid("Struct property limit exceeded");
             }
 
             this.properties.put(name, nativeChecked(value));
         }
 
-        public StructValue copy()
-        {
+        public StructValue copy() {
             MapStruct copy = new MapStruct();
             copy.properties.putAll(this.properties);
             return copy;
         }
 
-        public String toString()
-        {
+        public String toString() {
             return "struct" + this.properties;
         }
     }
 
     /** Source RoamingStruct is a float-only, flat author state channel, separate from physics storage. */
-    private static final class RoamingValue implements StructValue
-    {
+    private static final class RoamingValue implements StructValue {
         private final Map<String, Float> values = new LinkedHashMap<>();
         private final Set<String> names = new LinkedHashSet<>();
         private final Map<String, Double> changed = new LinkedHashMap<>();
 
-        public Object getProperty(String name)
-        {
+        public Object getProperty(String name) {
             return name.contains(".") ? null : (double) this.values.getOrDefault(name, 0f);
         }
 
-        public void putProperty(String name, Object value)
-        {
-            if (name.contains("."))
-            {
+        public void putProperty(String name, Object value) {
+            if (name.contains(".")) {
                 return;
             }
             // A numeric roaming property cannot contain another struct.
-            if (!this.values.containsKey(name) && this.values.size() >= 256)
-            {
+            if (!this.values.containsKey(name) && this.values.size() >= 256) {
                 throw invalid("Struct property limit exceeded");
             }
 
             float next = (float) nativeNumber(value), previous = this.values.getOrDefault(name, 0f);
             this.values.put(name, next);
-            if (next == previous)
-            {
+            if (next == previous) {
                 return;
             }
 
             this.names.add(name);
             // Preserve the source cumulative-name budget, including its local-only overflow behavior.
-            if (this.names.size() > Context.MAX_ROAMING_VARIABLES)
-            {
+            if (this.names.size() > Context.MAX_ROAMING_VARIABLES) {
                 return;
             }
 
             this.changed.put(name, (double) next);
         }
 
-        private void seed(String name, double value)
-        {
-            if (name.isBlank() || name.contains(".") || name.length() > Context.MAX_ROAMING_VARIABLE_NAME_LENGTH)
-            {
+        private void seed(String name, double value) {
+            if (name.isBlank() || name.contains(".") || name.length() > Context.MAX_ROAMING_VARIABLE_NAME_LENGTH) {
                 return;
             }
 
             float next = (float) value;
-            if (!Float.isFinite(next))
-            {
+            if (!Float.isFinite(next)) {
                 throw invalid("Roaming variable value");
             }
 
-            if (!this.values.containsKey(name) && this.values.size() >= 256)
-            {
+            if (!this.values.containsKey(name) && this.values.size() >= 256) {
                 throw invalid("Struct property limit exceeded");
             }
 
@@ -149,14 +123,11 @@ public final class Molang
             this.changed.remove(name);
         }
 
-        private Map<String, Double> consume()
-        {
+        private Map<String, Double> consume() {
             Map<String, Double> result = new LinkedHashMap<>();
-            this.changed.forEach((name, value) ->
-            {
+            this.changed.forEach((name, value) -> {
                 if (!name.isBlank() && name.length() <= Context.MAX_ROAMING_VARIABLE_NAME_LENGTH
-                        && Double.isFinite(value))
-                {
+                        && Double.isFinite(value)) {
                     result.put("variable.roaming." + name, value);
                 }
             });
@@ -164,26 +135,21 @@ public final class Molang
             return Collections.unmodifiableMap(result);
         }
 
-        public StructValue copy()
-        {
+        public StructValue copy() {
             MapStruct copy = new MapStruct();
             this.values.forEach((name, value) -> copy.putProperty(name, (double) value));
             return copy;
         }
     }
 
-    public record SequenceValue(List<Object> elements)
-    {
-        public SequenceValue
-        {
-            if (elements.size() > 256)
-            {
+    public record SequenceValue(List<Object> elements) {
+        public SequenceValue {
+            if (elements.size() > 256) {
                 throw invalid("Sequence limit exceeded");
             }
 
             elements = elements.stream().map(Molang::nativeChecked).toList();
-            if (elements.stream().anyMatch(SequenceValue.class::isInstance))
-            {
+            if (elements.stream().anyMatch(SequenceValue.class::isInstance)) {
                 throw invalid("Nested sequence limit");
             }
 
@@ -191,8 +157,7 @@ public final class Molang
     }
 
     /** Per-name degradation count; actualFallback is the most recently evaluated fallback. */
-    public record QueryDiagnostic(String name, String reason, long count, Object actualFallback)
-    {
+    public record QueryDiagnostic(String name, String reason, long count, Object actualFallback) {
     }
 
     private static final Set<String> MODEL_FUNCTIONS = Set.of("query.position", "query.position_delta",
@@ -211,48 +176,38 @@ public final class Molang
             "ctrl.state_continue", 2d, "ctrl.state_stop", 3d, "ctrl.state_pause", 4d, "ctrl.state_bypass", 5d,
             "ctrl.loop", 10d, "ctrl.play_once", 11d, "ctrl.hold_on_last_frame", 12d);
 
-    private static boolean modelFunction(String name)
-    {
+    private static boolean modelFunction(String name) {
         return MODEL_FUNCTIONS.contains(name)
                 || name.length() <= 131 && name.matches("fn\\.[\\p{L}\\p{N}_]+(?:\\.[\\p{L}\\p{N}_]+)*");
     }
 
-    public static final class Program
-    {
+    public static final class Program {
         private final Node root;
         private final Set<String> references;
 
-        private Program(Node root, Set<String> references)
-        {
+        private Program(Node root, Set<String> references) {
             this.root = root;
             this.references = Set.copyOf(references);
         }
 
-        public double evaluate(Context context)
-        {
+        public double evaluate(Context context) {
             return context.numeric(evaluateValue(context));
         }
 
-        public Object evaluateValue(Context context)
-        {
-            try
-            {
+        public Object evaluateValue(Context context) {
+            try {
                 return context.check(this.root.eval(Objects.requireNonNull(context)));
-            }
-            catch (Return returned)
-            {
+            } catch (Return returned) {
                 return context.check(returned.value);
             }
         }
 
-        public Set<String> references()
-        {
+        public Set<String> references() {
             return this.references;
         }
     }
 
-    public static final class Context
-    {
+    public static final class Context {
         public static final int MAX_ROAMING_VARIABLES = 64, MAX_ROAMING_VARIABLE_NAME_LENGTH = 32;
         private static final int MAX_QUERY_DIAGNOSTICS = 128, MAX_DIAGNOSTIC_NAME_LENGTH = 256;
         private Map<String, Object> variables = new HashMap<>();
@@ -266,32 +221,27 @@ public final class Molang
         private double currentValue;
         private String physicsScope;
         private String effectScope;
-        private Consumer<Context> childScope = context ->
-        {
+        private Consumer<Context> childScope = context -> {
         };
         private RoamingValue roaming;
         private int budget = 250_000;
 
-        public Context()
-        {
+        public Context() {
             this(0);
         }
 
-        public Context(long seed)
-        {
+        public Context(long seed) {
             this.random = new Random(seed);
         }
 
-        public void frame(Map<String, Double> values)
-        {
+        public void frame(Map<String, Double> values) {
             this.queries.clear();
             values.forEach((key, value) -> this.queries.put(normalize(key), finite(value)));
             this.variables.keySet().removeIf(key -> key.startsWith("temp."));
             this.budget = 250_000;
         }
 
-        public void clear()
-        {
+        public void clear() {
             this.variables.clear();
             this.queries.clear();
             this.controllerVariables.clear();
@@ -303,36 +253,29 @@ public final class Molang
         }
 
         /** Opt in only for local YSM playback; default client/server contexts retain their old null semantics. */
-        public void enableDiagnostics()
-        {
+        public void enableDiagnostics() {
             this.diagnosticsEnabled = true;
         }
 
         /** Only native local YSM opts into the mature runtime's nullable and structured values. */
-        public void enableNativeYsm()
-        {
+        public void enableNativeYsm() {
             this.nativeYsm = true;
         }
 
-        public boolean nativeYsm()
-        {
+        public boolean nativeYsm() {
             return this.nativeYsm;
         }
 
         /** Install the source roaming struct once per model instance. Ordinary BB contexts stay unchanged. */
-        public void enableNativeRoaming()
-        {
-            if (!this.nativeYsm)
-            {
+        public void enableNativeRoaming() {
+            if (!this.nativeYsm) {
                 throw invalid("Native roaming requires a YSM context");
             }
 
-            if (this.roaming == null)
-            {
+            if (this.roaming == null) {
                 this.roaming = new RoamingValue();
                 Object previous = this.variables.get("variable.roaming");
-                if (previous instanceof MapStruct struct)
-                {
+                if (previous instanceof MapStruct struct) {
                     struct.properties.forEach((name, value) -> this.roaming.seed(name, nativeNumber(value)));
                 }
 
@@ -341,19 +284,15 @@ public final class Molang
         }
 
         /** External persisted/server values initialize or deliberately replace a baseline without echoing dirt. */
-        public void seedRoamingValues(Map<String, Double> values)
-        {
-            if (values.size() > MAX_ROAMING_VARIABLES)
-            {
+        public void seedRoamingValues(Map<String, Double> values) {
+            if (values.size() > MAX_ROAMING_VARIABLES) {
                 throw invalid("Roaming variable count");
             }
 
             enableNativeRoaming();
-            values.forEach((name, value) ->
-            {
+            values.forEach((name, value) -> {
                 String key = normalize(name);
-                if (!key.startsWith("variable.roaming.") || value == null || !Double.isFinite(value))
-                {
+                if (!key.startsWith("variable.roaming.") || value == null || !Double.isFinite(value)) {
                     throw invalid("Roaming variable binding");
                 }
 
@@ -362,104 +301,84 @@ public final class Molang
         }
 
         /** Consumed only by the locally owned world body; previews and observers never persist these deltas. */
-        public Map<String, Double> consumeRoamingChanges()
-        {
+        public Map<String, Double> consumeRoamingChanges() {
             return this.roaming == null ? Map.of() : this.roaming.consume();
         }
 
-        public void currentValue(double value)
-        {
+        public void currentValue(double value) {
             this.currentValue = finite(value);
         }
 
-        public double currentValue()
-        {
+        public double currentValue() {
             return this.currentValue;
         }
 
-        public void physicsScope(String scope)
-        {
+        public void physicsScope(String scope) {
             this.physicsScope = scope;
         }
 
-        public String physicsScope()
-        {
+        public String physicsScope() {
             return this.physicsScope;
         }
 
         /** Internal audio manager identity, never an author-visible query or variable. */
-        public void effectScope(String scope)
-        {
+        public void effectScope(String scope) {
             this.effectScope = scope;
         }
 
-        public String effectScope()
-        {
+        public String effectScope() {
             return this.effectScope;
         }
 
         /** Rebind model functions while a typed child still owns its entity query bindings. */
-        public void childScope(Consumer<Context> configure)
-        {
+        public void childScope(Consumer<Context> configure) {
             this.childScope = Objects.requireNonNull(configure);
         }
 
-        public List<QueryDiagnostic> diagnostics()
-        {
+        public List<QueryDiagnostic> diagnostics() {
             return List.copyOf(this.queryDiagnostics.values());
         }
 
-        public void functions(FunctionResolver resolver)
-        {
+        public void functions(FunctionResolver resolver) {
             this.resolver = resolver;
         }
 
-        public FunctionResolver functionResolver()
-        {
+        public FunctionResolver functionResolver() {
             return this.resolver;
         }
 
-        public double get(String name)
-        {
+        public double get(String name) {
             return numeric(value(name));
         }
 
-        public Object value(String name)
-        {
+        public Object value(String name) {
             spend();
             name = normalize(name);
-            if (name.equals("this"))
-            {
+            if (name.equals("this")) {
                 return this.currentValue;
             }
 
-            if (CONSTANTS.containsKey(name))
-            {
+            if (CONSTANTS.containsKey(name)) {
                 return CONSTANTS.get(name);
             }
 
             Object absent = this.nativeYsm ? null : 0d;
-            if (name.startsWith("context."))
-            {
+            if (name.startsWith("context.")) {
                 return lookup(this.controllerVariables, name, lookup(this.queries, name, absent, this.nativeYsm),
                         this.nativeYsm);
             }
 
-            if (writable(name))
-            {
+            if (writable(name)) {
                 return lookup(this.variables, name, absent, this.nativeYsm);
             }
 
             Object value = lookup(this.queries, name, absent, this.nativeYsm);
-            if (this.diagnosticsEnabled && queryBinding(name))
-            {
-                if (this.queries.containsKey(name) && value == null)
-                {
+            if (this.diagnosticsEnabled && queryBinding(name)) {
+                if (this.queries.containsKey(name) && value == null) {
                     recordQueryDiagnostic(name, "unavailable_query", 0d);
                 }
 
-                else if (!this.queries.containsKey(name) && !structuredPropertyBound(this.queries, name))
-                {
+                else if (!this.queries.containsKey(name) && !structuredPropertyBound(this.queries, name)) {
                     recordQueryDiagnostic(name, "missing_query", 0d);
                 }
 
@@ -467,37 +386,30 @@ public final class Molang
             return value == null && !this.nativeYsm ? 0d : value;
         }
 
-        public boolean has(String name)
-        {
+        public boolean has(String name) {
             name = normalize(name);
-            if (CONSTANTS.containsKey(name) || this.nativeYsm && name.equals("this"))
-            {
+            if (CONSTANTS.containsKey(name) || this.nativeYsm && name.equals("this")) {
                 return true;
             }
 
-            if (name.startsWith("context."))
-            {
+            if (name.startsWith("context.")) {
                 return bound(this.controllerVariables, name) || bound(this.queries, name);
             }
 
             return bound(writable(name) ? this.variables : this.queries, name);
         }
 
-        private boolean bound(Map<String, Object> values, String name)
-        {
-            if (values.containsKey(name))
-            {
+        private boolean bound(Map<String, Object> values, String name) {
+            if (values.containsKey(name)) {
                 return true;
             }
 
-            if (!this.nativeYsm)
-            {
+            if (!this.nativeYsm) {
                 return false;
             }
 
             int root = name.indexOf('.', name.indexOf('.') + 1);
-            if (root < 0)
-            {
+            if (root < 0) {
                 return false;
             }
 
@@ -509,70 +421,57 @@ public final class Molang
                                     : value instanceof StructValue struct && struct.getProperty(property) != null));
         }
 
-        public void query(String name, double value)
-        {
+        public void query(String name, double value) {
             this.queries.put(normalize(name), finite(value));
         }
 
-        public void query(String name, Object value)
-        {
+        public void query(String name, Object value) {
             name = normalize(name);
             // Only opted-in query/ysm bindings retain unavailable metadata; expression values still read as zero.
             this.queries.put(name, this.nativeYsm ? nativeChecked(value)
                     : (this.diagnosticsEnabled && queryBinding(name) && value == null ? null : checked(value)));
         }
 
-        public void stringQuery(String name, String value)
-        {
+        public void stringQuery(String name, String value) {
             query(name, (Object) value);
         }
 
         /** Immutable copy preserves opted-in unavailable bindings across author function/event scopes. */
-        public Map<String, Object> queryValues()
-        {
+        public Map<String, Object> queryValues() {
             return Collections.unmodifiableMap(new HashMap<>(this.queries));
         }
 
-        public void restoreQueries(Map<String, Object> values)
-        {
+        public void restoreQueries(Map<String, Object> values) {
             this.queries.clear();
             values.forEach(this::query);
         }
 
-        public Map<String, Object> contextValues()
-        {
+        public Map<String, Object> contextValues() {
             return Collections.unmodifiableMap(new HashMap<>(this.controllerVariables));
         }
 
-        public Map<String, Object> tempValues()
-        {
+        public Map<String, Object> tempValues() {
             Map<String, Object> values = new HashMap<>();
-            this.variables.forEach((name, value) ->
-            {
-                if (name.startsWith("temp."))
-                {
+            this.variables.forEach((name, value) -> {
+                if (name.startsWith("temp.")) {
                     values.put(name, value);
                 }
             });
             return Collections.unmodifiableMap(values);
         }
 
-        public void restoreTempValues(Map<String, Object> values)
-        {
+        public void restoreTempValues(Map<String, Object> values) {
             Map<String, Object> restored = new HashMap<>();
-            values.forEach((name, value) ->
-            {
+            values.forEach((name, value) -> {
                 String key = normalize(name);
-                if (!key.startsWith("temp."))
-                {
+                if (!key.startsWith("temp.")) {
                     throw invalid("Temporary variable binding");
                 }
 
                 restored.put(key, check(value));
             });
             long globals = this.variables.keySet().stream().filter(name -> !name.startsWith("temp.")).count();
-            if (globals + restored.size() > 4096)
-            {
+            if (globals + restored.size() > 4096) {
                 throw invalid("Variable limit exceeded");
             }
 
@@ -580,19 +479,15 @@ public final class Molang
             this.variables.putAll(restored);
         }
 
-        public void restoreContextValues(Map<String, Object> values)
-        {
-            if (values.size() > 1024)
-            {
+        public void restoreContextValues(Map<String, Object> values) {
+            if (values.size() > 1024) {
                 throw invalid("Controller variable limit exceeded");
             }
 
             Map<String, Object> checkedValues = new HashMap<>();
-            values.forEach((key, value) ->
-            {
+            values.forEach((key, value) -> {
                 String name = normalize(key);
-                if (!name.startsWith("context."))
-                {
+                if (!name.startsWith("context.")) {
                     throw invalid("Controller variable binding");
                 }
 
@@ -602,42 +497,34 @@ public final class Molang
             this.controllerVariables.putAll(checkedValues);
         }
 
-        public double set(String name, double value)
-        {
+        public double set(String name, double value) {
             return number(setValue(name, value));
         }
 
-        public Object setValue(String name, Object value)
-        {
+        public Object setValue(String name, Object value) {
             spend();
             name = normalize(name);
-            if (!writable(name))
-            {
+            if (!writable(name)) {
                 throw invalid("Read-only binding: " + name);
             }
 
-            if (this.nativeYsm)
-            {
+            if (this.nativeYsm) {
                 int point = name.indexOf('.', name.indexOf('.') + 1);
-                if (point > 0)
-                {
+                if (point > 0) {
                     String base = name.substring(0, point), path = name.substring(point + 1);
                     Map<String, Object> storage = name.startsWith("context.") ? this.controllerVariables
                             : this.variables;
                     Object existing = storage.get(base);
-                    if (value instanceof StructValue)
-                    {
+                    if (value instanceof StructValue) {
                         return value;
                     }
 
                     StructValue struct;
-                    if (existing instanceof StructValue bound)
-                    {
+                    if (existing instanceof StructValue bound) {
                         struct = bound;
                     }
 
-                    else
-                    {
+                    else {
                         struct = new MapStruct();
                         setValue(base, struct);
                         struct = (StructValue) storage.get(base);
@@ -645,16 +532,13 @@ public final class Molang
                     struct.putProperty(path, check(value));
                     return check(value);
                 }
-                if (value instanceof StructValue struct)
-                {
+                if (value instanceof StructValue struct) {
                     value = struct.copy();
                 }
 
             }
-            if (name.startsWith("context."))
-            {
-                if (!this.controllerVariables.containsKey(name) && this.controllerVariables.size() >= 1024)
-                {
+            if (name.startsWith("context.")) {
+                if (!this.controllerVariables.containsKey(name) && this.controllerVariables.size() >= 1024) {
                     throw invalid("Controller variable limit exceeded");
                 }
 
@@ -662,8 +546,7 @@ public final class Molang
                 this.controllerVariables.put(name, value);
                 return value;
             }
-            if (!this.variables.containsKey(name) && this.variables.size() >= 4096)
-            {
+            if (!this.variables.containsKey(name) && this.variables.size() >= 4096) {
                 throw invalid("Variable limit exceeded");
             }
 
@@ -672,24 +555,19 @@ public final class Molang
             return value;
         }
 
-        public Map<String, Double> variables()
-        {
+        public Map<String, Double> variables() {
             Map<String, Double> numbers = new HashMap<>();
-            this.variables.forEach((k, v) ->
-            {
-                if (!(this.nativeYsm && v instanceof StructValue))
-                {
+            this.variables.forEach((k, v) -> {
+                if (!(this.nativeYsm && v instanceof StructValue)) {
                     numbers.put(k, numeric(v));
                 }
 
                 // Existing status consumers retain numeric dotted fields for author structs.
-                if (v instanceof MapStruct struct)
-                {
+                if (v instanceof MapStruct struct) {
                     struct.properties.forEach((property, value) -> numbers.put(k + "." + property, numeric(value)));
                 }
 
-                if (v instanceof RoamingValue roaming)
-                {
+                if (v instanceof RoamingValue roaming) {
                     roaming.values.forEach((property, value) -> numbers.put(k + "." + property, numeric(value)));
                 }
 
@@ -697,26 +575,21 @@ public final class Molang
             return Map.copyOf(numbers);
         }
 
-        public Map<String, Object> values()
-        {
+        public Map<String, Object> values() {
             return Collections.unmodifiableMap(new HashMap<>(this.variables));
         }
 
         /** Isolated GUI scopes start with copies of author structs; live readonly bindings keep identity. */
-        public void restoreValues(Map<String, Object> values)
-        {
-            if (values.size() > 4096)
-            {
+        public void restoreValues(Map<String, Object> values) {
+            if (values.size() > 4096) {
                 throw invalid("Variable limit exceeded");
             }
 
             this.variables.clear();
             this.roaming = null;
-            values.forEach((key, value) ->
-            {
+            values.forEach((key, value) -> {
                 String name = normalize(key);
-                if (!name.startsWith("variable.") && !name.startsWith("temp."))
-                {
+                if (!name.startsWith("variable.") && !name.startsWith("temp.")) {
                     throw invalid("Variable binding");
                 }
 
@@ -724,79 +597,63 @@ public final class Molang
             });
         }
 
-        private Object check(Object value)
-        {
+        private Object check(Object value) {
             return this.nativeYsm ? nativeChecked(value) : checked(value);
         }
 
-        private double numeric(Object value)
-        {
+        private double numeric(Object value) {
             return this.nativeYsm ? nativeNumber(value) : number(value);
         }
 
-        private boolean booleanValue(Object value)
-        {
+        private boolean booleanValue(Object value) {
             return this.nativeYsm ? nativeTruth(value) : truth(value);
         }
 
-        private Object binaryValue(String op, Object a, Object b)
-        {
+        private Object binaryValue(String op, Object a, Object b) {
             return binary(op, a, b, this.nativeYsm);
         }
 
-        private Object coalesce(String name, Node primary, Node fallback)
-        {
+        private Object coalesce(String name, Node primary, Node fallback) {
             boolean missing = !has(name);
             boolean unavailable = this.diagnosticsEnabled && queryBinding(name) && this.queries.containsKey(name)
                     && this.queries.get(name) == null;
-            if (!missing && !unavailable)
-            {
+            if (!missing && !unavailable) {
                 return primary.eval(this);
             }
 
-            if (this.diagnosticsEnabled && queryBinding(name))
-            {
+            if (this.diagnosticsEnabled && queryBinding(name)) {
                 spend();
             }
 
             Object value = fallback.eval(this);
-            if (this.diagnosticsEnabled && queryBinding(name))
-
-            {
+            if (this.diagnosticsEnabled && queryBinding(name)) {
                 recordQueryDiagnostic(name, unavailable ? "unavailable_query" : "missing_query", check(value));
             }
 
             return value;
         }
 
-        private Object nativeCoalesce(String name, Node primary, Node fallback)
-        {
+        private Object nativeCoalesce(String name, Node primary, Node fallback) {
             Object value = name == null ? primary.eval(this) : lookup(this.queries, normalize(name), null, true);
-            if (name != null && !queryBinding(normalize(name)))
-            {
+            if (name != null && !queryBinding(normalize(name))) {
                 value = primary.eval(this);
             }
 
-            if (value != null)
-            {
+            if (value != null) {
                 return value;
             }
 
             spend();
             value = fallback.eval(this);
-            if (this.diagnosticsEnabled && name != null && queryBinding(normalize(name)))
-
-            {
+            if (this.diagnosticsEnabled && name != null && queryBinding(normalize(name))) {
                 recordQueryDiagnostic(normalize(name), has(name) ? "unavailable_query" : "missing_query", check(value));
             }
 
             return value;
         }
 
-        private Object childValue(Object value, Node expression)
-        {
-            if (!this.nativeYsm || !(value instanceof ContextValue scoped))
-            {
+        private Object childValue(Object value, Node expression) {
+            if (!this.nativeYsm || !(value instanceof ContextValue scoped)) {
                 return this.nativeYsm ? null : 0d;
             }
 
@@ -818,13 +675,10 @@ public final class Molang
             child.physicsScope = this.physicsScope;
             child.effectScope = this.effectScope;
             child.childScope = this.childScope;
-            try
-            {
+            try {
                 this.childScope.accept(child);
                 return expression.eval(child);
-            }
-            finally
-            {
+            } finally {
                 this.budget = Math.min(this.budget, child.budget);
                 child.variables = ownVariables;
                 child.controllerVariables = ownController;
@@ -837,12 +691,10 @@ public final class Molang
             }
         }
 
-        private void recordQueryDiagnostic(String name, String reason, Object actualFallback)
-        {
+        private void recordQueryDiagnostic(String name, String reason, Object actualFallback) {
             String boundedName = name.substring(0, Math.min(name.length(), MAX_DIAGNOSTIC_NAME_LENGTH));
             QueryDiagnostic previous = this.queryDiagnostics.get(boundedName);
-            if (previous == null && this.queryDiagnostics.size() >= MAX_QUERY_DIAGNOSTICS)
-            {
+            if (previous == null && this.queryDiagnostics.size() >= MAX_QUERY_DIAGNOSTICS) {
                 return;
             }
 
@@ -851,32 +703,25 @@ public final class Molang
             this.queryDiagnostics.put(boundedName, new QueryDiagnostic(boundedName, reason, count, actualFallback));
         }
 
-        private void spend()
-        {
-            if (--this.budget < 0)
-            {
+        private void spend() {
+            if (--this.budget < 0) {
                 throw invalid("Evaluation budget exceeded");
             }
         }
 
-        private Object call(String name, Node[] arguments)
-        {
+        private Object call(String name, Node[] arguments) {
             spend();
             Object[] values = new Object[arguments.length];
             double[] a = new double[arguments.length];
-            for (int i = 0; i < a.length; i++)
-            {
+            for (int i = 0; i < a.length; i++) {
                 values[i] = arguments[i].eval(this);
                 a[i] = numeric(values[i]);
             }
-            if (modelFunction(name) && this.resolver != null)
-
-            {
+            if (modelFunction(name) && this.resolver != null) {
                 return check(this.resolver.call(name, Collections.unmodifiableList(Arrays.asList(values))));
             }
 
-            return finite(switch (name)
-            {
+            return finite(switch (name) {
             case "math.sin" -> Math.sin(Math.toRadians(a[0]));
             case "math.cos" -> Math.cos(Math.toRadians(a[0]));
             case "math.tan" -> Math.tan(Math.toRadians(a[0]));
@@ -919,29 +764,24 @@ public final class Molang
             });
         }
 
-        private double nativeRandomInteger(double a, double b)
-        {
+        private double nativeRandomInteger(double a, double b) {
             int low = (int) Math.min(a, b), high = (int) Math.max(a, b);
             long range = (long) high - low;
-            if (range <= 0 || range > Integer.MAX_VALUE)
-            {
+            if (range <= 0 || range > Integer.MAX_VALUE) {
                 return 0;
             }
 
             return low + this.random.nextInt((int) range);
         }
 
-        private double dice(double requested, double min, double max, boolean integers)
-        {
-            if (requested < 0 || requested > 1024)
-            {
+        private double dice(double requested, double min, double max, boolean integers) {
+            if (requested < 0 || requested > 1024) {
                 throw invalid("Dice count exceeds limit");
             }
 
             double low = Math.min(min, max), high = Math.max(min, max), value = 0;
             int count = integers ? (int) Math.round(requested) : (int) requested;
-            for (int i = 0; i < count; i++)
-            {
+            for (int i = 0; i < count; i++) {
                 spend();
                 double roll = this.nativeYsm
                         ? (integers ? nativeRandomInteger(low, high) : low + this.random.nextFloat() * (high - low))
@@ -952,88 +792,69 @@ public final class Molang
         }
     }
 
-    private record Literal(Object literal) implements Node
-    {
-        public Object eval(Context c)
-        {
+    private record Literal(Object literal) implements Node {
+        public Object eval(Context c) {
             return this.literal;
         }
     }
 
-    private record Lookup(String name) implements Node
-    {
-        public Object eval(Context c)
-        {
+    private record Lookup(String name) implements Node {
+        public Object eval(Context c) {
             return c.value(this.name);
         }
     }
 
-    private record Property(Node base, String path) implements Node
-    {
-        public Object eval(Context c)
-        {
+    private record Property(Node base, String path) implements Node {
+        public Object eval(Context c) {
             return property(this.base.eval(c), this.path, c.nativeYsm);
         }
     }
 
-    private static final class Return extends RuntimeException
-    {
+    private static final class Return extends RuntimeException {
         final Object value;
 
-        Return(Object value)
-        {
+        Return(Object value) {
             super(null, null, false, false);
             this.value = nativeChecked(value);
         }
     }
 
-    private static final class LoopExit extends RuntimeException
-    {
+    private static final class LoopExit extends RuntimeException {
         final boolean continuing;
 
-        LoopExit(boolean continuing)
-        {
+        LoopExit(boolean continuing) {
             super(null, null, false, false);
             this.continuing = continuing;
         }
     }
 
-    public static Program compile(String text)
-    {
+    public static Program compile(String text) {
         return compile(text, false);
     }
 
-    public static Program compileNativeYsm(String text)
-    {
+    public static Program compileNativeYsm(String text) {
         return compile(text, true);
     }
 
-    private static Program compile(String text, boolean nativeSyntax)
-    {
+    private static Program compile(String text, boolean nativeSyntax) {
         Objects.requireNonNull(text);
-        if (text.length() > 32_768)
-        {
+        if (text.length() > 32_768) {
             throw invalid("Expression length limit exceeded");
         }
 
         Parser parser = new Parser(text, nativeSyntax);
         Node statements = parser.statements(false);
-        if (!parser.end())
-        {
+        if (!parser.end()) {
             throw invalid("Unexpected trailing expression");
         }
 
-        if (!parser.degradedFunctions.isEmpty())
-        {
+        if (!parser.degradedFunctions.isEmpty()) {
             Map<String, String> functions = Collections.unmodifiableMap(new LinkedHashMap<>(parser.degradedFunctions));
             // The upstream native parser degrades the entire unregistered formula to ZERO.
-            statements = c ->
-            {
-                functions.forEach((function, reason) ->
-                {
+            statements = c -> {
+                functions.forEach((function, reason) -> {
                     c.spend();
-                    if (c.diagnosticsEnabled)
-                    {
+                    if (c.diagnosticsEnabled) {
                         c.recordQueryDiagnostic(function, reason, 0d);
                     }
                 });
@@ -1043,99 +864,79 @@ public final class Molang
         return new Program(statements, parser.references);
     }
 
-    public static double finite(double value)
-    {
+    public static double finite(double value) {
         return Double.isFinite(value) ? value : 0;
     }
 
-    private static double number(Object value)
-    {
+    private static double number(Object value) {
         return value instanceof Number n ? finite(n.doubleValue()) : (value instanceof Boolean b && b ? 1 : 0);
     }
 
-    private static boolean truth(Object value)
-    {
+    private static boolean truth(Object value) {
         return value instanceof String s ? !s.isEmpty() : number(value) != 0;
     }
 
-    private static double nativeNumber(Object value)
-    {
+    private static double nativeNumber(Object value) {
         return value == null ? 0
                 : (value instanceof Number n ? finite(n.doubleValue())
                         : (value instanceof Boolean b ? (b ? 1 : 0) : 1));
     }
 
-    private static boolean nativeTruth(Object value)
-    {
+    private static boolean nativeTruth(Object value) {
         return value != null && (!(value instanceof Number) && !(value instanceof Boolean) || nativeNumber(value) != 0);
     }
 
-    private static Object nativeChecked(Object value)
-    {
+    private static Object nativeChecked(Object value) {
         if (value == null || value instanceof StructValue || value instanceof ContextValue
-                || value instanceof SequenceValue)
-        {
+                || value instanceof SequenceValue) {
             return value;
         }
 
         return checked(value);
     }
 
-    private static Object checked(Object value)
-    {
-        if (value == null)
-        {
+    private static Object checked(Object value) {
+        if (value == null) {
             return 0d;
         }
 
-        if (value instanceof Number n)
-        {
+        if (value instanceof Number n) {
             return finite(n.doubleValue());
         }
 
-        if (value instanceof Boolean b)
-        {
+        if (value instanceof Boolean b) {
             return b ? 1d : 0d;
         }
 
-        if (value instanceof String s && s.length() <= 4096)
-        {
+        if (value instanceof String s && s.length() <= 4096) {
             return s;
         }
 
-        if (value instanceof VectorValue)
-        {
+        if (value instanceof VectorValue) {
             return value;
         }
 
-        if (value instanceof SequenceValue sequence)
-        {
+        if (value instanceof SequenceValue sequence) {
             return new SequenceValue(sequence.elements.stream().map(Molang::checked).toList());
         }
 
         throw invalid("Unsupported or oversized value");
     }
 
-    private static Object lookup(Map<String, Object> values, String name, Object fallback, boolean nullable)
-    {
-        if (values.containsKey(name))
-        {
+    private static Object lookup(Map<String, Object> values, String name, Object fallback, boolean nullable) {
+        if (values.containsKey(name)) {
             return values.get(name);
         }
 
         int point = name.lastIndexOf('.');
-        if (point > 0)
-        {
+        if (point > 0) {
             Object base = values.get(name.substring(0, point));
-            if (base instanceof VectorValue || base instanceof StructValue)
-            {
+            if (base instanceof VectorValue || base instanceof StructValue) {
                 return property(base, name.substring(point + 1), nullable);
             }
 
             int root = name.indexOf('.', name.indexOf('.') + 1);
-            if (root > 0 && values.get(name.substring(0, root)) instanceof StructValue struct)
-
-            {
+            if (root > 0 && values.get(name.substring(0, root)) instanceof StructValue struct) {
                 return struct.getProperty(name.substring(root + 1));
             }
 
@@ -1143,39 +944,31 @@ public final class Molang
         return fallback;
     }
 
-    private static boolean queryBinding(String name)
-    {
+    private static boolean queryBinding(String name) {
         return name.startsWith("query.") || name.startsWith("ysm.");
     }
 
-    private static boolean structuredPropertyBound(Map<String, Object> values, String name)
-    {
+    private static boolean structuredPropertyBound(Map<String, Object> values, String name) {
         int point = name.lastIndexOf('.');
         return point > 0 && (values.get(name.substring(0, point)) instanceof VectorValue
                 || values.get(name.substring(0, point)) instanceof StructValue);
     }
 
-    private static Object property(Object value, String name, boolean nullable)
-    {
-        if (value instanceof StructValue struct)
-        {
+    private static Object property(Object value, String name, boolean nullable) {
+        if (value instanceof StructValue struct) {
             return struct.getProperty(name);
         }
 
-        if (!(value instanceof VectorValue vector))
-        {
+        if (!(value instanceof VectorValue vector)) {
             return nullable ? null : 0d;
         }
 
-        return switch (name)
-        {
+        return switch (name) {
         case "x" -> vector.x;
         case "y" -> vector.y;
         case "z" -> vector.z;
-        default ->
-        {
-            if (nullable)
-            {
+        default -> {
+            if (nullable) {
                 yield null;
             }
             throw invalid("Unsupported vector property");
@@ -1183,46 +976,38 @@ public final class Molang
         };
     }
 
-    private static Object element(Object value, Object index, boolean nativeYsm)
-    {
-        if (!(value instanceof SequenceValue sequence) || !(index instanceof Number numeric))
-        {
+    private static Object element(Object value, Object index, boolean nativeYsm) {
+        if (!(value instanceof SequenceValue sequence) || !(index instanceof Number numeric)) {
             return nativeYsm ? null : 0d;
         }
 
         double requested = numeric.doubleValue();
         int position = (int) requested;
-        if (nativeYsm)
-        {
+        if (nativeYsm) {
             position = Math.max(0, position);
         }
 
         if (!Double.isFinite(requested) || !nativeYsm && requested != position || position < 0
-                || position >= sequence.elements().size())
-        {
+                || position >= sequence.elements().size()) {
             return nativeYsm ? null : 0d;
         }
 
         return sequence.elements().get(position);
     }
 
-    private static boolean writable(String name)
-    {
+    private static boolean writable(String name) {
         return name.startsWith("variable.") || name.startsWith("temp.") || name.startsWith("context.");
     }
 
-    private static double wrap(double value)
-    {
+    private static double wrap(double value) {
         return value - Math.floor((value + 180) / 360) * 360;
     }
 
-    private static double nativeLerpRotate(double a, double b, double t)
-    {
+    private static double nativeLerpRotate(double a, double b, double t) {
         a = wrap(a);
         b = wrap(b);
         double diff = a - b;
-        if (diff > 180 || diff < -180)
-        {
+        if (diff > 180 || diff < -180) {
             b = a + Math.copySign(360 - Math.abs(diff), diff);
         }
 
@@ -1230,10 +1015,8 @@ public final class Molang
     }
 
     /** Exact fixed-source validateArgumentSize contracts; unregistered functions are handled separately. */
-    private static boolean nativeFunctionArity(String name, int size)
-    {
-        return switch (name)
-        {
+    private static boolean nativeFunctionArity(String name, int size) {
+        return switch (name) {
         case "ysm.bone_rot", "ysm.bone_pos", "ysm.bone_scale", "ysm.bone_pivot_abs", "ysm.mod_version", "ysm.mouse",
                 "ysm.get_equipped_item_name", "ysm.dump_equipped_item", "query.position", "query.position_delta",
                 "query.rotation_to_camera", "query.max_durability", "query.remaining_durability",
@@ -1258,82 +1041,65 @@ public final class Molang
         };
     }
 
-    private static String normalize(String name)
-    {
+    private static String normalize(String name) {
         name = name.toLowerCase(Locale.ROOT);
-        if (name.startsWith("q."))
-        {
+        if (name.startsWith("q.")) {
             return "query." + name.substring(2);
         }
 
-        if (name.startsWith("v."))
-        {
+        if (name.startsWith("v.")) {
             return "variable." + name.substring(2);
         }
 
-        if (name.startsWith("t."))
-        {
+        if (name.startsWith("t.")) {
             return "temp." + name.substring(2);
         }
 
-        if (name.startsWith("c."))
-        {
+        if (name.startsWith("c.")) {
             return "context." + name.substring(2);
         }
 
-        if (name.startsWith("controller."))
-        {
+        if (name.startsWith("controller.")) {
             return "context." + name.substring(11);
         }
 
         return name;
     }
 
-    private static IllegalArgumentException invalid(String why)
-    {
+    private static IllegalArgumentException invalid(String why) {
         return new IllegalArgumentException("Molang: " + why);
     }
 
-    private record Token(String text, boolean string)
-    {
+    private record Token(String text, boolean string) {
     }
 
-    private static final class Parser
-    {
+    private static final class Parser {
         private final List<Token> tokens = new ArrayList<>();
         private final Set<String> references = new HashSet<>();
         private final Map<String, String> degradedFunctions = new LinkedHashMap<>();
         private int at, depth, loopDepth;
         private final boolean nativeSyntax;
 
-        Parser(String source, boolean nativeSyntax)
-        {
+        Parser(String source, boolean nativeSyntax) {
             this.nativeSyntax = nativeSyntax;
-            for (int i = 0; i < source.length();)
-            {
+            for (int i = 0; i < source.length();) {
                 char ch = source.charAt(i);
-                if (Character.isWhitespace(ch))
-                {
+                if (Character.isWhitespace(ch)) {
                     i++;
                     continue;
                 }
-                if (ch == '/' && i + 1 < source.length())
-                {
-                    if (source.charAt(i + 1) == '/')
-                    {
+                if (ch == '/' && i + 1 < source.length()) {
+                    if (source.charAt(i + 1) == '/') {
                         i += 2;
-                        while (i < source.length() && source.charAt(i) != '\n' && source.charAt(i) != '\r')
-                        {
+                        while (i < source.length() && source.charAt(i) != '\n' && source.charAt(i) != '\r') {
                             i++;
                         }
 
                         continue;
                     }
-                    if (source.charAt(i + 1) == '*')
-                    {
+                    if (source.charAt(i + 1) == '*') {
                         int end = source.indexOf("*/", i + 2);
-                        if (end < 0)
-                        {
+                        if (end < 0) {
                             throw invalid("Unterminated comment");
                         }
 
@@ -1341,187 +1107,140 @@ public final class Molang
                         continue;
                     }
                 }
-                if (ch == '\'' || ch == '"')
-                {
+                if (ch == '\'' || ch == '"') {
                     char quote = ch;
                     StringBuilder value = new StringBuilder();
                     i++;
-                    while (i < source.length() && source.charAt(i) != quote)
-                    {
+                    while (i < source.length() && source.charAt(i) != quote) {
                         char next = source.charAt(i++);
-                        if (next == '\\' && i < source.length())
-                        {
+                        if (next == '\\' && i < source.length()) {
                             next = source.charAt(i++);
                         }
 
                         value.append(next);
                     }
-                    if (i == source.length())
-                    {
+                    if (i == source.length()) {
                         throw invalid("Unterminated string");
                     }
 
                     this.tokens.add(new Token(value.toString(), true));
                     i++;
-                }
-                else if (Character.isLetter(ch) || ch == '_')
-                {
+                } else if (Character.isLetter(ch) || ch == '_') {
                     int start = i++;
                     while (i < source.length()
-                            && (Character.isLetterOrDigit(source.charAt(i)) || "_.".indexOf(source.charAt(i)) >= 0))
-                    {
+                            && (Character.isLetterOrDigit(source.charAt(i)) || "_.".indexOf(source.charAt(i)) >= 0)) {
                         i++;
                     }
 
                     this.tokens.add(new Token(source.substring(start, i).toLowerCase(Locale.ROOT), false));
-                }
-                else if (Character.isDigit(ch)
-                        || ch == '.' && i + 1 < source.length() && Character.isDigit(source.charAt(i + 1)))
-                {
+                } else if (Character.isDigit(ch)
+                        || ch == '.' && i + 1 < source.length() && Character.isDigit(source.charAt(i + 1))) {
                     int start = i++;
-                    while (i < source.length() && (Character.isDigit(source.charAt(i)) || source.charAt(i) == '.'))
-                    {
+                    while (i < source.length() && (Character.isDigit(source.charAt(i)) || source.charAt(i) == '.')) {
                         i++;
                     }
 
-                    if (i < source.length() && "eE".indexOf(source.charAt(i)) >= 0)
-                    {
+                    if (i < source.length() && "eE".indexOf(source.charAt(i)) >= 0) {
                         i++;
-                        if (i < source.length() && "+-".indexOf(source.charAt(i)) >= 0)
-                        {
+                        if (i < source.length() && "+-".indexOf(source.charAt(i)) >= 0) {
                             i++;
                         }
 
-                        while (i < source.length() && Character.isDigit(source.charAt(i)))
-                        {
+                        while (i < source.length() && Character.isDigit(source.charAt(i))) {
                             i++;
                         }
 
                     }
                     this.tokens.add(new Token(source.substring(start, i), false));
-                }
-                else
-                {
+                } else {
                     String pair = i + 1 < source.length() ? source.substring(i, i + 2) : "";
-                    if (Set.of("<=", ">=", "==", "!=", "&&", "||", "+=", "-=", "*=", "/=", "??", "->").contains(pair))
-                    {
+                    if (Set.of("<=", ">=", "==", "!=", "&&", "||", "+=", "-=", "*=", "/=", "??", "->").contains(pair)) {
                         this.tokens.add(new Token(pair, false));
                         i += 2;
-                    }
-                    else if (".+-*/%(){}[]?:,;=!<>".indexOf(ch) >= 0)
-                    {
+                    } else if (".+-*/%(){}[]?:,;=!<>".indexOf(ch) >= 0) {
                         this.tokens.add(new Token(String.valueOf(ch), false));
                         i++;
-                    }
-                    else
-                    {
+                    } else {
                         throw invalid("Unsupported character");
                     }
 
                 }
-                if (this.tokens.size() > 16_384)
-                {
+                if (this.tokens.size() > 16_384) {
                     throw invalid("Token limit exceeded");
                 }
 
             }
         }
 
-        boolean end()
-        {
+        boolean end() {
             return this.at == this.tokens.size();
         }
 
-        String peek()
-        {
+        String peek() {
             return end() ? "" : this.tokens.get(this.at).text;
         }
 
-        boolean take(String text)
-        {
-            if (!end() && !this.tokens.get(this.at).string && peek().equals(text))
-            {
+        boolean take(String text) {
+            if (!end() && !this.tokens.get(this.at).string && peek().equals(text)) {
                 this.at++;
                 return true;
             }
             return false;
         }
 
-        void require(String text)
-        {
-            if (!take(text))
-            {
+        void require(String text) {
+            if (!take(text)) {
                 throw invalid("Expected " + text);
             }
         }
 
-        Node statements(boolean block)
-        {
-            if (++this.depth > 64)
-            {
+        Node statements(boolean block) {
+            if (++this.depth > 64) {
                 throw invalid("Expression depth limit exceeded");
             }
 
             List<Node> nodes = new ArrayList<>();
-            while (!end() && !(block && peek().equals("}")))
-            {
-                if (take(";"))
-                {
+            while (!end() && !(block && peek().equals("}"))) {
+                if (take(";")) {
                     continue;
                 }
 
-                if (take("return"))
-                {
+                if (take("return")) {
                     Node value = expression(0);
-                    nodes.add(c ->
-                    {
+                    nodes.add(c -> {
                         throw new Return(value.eval(c));
                     });
-                }
-                else if (take("break"))
-                {
-                    if (this.loopDepth == 0)
-                    {
+                } else if (take("break")) {
+                    if (this.loopDepth == 0) {
                         throw invalid("Break outside loop");
                     }
-                    nodes.add(c ->
-                    {
+                    nodes.add(c -> {
                         throw new LoopExit(false);
                     });
-                }
-                else if (take("continue"))
-                {
-                    if (this.loopDepth == 0)
-                    {
+                } else if (take("continue")) {
+                    if (this.loopDepth == 0) {
                         throw invalid("Continue outside loop");
                     }
-                    nodes.add(c ->
-                    {
+                    nodes.add(c -> {
                         throw new LoopExit(true);
                     });
-                }
-                else
-                {
+                } else {
                     nodes.add(expression(0));
                 }
 
-                if (!end() && !(block && peek().equals("}")))
-                {
+                if (!end() && !(block && peek().equals("}"))) {
                     require(";");
                 }
 
             }
-            if (block)
-            {
+            if (block) {
                 require("}");
             }
             this.depth--;
             Node[] program = nodes.toArray(Node[]::new);
-            return c ->
-            {
+            return c -> {
                 Object value = 0d;
-                for (Node node : program)
-                {
+                for (Node node : program) {
                     c.spend();
                     value = node.eval(c);
                 }
@@ -1529,85 +1248,61 @@ public final class Molang
             };
         }
 
-        Node expression(int minimum)
-        {
-            if (++this.depth > 64)
-            {
+        Node expression(int minimum) {
+            if (++this.depth > 64) {
                 throw invalid("Expression depth limit exceeded");
             }
 
             Node left;
             String assignable = null;
-            if (take("-"))
-            {
+            if (take("-")) {
                 Node right = expression(10);
                 left = c -> -c.numeric(right.eval(c));
-            }
-            else if (take("+"))
-            {
+            } else if (take("+")) {
                 Node right = expression(10);
                 left = c -> c.numeric(right.eval(c));
-            }
-            else if (take("!"))
-            {
+            } else if (take("!")) {
                 Node right = expression(10);
                 left = c -> c.booleanValue(right.eval(c)) ? 0d : 1d;
-            }
-            else if (take("("))
-            {
+            } else if (take("(")) {
                 left = expression(0);
                 require(")");
-            }
-            else if (take("{"))
-            {
+            } else if (take("{")) {
                 left = statements(true);
             }
 
-            else
-            {
-                if (end())
-                {
+            else {
+                if (end()) {
                     throw invalid("Missing operand");
                 }
 
                 Token token = this.tokens.get(this.at++);
                 String name = normalize(token.text);
-                if (token.string)
-                {
+                if (token.string) {
                     left = new Literal(token.text);
                 }
 
-                else if (name.equals("true"))
-                {
+                else if (name.equals("true")) {
                     left = new Literal(1d);
                 }
 
-                else if (name.equals("false"))
-                {
+                else if (name.equals("false")) {
                     left = new Literal(0d);
                 }
 
-                else if (!name.isEmpty() && (Character.isDigit(name.charAt(0)) || name.charAt(0) == '.'))
-                {
+                else if (!name.isEmpty() && (Character.isDigit(name.charAt(0)) || name.charAt(0) == '.')) {
                     final double value;
-                    try
-                    {
+                    try {
                         value = Double.parseDouble(name);
-                    }
-                    catch (NumberFormatException error)
-                    {
+                    } catch (NumberFormatException error) {
                         throw invalid("Invalid number");
                     }
-                    if (!Double.isFinite(value))
-                    {
+                    if (!Double.isFinite(value)) {
                         throw invalid("Non-finite literal");
                     }
                     left = new Literal(value);
-                }
-                else if (take("("))
-                {
-                    if (name.equals("loop"))
-                    {
+                } else if (take("(")) {
+                    if (name.equals("loop")) {
                         Node count = expression(0);
                         require(",");
                         this.loopDepth++;
@@ -1615,41 +1310,30 @@ public final class Molang
                         this.loopDepth--;
                         require(")");
                         if (count instanceof Literal literal
-                                && (number(literal.literal) < 0 || number(literal.literal) > 1024))
-
-                        {
+                                && (number(literal.literal) < 0 || number(literal.literal) > 1024)) {
                             throw invalid("Loop count exceeds limit");
                         }
 
-                        left = c ->
-                        {
+                        left = c -> {
                             double requested = c.numeric(count.eval(c));
-                            if (requested < 0 || requested > 1024)
-                            {
+                            if (requested < 0 || requested > 1024) {
                                 throw invalid("Loop count exceeds limit");
                             }
 
                             Object value = 0d;
-                            for (int i = 0; i < (int) requested; i++)
-                            {
+                            for (int i = 0; i < (int) requested; i++) {
                                 c.spend();
-                                try
-                                {
+                                try {
                                     value = body.eval(c);
-                                }
-                                catch (LoopExit exit)
-                                {
-                                    if (!exit.continuing)
-                                    {
+                                } catch (LoopExit exit) {
+                                    if (!exit.continuing) {
                                         break;
                                     }
                                 }
                             }
                             return value;
                         };
-                    }
-                    else if (name.equals("for_each"))
-                    {
+                    } else if (name.equals("for_each")) {
                         Node target = expression(0);
                         require(",");
                         Node collection = expression(0);
@@ -1658,53 +1342,39 @@ public final class Molang
                         Node body = expression(0);
                         this.loopDepth--;
                         require(")");
-                        if (!(target instanceof Lookup lookup) || !writable(lookup.name))
-                        {
+                        if (!(target instanceof Lookup lookup) || !writable(lookup.name)) {
                             throw invalid("For-each variable binding");
                         }
 
                         String targetName = ((Lookup) target).name;
-                        left = c ->
-                        {
+                        left = c -> {
                             Object values = collection.eval(c);
-                            if (!(values instanceof SequenceValue sequence))
-                            {
+                            if (!(values instanceof SequenceValue sequence)) {
                                 return 0d;
                             }
                             Object result = 0d;
-                            for (Object value : sequence.elements)
-                            {
+                            for (Object value : sequence.elements) {
                                 c.spend();
                                 c.setValue(targetName, value);
-                                try
-                                {
+                                try {
                                     result = body.eval(c);
-                                }
-                                catch (LoopExit exit)
-                                {
-                                    if (!exit.continuing)
-                                    {
+                                } catch (LoopExit exit) {
+                                    if (!exit.continuing) {
                                         break;
                                     }
                                 }
                             }
                             return result;
                         };
-                    }
-                    else
-                    {
+                    } else {
                         List<Node> args = new ArrayList<>();
-                        if (!take(")"))
-                        {
-                            do
-                            {
+                        if (!take(")")) {
+                            do {
                                 args.add(expression(0));
-                            }
-                            while (take(","));
+                            } while (take(","));
                             require(")");
                         }
-                        int arity = switch (name)
-                        {
+                        int arity = switch (name) {
                         case "math.sin", "math.cos", "math.tan", "math.asin", "math.acos", "math.atan", "math.abs",
                                 "math.sqrt", "math.exp", "math.ln", "math.floor", "math.ceil", "math.round",
                                 "math.trunc", "math.sign", "math.hermite_blend", "math.hermite", "math.min_angle" ->
@@ -1717,22 +1387,17 @@ public final class Molang
                         case "math.min", "math.max" -> this.nativeSyntax ? 2 : -1;
                         default -> modelFunction(name) ? -1 : -2;
                         };
-                        if (arity == -2)
-                        {
-                            if (this.nativeSyntax && (queryBinding(name) || name.startsWith("ctrl.")))
-                            {
+                        if (arity == -2) {
+                            if (this.nativeSyntax && (queryBinding(name) || name.startsWith("ctrl."))) {
                                 this.degradedFunctions.put(name, "unregistered_function");
                                 arity = -1;
-                            }
-                            else
-                            {
+                            } else {
                                 throw invalid(
                                         (queryBinding(name) ? "未接入的查询函数: " : "不支持的函数: ") + name + "；该表达式已拒绝，未执行此函数");
                             }
 
                         }
-                        if (args.size() > 32)
-                        {
+                        if (args.size() > 32) {
                             throw invalid("Function argument limit: " + name);
                         }
 
@@ -1741,15 +1406,12 @@ public final class Molang
                                 || this.nativeSyntax && name.equals("math.random") && args.size() != 2
                                         && args.size() != 3
                                 || this.nativeSyntax && !nativeFunctionArity(name, args.size());
-                        if (invalidArity)
-                        {
-                            if (this.nativeSyntax)
-                            {
+                        if (invalidArity) {
+                            if (this.nativeSyntax) {
                                 this.degradedFunctions.put(name, "invalid_function_arity");
                             }
 
-                            else
-                            {
+                            else {
                                 throw invalid("Function arity: " + name);
                             }
 
@@ -1758,14 +1420,11 @@ public final class Molang
                         Node[] arguments = args.toArray(Node[]::new);
                         left = c -> c.call(name, arguments);
                     }
-                }
-                else
-                {
+                } else {
                     if (!writable(name) && !name.startsWith("query.") && !name.startsWith("ysm.")
                             && !name.startsWith("ctrl.") && !name.startsWith("context.") && !name.startsWith("args.")
                             && !name.equals("args") && !(this.nativeSyntax && name.equals("this"))
-                            && !name.equals("math.pi") && !name.equals("math.e"))
-                    {
+                            && !name.equals("math.pi") && !name.equals("math.e")) {
                         throw invalid("Unsupported binding: " + name);
                     }
 
@@ -1774,29 +1433,23 @@ public final class Molang
                     left = new Lookup(name);
                 }
             }
-            while (!end() && (peek().equals(".") || peek().equals("[")))
-            {
-                if (take("["))
-                {
+            while (!end() && (peek().equals(".") || peek().equals("["))) {
+                if (take("[")) {
                     Node index = expression(0);
                     require("]");
                     Node value = left;
                     left = c -> element(value.eval(c), index.eval(c), c.nativeYsm);
                     assignable = null;
-                }
-                else
-                {
+                } else {
                     require(".");
-                    if (end())
-                    {
+                    if (end()) {
                         throw invalid("Missing vector property");
                     }
 
                     Token token = this.tokens.get(this.at++);
                     String property = token.text;
                     if (token.string || !this.nativeSyntax && !Set.of("x", "y", "z").contains(property)
-                            || this.nativeSyntax && !property.matches("[\\p{L}_][\\p{L}\\p{N}_.]{0,127}"))
-                    {
+                            || this.nativeSyntax && !property.matches("[\\p{L}_][\\p{L}\\p{N}_.]{0,127}")) {
                         throw invalid("Unsupported vector property");
                     }
 
@@ -1804,11 +1457,9 @@ public final class Molang
                     assignable = null;
                 }
             }
-            while (!end())
-            {
+            while (!end()) {
                 String op = peek();
-                int precedence = switch (op)
-                {
+                int precedence = switch (op) {
                 case "=", "+=", "-=", "*=", "/=" -> 1;
                 case "?" -> this.nativeSyntax ? 3 : 2;
                 case "??" -> this.nativeSyntax ? 2 : 3;
@@ -1821,30 +1472,23 @@ public final class Molang
                 case "->" -> this.nativeSyntax ? 11 : -1;
                 default -> -1;
                 };
-                if (precedence < minimum)
-                {
+                if (precedence < minimum) {
                     break;
                 }
 
                 this.at++;
                 Node a = left;
-                if (op.equals("?"))
-                {
+                if (op.equals("?")) {
                     Node yes = expression(0);
                     Node no = take(":") ? expression(precedence) : new Literal(this.nativeSyntax ? null : 0d);
                     left = c -> c.booleanValue(a.eval(c)) ? yes.eval(c) : no.eval(c);
-                }
-                else if (precedence == 1)
-                {
-                    if (this.nativeSyntax && a instanceof Property property)
-                    {
+                } else if (precedence == 1) {
+                    if (this.nativeSyntax && a instanceof Property property) {
                         Node b = expression(precedence);
-                        left = c ->
-                        {
+                        left = c -> {
                             Object base = property.base.eval(c), value = op.equals("=") ? b.eval(c)
                                     : c.binaryValue(op.substring(0, 1), property.eval(c), b.eval(c));
-                            if (base instanceof StructValue struct && !(value instanceof StructValue))
-                            {
+                            if (base instanceof StructValue struct && !(value instanceof StructValue)) {
                                 struct.putProperty(property.path, c.check(value));
                             }
 
@@ -1853,8 +1497,7 @@ public final class Molang
                         assignable = null;
                         continue;
                     }
-                    if (assignable == null || !writable(assignable))
-                    {
+                    if (assignable == null || !writable(assignable)) {
                         throw invalid("Invalid assignment target");
                     }
 
@@ -1862,12 +1505,9 @@ public final class Molang
                     Node b = expression(precedence);
                     left = c -> c.setValue(name,
                             op.equals("=") ? b.eval(c) : c.binaryValue(op.substring(0, 1), c.value(name), b.eval(c)));
-                }
-                else
-                {
+                } else {
                     Node b = expression(precedence + 1);
-                    left = switch (op)
-                    {
+                    left = switch (op) {
                     case "&&" -> c -> c.booleanValue(a.eval(c)) && c.booleanValue(b.eval(c)) ? 1d : 0d;
                     case "||" -> c -> c.booleanValue(a.eval(c)) || c.booleanValue(b.eval(c)) ? 1d : 0d;
                     case "??" ->
@@ -1884,10 +1524,8 @@ public final class Molang
         }
     }
 
-    private static Object binary(String op, Object left, Object right, boolean nativeYsm)
-    {
-        if (op.equals("==") || op.equals("!="))
-        {
+    private static Object binary(String op, Object left, Object right, boolean nativeYsm) {
+        if (op.equals("==") || op.equals("!=")) {
             boolean equal = nativeYsm
                     ? left == right || (left instanceof Number || right instanceof Number
                             ? nativeNumber(left) == nativeNumber(right)
@@ -1898,8 +1536,7 @@ public final class Molang
             return equal == op.equals("==") ? 1d : 0d;
         }
         double a = nativeYsm ? nativeNumber(left) : number(left), b = nativeYsm ? nativeNumber(right) : number(right);
-        return finite(switch (op)
-        {
+        return finite(switch (op) {
         case "+" -> a + b;
         case "-" -> a - b;
         case "*" -> a * b;

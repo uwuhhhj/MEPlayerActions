@@ -13,15 +13,12 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NativeBbModelBasisTest
-{
+class NativeBbModelBasisTest {
     @ParameterizedTest
-    @CsvSource(
-    { "4.10,32.5,0,0", "4.10,0,-37,0", "4.10,0,0,24", "4.10,23,-41,57", "5.0,32.5,0,0", "5.0,0,-37,0", "5.0,0,0,24",
-            "5.0,23,-41,57" })
+    @CsvSource({ "4.10,32.5,0,0", "4.10,0,-37,0", "4.10,0,0,24", "4.10,23,-41,57", "5.0,32.5,0,0", "5.0,0,-37,0",
+            "5.0,0,0,24", "5.0,23,-41,57" })
     void authorRestRotationUsesTheSamePositiveZyxEditorBasisAcrossFormatVersions(String version, float x, float y,
-            float z) throws Exception
-    {
+            float z) throws Exception {
         JsonObject source = staticSource(version);
         source.getAsJsonArray("outliner").get(0).getAsJsonObject().add("rotation", array(x, y, z));
         byte[] bytes = source.toString().getBytes(StandardCharsets.UTF_8);
@@ -35,8 +32,7 @@ class NativeBbModelBasisTest
     }
 
     @Test
-    void authoredLocatorRetainsItsLocalRestRotationAndParentBasis() throws Exception
-    {
+    void authoredLocatorRetainsItsLocalRestRotationAndParentBasis() throws Exception {
         JsonObject source = staticSource("5.0");
         JsonObject body = source.getAsJsonArray("outliner").get(0).getAsJsonObject();
         body.add("rotation", array(15, 20, -25));
@@ -54,8 +50,7 @@ class NativeBbModelBasisTest
                 model.basisBoneTransforms().get("RightHandLocator").get(new float[16]), 1e-5f);
     }
 
-    private static JsonObject staticSource(String version) throws Exception
-    {
+    private static JsonObject staticSource(String version) throws Exception {
         JsonObject source = NativeBbModelTest.source();
         source.add("meta",
                 JsonParser.parseString("{\"format_version\":\"" + version + "\",\"model_format\":\"bedrock\"}"));
@@ -70,8 +65,7 @@ class NativeBbModelBasisTest
         return source;
     }
 
-    private static JsonArray array(float x, float y, float z)
-    {
+    private static JsonArray array(float x, float y, float z) {
         JsonArray values = new JsonArray();
         values.add(x);
         values.add(y);
@@ -79,8 +73,7 @@ class NativeBbModelBasisTest
         return values;
     }
 
-    private static Matrix4f rotation(float x, float y, float z)
-    {
+    private static Matrix4f rotation(float x, float y, float z) {
         return new Matrix4f().rotateZ((float) Math.toRadians(z)).rotateY((float) Math.toRadians(y))
                 .rotateX((float) Math.toRadians(x));
     }

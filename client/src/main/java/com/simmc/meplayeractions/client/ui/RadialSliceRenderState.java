@@ -19,13 +19,10 @@ import java.util.concurrent.atomic.AtomicLong;
  * See THIRD_PARTY_NOTICES.md for the upstream license and source attribution.
  */
 public record RadialSliceRenderState(Matrix3x2f pose, List<WheelSelection.Point> vertices, int color,
-        ScreenRect scissorArea, ScreenRect bounds, AtomicLong emittedVertices) implements SimpleGuiElementRenderState
-{
+        ScreenRect scissorArea, ScreenRect bounds, AtomicLong emittedVertices) implements SimpleGuiElementRenderState {
     public static RadialSliceRenderState of(Matrix3x2fc currentPose, List<WheelSelection.Point> vertices, int color,
-            ScreenRect scissor, AtomicLong emittedVertices)
-    {
-        if (vertices.size() != 4)
-        {
+            ScreenRect scissor, AtomicLong emittedVertices) {
+        if (vertices.size() != 4) {
             throw new IllegalArgumentException("A roulette slice has four vertices");
         }
 
@@ -35,10 +32,8 @@ public record RadialSliceRenderState(Matrix3x2f pose, List<WheelSelection.Point>
     }
 
     @Override
-    public void setupVertices(VertexConsumer consumer)
-    {
-        for (WheelSelection.Point point : this.vertices)
-        {
+    public void setupVertices(VertexConsumer consumer) {
+        for (WheelSelection.Point point : this.vertices) {
             consumer.vertex(this.pose, point.x(), point.y()).color(this.color);
         }
 
@@ -46,23 +41,19 @@ public record RadialSliceRenderState(Matrix3x2f pose, List<WheelSelection.Point>
     }
 
     @Override
-    public RenderPipeline pipeline()
-    {
+    public RenderPipeline pipeline() {
         return RenderPipelines.GUI;
     }
 
     @Override
-    public TextureSetup textureSetup()
-    {
+    public TextureSetup textureSetup() {
         return TextureSetup.empty();
     }
 
-    private static ScreenRect computeBounds(Matrix3x2fc pose, List<WheelSelection.Point> points, ScreenRect scissor)
-    {
+    private static ScreenRect computeBounds(Matrix3x2fc pose, List<WheelSelection.Point> points, ScreenRect scissor) {
         float minX = Float.POSITIVE_INFINITY, minY = Float.POSITIVE_INFINITY;
         float maxX = Float.NEGATIVE_INFINITY, maxY = Float.NEGATIVE_INFINITY;
-        for (WheelSelection.Point point : points)
-        {
+        for (WheelSelection.Point point : points) {
             Vector2f transformed = pose.transformPosition(point.x(), point.y(), new Vector2f());
             minX = Math.min(minX, transformed.x);
             minY = Math.min(minY, transformed.y);

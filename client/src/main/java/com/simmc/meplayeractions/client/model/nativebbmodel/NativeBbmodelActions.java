@@ -11,30 +11,23 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.*;
 
-public final class NativeBbmodelActions
-{
+public final class NativeBbmodelActions {
     private static final String BASE = "/assets/meplayeractions/builtin/bbmodel/animations/";
     private static volatile Map<String, RawYsmModel.RawAnimationFile> cached;
 
-    private NativeBbmodelActions()
-    {
+    private NativeBbmodelActions() {
     }
 
-    public static void apply(RawYsmModel raw) throws IOException
-    {
+    public static void apply(RawYsmModel raw) throws IOException {
         SemanticSkeleton skeleton = buildSemanticSkeleton(raw.mainEntity.mainModel);
         Map<String, RawYsmModel.RawAnimation> body = new LinkedHashMap<>(), arms = new LinkedHashMap<>();
-        for (Map.Entry<String, RawYsmModel.RawAnimationFile> entry : raw.mainEntity.animationFiles.entrySet())
-        {
+        for (Map.Entry<String, RawYsmModel.RawAnimationFile> entry : raw.mainEntity.animationFiles.entrySet()) {
             String family = entry.getKey().replaceFirst("^animation-", "");
             (family.equals("fp_arm") || family.equals("fp.arm") ? arms : body).putAll(entry.getValue().animations);
         }
-        for (Map.Entry<String, RawYsmModel.RawAnimationFile> entry : presets().entrySet())
-        {
+        for (Map.Entry<String, RawYsmModel.RawAnimationFile> entry : presets().entrySet()) {
             Map<String, RawYsmModel.RawAnimation> target = entry.getKey().equals("fp_arm") ? arms : body;
-            for (Map.Entry<String, RawYsmModel.RawAnimation> clip : entry.getValue().animations.entrySet())
-
-            {
+            for (Map.Entry<String, RawYsmModel.RawAnimation> clip : entry.getValue().animations.entrySet()) {
                 target.computeIfAbsent(clip.getKey(), name -> remap(clip.getValue(), skeleton));
             }
 
@@ -43,17 +36,14 @@ public final class NativeBbmodelActions
         aliases(arms);
         for (String animation : List.of("hold_mainhand:lance", "hold_offhand:lance", "swing:lance",
                 "use_mainhand:lance", "use_offhand:lance", "lance_stand", "lance_jab", "lance_lunge", "lance_charge",
-                "lance_riding_idle", "lance_riding_charge", "lance_fall_flying_charge"))
-        {
+                "lance_riding_idle", "lance_riding_charge", "lance_fall_flying_charge")) {
             RawYsmModel.RawAnimation existing = arms.get(animation);
-            if (existing != null && !existing.boneAnimations.isEmpty())
-            {
+            if (existing != null && !existing.boneAnimations.isEmpty()) {
                 continue;
             }
 
             RawYsmModel.RawAnimation derived = firstPerson(animation, body.get(animation));
-            if (derived != null)
-            {
+            if (derived != null) {
                 arms.put(animation, derived);
             }
 
@@ -68,34 +58,26 @@ public final class NativeBbmodelActions
         raw.mainEntity.animationFiles.put("main", main);
         raw.mainEntity.animationFiles.put("fp_arm", fp);
         // ClientModelBundleAssembler uses the main mesh when no separate arm mesh exists.
-        if (raw.mainEntity.armModel == null)
-        {
+        if (raw.mainEntity.armModel == null) {
             raw.mainEntity.armModel = raw.mainEntity.mainModel;
         }
 
     }
 
-    private static Map<String, RawYsmModel.RawAnimationFile> presets() throws IOException
-    {
+    private static Map<String, RawYsmModel.RawAnimationFile> presets() throws IOException {
         Map<String, RawYsmModel.RawAnimationFile> result = cached;
-        if (result != null)
-        {
+        if (result != null) {
             return result;
         }
 
-        synchronized (NativeBbmodelActions.class)
-        {
+        synchronized (NativeBbmodelActions.class) {
             result = cached;
-            if (result == null)
-            {
+            if (result == null) {
                 Map<String, RawYsmModel.RawAnimationFile> loaded = new LinkedHashMap<>();
-                for (String family : List.of("main", "extra", "fp_arm"))
-                {
+                for (String family : List.of("main", "extra", "fp_arm")) {
                     String file = family.equals("fp_arm") ? "fp.arm.animation.json" : family + ".animation.json";
-                    try (InputStream stream = NativeBbmodelActions.class.getResourceAsStream(BASE + file))
-                    {
-                        if (stream == null)
-                        {
+                    try (InputStream stream = NativeBbmodelActions.class.getResourceAsStream(BASE + file)) {
+                        if (stream == null) {
                             BbImportHost.LOGGER.warn("[MPA] Missing builtin bbmodel action preset file {}", file);
                             continue;
                         }
@@ -104,9 +86,7 @@ public final class NativeBbmodelActions
                         BbRotationCompat.convertRawAnimationFile(animations);
                         animations.animType = YsmAnimationParsing.getAnimTypeFromKey(family);
                         loaded.put(family, animations);
-                    }
-                    catch (Exception error)
-                    {
+                    } catch (Exception error) {
                         BbImportHost.LOGGER.warn("[MPA] Failed to load builtin bbmodel action preset file {}", file,
                                 error);
                     }
@@ -118,21 +98,17 @@ public final class NativeBbmodelActions
         return result;
     }
 
-    private static RawYsmModel.RawAnimation remap(RawYsmModel.RawAnimation source, SemanticSkeleton skeleton)
-    {
+    private static RawYsmModel.RawAnimation remap(RawYsmModel.RawAnimation source, SemanticSkeleton skeleton) {
         RawYsmModel.RawAnimation derived = copy(source, source.name);
         derived.boneAnimations = new ArrayList<>();
-        for (RawYsmModel.RawBoneAnimation animation : source.boneAnimations)
-        {
+        for (RawYsmModel.RawBoneAnimation animation : source.boneAnimations) {
             String semantic = PRESET_BONE_SEMANTICS.get(normalizeBoneName(animation.boneName));
             String actual = semantic == null ? null : skeleton.getTarget(semantic);
-            if (actual == null || actual.equals(animation.boneName))
-            {
+            if (actual == null || actual.equals(animation.boneName)) {
                 derived.boneAnimations.add(animation);
             }
 
-            else
-            {
+            else {
                 RawYsmModel.RawBoneAnimation bone = new RawYsmModel.RawBoneAnimation();
                 bone.boneName = actual;
                 bone.rotation = animation.rotation;
@@ -144,8 +120,7 @@ public final class NativeBbmodelActions
         return derived;
     }
 
-    private static RawYsmModel.RawAnimation copy(RawYsmModel.RawAnimation source, String name)
-    {
+    private static RawYsmModel.RawAnimation copy(RawYsmModel.RawAnimation source, String name) {
         RawYsmModel.RawAnimation result = new RawYsmModel.RawAnimation();
         result.name = name;
         result.length = source.length;
@@ -161,48 +136,33 @@ public final class NativeBbmodelActions
         return result;
     }
 
-    private static void aliases(Map<String, RawYsmModel.RawAnimation> clips)
-    {
-        for (String[] pair : new String[][]
-        {
-                { "hold_mainhand:lance", "hold_mainhand:spear" },
-                { "hold_offhand:lance", "hold_offhand:spear" },
-                { "swing:lance", "swing:spear" },
-                { "use_mainhand:lance", "use_mainhand:spear" },
-                { "use_offhand:lance", "use_offhand:spear" },
-                { "lance_stand", "hold_mainhand:lance" },
-                { "lance_jab", "swing:lance" },
-                { "lance_lunge", "swing:lance" },
-                { "lance_charge", "use_mainhand:lance" },
-                { "lance_riding_idle", "hold_mainhand:lance" },
-                { "lance_riding_charge", "use_mainhand:lance" },
+    private static void aliases(Map<String, RawYsmModel.RawAnimation> clips) {
+        for (String[] pair : new String[][] { { "hold_mainhand:lance", "hold_mainhand:spear" },
+                { "hold_offhand:lance", "hold_offhand:spear" }, { "swing:lance", "swing:spear" },
+                { "use_mainhand:lance", "use_mainhand:spear" }, { "use_offhand:lance", "use_offhand:spear" },
+                { "lance_stand", "hold_mainhand:lance" }, { "lance_jab", "swing:lance" },
+                { "lance_lunge", "swing:lance" }, { "lance_charge", "use_mainhand:lance" },
+                { "lance_riding_idle", "hold_mainhand:lance" }, { "lance_riding_charge", "use_mainhand:lance" },
                 { "lance_fall_flying_charge", "use_mainhand:lance" },
                 { "hold_mainhand:mace", "hold_mainhand$minecraft:mace" },
-                { "hold_offhand:mace", "hold_offhand$minecraft:mace" },
-                { "swing:mace", "swing$minecraft:mace" } })
-        {
+                { "hold_offhand:mace", "hold_offhand$minecraft:mace" }, { "swing:mace", "swing$minecraft:mace" } }) {
             RawYsmModel.RawAnimation original = clips.get(pair[1]);
-            if (original != null)
-            {
+            if (original != null) {
                 clips.putIfAbsent(pair[0], copy(original, pair[0]));
             }
 
         }
     }
 
-    private static RawYsmModel.RawAnimation firstPerson(String name, RawYsmModel.RawAnimation source)
-    {
-        if (source == null || source.boneAnimations.isEmpty())
-        {
+    private static RawYsmModel.RawAnimation firstPerson(String name, RawYsmModel.RawAnimation source) {
+        if (source == null || source.boneAnimations.isEmpty()) {
             return null;
         }
 
         Map<String, RawYsmModel.RawBoneAnimation> bones = new LinkedHashMap<>();
-        for (RawYsmModel.RawBoneAnimation bone : source.boneAnimations)
-        {
+        for (RawYsmModel.RawBoneAnimation bone : source.boneAnimations) {
             String target = firstPersonArmTarget(bone.boneName);
-            if (target == null)
-            {
+            if (target == null) {
                 continue;
             }
 
@@ -211,18 +171,14 @@ public final class NativeBbmodelActions
             derived.rotation = bone.rotation;
             derived.position = bone.position;
             derived.scale = bone.scale;
-            if (target.equals(bone.boneName))
-            {
+            if (target.equals(bone.boneName)) {
                 bones.put(target, derived);
-            }
-            else
-            {
+            } else {
                 bones.putIfAbsent(target, derived);
             }
 
         }
-        if (bones.isEmpty())
-        {
+        if (bones.isEmpty()) {
             return null;
         }
 
@@ -233,10 +189,8 @@ public final class NativeBbmodelActions
         return result;
     }
 
-    private static String firstPersonArmTarget(String name)
-    {
-        return switch (normalizeBoneName(name))
-        {
+    private static String firstPersonArmTarget(String name) {
+        return switch (normalizeBoneName(name)) {
         case "leftarm", "leftupperarm", "leftuparm", "leftshoulder", "leftbicep" -> "LeftArm";
         case "leftforearm", "leftlowerarm", "leftelbow" -> "LeftForeArm";
         case "lefthand", "leftwrist", "leftpalm" -> "LeftHand";
@@ -263,21 +217,16 @@ public final class NativeBbmodelActions
             Map.entry("leftitem", "LEFT_HAND_LOCATOR"), Map.entry("rightitem", "RIGHT_HAND_LOCATOR"),
             Map.entry("lefthandlocator", "LEFT_HAND_LOCATOR"), Map.entry("righthandlocator", "RIGHT_HAND_LOCATOR"));
 
-    private static SemanticSkeleton buildSemanticSkeleton(RawYsmModel.RawGeometry mainModel)
-    {
+    private static SemanticSkeleton buildSemanticSkeleton(RawYsmModel.RawGeometry mainModel) {
         LinkedHashMap<String, String> normalizedToActual = new LinkedHashMap<>();
-        if (mainModel != null && mainModel.bones != null)
-        {
-            for (RawYsmModel.RawBone bone : mainModel.bones)
-            {
+        if (mainModel != null && mainModel.bones != null) {
+            for (RawYsmModel.RawBone bone : mainModel.bones) {
                 String actual = bone.name;
-                if (actual == null || actual.isEmpty())
-                {
+                if (actual == null || actual.isEmpty()) {
                     continue;
                 }
                 String normalized = normalizeBoneName(actual);
-                if (!normalized.isEmpty())
-                {
+                if (!normalized.isEmpty()) {
                     normalizedToActual.putIfAbsent(normalized, actual);
                 }
             }
@@ -308,31 +257,24 @@ public final class NativeBbmodelActions
     }
 
     private static void registerSemanticBone(Map<String, String> normalizedToActual, Map<String, String> out,
-            String semanticName, String... candidates)
-    {
-        for (String candidate : candidates)
-        {
+            String semanticName, String... candidates) {
+        for (String candidate : candidates) {
             String actual = normalizedToActual.get(candidate);
-            if (actual != null)
-            {
+            if (actual != null) {
                 out.putIfAbsent(semanticName, actual);
                 return;
             }
         }
     }
 
-    private static String normalizeBoneName(String name)
-    {
-        if (name == null || name.isEmpty())
-        {
+    private static String normalizeBoneName(String name) {
+        if (name == null || name.isEmpty()) {
             return "";
         }
         StringBuilder out = new StringBuilder(name.length());
-        for (int i = 0; i < name.length(); i++)
-        {
+        for (int i = 0; i < name.length(); i++) {
             char c = Character.toLowerCase(name.charAt(i));
-            if (Character.isLetterOrDigit(c))
-            {
+            if (Character.isLetterOrDigit(c)) {
                 out.append(c);
             }
         }

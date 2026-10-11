@@ -9,14 +9,12 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class ClientOptionsPrivateSyncTest
-{
+class ClientOptionsPrivateSyncTest {
     @TempDir
     Path directory;
 
     @Test
-    void missingAndLegacyConfigurationsRemainPrivate() throws Exception
-    {
+    void missingAndLegacyConfigurationsRemainPrivate() throws Exception {
         Path path = this.directory.resolve("options.json");
         assertFalse(new ClientOptions(path).privateSyncEnabled);
         Files.writeString(path, "{\"localActionLocked\":true}");
@@ -24,8 +22,7 @@ class ClientOptionsPrivateSyncTest
     }
 
     @Test
-    void optInAndOptOutPersistWithoutChangingTheSelectedModel()
-    {
+    void optInAndOptOutPersistWithoutChangingTheSelectedModel() {
         Path path = this.directory.resolve("options.json");
         ClientOptions options = new ClientOptions(path);
         LocalAppearanceSettings appearance = new LocalAppearanceSettings(true, "ysm:sample", 1.25f, .5, 1, -.5);
@@ -43,11 +40,9 @@ class ClientOptionsPrivateSyncTest
     }
 
     @Test
-    void stringOrNumericValuesNeverOptIn() throws Exception
-    {
+    void stringOrNumericValuesNeverOptIn() throws Exception {
         Path path = this.directory.resolve("options.json");
-        for (String value : List.of("\"true\"", "1", "null", "{}"))
-        {
+        for (String value : List.of("\"true\"", "1", "null", "{}")) {
             Files.writeString(path, "{\"privateSyncEnabled\":" + value + "}");
             assertFalse(new ClientOptions(path).privateSyncEnabled, value);
         }

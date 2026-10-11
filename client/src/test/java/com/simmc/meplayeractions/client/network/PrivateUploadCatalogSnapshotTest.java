@@ -8,11 +8,9 @@ import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class PrivateUploadCatalogSnapshotTest
-{
+class PrivateUploadCatalogSnapshotTest {
     @Test
-    void completeRevisionsReplaceAtomicallyAndRestartDropsPriorServerMetadata()
-    {
+    void completeRevisionsReplaceAtomicallyAndRestartDropsPriorServerMetadata() {
         PrivateUploadCatalogSnapshot directory = new PrivateUploadCatalogSnapshot();
         assertTrue(directory.accept(packet(1, 0, 1, true, "local:first.bbmodel")));
         assertEquals("local:first.bbmodel", directory.models().getFirst().modelId());
@@ -30,8 +28,7 @@ class PrivateUploadCatalogSnapshotTest
     }
 
     @Test
-    void revokedDirectoryCarriesNoModelsAndCannotBeMixedWithAuthorizedFragments()
-    {
+    void revokedDirectoryCarriesNoModelsAndCannotBeMixedWithAuthorizedFragments() {
         PrivateUploadCatalogSnapshot directory = new PrivateUploadCatalogSnapshot();
         assertTrue(directory.accept(packet(1, 0, 1, true, "ysm:鲸鱼娘flash.ysm")));
         assertTrue(directory.accept(packet(2, 0, 1, false)));
@@ -43,8 +40,7 @@ class PrivateUploadCatalogSnapshotTest
     }
 
     @Test
-    void duplicateChangedOrOverBudgetFragmentsAreRejectedBeforeTheyCanPublish()
-    {
+    void duplicateChangedOrOverBudgetFragmentsAreRejectedBeforeTheyCanPublish() {
         PrivateUploadCatalogSnapshot directory = new PrivateUploadCatalogSnapshot();
         assertFalse(directory.accept(packet(1, 0, 2, true, "local:first.bbmodel")));
         assertThrows(IllegalArgumentException.class,
@@ -54,8 +50,7 @@ class PrivateUploadCatalogSnapshotTest
         assertThrows(IllegalArgumentException.class,
                 () -> directory.accept(packet(1, 1, 3, true, "local:second.bbmodel")));
         String[] many = new String[65];
-        for (int i = 0; i < many.length; i++)
-        {
+        for (int i = 0; i < many.length; i++) {
             many[i] = "local:model" + i + ".bbmodel";
         }
 
@@ -64,15 +59,13 @@ class PrivateUploadCatalogSnapshotTest
     }
 
     @Test
-    void entriesAreTypedBoundedLocalSourceIdentitiesWithoutPathsOrAssetTokens()
-    {
-        for (String id : List.of("../server.bbmodel", "local:../server.bbmodel", "https://server/model.ysm", "local:x"))
-        {
+    void entriesAreTypedBoundedLocalSourceIdentitiesWithoutPathsOrAssetTokens() {
+        for (String id : List.of("../server.bbmodel", "local:../server.bbmodel", "https://server/model.ysm",
+                "local:x")) {
             PrivateUploadCatalogSnapshot directory = new PrivateUploadCatalogSnapshot();
             assertThrows(IllegalArgumentException.class, () -> directory.accept(packet(1, 0, 1, true, id)));
         }
-        for (String field : List.of("owner", "offerId", "url", "command"))
-        {
+        for (String field : List.of("owner", "offerId", "url", "command")) {
             JsonObject value = packet(1, 0, 1, true, "local:model.bbmodel");
             value.getAsJsonArray("models").get(0).getAsJsonObject().addProperty(field, "injected");
             assertThrows(IllegalArgumentException.class, () -> new PrivateUploadCatalogSnapshot().accept(value));
@@ -82,16 +75,14 @@ class PrivateUploadCatalogSnapshotTest
         assertThrows(IllegalArgumentException.class, () -> new PrivateUploadCatalogSnapshot().accept(wrong));
     }
 
-    private static JsonObject packet(long revision, int index, int count, boolean available, String... ids)
-    {
+    private static JsonObject packet(long revision, int index, int count, boolean available, String... ids) {
         JsonObject result = PrivateModelSyncClient.envelope("upload_catalog");
         result.addProperty("revision", revision);
         result.addProperty("index", index);
         result.addProperty("count", count);
         result.addProperty("available", available);
         JsonArray models = new JsonArray();
-        for (String id : ids)
-        {
+        for (String id : ids) {
             JsonObject model = new JsonObject();
             model.addProperty("modelId", id);
             model.addProperty("hash", "a".repeat(64));

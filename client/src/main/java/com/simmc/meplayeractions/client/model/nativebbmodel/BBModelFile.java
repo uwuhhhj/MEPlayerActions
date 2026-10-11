@@ -19,8 +19,7 @@ import java.util.List;
  *   <li>{@code animation_controllers[].states} 是数组（顺序有意义）。</li>
  * </ul>
  */
-public class BBModelFile
-{
+public class BBModelFile {
     public BBMetadata meta = new BBMetadata();
     public BBResolution resolution = new BBResolution();
     public String name = "";
@@ -58,8 +57,7 @@ public class BBModelFile
     public BBDisplaySettings display;
     public List<BBCollection> collections = new ArrayList<>();
 
-    public static class BBMetadata
-    {
+    public static class BBMetadata {
         public String format_version = "4.5";
         public String model_format = "";
         public boolean box_uv = false;
@@ -67,8 +65,7 @@ public class BBModelFile
         public long creation_time = 0;
     }
 
-    public static class BBResolution
-    {
+    public static class BBResolution {
         public int width = 16;
         public int height = 16;
     }

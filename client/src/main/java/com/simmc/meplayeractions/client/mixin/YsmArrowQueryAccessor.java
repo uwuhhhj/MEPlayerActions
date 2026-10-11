@@ -7,8 +7,7 @@ import org.spongepowered.asm.mixin.gen.Invoker;
 
 /** Native fields used by OpenYSM/Sparkle projectile animation queries. */
 @Mixin(PersistentProjectileEntity.class)
-public interface YsmArrowQueryAccessor
-{
+public interface YsmArrowQueryAccessor {
     @Accessor("inGroundTime")
     int mpa$inGroundTime();
 

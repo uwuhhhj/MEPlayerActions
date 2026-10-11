@@ -14,48 +14,40 @@ import java.util.function.BiConsumer;
 import java.util.function.Function;
 
 /** Optional protocol-3 optimizations are used only after both peers advertise them. */
-public final class IncrementalStateProtocol
-{
+public final class IncrementalStateProtocol {
     public static final String INCREMENTAL = "incremental_state", TIMELINE = "server_timeline";
     public static final String DISGUISE_RESULTS = "disguise_results";
     public static final int MAX_HEARTBEAT_BINDINGS = 64;
 
-    public record Animation(String id, String label)
-    {
+    public record Animation(String id, String label) {
     }
 
-    public record Identity(UUID owner, String instance, String hash)
-    {
+    public record Identity(UUID owner, String instance, String hash) {
     }
 
     private Set<String> offered = Set.of();
     private boolean incremental, timeline, serverCatalog, disguiseResults, timelinePreference, legacyHello;
 
-    public static List<String> helloCapabilities(boolean followServerTimeline)
-    {
+    public static List<String> helloCapabilities(boolean followServerTimeline) {
         ArrayList<String> result = new ArrayList<>(List.of("local_render", "server_push_models", INCREMENTAL,
                 ServerModelCatalogSnapshot.CAPABILITY, DISGUISE_RESULTS));
-        if (followServerTimeline)
-        {
+        if (followServerTimeline) {
             result.add(TIMELINE);
         }
 
         return List.copyOf(result);
     }
 
-    public List<String> nextHelloCapabilities(boolean followServerTimeline)
-    {
+    public List<String> nextHelloCapabilities(boolean followServerTimeline) {
         return this.legacyHello ? List.of("local_render", "server_push_models")
                 : helloCapabilities(followServerTimeline);
     }
 
-    public void helloSent(Collection<String> capabilities)
-    {
+    public void helloSent(Collection<String> capabilities) {
         helloSent(capabilities, capabilities.contains(TIMELINE));
     }
 
-    public void helloSent(Collection<String> capabilities, boolean followServerTimeline)
-    {
+    public void helloSent(Collection<String> capabilities, boolean followServerTimeline) {
         this.offered = Set.copyOf(capabilities);
         this.timelinePreference = followServerTimeline;
         this.incremental = false;
@@ -65,13 +57,11 @@ public final class IncrementalStateProtocol
     }
 
     /** Pre-extension servers reject unknown hello capabilities; retry their original hello once. */
-    public boolean fallbackForError(String code)
-    {
+    public boolean fallbackForError(String code) {
         if (this.legacyHello || !Set.of("invalid_payload", "unsupported_capability").contains(code)
                 || !this.offered.contains(INCREMENTAL) && !this.offered.contains(TIMELINE)
                         && !this.offered.contains(ServerModelCatalogSnapshot.CAPABILITY)
-                        && !this.offered.contains(DISGUISE_RESULTS))
-        {
+                        && !this.offered.contains(DISGUISE_RESULTS)) {
             return false;
         }
 
@@ -84,8 +74,7 @@ public final class IncrementalStateProtocol
         return true;
     }
 
-    public void acknowledge(Collection<String> capabilities)
-    {
+    public void acknowledge(Collection<String> capabilities) {
         this.incremental = this.offered.contains(INCREMENTAL) && capabilities.contains(INCREMENTAL);
         this.timeline = this.offered.contains(TIMELINE) && capabilities.contains(TIMELINE);
         this.serverCatalog = this.offered.contains(ServerModelCatalogSnapshot.CAPABILITY)
@@ -93,33 +82,27 @@ public final class IncrementalStateProtocol
         this.disguiseResults = this.offered.contains(DISGUISE_RESULTS) && capabilities.contains(DISGUISE_RESULTS);
     }
 
-    public boolean incremental()
-    {
+    public boolean incremental() {
         return this.incremental;
     }
 
-    public boolean serverTimeline()
-    {
+    public boolean serverTimeline() {
         return this.timeline;
     }
 
-    public boolean serverCatalog()
-    {
+    public boolean serverCatalog() {
         return this.serverCatalog;
     }
 
-    public boolean disguiseResults()
-    {
+    public boolean disguiseResults() {
         return this.disguiseResults;
     }
 
-    public boolean requestedTimeline()
-    {
+    public boolean requestedTimeline() {
         return this.timelinePreference;
     }
 
-    public void reset()
-    {
+    public void reset() {
         this.offered = Set.of();
         this.incremental = false;
         this.timeline = false;
@@ -130,32 +113,25 @@ public final class IncrementalStateProtocol
     }
 
     /** Absent catalogue means unchanged only in a negotiated incremental session. Explicit [] always clears it. */
-    public <T> List<T> animations(JsonObject state, List<T> previous, Function<Animation, T> factory)
-    {
-        if (!state.has("animations"))
-        {
+    public <T> List<T> animations(JsonObject state, List<T> previous, Function<Animation, T> factory) {
+        if (!state.has("animations")) {
             return this.incremental ? List.copyOf(previous) : List.of();
         }
 
         JsonElement value = state.get("animations");
-        if (!value.isJsonArray() || value.getAsJsonArray().size() > 512)
-
-        {
+        if (!value.isJsonArray() || value.getAsJsonArray().size() > 512) {
             throw new IllegalArgumentException("Animation catalogue");
         }
 
         ArrayList<T> result = new ArrayList<T>();
-        for (JsonElement entry : value.getAsJsonArray())
-        {
-            if (!entry.isJsonObject())
-            {
+        for (JsonElement entry : value.getAsJsonArray()) {
+            if (!entry.isJsonObject()) {
                 throw new IllegalArgumentException("Animation catalogue entry");
             }
 
             JsonObject animation = entry.getAsJsonObject();
             String id = WireJson.string(animation, "id", 128);
-            if (!id.matches("[a-zA-Z0-9_.:/-]{1,128}"))
-            {
+            if (!id.matches("[a-zA-Z0-9_.:/-]{1,128}")) {
                 throw new IllegalArgumentException("Animation ID");
             }
 
@@ -166,25 +142,20 @@ public final class IncrementalStateProtocol
 
     /** Fragments renew listed current identities and report gaps requiring an authoritative snapshot. */
     public <T> boolean renewBindings(JsonObject heartbeat, Map<UUID, T> current, Function<T, Identity> identity,
-            BiConsumer<T, Long> renew, long now)
-    {
-        if (!this.incremental)
-        {
+            BiConsumer<T, Long> renew, long now) {
+        if (!this.incremental) {
             return false;
         }
         // Legacy heartbeat only advances the server clock.
         List<Identity> identities = readHeartbeatBindings(heartbeat);
         boolean gap = false;
-        for (Identity item : identities)
-        {
+        for (Identity item : identities) {
             T binding = current.get(item.owner());
-            if (binding != null && item.equals(identity.apply(binding)))
-            {
+            if (binding != null && item.equals(identity.apply(binding))) {
                 renew.accept(binding, now);
             }
 
-            else
-            {
+            else {
                 gap = true;
             }
 
@@ -192,25 +163,20 @@ public final class IncrementalStateProtocol
         return gap; // Missing entries in a fragment never imply a missing or removed binding.
     }
 
-    private static List<Identity> readHeartbeatBindings(JsonObject heartbeat)
-    {
+    private static List<Identity> readHeartbeatBindings(JsonObject heartbeat) {
         JsonElement value = heartbeat.get("bindings");
-        if (value == null || !value.isJsonArray())
-        {
+        if (value == null || !value.isJsonArray()) {
             throw new IllegalArgumentException("Heartbeat bindings");
         }
 
         JsonArray bindings = value.getAsJsonArray();
-        if (bindings.size() > MAX_HEARTBEAT_BINDINGS)
-        {
+        if (bindings.size() > MAX_HEARTBEAT_BINDINGS) {
             throw new IllegalArgumentException("Heartbeat binding count");
         }
 
         ArrayList<IncrementalStateProtocol.Identity> result = new ArrayList<Identity>();
-        for (JsonElement element : bindings)
-        {
-            if (!element.isJsonObject())
-            {
+        for (JsonElement element : bindings) {
+            if (!element.isJsonObject()) {
                 throw new IllegalArgumentException("Heartbeat binding");
             }
 
@@ -218,8 +184,7 @@ public final class IncrementalStateProtocol
             UUID owner = UUID.fromString(WireJson.string(entry, "owner", 36));
             String instance = UUID.fromString(WireJson.string(entry, "instance", 36)).toString();
             String hash = WireJson.string(entry, "hash", 64);
-            if (!hash.isEmpty() && !hash.matches("[0-9a-f]{64}"))
-            {
+            if (!hash.isEmpty() && !hash.matches("[0-9a-f]{64}")) {
                 throw new IllegalArgumentException("Heartbeat hash");
             }
 

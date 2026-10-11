@@ -8,12 +8,9 @@ import java.util.UUID;
 import org.bukkit.Location;
 
 /** Geometric bed surface, independent of which half the player clicked or slept on. */
-public record BedAnchor(UUID world, double x, double y, double z, float bodyYaw)
-{
-    public static BedAnchor of(UUID world, int x, int y, int z, Bed.Part part, BlockFace facing)
-    {
-        float yaw = switch (facing)
-        {
+public record BedAnchor(UUID world, double x, double y, double z, float bodyYaw) {
+    public static BedAnchor of(UUID world, int x, int y, int z, Bed.Part part, BlockFace facing) {
+        float yaw = switch (facing) {
         case SOUTH -> 0;
         case WEST -> 90;
         case NORTH -> 180;
@@ -25,26 +22,20 @@ public record BedAnchor(UUID world, double x, double y, double z, float bodyYaw)
                 z + 0.5 + facing.getModZ() * direction, yaw);
     }
 
-    public static BedAnchor observe(Player player)
-    {
-        if (!player.isSleeping())
-        {
+    public static BedAnchor observe(Player player) {
+        if (!player.isSleeping()) {
             return null;
         }
 
-        try
-        {
+        try {
             Location location = player.getBedLocation();
-            if (location == null || !(location.getBlock().getBlockData() instanceof Bed bed))
-            {
+            if (location == null || !(location.getBlock().getBlockData() instanceof Bed bed)) {
                 return null;
             }
 
             return of(location.getWorld().getUID(), location.getBlockX(), location.getBlockY(), location.getBlockZ(),
                     bed.getPart(), bed.getFacing());
-        }
-        catch (IllegalStateException noLongerSleeping)
-        {
+        } catch (IllegalStateException noLongerSleeping) {
             return null;
         }
     }

@@ -14,11 +14,9 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NativeYsmMultilineImportTest
-{
+class NativeYsmMultilineImportTest {
     @Test
-    void binaryPropertyControlsTimelineEarlyReturnAndPartialSourceLines() throws Exception
-    {
+    void binaryPropertyControlsTimelineEarlyReturnAndPartialSourceLines() throws Exception {
         RawYsmModel source = sourceWithTimeline("v.value=1;return 7;", "v.value=2;");
         source.properties.mergeMultilineExpr = true;
         YsmFolderModel.Imported merged = NativeYsmFile.importModel(source, null);
@@ -44,8 +42,7 @@ class NativeYsmMultilineImportTest
     }
 
     @Test
-    void controllerEntryAndExitUseSameJoinWhileProfileRetainsAuthorArrays() throws Exception
-    {
+    void controllerEntryAndExitUseSameJoinWhileProfileRetainsAuthorArrays() throws Exception {
         RawYsmModel source = NativeYsmFileTest.model();
         source.properties.mergeMultilineExpr = true;
         RawYsmModel.RawAnimationControllerFile file = new RawYsmModel.RawAnimationControllerFile();
@@ -77,8 +74,7 @@ class NativeYsmMultilineImportTest
     }
 
     @Test
-    void sparkleFolderProfileAndAnimationFamilyReachNativeRuntimeAndCullRemainsMetadata() throws Exception
-    {
+    void sparkleFolderProfileAndAnimationFamilyReachNativeRuntimeAndCullRemainsMetadata() throws Exception {
         RawYsmModel source = sourceWithTimeline("v.value=3;");
         source.formatVersion = 65535;
         RawYsmModel.RawAnimationFile animation = source.mainEntity.animationFiles.remove("main");
@@ -102,8 +98,7 @@ class NativeYsmMultilineImportTest
         assertTrue(restored.model().animations().contains("probe"));
     }
 
-    private static RawYsmModel sourceWithTimeline(String... programs)
-    {
+    private static RawYsmModel sourceWithTimeline(String... programs) {
         RawYsmModel source = NativeYsmFileTest.model();
         RawYsmModel.RawAnimationFile file = new RawYsmModel.RawAnimationFile();
         RawYsmModel.RawAnimation animation = new RawYsmModel.RawAnimation();

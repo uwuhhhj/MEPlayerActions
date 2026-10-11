@@ -3,49 +3,40 @@ package com.simmc.meplayeractions.client.network;
 import java.util.*;
 
 /** Server-issued download grants; observing a hash never authorizes unsolicited bytes. */
-public final class ServerPushAuthorization
-{
+public final class ServerPushAuthorization {
     public static final int MAX_OFFERS = 4;
     public static final long MAX_LIFETIME = 60_000_000_000L, IDLE_TIMEOUT = 15_000_000_000L;
 
-    public record Identity(UUID owner, String instance, String modelId, String hash)
-    {
-        public Identity
-        {
+    public record Identity(UUID owner, String instance, String modelId, String hash) {
+        public Identity {
             Objects.requireNonNull(owner);
             if (instance == null || !UUID.fromString(instance).toString().equals(instance) || modelId == null
-                    || !modelId.matches("[a-z0-9_-]{1,64}") || hash == null || !hash.matches("[0-9a-f]{64}"))
-            {
+                    || !modelId.matches("[a-z0-9_-]{1,64}") || hash == null || !hash.matches("[0-9a-f]{64}")) {
                 throw new IllegalArgumentException("Offer identity");
             }
 
         }
     }
 
-    public record Offer(UUID offerId, Identity identity)
-    {
-        public Offer
-        {
+    public record Offer(UUID offerId, Identity identity) {
+        public Offer {
             Objects.requireNonNull(offerId);
             Objects.requireNonNull(identity);
         }
     }
 
-    public enum Phase
-    {
+    public enum Phase {
         CACHE_VALIDATION, MISSING, RECEIVING, DECODING
     }
 
-    private static final class Grant
-    {
+    private static final class Grant {
         final Offer offer;
         final long created;
         long progress;
         Phase phase = Phase.CACHE_VALIDATION;
         AssetTransfer transfer;
 
-        Grant(Offer offer, long now)
-        {
+        Grant(Offer offer, long now) {
             this.offer = offer;
             this.created = this.progress = now;
         }
@@ -54,42 +45,34 @@ public final class ServerPushAuthorization
     private final Map<UUID, Grant> grants = new LinkedHashMap<>();
     private final Map<UUID, Offer> retired = new LinkedHashMap<>();
 
-    public static boolean acceptsHandshake(String mode, Collection<String> capabilities)
-    {
+    public static boolean acceptsHandshake(String mode, Collection<String> capabilities) {
         return "server-push".equals(mode) && capabilities != null && capabilities.contains("local_render")
                 && capabilities.contains("server_push_models");
     }
 
     /** Exact binding identity is required at issuance; duplicate grants cannot reset time or phase. */
-    public boolean offer(Offer offer, Collection<Identity> currentBindings, long now)
-    {
-        if (!currentBindings.contains(offer.identity()))
-        {
+    public boolean offer(Offer offer, Collection<Identity> currentBindings, long now) {
+        if (!currentBindings.contains(offer.identity())) {
             throw new IllegalArgumentException("Offer has no current binding");
         }
 
         Offer completed = this.retired.get(offer.offerId());
-        if (completed != null)
-        {
-            if (!completed.equals(offer))
-            {
+        if (completed != null) {
+            if (!completed.equals(offer)) {
                 throw new IllegalArgumentException("Reused offer ID");
             }
 
             return false;
         }
         Grant previous = this.grants.get(offer.offerId());
-        if (previous != null)
-        {
-            if (!previous.offer.equals(offer))
-            {
+        if (previous != null) {
+            if (!previous.offer.equals(offer)) {
                 throw new IllegalArgumentException("Conflicting offer ID");
             }
 
             return false;
         }
-        if (this.grants.size() >= MAX_OFFERS)
-        {
+        if (this.grants.size() >= MAX_OFFERS) {
             throw new IllegalArgumentException("Too many active offers");
         }
 
@@ -97,40 +80,32 @@ public final class ServerPushAuthorization
         return true;
     }
 
-    public Optional<Offer> find(UUID id)
-    {
+    public Optional<Offer> find(UUID id) {
         return Optional.ofNullable(this.grants.get(id)).map(grant -> grant.offer);
     }
 
-    public boolean current(Offer offer, Collection<Identity> currentBindings, long now)
-    {
+    public boolean current(Offer offer, Collection<Identity> currentBindings, long now) {
         Grant grant = this.grants.get(offer.offerId());
         return grant != null && grant.offer.equals(offer) && valid(grant, currentBindings, now);
     }
 
-    private static boolean valid(Grant grant, Collection<Identity> bindings, long now)
-    {
+    private static boolean valid(Grant grant, Collection<Identity> bindings, long now) {
         return now - grant.created < MAX_LIFETIME && now - grant.progress < IDLE_TIMEOUT
                 && bindings.stream().anyMatch(binding -> binding.hash().equals(grant.offer.identity().hash()));
     }
 
-    private Grant require(UUID id, String hash, Collection<Identity> bindings, long now)
-    {
+    private Grant require(UUID id, String hash, Collection<Identity> bindings, long now) {
         Grant grant = this.grants.get(id);
-        if (grant == null || !grant.offer.identity().hash().equals(hash) || !valid(grant, bindings, now))
-
-        {
+        if (grant == null || !grant.offer.identity().hash().equals(hash) || !valid(grant, bindings, now)) {
             throw new IllegalArgumentException("Unissued, stale or mismatched asset offer");
         }
 
         return grant;
     }
 
-    public void missing(Offer offer, Collection<Identity> bindings, long now)
-    {
+    public void missing(Offer offer, Collection<Identity> bindings, long now) {
         Grant grant = require(offer.offerId(), offer.identity().hash(), bindings, now);
-        if (grant.phase != Phase.CACHE_VALIDATION)
-        {
+        if (grant.phase != Phase.CACHE_VALIDATION) {
             throw new IllegalArgumentException("Unexpected cache feedback");
         }
 
@@ -139,12 +114,9 @@ public final class ServerPushAuthorization
     }
 
     public void begin(UUID id, String hash, String modelId, int rawBytes, int compressedBytes, int chunks,
-            Collection<Identity> bindings, long now)
-    {
+            Collection<Identity> bindings, long now) {
         Grant grant = require(id, hash, bindings, now);
-        if (grant.phase != Phase.MISSING || !grant.offer.identity().modelId().equals(modelId))
-
-        {
+        if (grant.phase != Phase.MISSING || !grant.offer.identity().modelId().equals(modelId)) {
             throw new IllegalArgumentException("Transfer does not match missing offer");
         }
 
@@ -154,11 +126,9 @@ public final class ServerPushAuthorization
         grant.progress = now;
     }
 
-    public void chunk(UUID id, String hash, int index, String data, Collection<Identity> bindings, long now)
-    {
+    public void chunk(UUID id, String hash, int index, String data, Collection<Identity> bindings, long now) {
         Grant grant = require(id, hash, bindings, now);
-        if (grant.phase != Phase.RECEIVING)
-        {
+        if (grant.phase != Phase.RECEIVING) {
             throw new IllegalArgumentException("Chunk outside offered transfer");
         }
 
@@ -166,11 +136,9 @@ public final class ServerPushAuthorization
         grant.progress = now;
     }
 
-    public AssetTransfer end(UUID id, String hash, Collection<Identity> bindings, long now)
-    {
+    public AssetTransfer end(UUID id, String hash, Collection<Identity> bindings, long now) {
         Grant grant = require(id, hash, bindings, now);
-        if (grant.phase != Phase.RECEIVING)
-        {
+        if (grant.phase != Phase.RECEIVING) {
             throw new IllegalArgumentException("End outside offered transfer");
         }
 
@@ -181,11 +149,9 @@ public final class ServerPushAuthorization
         return transfer;
     }
 
-    public boolean remove(Offer offer)
-    {
+    public boolean remove(Offer offer) {
         Grant grant = this.grants.get(offer.offerId());
-        if (grant == null || !grant.offer.equals(offer))
-        {
+        if (grant == null || !grant.offer.equals(offer)) {
             return false;
         }
 
@@ -194,13 +160,10 @@ public final class ServerPushAuthorization
         return true;
     }
 
-    public List<Offer> prune(Collection<Identity> currentBindings, long now)
-    {
+    public List<Offer> prune(Collection<Identity> currentBindings, long now) {
         List<Offer> removed = new ArrayList<>();
-        this.grants.values().removeIf(grant ->
-        {
-            if (valid(grant, currentBindings, now))
-            {
+        this.grants.values().removeIf(grant -> {
+            if (valid(grant, currentBindings, now)) {
                 return false;
             }
 
@@ -211,31 +174,25 @@ public final class ServerPushAuthorization
         return List.copyOf(removed);
     }
 
-    private void retire(Offer offer)
-    {
+    private void retire(Offer offer) {
         this.retired.put(offer.offerId(), offer);
-        if (this.retired.size() > 64)
-        {
+        if (this.retired.size() > 64) {
             this.retired.remove(this.retired.keySet().iterator().next());
         }
 
     }
 
-    public void clear()
-    {
+    public void clear() {
         this.grants.clear();
         this.retired.clear();
     }
 
-    public int receiving()
-    {
+    public int receiving() {
         return (int) this.grants.values().stream().filter(grant -> grant.phase == Phase.RECEIVING).count();
     }
 
-    public List<Map<String, Object>> diagnostics()
-    {
-        return this.grants.values().stream().map(grant ->
-        {
+    public List<Map<String, Object>> diagnostics() {
+        return this.grants.values().stream().map(grant -> {
             Identity identity = grant.offer.identity();
             return Map.<String, Object>of("owner", identity.owner().toString(), "instance", identity.instance(),
                     "modelId", identity.modelId(), "hash", identity.hash(), "offerId", grant.offer.offerId().toString(),

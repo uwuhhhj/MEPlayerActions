@@ -8,11 +8,9 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class ServerModelCatalogSnapshotTest
-{
+class ServerModelCatalogSnapshotTest {
     @Test
-    void olderDirectoriesRetainUnknownLocationAndPublicationWithoutLosingCommandAuthority()
-    {
+    void olderDirectoriesRetainUnknownLocationAndPublicationWithoutLosingCommandAuthority() {
         ServerModelCatalogSnapshot catalogue = authorized("legacy");
         ServerModelCatalogSnapshot.Model model = catalogue.models().getFirst();
         assertEquals(new ServerModelCatalogSnapshot.Model("legacy", "legacy"), model);
@@ -23,8 +21,7 @@ class ServerModelCatalogSnapshotTest
     }
 
     @Test
-    void directoryMetadataIsPreservedWithoutBecomingACommandOrDownloadRequest()
-    {
+    void directoryMetadataIsPreservedWithoutBecomingACommandOrDownloadRequest() {
         JsonObject packet = chunk(1, 0, 1, true, false, "safe");
         JsonObject entry = packet.getAsJsonArray("models").get(0).getAsJsonObject();
         entry.addProperty("source", "own");
@@ -41,8 +38,7 @@ class ServerModelCatalogSnapshotTest
     }
 
     @Test
-    void anExplicitMissingClientResourceStillAllowsTheRegisteredModelEngineDisguise()
-    {
+    void anExplicitMissingClientResourceStillAllowsTheRegisteredModelEngineDisguise() {
         JsonObject packet = chunk(1, 0, 1, true, false, "me_only");
         JsonObject entry = packet.getAsJsonArray("models").get(0).getAsJsonObject();
         entry.addProperty("source", "modelengine");
@@ -55,11 +51,9 @@ class ServerModelCatalogSnapshotTest
     }
 
     @Test
-    void invalidDirectoryLocationsCannotReplaceAValidSnapshot()
-    {
+    void invalidDirectoryLocationsCannotReplaceAValidSnapshot() {
         for (String folder : List.of("/absolute", "C:/models", "a\\b", "a/../b", "a/./b", "a//b", "trailing/",
-                "a\nmodel", "x".repeat(257), "a/".repeat(16) + "a"))
-        {
+                "a\nmodel", "x".repeat(257), "a/".repeat(16) + "a")) {
             ServerModelCatalogSnapshot catalogue = authorized("old");
             JsonObject packet = chunk(2, 0, 1, true, false, "new");
             JsonObject entry = packet.getAsJsonArray("models").get(0).getAsJsonObject();
@@ -73,10 +67,8 @@ class ServerModelCatalogSnapshotTest
     }
 
     @Test
-    void invalidOptionalFieldTypesAndSourcesAreRejectedBeforePublication()
-    {
-        for (String field : List.of("source", "folder", "clientResource"))
-        {
+    void invalidOptionalFieldTypesAndSourcesAreRejectedBeforePublication() {
+        for (String field : List.of("source", "folder", "clientResource")) {
             JsonObject packet = chunk(1, 0, 1, true, false, "safe");
             JsonObject entry = packet.getAsJsonArray("models").get(0).getAsJsonObject();
             entry.addProperty(field, 123);
@@ -88,8 +80,7 @@ class ServerModelCatalogSnapshotTest
     }
 
     @Test
-    void repeatedFragmentsCannotChangeTheSourceFolderOrPublicationHint()
-    {
+    void repeatedFragmentsCannotChangeTheSourceFolderOrPublicationHint() {
         JsonObject packet = chunk(1, 0, 2, true, false, "first");
         JsonObject entry = packet.getAsJsonArray("models").get(0).getAsJsonObject();
         entry.addProperty("source", "own");
@@ -105,8 +96,7 @@ class ServerModelCatalogSnapshotTest
     }
 
     @Test
-    void fragmentsPublishInDirectoryOrderOnlyAfterTheWholeRevisionArrives()
-    {
+    void fragmentsPublishInDirectoryOrderOnlyAfterTheWholeRevisionArrives() {
         ServerModelCatalogSnapshot catalogue = new ServerModelCatalogSnapshot();
         assertFalse(catalogue.accept(chunk(1, 1, 2, true, false, "ysm_02_jk")));
         assertTrue(catalogue.receiving());
@@ -123,8 +113,7 @@ class ServerModelCatalogSnapshotTest
     }
 
     @Test
-    void aReplacementSuspendsOldButtonsBeforeItsFinalFragmentCommits()
-    {
+    void aReplacementSuspendsOldButtonsBeforeItsFinalFragmentCommits() {
         ServerModelCatalogSnapshot catalogue = authorized("old_model");
         long display = catalogue.displayRevision();
         assertTrue(catalogue.canRequest("old_model", true, 0));
@@ -140,8 +129,7 @@ class ServerModelCatalogSnapshotTest
     }
 
     @Test
-    void aPermissionRevocationCanReplaceAnUnfinishedLargerCatalogueImmediately()
-    {
+    void aPermissionRevocationCanReplaceAnUnfinishedLargerCatalogueImmediately() {
         ServerModelCatalogSnapshot catalogue = authorized("ysm_01_jk");
         catalogue.accept(chunk(2, 0, 2, true, false, "ysm_02_jk"));
         assertTrue(catalogue.accept(chunk(3, 0, 1, false, false)));
@@ -153,8 +141,7 @@ class ServerModelCatalogSnapshotTest
     }
 
     @Test
-    void duplicateAndStalePacketsDoNotRestartOrAppendToThePublishedDirectory()
-    {
+    void duplicateAndStalePacketsDoNotRestartOrAppendToThePublishedDirectory() {
         ServerModelCatalogSnapshot catalogue = new ServerModelCatalogSnapshot();
         JsonObject first = chunk(2, 0, 2, true, false, "first");
         catalogue.accept(first);
@@ -171,8 +158,7 @@ class ServerModelCatalogSnapshotTest
     }
 
     @Test
-    void inconsistentFragmentsCannotModifyThePartialSnapshot()
-    {
+    void inconsistentFragmentsCannotModifyThePartialSnapshot() {
         ServerModelCatalogSnapshot catalogue = new ServerModelCatalogSnapshot();
         catalogue.accept(chunk(1, 0, 2, true, false, "first"));
         long display = catalogue.displayRevision();
@@ -184,11 +170,9 @@ class ServerModelCatalogSnapshotTest
     }
 
     @Test
-    void malformedIdsAndUnauthorizedEntriesNeverPublishCommandArguments()
-    {
+    void malformedIdsAndUnauthorizedEntriesNeverPublishCommandArguments() {
         for (String id : List.of("", "../model", "foo bar", "foo;op", "ysm:test", "model\nhelp", "UPPER",
-                "x".repeat(65)))
-        {
+                "x".repeat(65))) {
             ServerModelCatalogSnapshot catalogue = authorized("safe");
             assertThrows(IllegalArgumentException.class, () -> catalogue.accept(chunk(2, 0, 1, true, false, id)), id);
             assertTrue(catalogue.contains("safe"), "Validation must finish before replacing the old directory");
@@ -204,14 +188,11 @@ class ServerModelCatalogSnapshotTest
     }
 
     @Test
-    void combinedModelBudgetIsEnforcedAcrossAllFragmentsAndCanBeSuperseded()
-    {
+    void combinedModelBudgetIsEnforcedAcrossAllFragmentsAndCanBeSuperseded() {
         ServerModelCatalogSnapshot catalogue = new ServerModelCatalogSnapshot();
-        for (int batch = 0; batch < 8; batch++)
-        {
+        for (int batch = 0; batch < 8; batch++) {
             String[] ids = new String[512];
-            for (int index = 0; index < ids.length; index++)
-            {
+            for (int index = 0; index < ids.length; index++) {
                 ids[index] = "model_" + (batch * 512 + index);
             }
 
@@ -225,8 +206,7 @@ class ServerModelCatalogSnapshotTest
     }
 
     @Test
-    void resetDiscardsOldAuthorityAndAllowsTheNextSessionsRevisionOne()
-    {
+    void resetDiscardsOldAuthorityAndAllowsTheNextSessionsRevisionOne() {
         ServerModelCatalogSnapshot catalogue = authorized("old");
         catalogue.command("old", true, 100);
         catalogue.accept(chunk(2, 0, 2, true, false, "partial"));
@@ -243,8 +223,7 @@ class ServerModelCatalogSnapshotTest
     }
 
     @Test
-    void useBuildsOnlyTheFixedCommandForALiveAuthorizedSelectionWithOneSharedRateLimit()
-    {
+    void useBuildsOnlyTheFixedCommandForALiveAuthorizedSelectionWithOneSharedRateLimit() {
         ServerModelCatalogSnapshot catalogue = authorized("ysm_01_jk", "ysm_02_jk");
         assertTrue(catalogue.command("unknown", true, 0).isEmpty());
         assertTrue(catalogue.command("ysm_01_jk", false, 0).isEmpty());
@@ -258,16 +237,14 @@ class ServerModelCatalogSnapshotTest
         assertTrue(catalogue.command("ysm_02_jk", true, 2 * ServerModelCatalogSnapshot.COMMAND_INTERVAL).isEmpty());
     }
 
-    private static ServerModelCatalogSnapshot authorized(String... ids)
-    {
+    private static ServerModelCatalogSnapshot authorized(String... ids) {
         ServerModelCatalogSnapshot result = new ServerModelCatalogSnapshot();
         assertTrue(result.accept(chunk(1, 0, 1, true, false, ids)));
         return result;
     }
 
     private static JsonObject chunk(long revision, int index, int count, boolean canDisguise, boolean truncated,
-            String... ids)
-    {
+            String... ids) {
         JsonObject result = WireJson.envelope("server_model_catalog");
         result.addProperty("revision", revision);
         result.addProperty("index", index);
@@ -275,8 +252,7 @@ class ServerModelCatalogSnapshotTest
         result.addProperty("canDisguise", canDisguise);
         result.addProperty("truncated", truncated);
         JsonArray models = new JsonArray();
-        for (String id : ids)
-        {
+        for (String id : ids) {
             JsonObject entry = new JsonObject();
             entry.addProperty("id", id);
             entry.addProperty("label", id);

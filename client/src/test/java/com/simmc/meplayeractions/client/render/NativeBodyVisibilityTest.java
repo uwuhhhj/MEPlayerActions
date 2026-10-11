@@ -5,65 +5,56 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NativeBodyVisibilityTest
-{
+class NativeBodyVisibilityTest {
     @Test
-    void modelEngineHidingTheOriginalPlayerDoesNotHideTheReplacementBody()
-    {
+    void modelEngineHidingTheOriginalPlayerDoesNotHideTheReplacementBody() {
         NativeBodyVisibility.Body body = NativeBodyVisibility.resolve(true, true, true, false, 0);
         assertTrue(body.visible());
         assertFalse(body.outlineOnly());
     }
 
     @Test
-    void genuineInvisibilityStillHidesTheReplacementEvenWithAnOutdatedVisibleFrame()
-    {
+    void genuineInvisibilityStillHidesTheReplacementEvenWithAnOutdatedVisibleFrame() {
         assertFalse(NativeBodyVisibility.resolve(true, true, false, true, 0).visible());
         assertFalse(NativeBodyVisibility.resolve(true, true, true, true, 0).visible());
     }
 
     @Test
-    void genuineGlowingInvisibilityKeepsItsNativeOutline()
-    {
+    void genuineGlowingInvisibilityKeepsItsNativeOutline() {
         NativeBodyVisibility.Body body = NativeBodyVisibility.resolve(true, true, true, true, 0xff80ff80);
         assertTrue(body.visible());
         assertTrue(body.outlineOnly());
     }
 
     @Test
-    void modelEngineHideAloneDoesNotTurnTheVisibleReplacementIntoAnOutline()
-    {
+    void modelEngineHideAloneDoesNotTurnTheVisibleReplacementIntoAnOutline() {
         NativeBodyVisibility.Body body = NativeBodyVisibility.resolve(true, true, true, false, 0xff80ff80);
         assertTrue(body.visible());
         assertFalse(body.outlineOnly());
     }
 
     @Test
-    void thePlayersShowSelfChoiceStillHidesTheReplacement()
-    {
+    void thePlayersShowSelfChoiceStillHidesTheReplacement() {
         assertFalse(NativeBodyVisibility.resolve(true, false, true, false, 0).visible());
         assertFalse(NativeBodyVisibility.resolve(true, false, true, true, 0xff80ff80).visible());
     }
 
     @Test
-    void privateModelsAndOldServersKeepTheNativeInvisibilityRule()
-    {
+    void privateModelsAndOldServersKeepTheNativeInvisibilityRule() {
         assertFalse(NativeBodyVisibility.resolve(true, true, true, null, 0).visible());
         assertTrue(NativeBodyVisibility.resolve(true, true, false, null, 0).visible());
         assertTrue(NativeBodyVisibility.resolve(true, true, true, null, 0xff80ff80).outlineOnly());
     }
 
     @Test
-    void ordinaryLegacyBbModelVisibilityKeepsItsExistingPolicy()
-    {
+    void ordinaryLegacyBbModelVisibilityKeepsItsExistingPolicy() {
         assertTrue(NativeBodyVisibility.resolve(false, true, true, null, 0).visible());
         assertFalse(NativeBodyVisibility.resolve(false, false, false, null, 0).visible());
         assertFalse(NativeBodyVisibility.resolve(false, true, true, null, 0xff80ff80).outlineOnly());
     }
 
     @Test
-    void aMissingSourceFlagDoesNotGuessTheOriginalPlayersVisibility()
-    {
+    void aMissingSourceFlagDoesNotGuessTheOriginalPlayersVisibility() {
         assertNull(NativeBodyVisibility.readSourceInvisible(new JsonObject()));
         JsonObject state = new JsonObject();
         state.addProperty("sourceInvisible", false);
@@ -73,8 +64,7 @@ class NativeBodyVisibilityTest
     }
 
     @Test
-    void theOptionalSourceFlagIsStillStrictlyTyped()
-    {
+    void theOptionalSourceFlagIsStillStrictlyTyped() {
         JsonObject state = new JsonObject();
         state.addProperty("sourceInvisible", "false");
         assertThrows(IllegalArgumentException.class, () -> NativeBodyVisibility.readSourceInvisible(state));

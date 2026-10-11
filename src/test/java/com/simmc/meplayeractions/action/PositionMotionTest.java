@@ -4,11 +4,9 @@ import org.junit.jupiter.api.Test;
 import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
-class PositionMotionTest
-{
+class PositionMotionTest {
     @Test
-    void actualMovementNeedsNoVelocityAndIrregularSamplesKeepPhysicalUnits()
-    {
+    void actualMovementNeedsNoVelocityAndIrregularSamplesKeepPhysicalUnits() {
         UUID world = UUID.randomUUID();
         PositionMotion everyTick = new PositionMotion();
         PositionMotion delayed = new PositionMotion();
@@ -30,8 +28,7 @@ class PositionMotionTest
     }
 
     @Test
-    void repeatedSameTickCannotEraseMotionOrChangeNextSampleBaseline()
-    {
+    void repeatedSameTickCannotEraseMotionOrChangeNextSampleBaseline() {
         UUID world = UUID.randomUUID();
         PositionMotion motion = new PositionMotion();
         motion.sample(world, 0, 64, 0, 0, 100);
@@ -41,8 +38,7 @@ class PositionMotionTest
     }
 
     @Test
-    void teleportsWorldChangesClockResetsAndLongPausesCannotBecomeSpringImpulses()
-    {
+    void teleportsWorldChangesClockResetsAndLongPausesCannotBecomeSpringImpulses() {
         UUID world = UUID.randomUUID();
         PositionMotion motion = new PositionMotion();
         motion.sample(world, 0, 64, 0, 0, 100);
@@ -57,8 +53,7 @@ class PositionMotionTest
         assertReset(motion.sample(nextWorld, 5, 64, 0, 0, 105));
     }
 
-    private static void assertReset(PositionMotion.Sample sample)
-    {
+    private static void assertReset(PositionMotion.Sample sample) {
         assertTrue(sample.discontinuity());
         assertEquals(0, sample.groundSpeed());
         assertEquals(0, sample.verticalSpeed());

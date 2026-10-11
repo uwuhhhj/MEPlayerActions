@@ -22,8 +22,7 @@ import java.util.*;
 import javax.imageio.ImageIO;
 
 /** Opt-in standalone acceptance: actual native callbacks, private OGG decoder, sound channels and particles. */
-public final class ModelEffectsHarness implements AutoCloseable
-{
+public final class ModelEffectsHarness implements AutoCloseable {
     private final ClientRuntime runtime;
     private final List<Map<String, Object>> checks = new ArrayList<>();
     private final List<Path> ownedFiles = new ArrayList<>(), ownedDirectories = new ArrayList<>();
@@ -38,28 +37,23 @@ public final class ModelEffectsHarness implements AutoCloseable
     private SoundInstance sentinel;
     private boolean complete, cleaned, reloadWasPlaying, resetWasPlaying;
 
-    public ModelEffectsHarness(ClientRuntime runtime)
-    {
+    public ModelEffectsHarness(ClientRuntime runtime) {
         this.runtime = Objects.requireNonNull(runtime);
     }
 
-    public boolean complete()
-    {
+    public boolean complete() {
         return this.complete;
     }
 
-    public boolean passed()
-    {
+    public boolean passed() {
         return this.complete && this.checks.stream().allMatch(check -> Boolean.TRUE.equals(check.get("passed")));
     }
 
-    public List<Map<String, Object>> checks()
-    {
+    public List<Map<String, Object>> checks() {
         return List.copyOf(this.checks);
     }
 
-    public Map<String, Object> diagnostics()
-    {
+    public Map<String, Object> diagnostics() {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("phase", this.phase);
         result.put("phaseTicks", this.phaseTicks);
@@ -80,31 +74,24 @@ public final class ModelEffectsHarness implements AutoCloseable
         return result;
     }
 
-    public void tick(MinecraftClient client)
-    {
-        if (this.complete)
-        {
+    public void tick(MinecraftClient client) {
+        if (this.complete) {
             return;
         }
         this.client = client;
         this.ticks++;
         this.phaseTicks++;
-        if (this.ticks > 420 && !this.phase.equals("restoring"))
-        {
+        if (this.ticks > 420 && !this.phase.equals("restoring")) {
             fail("FX acceptance timeout");
             restore();
         }
-        try
-        {
-            switch (this.phase)
-            {
+        try {
+            switch (this.phase) {
             case "setup" -> setup();
-            case "binding" ->
-            {
+            case "binding" -> {
                 ClientRuntime.RenderBinding binding = own();
                 if (binding != null && binding.assetHash().equals(this.fixtureHash)
-                        && this.runtime.localAppearance().modelId().equals(this.fixtureId))
-                {
+                        && this.runtime.localAppearance().modelId().equals(this.fixtureId)) {
                     check("standaloneYsmEffectsFixtureUsesCurrentBinding",
                             this.runtime.localModelProfile().soundResource("tone").isPresent(),
                             "Validated local YSM profile and current native owner/instance/hash");
@@ -114,17 +101,13 @@ public final class ModelEffectsHarness implements AutoCloseable
                     check("standaloneYsmEffectsTimelineStarted", this.runtime.playLocal("extra1"),
                             "Play authored extra1 with sound_effects and particle_effects keyframes");
                     next("timeline");
-                }
-                else if (this.phaseTicks > 120)
-                {
+                } else if (this.phaseTicks > 120) {
                     fail("Fixture model did not become ready");
                     restore();
                 }
             }
-            case "timeline" ->
-            {
-                if (this.phaseTicks >= 24)
-                {
+            case "timeline" -> {
+                if (this.phaseTicks >= 24) {
                     check("standaloneYsmSoundTimelineCallsNativeBackend",
                             number(ownerEffects(), "soundsStarted") > this.timelineSoundBaseline
                                     && number(YsmAudioRegistry.diagnostics(), "streamsOpened") > this.openedBaseline,
@@ -140,10 +123,8 @@ public final class ModelEffectsHarness implements AutoCloseable
                     next("playing");
                 }
             }
-            case "playing" ->
-            {
-                if (this.phaseTicks >= 30)
-                {
+            case "playing" -> {
+                if (this.phaseTicks >= 30) {
                     check("standaloneYsmCustomOggStreamActuallyOpened",
                             number(YsmAudioRegistry.diagnostics(), "streamsOpened") > this.loopOpenedBaseline
                                     && number(YsmAudioRegistry.diagnostics(), "activeStreams") > 0,
@@ -160,10 +141,8 @@ public final class ModelEffectsHarness implements AutoCloseable
                     next("stopping");
                 }
             }
-            case "stopping" ->
-            {
-                if (this.phaseTicks >= 12)
-                {
+            case "stopping" -> {
+                if (this.phaseTicks >= 12) {
                     check("standaloneYsmStopSoundScoped",
                             number(ownerEffects(), "customPlaying") == 0 && number(ownerEffects(), "packPlaying") > 0
                                     && sentinelPlaying(),
@@ -172,10 +151,8 @@ public final class ModelEffectsHarness implements AutoCloseable
                     next("stopped");
                 }
             }
-            case "stopped" ->
-            {
-                if (this.phaseTicks >= 12)
-                {
+            case "stopped" -> {
+                if (this.phaseTicks >= 12) {
                     check("standaloneYsmStopAllScoped", number(ownerEffects(), "liveSounds") == 0 && sentinelPlaying(),
                             "Stops only this binding's selected global audio context");
                     this.loopOpenedBaseline = number(YsmAudioRegistry.diagnostics(), "streamsOpened");
@@ -183,21 +160,17 @@ public final class ModelEffectsHarness implements AutoCloseable
                     next("reload-start");
                 }
             }
-            case "reload-start" ->
-            {
+            case "reload-start" -> {
                 this.reloadWasPlaying = number(ownerEffects(), "customPlaying") > 0
                         && number(YsmAudioRegistry.diagnostics(), "activeStreams") > 0
                         && number(YsmAudioRegistry.diagnostics(), "streamsOpened") > this.loopOpenedBaseline;
-                if (this.phaseTicks >= 10 && this.reloadWasPlaying || this.phaseTicks >= 40)
-                {
+                if (this.phaseTicks >= 10 && this.reloadWasPlaying || this.phaseTicks >= 40) {
                     this.runtime.resourcesReloaded();
                     next("reloading");
                 }
             }
-            case "reloading" ->
-            {
-                if (this.phaseTicks >= 12)
-                {
+            case "reloading" -> {
+                if (this.phaseTicks >= 12) {
                     check("standaloneYsmEffectsReloadCleanup",
                             this.reloadWasPlaying && emptyAudio() && sentinelPlaying(),
                             "Runtime resource-reload callback retires model routes/streams without stopping unrelated native audio");
@@ -206,35 +179,29 @@ public final class ModelEffectsHarness implements AutoCloseable
                     next("reset-start");
                 }
             }
-            case "reset-start" ->
-            {
+            case "reset-start" -> {
                 this.resetWasPlaying = number(ownerEffects(), "customPlaying") > 0
                         && number(YsmAudioRegistry.diagnostics(), "activeStreams") > 0
                         && number(YsmAudioRegistry.diagnostics(), "streamsOpened") > this.loopOpenedBaseline;
-                if (this.phaseTicks >= 10 && this.resetWasPlaying || this.phaseTicks >= 40)
-                {
+                if (this.phaseTicks >= 10 && this.resetWasPlaying || this.phaseTicks >= 40) {
                     this.runtime.reset();
                     this.runtime.joined();
                     next("resetting");
                 }
             }
-            case "resetting" ->
-            {
-                if (this.phaseTicks >= 12)
-                {
+            case "resetting" -> {
+                if (this.phaseTicks >= 12) {
                     check("standaloneYsmEffectsResetCleanup", this.resetWasPlaying && emptyAudio() && sentinelPlaying(),
                             "Runtime reset closes owned model effects and leaves unrelated native audio intact");
                     restore();
                 }
             }
-            case "restoring" ->
-            {
+            case "restoring" -> {
                 ClientRuntime.RenderBinding binding = own();
                 boolean ready = this.original != null && this.runtime.localAppearance().equals(this.original)
                         && binding != null && binding.assetHash().equals(this.originalHash)
                         && ModelRenderer.has(binding.assetHash());
-                if (ready || this.phaseTicks > 120)
-                {
+                if (ready || this.phaseTicks > 120) {
                     check("standaloneYsmEffectsOriginalProfileRestored", ready,
                             "Original private profile, same model hash and real GPU model restored");
                     check("standaloneYsmEffectsNoServerRequests",
@@ -246,26 +213,20 @@ public final class ModelEffectsHarness implements AutoCloseable
                 }
             }
             }
-        }
-        catch (Exception error)
-        {
+        } catch (Exception error) {
             fail(error.getClass().getSimpleName() + ": " + error.getMessage());
             restore();
         }
     }
 
-    private void setup() throws Exception
-    {
-        if (this.client.player == null || this.client.world == null || own() == null)
-        {
-            if (this.phaseTicks > 120)
-            {
+    private void setup() throws Exception {
+        if (this.client.player == null || this.client.world == null || own() == null) {
+            if (this.phaseTicks > 120) {
                 throw new IOException("No active native owner");
             }
             return;
         }
-        if (this.runtime.serverBridgeReady())
-        {
+        if (this.runtime.serverBridgeReady()) {
             throw new IOException("This fixture is limited to the isolated no-plugin acceptance");
         }
 
@@ -279,8 +240,7 @@ public final class ModelEffectsHarness implements AutoCloseable
         Files.createDirectories(this.base);
         this.base = this.base.toRealPath();
         this.fixture = Files.createTempDirectory(this.base, "mpa-effects-fixture-").toAbsolutePath().normalize();
-        for (String child : List.of("models", "animations", "textures", "sounds"))
-        {
+        for (String child : List.of("models", "animations", "textures", "sounds")) {
             Path directory = this.fixture.resolve(child);
             Files.createDirectory(directory);
             this.ownedDirectories.add(directory);
@@ -302,10 +262,8 @@ public final class ModelEffectsHarness implements AutoCloseable
                 "sound_effects":{"0.1":{"effect":"tone"}},"particle_effects":{"0.1":{"effect":"minecraft:flame"}}}}}
                 """);
         BufferedImage image = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
-        for (int y = 0; y < 16; y++)
-        {
-            for (int x = 0; x < 16; x++)
-            {
+        for (int y = 0; y < 16; y++) {
+            for (int x = 0; x < 16; x++) {
                 image.setRGB(x, y, 0xffffaa44);
             }
 
@@ -313,8 +271,7 @@ public final class ModelEffectsHarness implements AutoCloseable
 
         Path png = this.fixture.resolve("textures/default.png");
         this.ownedFiles.add(png);
-        if (!ImageIO.write(image, "png", png.toFile()))
-        {
+        if (!ImageIO.write(image, "png", png.toFile())) {
             throw new IOException("PNG fixture encoder unavailable");
         }
 
@@ -333,77 +290,62 @@ public final class ModelEffectsHarness implements AutoCloseable
         next("binding");
     }
 
-    private byte[] existingOgg() throws IOException
-    {
+    private byte[] existingOgg() throws IOException {
         for (String event : List.of("minecraft:entity.experience_orb.pickup", "minecraft:block.note_block.pling",
-                "minecraft:block.amethyst_block.hit"))
-        {
+                "minecraft:block.amethyst_block.hit")) {
             WeightedSoundSet set = this.client.getSoundManager().get(Identifier.of(event));
-            if (set == null)
-            {
+            if (set == null) {
                 continue;
             }
 
             Sound sound = set.getSound(SoundInstance.createRandom());
             Identifier location = sound.getLocation();
-            if (!location.getNamespace().equals("minecraft"))
-            {
+            if (!location.getNamespace().equals("minecraft")) {
                 continue;
             }
 
             Optional<Resource> resource = this.client.getResourceManager().getResource(location);
-            if (resource.isEmpty())
-            {
+            if (resource.isEmpty()) {
                 continue;
             }
 
-            try (InputStream input = resource.get().getInputStream())
-            {
+            try (InputStream input = resource.get().getInputStream()) {
                 byte[] bytes = input.readNBytes(262_145);
-                if (bytes.length > 262_144)
-                {
+                if (bytes.length > 262_144) {
                     continue;
                 }
 
-                try
-                {
+                try {
                     YsmAudioRegistry.validateOgg(bytes);
                     this.vanillaSound = event;
                     return bytes;
-                }
-                catch (IllegalArgumentException unsupported)
-                {
+                } catch (IllegalArgumentException unsupported) {
                 }
             }
         }
         throw new IOException("No bounded vanilla Vorbis resource available");
     }
 
-    private void write(String name, String text) throws IOException
-    {
+    private void write(String name, String text) throws IOException {
         Path path = this.fixture.resolve(name);
         this.ownedFiles.add(path);
         Files.writeString(path, text);
     }
 
-    private double evaluate(String script)
-    {
+    private double evaluate(String script) {
         Molang.Context context = new Molang.Context();
         context.frame(Map.of());
         this.runtime.configureExpressionContext(this.client.player.getUuid(), context);
         return Molang.compile(script).evaluate(context);
     }
 
-    private ClientRuntime.RenderBinding own()
-    {
+    private ClientRuntime.RenderBinding own() {
         return this.client == null || this.client.player == null ? null
                 : this.runtime.appearanceBinding(this.client.player.getUuid());
     }
 
-    private Map<?, ?> ownerEffects()
-    {
-        if (this.client == null || this.client.player == null)
-        {
+    private Map<?, ?> ownerEffects() {
+        if (this.client == null || this.client.player == null) {
             return Map.of();
         }
 
@@ -411,107 +353,84 @@ public final class ModelEffectsHarness implements AutoCloseable
         return value instanceof Map<?, ?> map ? map : Map.of();
     }
 
-    private static long number(Map<?, ?> map, String key)
-    {
+    private static long number(Map<?, ?> map, String key) {
         Object value = map.get(key);
         return value instanceof Number numeric ? numeric.longValue() : 0;
     }
 
-    private boolean sentinelPlaying()
-    {
+    private boolean sentinelPlaying() {
         return this.sentinel != null && this.client.getSoundManager().isPlaying(this.sentinel);
     }
 
-    private boolean emptyAudio()
-    {
+    private boolean emptyAudio() {
         return number(YsmAudioRegistry.diagnostics(), "routes") == 0
                 && number(YsmAudioRegistry.diagnostics(), "activeStreams") == 0
                 && number(ownerEffects(), "liveSounds") == 0;
     }
 
-    private void next(String phase)
-    {
+    private void next(String phase) {
         this.phase = phase;
         this.phaseTicks = 0;
     }
 
-    private void check(String name, boolean passed, String detail)
-    {
-        if (this.checks.stream().anyMatch(check -> name.equals(check.get("name"))))
-        {
+    private void check(String name, boolean passed, String detail) {
+        if (this.checks.stream().anyMatch(check -> name.equals(check.get("name")))) {
             return;
         }
 
         this.checks.add(Map.of("name", name, "passed", passed, "detail", detail));
     }
 
-    private void fail(String reason)
-    {
+    private void fail(String reason) {
         this.failure = reason;
         check("standaloneYsmEffectsExecution", false, reason);
     }
 
-    private void restore()
-    {
-        if (this.phase.equals("restoring"))
-        {
+    private void restore() {
+        if (this.phase.equals("restoring")) {
             return;
         }
 
-        if (this.client != null && this.sentinel != null)
-        {
+        if (this.client != null && this.sentinel != null) {
             this.client.getSoundManager().stop(this.sentinel);
         }
 
-        if (this.original != null)
-        {
+        if (this.original != null) {
             this.runtime.updateLocalAppearance(this.original);
         }
 
-        if (this.client != null && this.perspective != null)
-        {
+        if (this.client != null && this.perspective != null) {
             this.client.options.setPerspective(this.perspective);
         }
         next("restoring");
     }
 
-    private void cleanup()
-    {
-        if (this.cleaned)
-        {
+    private void cleanup() {
+        if (this.cleaned) {
             return;
         }
         boolean success = true;
-        try
-        {
-            if (this.fixture != null)
-            {
+        try {
+            if (this.fixture != null) {
                 if (!this.fixture.getParent().equals(this.base) || Files.isSymbolicLink(this.fixture)
-                        || !this.fixture.toRealPath().equals(this.fixture))
-
-                {
+                        || !this.fixture.toRealPath().equals(this.fixture)) {
                     throw new IOException("Unexpected fixture cleanup target");
                 }
 
-                for (Path file : this.ownedFiles)
-                {
-                    if (!file.normalize().startsWith(this.fixture) || Files.isSymbolicLink(file))
-                    {
+                for (Path file : this.ownedFiles) {
+                    if (!file.normalize().startsWith(this.fixture) || Files.isSymbolicLink(file)) {
                         throw new IOException("Unexpected fixture file");
                     }
 
                     Files.deleteIfExists(file);
                 }
-                for (Path directory : this.ownedDirectories)
-                {
+                for (Path directory : this.ownedDirectories) {
                     Files.deleteIfExists(directory);
                 }
 
                 Files.deleteIfExists(this.fixture);
             }
-        }
-        catch (IOException invalid)
-        {
+        } catch (IOException invalid) {
             success = false;
             this.failure = "Fixture cleanup incomplete: " + invalid.getClass().getSimpleName();
         }
@@ -521,10 +440,8 @@ public final class ModelEffectsHarness implements AutoCloseable
     }
 
     @Override
-    public void close()
-    {
-        if (!this.complete)
-        {
+    public void close() {
+        if (!this.complete) {
             restore();
         }
         cleanup();

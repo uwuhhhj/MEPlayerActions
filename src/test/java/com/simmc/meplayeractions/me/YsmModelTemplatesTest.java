@@ -10,10 +10,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class YsmModelTemplatesTest
-{
-    private static JsonObject model()
-    {
+class YsmModelTemplatesTest {
+    private static JsonObject model() {
         return JsonParser.parseString("""
                 {"mpa_runtime":true,"animations":[{"name":"idle","animators":{
                   "00000000-0000-0000-0000-000000000001":{"name":"body","type":"bone","keyframes":[
@@ -23,12 +21,10 @@ class YsmModelTemplatesTest
     }
 
     @Test
-    void repeatedModelDoesOneSourceReadAndParseAndRetainsOnlyImmutableCompiledData()
-    {
+    void repeatedModelDoesOneSourceReadAndParseAndRetainsOnlyImmutableCompiledData() {
         AtomicInteger loads = new AtomicInteger();
         JsonObject raw = model();
-        YsmModelTemplates cache = new YsmModelTemplates(64, name ->
-        {
+        YsmModelTemplates cache = new YsmModelTemplates(64, name -> {
             loads.incrementAndGet();
             return raw;
         });
@@ -52,11 +48,9 @@ class YsmModelTemplatesTest
     }
 
     @Test
-    void absentAndOrdinaryModelsAreNegativeCachedAndLeastRecentlyUsedEntriesAreBounded()
-    {
+    void absentAndOrdinaryModelsAreNegativeCachedAndLeastRecentlyUsedEntriesAreBounded() {
         Map<String, Integer> loads = new HashMap<>();
-        YsmModelTemplates cache = new YsmModelTemplates(2, name ->
-        {
+        YsmModelTemplates cache = new YsmModelTemplates(2, name -> {
             loads.merge(name, 1, Integer::sum);
             return name.equals("absent") ? null : new JsonObject();
         });

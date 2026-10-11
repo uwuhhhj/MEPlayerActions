@@ -14,21 +14,18 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NativeGuiPreviewCameraTest
-{
+class NativeGuiPreviewCameraTest {
     private static final PreviewMesh.Settings SETTINGS = new PreviewMesh.Settings(true, false, "", "");
 
     @Test
-    void nativeItemParentExactlyMatchesEveryProjectedBodyVertex()
-    {
+    void nativeItemParentExactlyMatchesEveryProjectedBodyVertex() {
         JsonObject properties = new JsonObject();
         properties.addProperty("height_scale", .6f);
         properties.addProperty("width_scale", .8f);
         NativeGuiPreviewCamera.Camera camera = NativeGuiPreviewCamera.owner(1.8f, 1, 37, -21)
                 .withModelScale(properties);
         for (Vector3f point : List.of(new Vector3f(0, 0, 0), new Vector3f(.4f, 1.7f, -.2f),
-                new Vector3f(-.3f, .9f, .5f)))
-        {
+                new Vector3f(-.3f, .9f, .5f))) {
             NativeGuiPreviewCamera.Position projected = camera.project(point.x, point.y, point.z, 10, 20, 125, 171);
             Vector3f attached = camera.projectedBodyMatrix().transformPosition(new Vector3f(point));
             assertEquals(projected.x() - (10 + 125 * .5f), attached.x, .0001);
@@ -38,11 +35,9 @@ class NativeGuiPreviewCameraTest
     }
 
     @Test
-    void nativeConvertedProfilesUseFixedCameraWhileStandaloneBbModelsKeepTheirBoundsFit() throws Exception
-    {
+    void nativeConvertedProfilesUseFixedCameraWhileStandaloneBbModelsKeepTheirBoundsFit() throws Exception {
         for (String id : List.of(YsmFolderModel.DEFAULT_ID, BuiltinYsmModels.TAISHO_MAID_ID,
-                BuiltinYsmModels.NEW_YEAR_ID))
-        {
+                BuiltinYsmModels.NEW_YEAR_ID)) {
             YsmFolderModel.Imported imported = YsmFolderModel.bundledWithProfile(id, null);
             assertTrue(NativeGuiPreviewCamera.appliesTo(imported.profile()), id);
             assertTrue(BbModel.parse(imported.raw()).ysmControllers(), "The profile belongs to converted YSM geometry");
@@ -58,8 +53,7 @@ class NativeGuiPreviewCameraTest
     }
 
     @Test
-    void ownerCameraUsesNormalizedNativeHeightAndTheInventorySourceAnchor()
-    {
+    void ownerCameraUsesNormalizedNativeHeightAndTheInventorySourceAnchor() {
         NativeGuiPreviewCamera.Camera camera = NativeGuiPreviewCamera.owner(3.6f, 2, 0, 0);
         assertEquals(70, camera.displaySize());
         assertEquals(70, camera.pixelsPerBlock());
@@ -77,8 +71,7 @@ class NativeGuiPreviewCameraTest
     }
 
     @Test
-    void dummyCardUsesTheSourceScaleOffsetAndAuthoredFixedViewFlag()
-    {
+    void dummyCardUsesTheSourceScaleOffsetAndAuthoredFixedViewFlag() {
         NativeGuiPreviewCamera.Camera fixed = NativeGuiPreviewCamera.card(1.8f, 1, true);
         assertEquals(30, fixed.displaySize());
         assertEquals(30, fixed.pixelsPerBlock());
@@ -101,8 +94,7 @@ class NativeGuiPreviewCameraTest
     }
 
     @Test
-    void aLargeAuthoredStageCannotShrinkOrRecenterThePreviewedActor() throws Exception
-    {
+    void aLargeAuthoredStageCannotShrinkOrRecenterThePreviewedActor() throws Exception {
         YsmFolderModel.Imported imported = YsmFolderModel.bundledWithProfile(BuiltinYsmModels.TAISHO_MAID_ID, null);
         BbModel model = BbModel.parse(imported.raw());
         List<BbModel.Vertex> authoredStage = model.sample(0,
@@ -123,8 +115,7 @@ class NativeGuiPreviewCameraTest
     }
 
     @Test
-    void cardDoesNotInheritOwnerPoseOrScale()
-    {
+    void cardDoesNotInheritOwnerPoseOrScale() {
         NativeGuiPreviewCamera.Camera standing = NativeGuiPreviewCamera.select(true, 1.8f, 1, 0, 0, true);
         NativeGuiPreviewCamera.Camera swimmingScaledOwner = NativeGuiPreviewCamera.select(true, .6f, 2, 90, -35, true);
         assertEquals(standing, swimmingScaledOwner,
@@ -137,8 +128,7 @@ class NativeGuiPreviewCameraTest
     }
 
     @Test
-    void nativeRotationPreservesUvDepthOrderingAndRejectsInvalidEntityDimensions()
-    {
+    void nativeRotationPreservesUvDepthOrderingAndRejectsInvalidEntityDimensions() {
         List<BbModel.Vertex> faces = new ArrayList<>(face(0, 0, -2, 1, 1, 3));
         faces.addAll(face(0, 0, 2, 1, 1, 7));
         List<PreviewMesh.Quad> front = PreviewMesh.project(faces, 0, 0, 125, 171, SETTINGS,
@@ -147,8 +137,7 @@ class NativeGuiPreviewCameraTest
                 NativeGuiPreviewCamera.owner(1.8f, 1, 180, 0));
         assertEquals(List.of(7, 3), front.stream().map(PreviewMesh.Quad::texture).toList());
         assertEquals(List.of(3, 7), rear.stream().map(PreviewMesh.Quad::texture).toList());
-        for (int corner = 0; corner < 4; corner++)
-        {
+        for (int corner = 0; corner < 4; corner++) {
             assertEquals(faces.get(corner).u(), rear.getFirst().points().get(corner).u());
             assertEquals(faces.get(corner).v(), rear.getFirst().points().get(corner).v());
         }
@@ -162,8 +151,7 @@ class NativeGuiPreviewCameraTest
     }
 
     @Test
-    void nativeAuthorScaleDefaultsToPointSevenWithoutChangingCameraAnchors() throws Exception
-    {
+    void nativeAuthorScaleDefaultsToPointSevenWithoutChangingCameraAnchors() throws Exception {
         NativeGuiPreviewCamera.Camera nativeCamera = NativeGuiPreviewCamera.owner(1.8f, 1, 0, 0);
         NativeGuiPreviewCamera.Camera defaults = nativeCamera.withModelScale(new JsonObject());
         JsonObject explicit = new JsonObject();
@@ -185,22 +173,19 @@ class NativeGuiPreviewCameraTest
         assertEquals(2.56875, defaults.project(0, 43.3f / 16, 0, 0, 0, 145, 137).y(), .0001,
                 "The original .7 author scale restores the head inside the existing small viewport");
         for (String id : List.of(YsmFolderModel.DEFAULT_ID, BuiltinYsmModels.TAISHO_MAID_ID,
-                BuiltinYsmModels.NEW_YEAR_ID, BuiltinYsmModels.ASTRONAUT_ID))
-        {
+                BuiltinYsmModels.NEW_YEAR_ID, BuiltinYsmModels.ASTRONAUT_ID)) {
             YsmModelProfile profile = YsmFolderModel.bundledWithProfile(id, null).profile();
             assertEquals(defaults.modelScale(), nativeCamera.withModelScale(profile.properties()).modelScale(), id);
         }
     }
 
     @Test
-    void nativeAuthorScaleUsesUpstreamNonUniformAxesForOwnerAndCard()
-    {
+    void nativeAuthorScaleUsesUpstreamNonUniformAxesForOwnerAndCard() {
         JsonObject properties = new JsonObject();
         properties.addProperty("height_scale", 2);
         properties.addProperty("width_scale", 3);
         for (NativeGuiPreviewCamera.Camera unscaled : List.of(NativeGuiPreviewCamera.owner(1.8f, 1, 0, 0),
-                NativeGuiPreviewCamera.card(1.8f, 1, true)))
-        {
+                NativeGuiPreviewCamera.card(1.8f, 1, true))) {
             NativeGuiPreviewCamera.Camera camera = unscaled.withModelScale(properties);
             NativeGuiPreviewCamera.Position origin = camera.project(0, 0, 0, 10, 20, 125, 171);
             NativeGuiPreviewCamera.Position corner = camera.project(1, 1, 1, 10, 20, 125, 171);
@@ -223,8 +208,7 @@ class NativeGuiPreviewCameraTest
     }
 
     @Test
-    void nativeAuthorScalePrecedesTheGeckoOffsetAndPreservesPerVertexDepth()
-    {
+    void nativeAuthorScalePrecedesTheGeckoOffsetAndPreservesPerVertexDepth() {
         JsonObject properties = new JsonObject();
         properties.addProperty("height_scale", .5);
         properties.addProperty("width_scale", 2);
@@ -238,8 +222,7 @@ class NativeGuiPreviewCameraTest
         assertEquals(nativeCamera.project(0, 0, 0, 10, 20, 125, 171), camera.project(0, 0, 0, 10, 20, 125, 171));
         List<BbModel.Vertex> vertices = face(0, 0, 2, 1, 1, 7);
         PreviewMesh.Quad quad = PreviewMesh.project(vertices, 10, 20, 125, 171, SETTINGS, camera).getFirst();
-        for (int i = 0; i < 4; i++)
-        {
+        for (int i = 0; i < 4; i++) {
             BbModel.Vertex vertex = vertices.get(i);
             PreviewMesh.Point point = quad.points().get(i);
             NativeGuiPreviewCamera.Position actual = camera.project(vertex.x(), vertex.y(), vertex.z(), 10, 20, 125,
@@ -256,8 +239,7 @@ class NativeGuiPreviewCameraTest
                 "The plain BB four-argument point constructor stays compatible");
     }
 
-    private static List<BbModel.Vertex> face(float x, float y, float z, float width, float height, int texture)
-    {
+    private static List<BbModel.Vertex> face(float x, float y, float z, float width, float height, int texture) {
         return List.of(new BbModel.Vertex(x + width, y + height, z, 0, 0, 0, 0, -1, texture),
                 new BbModel.Vertex(x + width, y, z, 0, 1, 0, 0, -1, texture),
                 new BbModel.Vertex(x, y, z, 1, 1, 0, 0, -1, texture),

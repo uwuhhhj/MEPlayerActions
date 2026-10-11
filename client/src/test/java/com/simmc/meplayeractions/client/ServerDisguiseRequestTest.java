@@ -6,8 +6,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class ServerDisguiseRequestTest
-{
+class ServerDisguiseRequestTest {
     private static final ServerDisguisePreferences DEFAULT = ServerDisguisePreferences.defaults();
     private static final ServerDisguisePreferences SCALED = new ServerDisguisePreferences(1.5, null, null, null, null,
             null, null);
@@ -17,8 +16,7 @@ class ServerDisguiseRequestTest
             "");
 
     @Test
-    void sendingDoesNotConfirmAndOldOrDifferentBindingStatesCannotCompleteTheRequest()
-    {
+    void sendingDoesNotConfirmAndOldOrDifferentBindingStatesCannotCompleteTheRequest() {
         ServerDisguiseRequest request = new ServerDisguiseRequest();
         request.sent("ysm_01_jk", "old", SCALED, 10);
         assertEquals("ysm_01_jk", request.modelId());
@@ -34,8 +32,7 @@ class ServerDisguiseRequestTest
     }
 
     @Test
-    void newlySavedSettingsRemainDirtyUntilANewInstanceConfirmsTheMatchingRequestSnapshot()
-    {
+    void newlySavedSettingsRemainDirtyUntilANewInstanceConfirmsTheMatchingRequestSnapshot() {
         ServerDisguiseRequest request = new ServerDisguiseRequest();
         request.sent("model", "", DEFAULT, 0);
         request.confirmed("model", "first");
@@ -53,8 +50,7 @@ class ServerDisguiseRequestTest
     }
 
     @Test
-    void externalInstancesAndDifferentModelsCannotInheritThePreviousParametersConfirmation()
-    {
+    void externalInstancesAndDifferentModelsCannotInheritThePreviousParametersConfirmation() {
         ServerDisguiseRequest request = new ServerDisguiseRequest();
         assertFalse(request.preferencesNeedApply("model", "external", DEFAULT));
         assertTrue(request.preferencesNeedApply("model", "external", SCALED));
@@ -66,8 +62,7 @@ class ServerDisguiseRequestTest
     }
 
     @Test
-    void expiryClearsPendingSelectionAndProvidesAnActionableStatusAtTheExactBound()
-    {
+    void expiryClearsPendingSelectionAndProvidesAnActionableStatusAtTheExactBound() {
         ServerDisguiseRequest request = new ServerDisguiseRequest();
         request.sent("model", "", DEFAULT, 100);
         assertFalse(request.expire(100 + ServerDisguiseRequest.TIMEOUT - 1));
@@ -80,8 +75,7 @@ class ServerDisguiseRequestTest
     }
 
     @Test
-    void failureDoesNotErasePreviousAppliedParametersOrConfirmTheFailedNewOnes()
-    {
+    void failureDoesNotErasePreviousAppliedParametersOrConfirmTheFailedNewOnes() {
         ServerDisguiseRequest request = new ServerDisguiseRequest();
         request.sent("model", "", SCALED, 0);
         request.confirmed("model", "current");
@@ -94,8 +88,7 @@ class ServerDisguiseRequestTest
     }
 
     @Test
-    void sessionResetDropsPendingAndPreviousServerConfirmations()
-    {
+    void sessionResetDropsPendingAndPreviousServerConfirmations() {
         ServerDisguiseRequest request = new ServerDisguiseRequest();
         request.sent("model", "", SCALED, 0);
         request.confirmed("model", "current");
@@ -109,8 +102,7 @@ class ServerDisguiseRequestTest
     }
 
     @Test
-    void unsafeOrMissingPendingIdentityAndPreferenceDataAreRejected()
-    {
+    void unsafeOrMissingPendingIdentityAndPreferenceDataAreRejected() {
         ServerDisguiseRequest request = new ServerDisguiseRequest();
         assertThrows(IllegalArgumentException.class, () -> request.sent("model extra", "", DEFAULT, 0));
         assertThrows(NullPointerException.class, () -> request.sent("model", null, DEFAULT, 0));
@@ -118,8 +110,7 @@ class ServerDisguiseRequestTest
     }
 
     @Test
-    void negotiatedIdempotentResultCanConfirmTheExistingInstanceOnlyWithItsExactNonce()
-    {
+    void negotiatedIdempotentResultCanConfirmTheExistingInstanceOnlyWithItsExactNonce() {
         ServerDisguiseRequest request = new ServerDisguiseRequest();
         UUID nonce = UUID.randomUUID();
         request.sent(nonce, "model", "same", SCALED, true, 0);
@@ -134,8 +125,7 @@ class ServerDisguiseRequestTest
     }
 
     @Test
-    void aCommandResultAloneDoesNotConfirmAnAppearanceBeforeItsMatchingBindingState()
-    {
+    void aCommandResultAloneDoesNotConfirmAnAppearanceBeforeItsMatchingBindingState() {
         ServerDisguiseRequest request = new ServerDisguiseRequest();
         UUID nonce = UUID.randomUUID();
         request.sent(nonce, "model", "old", SCALED, true, 0);
@@ -150,8 +140,7 @@ class ServerDisguiseRequestTest
     }
 
     @Test
-    void failedResultsAndChangedActualParametersClearPendingWithoutMarkingPreferencesApplied()
-    {
+    void failedResultsAndChangedActualParametersClearPendingWithoutMarkingPreferencesApplied() {
         ServerDisguiseRequest request = new ServerDisguiseRequest();
         UUID nonce = UUID.randomUUID();
         request.sent(nonce, "model", "old", SCALED, true, 0);
@@ -168,8 +157,7 @@ class ServerDisguiseRequestTest
     }
 
     @Test
-    void allExplicitParametersAreComparedAgainstTheActualServerResult()
-    {
+    void allExplicitParametersAreComparedAgainstTheActualServerResult() {
         ServerDisguiseRequest request = new ServerDisguiseRequest();
         UUID nonce = UUID.randomUUID();
         ServerDisguisePreferences requested = new ServerDisguisePreferences(.8, false, false, 20d, 5, 2,
@@ -186,8 +174,7 @@ class ServerDisguiseRequestTest
     }
 
     @Test
-    void explicitlySavedDefaultsCanBeAppliedToAnExternalInstanceWithUnknownOverrides()
-    {
+    void explicitlySavedDefaultsCanBeAppliedToAnExternalInstanceWithUnknownOverrides() {
         ServerDisguiseRequest request = new ServerDisguiseRequest();
         assertFalse(request.preferencesNeedApply("model", "external", DEFAULT));
         request.preferencesSaved("model");
@@ -203,8 +190,7 @@ class ServerDisguiseRequestTest
     }
 
     @Test
-    void aNewSaveWhileWaitingCannotBeClearedByTheOlderRequestConfirmation()
-    {
+    void aNewSaveWhileWaitingCannotBeClearedByTheOlderRequestConfirmation() {
         ServerDisguiseRequest request = new ServerDisguiseRequest();
         request.preferencesSaved("model");
         request.sent("model", "old", SCALED, 0);

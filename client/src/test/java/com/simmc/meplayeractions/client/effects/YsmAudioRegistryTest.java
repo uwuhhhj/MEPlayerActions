@@ -11,11 +11,9 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Container fixtures test validation and route authority; native Vorbis decoding is verified in the real client. */
-class YsmAudioRegistryTest
-{
+class YsmAudioRegistryTest {
     @Test
-    void validatesVorbisIdentificationPageCrcAndEos()
-    {
+    void validatesVorbisIdentificationPageCrcAndEos() {
         byte[] bytes = container(1);
         assertDoesNotThrow(() -> YsmAudioRegistry.validateOgg(bytes));
         byte[] corrupt = bytes.clone();
@@ -30,8 +28,7 @@ class YsmAudioRegistryTest
     }
 
     @Test
-    void rejectsUnsupportedCodecChannelsRateAndChainedData()
-    {
+    void rejectsUnsupportedCodecChannelsRateAndChainedData() {
         byte[] bytes = container(2);
         bytes[39] = 3;
         crc(bytes);
@@ -48,13 +45,11 @@ class YsmAudioRegistryTest
     }
 
     @Test
-    void eachBindingHasDistinctRevocableRouteWhileCompressedBytesAreShared()
-    {
+    void eachBindingHasDistinctRevocableRouteWhileCompressedBytesAreShared() {
         byte[] bytes = container(4);
         YsmAudioRegistry.Lease first = YsmAudioRegistry.register(bytes);
         YsmAudioRegistry.Lease second = YsmAudioRegistry.register(bytes);
-        try
-        {
+        try {
             assertNotEquals(first.soundId(), second.soundId());
             assertEquals(1, YsmAudioRegistry.diagnostics().get("assets").intValue());
             assertEquals(2, YsmAudioRegistry.diagnostics().get("routes").intValue());
@@ -65,9 +60,7 @@ class YsmAudioRegistryTest
             first.close();
             assertTrue(YsmAudioRegistry.openStream(retired, false).isCompletedExceptionally());
             assertEquals(1, YsmAudioRegistry.diagnostics().get("routes").intValue());
-        }
-        finally
-        {
+        } finally {
             first.close();
             second.close();
         }
@@ -76,8 +69,7 @@ class YsmAudioRegistryTest
     }
 
     @Test
-    void stalePrivateIdsFailClosedAndNeverUseAResourcePack()
-    {
+    void stalePrivateIdsFailClosedAndNeverUseAResourcePack() {
         Identifier id = Identifier.of(YsmAudioRegistry.NAMESPACE, "sounds/retired.ogg");
         assertTrue(YsmAudioRegistry.isPrivate(id));
         assertTrue(YsmAudioRegistry.openStream(id, true).isCompletedExceptionally());
@@ -85,27 +77,21 @@ class YsmAudioRegistryTest
     }
 
     @Test
-    void routeCountIsBoundedEvenWhenEveryRouteUsesTheSameTinyAsset()
-    {
+    void routeCountIsBoundedEvenWhenEveryRouteUsesTheSameTinyAsset() {
         List<YsmAudioRegistry.Lease> leases = new ArrayList<>();
-        try
-        {
-            for (int i = 0; i < YsmAudioRegistry.MAX_ASSETS; i++)
-            {
+        try {
+            for (int i = 0; i < YsmAudioRegistry.MAX_ASSETS; i++) {
                 leases.add(YsmAudioRegistry.register(container(5)));
             }
 
             assertThrows(IllegalArgumentException.class, () -> YsmAudioRegistry.register(container(5)));
             assertEquals(YsmAudioRegistry.MAX_ASSETS, YsmAudioRegistry.diagnostics().get("routes").intValue());
-        }
-        finally
-        {
+        } finally {
             leases.forEach(YsmAudioRegistry.Lease::close);
         }
     }
 
-    private static byte[] container(int serial)
-    {
+    private static byte[] container(int serial) {
         byte[] bytes = new byte[58];
         bytes[0] = 'O';
         bytes[1] = 'g';
@@ -127,20 +113,16 @@ class YsmAudioRegistryTest
         return bytes;
     }
 
-    private static void crc(byte[] bytes)
-    {
+    private static void crc(byte[] bytes) {
         int crc = 0;
-        for (int index = 0; index < bytes.length; index++)
-        {
+        for (int index = 0; index < bytes.length; index++) {
             crc ^= (index >= 22 && index < 26 ? 0 : bytes[index] & 255) << 24;
-            for (int bit = 0; bit < 8; bit++)
-            {
+            for (int bit = 0; bit < 8; bit++) {
                 crc = (crc << 1) ^ (crc < 0 ? 0x04c11db7 : 0);
             }
 
         }
-        for (int index = 0; index < 4; index++)
-        {
+        for (int index = 0; index < 4; index++) {
             bytes[22 + index] = (byte) (crc >>> (index * 8));
         }
 

@@ -14,20 +14,17 @@ import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class BbModelTest
-{
+class BbModelTest {
     private static final float EPS = 1e-5f;
 
     @Test
-    void nativeHandSlotsRemainVisibleAboveTheLegacyPostureAndBelowManualActions()
-    {
+    void nativeHandSlotsRemainVisibleAboveTheLegacyPostureAndBelowManualActions() {
         JsonObject json = fixture();
         addAnimation(json, "idle", 1, constantFrame("position", 16, 0, 0));
         addAnimation(json, "hand", 1, constantFrame("position", 32, 0, 0));
         addAnimation(json, "manual", 1, constantFrame("position", 64, 0, 0));
         BbModel model = parse(json);
-        for (String slot : List.of("player.hold_mainhand", "player.hold_offhand", "player.swing", "player.use"))
-        {
+        for (String slot : List.of("player.hold_mainhand", "player.hold_offhand", "player.swing", "player.use")) {
             List<BbModel.Layer> layers = List.of(layer(slot, "hand", "HOLD", 0, 0),
                     layer("posture", "idle", "HOLD", 0, 0));
             assertEquals(4, model.sample(0, layers).getFirst().x(), EPS, slot);
@@ -41,23 +38,19 @@ class BbModelTest
     }
 
     @Test
-    void shippedModelsParseAndEveryAnimationProducesFiniteUnitNormals() throws Exception
-    {
-        for (String name : List.of("ysm_01_jk", "ysm_02_jk"))
-        {
+    void shippedModelsParseAndEveryAnimationProducesFiniteUnitNormals() throws Exception {
+        for (String name : List.of("ysm_01_jk", "ysm_02_jk")) {
             Path file = Path.of("../examples/models/" + name + ".bbmodel");
             BbModel model = BbModel.parse(Files.readAllBytes(file));
             assertEquals(name.equals("ysm_01_jk") ? 232 : 335, model.cubeCount());
             assertEquals(1, model.textures().size());
             assertTrue(model.animations().containsAll(
                     Set.of("crawl_idle", "crawl_walk", "player_jump", "bed_sleep", "idle", "sit", "sleep")));
-            for (String animation : model.animations())
-            {
+            for (String animation : model.animations()) {
                 List<BbModel.Vertex> vertices = model.sample(3.25, List.of(layer("posture", animation, "LOOP", 0, 0)));
                 assertFalse(vertices.isEmpty(), animation);
                 assertEquals(0, vertices.size() % 4);
-                for (BbModel.Vertex vertex : vertices)
-                {
+                for (BbModel.Vertex vertex : vertices) {
                     assertTrue(Float.isFinite(vertex.x()) && Float.isFinite(vertex.y()) && Float.isFinite(vertex.z()));
                     assertEquals(1,
                             Math.sqrt(
@@ -74,20 +67,16 @@ class BbModelTest
     }
 
     @Test
-    void cubeFacesHaveCorrectWindingAndUvs()
-    {
+    void cubeFacesHaveCorrectWindingAndUvs() {
         JsonObject json = fixture();
         JsonObject faces = json.getAsJsonArray("elements").get(0).getAsJsonObject().getAsJsonObject("faces");
-        for (String side : List.of("east", "south", "west", "up", "down"))
-
-        {
+        for (String side : List.of("east", "south", "west", "up", "down")) {
             faces.add(side, faces.get("north").deepCopy());
         }
 
         List<BbModel.Vertex> vertices = parse(json).sample(0, List.of());
         assertEquals(24, vertices.size());
-        for (int f = 0; f < vertices.size(); f += 4)
-        {
+        for (int f = 0; f < vertices.size(); f += 4) {
             BbModel.Vertex a = vertices.get(f), b = vertices.get(f + 1), c = vertices.get(f + 2);
             Vector3f geometric = new Vector3f(b.x() - a.x(), b.y() - a.y(), b.z() - a.z())
                     .cross(new Vector3f(c.x() - a.x(), c.y() - a.y(), c.z() - a.z())).normalize();
@@ -104,8 +93,7 @@ class BbModelTest
     }
 
     @Test
-    void textureUvResolutionIsIndependentOfPngPixelDimensionsAndRotationWorks()
-    {
+    void textureUvResolutionIsIndependentOfPngPixelDimensionsAndRotationWorks() {
         JsonObject json = fixture();
         json.getAsJsonArray("textures").get(0).getAsJsonObject().addProperty("uv_width", 32);
         json.getAsJsonArray("elements").get(0).getAsJsonObject().getAsJsonObject("faces").getAsJsonObject("north")
@@ -118,8 +106,7 @@ class BbModelTest
     }
 
     @Test
-    void cubeRotationUsesItsOwnOriginAndInflate()
-    {
+    void cubeRotationUsesItsOwnOriginAndInflate() {
         JsonObject json = fixture();
         JsonObject cube = json.getAsJsonArray("elements").get(0).getAsJsonObject();
         cube.add("origin", vector(8, 8, 8));
@@ -132,8 +119,7 @@ class BbModelTest
     }
 
     @Test
-    void nestedAbsolutePivotsAreConvertedRelativeToParent()
-    {
+    void nestedAbsolutePivotsAreConvertedRelativeToParent() {
         JsonObject json = fixture();
         JsonObject root = json.getAsJsonArray("outliner").get(0).getAsJsonObject();
         root.add("origin", vector(8, 0, 0));
@@ -156,18 +142,12 @@ class BbModelTest
     }
 
     @Test
-    void linearStepAndCatmullRomKeyframesEvaluateBetweenTicks()
-    {
+    void linearStepAndCatmullRomKeyframesEvaluateBetweenTicks() {
         JsonObject json = fixture();
-        addAnimation(json, "linear", 1, frames("position", "linear", new double[]
-        { 0, 1 }, new double[]
-        { 0, 16 }));
-        addAnimation(json, "step", 1, frames("position", "step", new double[]
-        { 0, 1 }, new double[]
-        { 0, 16 }));
-        addAnimation(json, "spline", 3, frames("position", "catmullrom", new double[]
-        { 0, 1, 2, 3 }, new double[]
-        { 0, 16, 0, 0 }));
+        addAnimation(json, "linear", 1, frames("position", "linear", new double[] { 0, 1 }, new double[] { 0, 16 }));
+        addAnimation(json, "step", 1, frames("position", "step", new double[] { 0, 1 }, new double[] { 0, 16 }));
+        addAnimation(json, "spline", 3,
+                frames("position", "catmullrom", new double[] { 0, 1, 2, 3 }, new double[] { 0, 16, 0, 0 }));
         BbModel model = parse(json);
         assertEquals(1.5, firstX(model, 10, layer("posture", "linear", "HOLD", 0, 0)), EPS);
         assertEquals(1, firstX(model, 10, layer("posture", "step", "HOLD", 0, 0)), EPS);
@@ -176,12 +156,9 @@ class BbModelTest
     }
 
     @Test
-    void twoPointKeyframesPreserveIncomingAndOutgoingDiscontinuities()
-    {
+    void twoPointKeyframesPreserveIncomingAndOutgoingDiscontinuities() {
         JsonObject json = fixture();
-        JsonArray frames = frames("position", "linear", new double[]
-        { 0, 1 }, new double[]
-        { 0, 32 });
+        JsonArray frames = frames("position", "linear", new double[] { 0, 1 }, new double[] { 0, 32 });
         frames.get(0).getAsJsonObject().getAsJsonArray("data_points").add(point(16, 0, 0));
         frames.get(1).getAsJsonObject().getAsJsonArray("data_points").add(point(48, 0, 0));
         addAnimation(json, "split", 1, frames);
@@ -193,12 +170,9 @@ class BbModelTest
     }
 
     @Test
-    void loopOnceHoldAndEntryExitTransitionsUseServerClock()
-    {
+    void loopOnceHoldAndEntryExitTransitionsUseServerClock() {
         JsonObject json = fixture();
-        addAnimation(json, "move", 1, frames("position", "linear", new double[]
-        { 0, 1 }, new double[]
-        { 0, 16 }));
+        addAnimation(json, "move", 1, frames("position", "linear", new double[] { 0, 1 }, new double[] { 0, 16 }));
         BbModel model = parse(json);
         assertEquals(1.25, firstX(model, 25, layer("posture", "move", "LOOP", 0, 0)), EPS);
         assertEquals(2, firstX(model, 25, layer("posture", "move", "HOLD", 0, 0)), EPS);
@@ -209,15 +183,10 @@ class BbModelTest
     }
 
     @Test
-    void layersOverrideOnlyOwnedChannelsAndPriorityDoesNotDependOnPacketOrder()
-    {
+    void layersOverrideOnlyOwnedChannelsAndPriorityDoesNotDependOnPacketOrder() {
         JsonObject json = fixture();
-        addAnimation(json, "move", 1, frames("position", "linear", new double[]
-        { 0 }, new double[]
-        { 8 }));
-        JsonArray rotation = frames("rotation", "linear", new double[]
-        { 0 }, new double[]
-        { 0 });
+        addAnimation(json, "move", 1, frames("position", "linear", new double[] { 0 }, new double[] { 8 }));
+        JsonArray rotation = frames("rotation", "linear", new double[] { 0 }, new double[] { 0 });
         rotation.get(0).getAsJsonObject().add("data_points", pointArray(point(0, 0, 90)));
         addAnimation(json, "turn", 1, rotation);
         BbModel model = parse(json);
@@ -229,12 +198,9 @@ class BbModelTest
     }
 
     @Test
-    void playbackSpeedMatchesTheServerSupportedRange()
-    {
+    void playbackSpeedMatchesTheServerSupportedRange() {
         JsonObject json = fixture();
-        addAnimation(json, "move", 1, frames("position", "linear", new double[]
-        { 0, 1 }, new double[]
-        { 0, 16 }));
+        addAnimation(json, "move", 1, frames("position", "linear", new double[] { 0, 1 }, new double[] { 0, 16 }));
         BbModel model = parse(json);
         assertEquals(1.5, firstX(model, .5, new BbModel.Layer("posture", "move", 0, 20, "HOLD", 0, 0)), EPS);
         assertEquals(1.5, firstX(model, 1000, new BbModel.Layer("posture", "move", 0, .01, "HOLD", 0, 0)), EPS);
@@ -244,8 +210,7 @@ class BbModelTest
     }
 
     @Test
-    void legacy410AnimationAxesMatchBlockbenchMigrationAndModelEngine()
-    {
+    void legacy410AnimationAxesMatchBlockbenchMigrationAndModelEngine() {
         JsonObject legacy = fixture();
         legacy.getAsJsonObject("meta").addProperty("format_version", "4.10");
         addAnimation(legacy, "move", 1, constantFrame("position", 16, 32, 48));
@@ -288,38 +253,30 @@ class BbModelTest
         assertThrows(IllegalArgumentException.class, () -> parse(missing));
     }
 
-    private static List<BbModel.Vertex> bodySample(BbModel model, String clip, double tick, String... names)
-    {
+    private static List<BbModel.Vertex> bodySample(BbModel model, String clip, double tick, String... names) {
         BbModel.Pose pose = model.emptyPose();
         com.simmc.meplayeractions.expression.Molang.Context context = new com.simmc.meplayeractions.expression.Molang.Context();
         context.frame(Map.of("ysm.food_level", 20d, "query.life_time", tick / 20));
         model.initializePhysics(context);
         for (BbModel.Layer layer : BbModel
-                .ordered(model.withParallelLayers(List.of(layer("posture", clip, "LOOP", 0, 0)))))
-        {
+                .ordered(model.withParallelLayers(List.of(layer("posture", clip, "LOOP", 0, 0))))) {
             BbModel.Evaluated evaluated = model.evaluate(tick, layer, true, context);
             BbModel.overlay(pose, evaluated.pose(), evaluated.weight(), false);
         }
         return model.vertices(pose, names.length == 0 ? null : Set.of(names));
     }
 
-    private static double zCenter(List<BbModel.Vertex> vertices)
-    {
+    private static double zCenter(List<BbModel.Vertex> vertices) {
         assertFalse(vertices.isEmpty());
         return vertices.stream().mapToDouble(BbModel.Vertex::z).average().orElseThrow();
     }
 
     @Test
-    void shippedCrawlHeadIsAheadOfFeetAndTailStaysAboveGround() throws Exception
-    {
-        for (String name : List.of("ysm_01_jk", "ysm_02_jk"))
-        {
+    void shippedCrawlHeadIsAheadOfFeetAndTailStaysAboveGround() throws Exception {
+        for (String name : List.of("ysm_01_jk", "ysm_02_jk")) {
             BbModel model = BbModel.parse(Files.readAllBytes(Path.of("../examples/models/" + name + ".bbmodel")));
-            for (String animation : List.of("climbing", "climb"))
-            {
-                for (double tick : new double[]
-                { 0, 5, 10, 15, 20 })
-                {
+            for (String animation : List.of("climbing", "climb")) {
+                for (double tick : new double[] { 0, 5, 10, 15, 20 }) {
                     List<BbModel.Vertex> body = bodySample(model, animation, tick, "jk", "jk2", "Head", "LeftLeg",
                             "RightLeg");
                     List<BbModel.Vertex> tail = bodySample(model, animation, tick, "Tail1", "Tail2", "Tail3");
@@ -337,10 +294,8 @@ class BbModelTest
     }
 
     @Test
-    void shippedBedPoseIsSupineAndTouchesMattressInEveryBedDirection() throws Exception
-    {
-        for (String name : List.of("ysm_01_jk", "ysm_02_jk"))
-        {
+    void shippedBedPoseIsSupineAndTouchesMattressInEveryBedDirection() throws Exception {
+        for (String name : List.of("ysm_01_jk", "ysm_02_jk")) {
             BbModel model = BbModel.parse(Files.readAllBytes(Path.of("../examples/models/" + name + ".bbmodel")));
             List<BbModel.Vertex> bed = bodySample(model, "bed_sleep", 30);
             List<BbModel.Vertex> back = bodySample(model, "bed_sleep", 30, "BackClothe");
@@ -358,13 +313,7 @@ class BbModelTest
                     - bed.stream().mapToDouble(BbModel.Vertex::z).min().orElseThrow();
             assertTrue(span > standingHeight * .75 && span < standingHeight * 1.4,
                     name + " supine span retains original dimensions: " + span);
-            for (double[] direction : new double[][]
-            {
-                    { 0, 0, 1 },
-                    { 90, -1, 0 },
-                    { 180, 0, -1 },
-                    { -90, 1, 0 } })
-            {
+            for (double[] direction : new double[][] { { 0, 0, 1 }, { 90, -1, 0 }, { 180, 0, -1 }, { -90, 1, 0 } }) {
                 double radians = Math.toRadians(180 - direction[0]);
                 assertTrue(Math.sin(radians) * delta * direction[1] + Math.cos(radians) * delta * direction[2] > 1);
                 List<BbModel.Vertex> torso = bodySample(model, "bed_sleep", 30, "Head", "LeftLeg", "RightLeg",
@@ -376,15 +325,10 @@ class BbModelTest
     }
 
     @Test
-    void animationPlayerMaintainsPlaybackAcrossRepeatedSnapshotsAndCrossfadesRemoval()
-    {
+    void animationPlayerMaintainsPlaybackAcrossRepeatedSnapshotsAndCrossfadesRemoval() {
         JsonObject json = fixture();
-        addAnimation(json, "move", 1, frames("position", "linear", new double[]
-        { 0, 1 }, new double[]
-        { 0, 16 }));
-        addAnimation(json, "next", 1, frames("position", "linear", new double[]
-        { 0 }, new double[]
-        { 32 }));
+        addAnimation(json, "move", 1, frames("position", "linear", new double[] { 0, 1 }, new double[] { 0, 16 }));
+        addAnimation(json, "next", 1, frames("position", "linear", new double[] { 0 }, new double[] { 32 }));
         AnimationPlayer player = new AnimationPlayer(parse(json));
         BbModel.Layer first = layer("posture", "move", "HOLD", 0, 4);
         player.sample(0, List.of(first));
@@ -399,11 +343,8 @@ class BbModelTest
     }
 
     @Test
-    void interactionAddsPunchDeltasAndKeepsCrawlOrSeatedPostureDuringFadeOut()
-    {
-        for (double angle : new double[]
-        { 90, 45 })
-        {
+    void interactionAddsPunchDeltasAndKeepsCrawlOrSeatedPostureDuringFadeOut() {
+        for (double angle : new double[] { 90, 45 }) {
             JsonObject json = headFixture();
             JsonObject leg = new JsonObject();
             leg.addProperty("uuid", "leg");
@@ -442,8 +383,7 @@ class BbModelTest
     }
 
     @Test
-    void interactionScaleMultipliesPostureAndManualPositionStillOverrides()
-    {
+    void interactionScaleMultipliesPostureAndManualPositionStillOverrides() {
         JsonObject json = fixture();
         JsonArray posture = constantFrame("scale", 2, 3, 4);
         posture.addAll(constantFrame("position", 8, 0, 0));
@@ -454,8 +394,7 @@ class BbModelTest
         addAnimation(json, "absolute", 1, constantFrame("position", 32, 0, 0));
         BbModel model = parse(json);
         BbModel.Layer base = layer("posture", "base", "HOLD", 0, 0);
-        for (String name : List.of("interaction", "arms", "swing", "use"))
-        {
+        for (String name : List.of("interaction", "arms", "swing", "use")) {
             BbModel.Layer delta = layer(name, "delta", "HOLD", 4, 4);
             List<BbModel.Layer> layers = List.of(base, delta);
             BbModel.Vertex halfway = model.sample(2, layers).getFirst();
@@ -474,17 +413,12 @@ class BbModelTest
     }
 
     @Test
-    void negativeScaleKeepsWindingAndNormalsConsistentAndZeroScaleHidesGeometry()
-    {
+    void negativeScaleKeepsWindingAndNormalsConsistentAndZeroScaleHidesGeometry() {
         JsonObject json = fixture();
-        JsonArray scale = frames("scale", "linear", new double[]
-        { 0 }, new double[]
-        { 0 });
+        JsonArray scale = frames("scale", "linear", new double[] { 0 }, new double[] { 0 });
         scale.get(0).getAsJsonObject().add("data_points", pointArray(point(-1, 1, 1)));
         addAnimation(json, "mirror", 1, scale);
-        addAnimation(json, "hidden", 1, frames("scale", "linear", new double[]
-        { 0 }, new double[]
-        { 0 }));
+        addAnimation(json, "hidden", 1, frames("scale", "linear", new double[] { 0 }, new double[] { 0 }));
         BbModel model = parse(json);
         List<BbModel.Vertex> vertices = model.sample(1, List.of(layer("manual", "mirror", "HOLD", 0, 0)));
         BbModel.Vertex a = vertices.get(0), b = vertices.get(1), c = vertices.get(2);
@@ -495,8 +429,7 @@ class BbModelTest
     }
 
     @Test
-    void rejectsUnsupportedMeshesScriptsExternalImagesUnknownBonesAndInvalidFloats()
-    {
+    void rejectsUnsupportedMeshesScriptsExternalImagesUnknownBonesAndInvalidFloats() {
         JsonObject mesh = fixture();
         mesh.getAsJsonArray("elements").get(0).getAsJsonObject().addProperty("type", "mesh");
         assertThrows(IllegalArgumentException.class, () -> parse(mesh));
@@ -504,15 +437,11 @@ class BbModelTest
         external.getAsJsonArray("textures").get(0).getAsJsonObject().addProperty("source", "../../secret.png");
         assertThrows(IllegalArgumentException.class, () -> parse(external));
         JsonObject script = fixture();
-        addAnimation(script, "bad", 1, frames("position", "linear", new double[]
-        { 0 }, new double[]
-        { 0 }));
+        addAnimation(script, "bad", 1, frames("position", "linear", new double[] { 0 }, new double[] { 0 }));
         script.getAsJsonArray("animations").get(0).getAsJsonObject().addProperty("anim_time_update", "query.anim_time");
         assertThrows(IllegalArgumentException.class, () -> parse(script));
         JsonObject expression = fixture();
-        addAnimation(expression, "bad", 1, frames("position", "linear", new double[]
-        { 0 }, new double[]
-        { 0 }));
+        addAnimation(expression, "bad", 1, frames("position", "linear", new double[] { 0 }, new double[] { 0 }));
         expression.getAsJsonArray("animations").get(0).getAsJsonObject().getAsJsonObject("animators")
                 .getAsJsonObject("bone").getAsJsonArray("keyframes").get(0).getAsJsonObject()
                 .getAsJsonArray("data_points").get(0).getAsJsonObject().addProperty("x", "Math.sin(query.anim_time)");
@@ -527,14 +456,12 @@ class BbModelTest
         assertThrows(IllegalArgumentException.class, () -> parse(unknown));
         assertThrows(IllegalArgumentException.class,
                 () -> BbModel.parse(("[".repeat(150) + "]".repeat(150)).getBytes(StandardCharsets.UTF_8)));
-        assertThrows(IllegalArgumentException.class, () -> BbModel.parse(new byte[]
-        { (byte) 0xc3, 0x28 }));
+        assertThrows(IllegalArgumentException.class, () -> BbModel.parse(new byte[] { (byte) 0xc3, 0x28 }));
         assertThrows(IllegalArgumentException.class, () -> BbModel.parse(new byte[8 * 1024 * 1024 + 1]));
     }
 
     @Test
-    void textureBytesCannotBeMutatedAfterValidation()
-    {
+    void textureBytesCannotBeMutatedAfterValidation() {
         BbModel model = parse(fixture());
         byte[] first = model.textures().getFirst().png();
         first[0] = 0;
@@ -543,8 +470,7 @@ class BbModelTest
     }
 
     @Test
-    void playerLookOnlyRotatesHeadAndWrapsYawWithCorrectNoseDirection()
-    {
+    void playerLookOnlyRotatesHeadAndWrapsYawWithCorrectNoseDirection() {
         BbModel model = parse(headFixture());
         List<BbModel.Vertex> neutral = model.sample(0, List.of());
         List<BbModel.Vertex> yaw = model.sample(0, List.of(), 20, 0);
@@ -560,16 +486,11 @@ class BbModelTest
     }
 
     @Test
-    void crawlHeadCounterrotationRemainsIntactBeforeLookDelta()
-    {
+    void crawlHeadCounterrotationRemainsIntactBeforeLookDelta() {
         JsonObject json = headFixture();
-        JsonArray rootFrames = frames("rotation", "linear", new double[]
-        { 0 }, new double[]
-        { 90 });
+        JsonArray rootFrames = frames("rotation", "linear", new double[] { 0 }, new double[] { 90 });
         addAnimation(json, "crawl", 1, rootFrames);
-        JsonArray headFrames = frames("rotation", "linear", new double[]
-        { 0 }, new double[]
-        { -90 });
+        JsonArray headFrames = frames("rotation", "linear", new double[] { 0 }, new double[] { -90 });
         JsonObject animator = new JsonObject();
         animator.addProperty("type", "bone");
         animator.add("keyframes", headFrames);
@@ -587,15 +508,12 @@ class BbModelTest
     }
 
     @Test
-    void explicitlyAuthoredManualHeadRotationFadesOutAdditionalLook()
-    {
+    void explicitlyAuthoredManualHeadRotationFadesOutAdditionalLook() {
         JsonObject json = headFixture();
         addAnimation(json, "head_lock", 1, new JsonArray());
         JsonObject animator = new JsonObject();
         animator.addProperty("type", "bone");
-        animator.add("keyframes", frames("rotation", "linear", new double[]
-        { 0 }, new double[]
-        { 0 }));
+        animator.add("keyframes", frames("rotation", "linear", new double[] { 0 }, new double[] { 0 }));
         JsonObject animation = json.getAsJsonArray("animations").get(0).getAsJsonObject();
         animation.getAsJsonObject("animators").add("head", animator);
         BbModel model = parse(json);
@@ -609,8 +527,7 @@ class BbModelTest
     }
 
     @Test
-    void prefixedHeadDescendantInheritsTrackingWithoutApplyingItTwice()
-    {
+    void prefixedHeadDescendantInheritsTrackingWithoutApplyingItTwice() {
         JsonObject json = headFixture();
         JsonObject head = json.getAsJsonArray("outliner").get(0).getAsJsonObject().getAsJsonArray("children").get(1)
                 .getAsJsonObject();
@@ -627,8 +544,7 @@ class BbModelTest
     }
 
     @Test
-    void invalidPngChecksumAndIncompletePngAreRejectedBeforeReady()
-    {
+    void invalidPngChecksumAndIncompletePngAreRejectedBeforeReady() {
         JsonObject json = fixture();
         JsonObject texture = json.getAsJsonArray("textures").get(0).getAsJsonObject();
         byte[] png = Base64.getDecoder().decode(texture.get("source").getAsString().substring(22));
@@ -646,13 +562,11 @@ class BbModelTest
     }
 
     @Test
-    void textureCountAndCombinedDecodedPixelsAreBounded() throws Exception
-    {
+    void textureCountAndCombinedDecodedPixelsAreBounded() throws Exception {
         JsonObject json = fixture();
         JsonArray textures = json.getAsJsonArray("textures");
         JsonObject tiny = textures.get(0).getAsJsonObject().deepCopy();
-        while (textures.size() < 16)
-        {
+        while (textures.size() < 16) {
             textures.add(tiny.deepCopy());
         }
 
@@ -676,8 +590,7 @@ class BbModelTest
         assertTrue(failure.getCause().getMessage().contains("dimensions exceed limits"));
     }
 
-    private static JsonObject headFixture()
-    {
+    private static JsonObject headFixture() {
         JsonObject model = fixture();
         JsonObject headCube = model.getAsJsonArray("elements").get(0).deepCopy().getAsJsonObject();
         headCube.addProperty("uuid", "headcube");
@@ -693,50 +606,41 @@ class BbModelTest
         return model;
     }
 
-    private static float height(List<BbModel.Vertex> vertices)
-    {
+    private static float height(List<BbModel.Vertex> vertices) {
         double min = vertices.stream().mapToDouble(BbModel.Vertex::y).min().orElseThrow();
         double max = vertices.stream().mapToDouble(BbModel.Vertex::y).max().orElseThrow();
         return (float) (max - min);
     }
 
-    private static float firstX(BbModel model, double tick, BbModel.Layer layer)
-    {
+    private static float firstX(BbModel model, double tick, BbModel.Layer layer) {
         return model.sample(tick, List.of(layer)).getFirst().x();
     }
 
-    private static BbModel.Layer layer(String name, String animation, String loop, int in, int out)
-    {
+    private static BbModel.Layer layer(String name, String animation, String loop, int in, int out) {
         return new BbModel.Layer(name, animation, 0, 1, loop, in, out);
     }
 
-    private static BbModel parse(JsonObject json)
-    {
+    private static BbModel parse(JsonObject json) {
         return BbModel.parse(json.toString().getBytes(StandardCharsets.UTF_8));
     }
 
-    private static JsonArray vector(double... values)
-    {
+    private static JsonArray vector(double... values) {
         JsonArray array = new JsonArray();
-        for (double value : values)
-        {
+        for (double value : values) {
             array.add(value);
         }
         return array;
     }
 
-    private static JsonArray stringArray(String... values)
-    {
+    private static JsonArray stringArray(String... values) {
         JsonArray array = new JsonArray();
-        for (String value : values)
-        {
+        for (String value : values) {
             array.add(value);
         }
         return array;
     }
 
-    private static JsonObject point(double x, double y, double z)
-    {
+    private static JsonObject point(double x, double y, double z) {
         JsonObject point = new JsonObject();
         point.addProperty("x", x);
         point.addProperty("y", y);
@@ -744,18 +648,15 @@ class BbModelTest
         return point;
     }
 
-    private static JsonArray pointArray(JsonObject point)
-    {
+    private static JsonArray pointArray(JsonObject point) {
         JsonArray array = new JsonArray();
         array.add(point);
         return array;
     }
 
-    private static JsonArray frames(String channel, String interpolation, double[] times, double[] xs)
-    {
+    private static JsonArray frames(String channel, String interpolation, double[] times, double[] xs) {
         JsonArray frames = new JsonArray();
-        for (int i = 0; i < times.length; i++)
-        {
+        for (int i = 0; i < times.length; i++) {
             JsonObject frame = new JsonObject();
             frame.addProperty("channel", channel);
             frame.addProperty("time", times[i]);
@@ -766,20 +667,15 @@ class BbModelTest
         return frames;
     }
 
-    private static JsonArray constantFrame(String channel, double x, double y, double z)
-    {
-        JsonArray frames = frames(channel, "linear", new double[]
-        { 0 }, new double[]
-        { x });
+    private static JsonArray constantFrame(String channel, double x, double y, double z) {
+        JsonArray frames = frames(channel, "linear", new double[] { 0 }, new double[] { x });
         frames.get(0).getAsJsonObject().add("data_points", pointArray(point(x, y, z)));
         return frames;
     }
 
-    private static void addMultiBoneAnimation(JsonObject model, String name, Map<String, JsonArray> bones)
-    {
+    private static void addMultiBoneAnimation(JsonObject model, String name, Map<String, JsonArray> bones) {
         JsonObject animators = new JsonObject();
-        bones.forEach((id, frames) ->
-        {
+        bones.forEach((id, frames) -> {
             JsonObject animator = new JsonObject();
             animator.addProperty("type", "bone");
             animator.add("keyframes", frames);
@@ -792,8 +688,7 @@ class BbModelTest
         model.getAsJsonArray("animations").add(animation);
     }
 
-    private static void addAnimation(JsonObject model, String name, double length, JsonArray frames)
-    {
+    private static void addAnimation(JsonObject model, String name, double length, JsonArray frames) {
         JsonObject animator = new JsonObject();
         animator.addProperty("type", "bone");
         animator.add("keyframes", frames);
@@ -806,16 +701,14 @@ class BbModelTest
         model.getAsJsonArray("animations").add(animation);
     }
 
-    private static JsonObject fixture()
-    {
+    private static JsonObject fixture() {
         JsonObject model = JsonParser.parseString("""
                 {"meta":{"format_version":"5.0"},"resolution":{"width":16,"height":16},"textures":[],"animations":[],
                  "elements":[{"uuid":"cube","type":"cube","from":[0,0,0],"to":[16,16,16],"origin":[0,0,0],
                               "faces":{"north":{"uv":[0,0,16,16],"texture":0}}}],
                  "outliner":[{"uuid":"bone","name":"bone","origin":[0,0,0],"children":["cube"]}]}
                 """).getAsJsonObject();
-        try
-        {
+        try {
             BufferedImage image = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
             image.setRGB(0, 0, 0xffffffff);
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
@@ -824,9 +717,7 @@ class BbModelTest
             texture.addProperty("source",
                     "data:image/png;base64," + Base64.getEncoder().encodeToString(bytes.toByteArray()));
             model.getAsJsonArray("textures").add(texture);
-        }
-        catch (Exception e)
-        {
+        } catch (Exception e) {
             throw new AssertionError(e);
         }
         return model;

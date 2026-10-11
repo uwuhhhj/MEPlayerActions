@@ -10,8 +10,7 @@ import java.util.Map;
 import java.util.Set;
 
 /** Source render_layers_first, adapted to Minecraft's deferred render command groups. */
-public final class NativeRenderPhases
-{
+public final class NativeRenderPhases {
     // Vanilla equipment layers use nonnegative, incrementing batch indices. Give each
     // semantic phase its own range so armor texture/glint/trim ordering stays native.
     private static final int PHASE_SIZE = 1 << 29;
@@ -20,69 +19,56 @@ public final class NativeRenderPhases
     private static final Map<OrderedRenderCommandQueue, PhasePair> PHASES = new IdentityHashMap<>();
     private static final Set<RenderCommandQueue> FLUSH = Collections.newSetFromMap(new IdentityHashMap<>());
 
-    private NativeRenderPhases()
-    {
+    private NativeRenderPhases() {
     }
 
-    public static void beginFrame()
-    {
+    public static void beginFrame() {
         PHASES.clear();
         FLUSH.clear();
     }
 
-    public static OrderedRenderCommandQueue geometry(OrderedRenderCommandQueue queue, boolean layersFirst)
-    {
+    public static OrderedRenderCommandQueue geometry(OrderedRenderCommandQueue queue, boolean layersFirst) {
         return phase(queue, layersFirst);
     }
 
-    public static OrderedRenderCommandQueue attachments(OrderedRenderCommandQueue queue, boolean layersFirst)
-    {
+    public static OrderedRenderCommandQueue attachments(OrderedRenderCommandQueue queue, boolean layersFirst) {
         return phase(queue, !layersFirst);
     }
 
-    private static OrderedRenderCommandQueue phase(OrderedRenderCommandQueue queue, boolean second)
-    {
+    private static OrderedRenderCommandQueue phase(OrderedRenderCommandQueue queue, boolean second) {
         PhasePair pair = PHASES.computeIfAbsent(queue,
                 parent -> new PhasePair(new PhaseQueue(parent, FIRST), new PhaseQueue(parent, SECOND)));
         return second ? pair.second() : pair.first();
     }
 
-    public static boolean requiresFlush(RenderCommandQueue queue)
-    {
+    public static boolean requiresFlush(RenderCommandQueue queue) {
         return FLUSH.contains(queue);
     }
 
-    private record PhasePair(PhaseQueue first, PhaseQueue second)
-    {
+    private record PhasePair(PhaseQueue first, PhaseQueue second) {
     }
 
     /** Reuse native submit forwarding, while relocating its ordered child batches. */
-    private static final class PhaseQueue extends OrderedRenderCommandQueueImpl
-    {
+    private static final class PhaseQueue extends OrderedRenderCommandQueueImpl {
         private final OrderedRenderCommandQueue parent;
         private final int base;
         private int lastOrder = -1;
         private BatchingRenderCommandQueue lastQueue;
 
-        private PhaseQueue(OrderedRenderCommandQueue parent, int base)
-        {
+        private PhaseQueue(OrderedRenderCommandQueue parent, int base) {
             this.parent = parent;
             this.base = base;
         }
 
         @Override
-        public BatchingRenderCommandQueue getBatchingQueue(int order)
-        {
-            if (order < 0 || order >= PHASE_SIZE)
-
-            {
+        public BatchingRenderCommandQueue getBatchingQueue(int order) {
+            if (order < 0 || order >= PHASE_SIZE) {
                 throw new IllegalArgumentException("Native equipment batch index outside its phase: " + order);
             }
 
             BatchingRenderCommandQueue batching = (BatchingRenderCommandQueue) this.parent
                     .getBatchingQueue(this.base + order);
-            if (order > this.lastOrder)
-            {
+            if (order > this.lastOrder) {
                 FLUSH.remove(this.lastQueue);
                 this.lastOrder = order;
                 this.lastQueue = batching;

@@ -10,49 +10,39 @@ import java.util.Comparator;
 import java.util.List;
 
 /** GUI-only orthographic camera. Authored model coordinates never enter a world renderer. */
-final class PreviewMesh
-{
+final class PreviewMesh {
     /** Per-corner camera depth is retained for a depth-tested GUI model pass. */
-    record Point(float x, float y, float u, float v, float depth)
-    {
-        Point(float x, float y, float u, float v)
-        {
+    record Point(float x, float y, float u, float v, float depth) {
+        Point(float x, float y, float u, float v) {
             this(x, y, u, v, 0);
         }
     }
 
-    record Quad(List<Point> points, int texture, int color, float depth)
-    {
+    record Quad(List<Point> points, int texture, int color, float depth) {
     }
 
-    record Projection(List<Quad> quads, float pixelsPerBlock)
-    {
+    record Projection(List<Quad> quads, float pixelsPerBlock) {
         static final Projection EMPTY = new Projection(List.of(), 1);
     }
 
-    record Settings(boolean noLighting, boolean disableRotation, String background, String foreground)
-    {
+    record Settings(boolean noLighting, boolean disableRotation, String background, String foreground) {
     }
 
-    private PreviewMesh()
-    {
+    private PreviewMesh() {
     }
 
-    static Settings settings(JsonObject properties)
-    {
+    static Settings settings(JsonObject properties) {
         return new Settings(flag(properties, "gui_no_lighting"), flag(properties, "disable_preview_rotation"),
                 resource(properties, "gui_background"), resource(properties, "gui_foreground"));
     }
 
-    private static boolean flag(JsonObject properties, String key)
-    {
+    private static boolean flag(JsonObject properties, String key) {
         JsonElement value = properties.get(key);
         return value != null && value.isJsonPrimitive() && value.getAsJsonPrimitive().isBoolean()
                 && value.getAsBoolean();
     }
 
-    private static String resource(JsonObject properties, String key)
-    {
+    private static String resource(JsonObject properties, String key) {
         JsonElement value = properties.get(key);
         return value != null && value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()
                 && value.getAsString().length() <= 256 ? value.getAsString() : "";
@@ -60,44 +50,36 @@ final class PreviewMesh
 
     /** One ordered atlas batch prevents a GUI texture sorter from placing the foreground behind the model. */
     static List<Quad> compose(List<Quad> model, int x, int y, int width, int height, boolean background,
-            boolean foreground)
-    {
-        if (width <= 0 || height <= 0)
-        {
+            boolean foreground) {
+        if (width <= 0 || height <= 0) {
             return List.of();
         }
 
-        if (!background && !foreground)
-        {
+        if (!background && !foreground) {
             return model;
         }
 
         List<Quad> result = new ArrayList<>(model.size() + 2);
-        if (background)
-        {
+        if (background) {
             result.add(image(x, y, width, height, -1));
         }
 
         result.addAll(model);
-        if (foreground)
-        {
+        if (foreground) {
             result.add(image(x, y, width, height, -2));
         }
 
         return List.copyOf(result);
     }
 
-    private static Quad image(int x, int y, int width, int height, int texture)
-    {
+    private static Quad image(int x, int y, int width, int height, int texture) {
         return new Quad(List.of(new Point(x, y, 0, 0), new Point(x, y + height, 0, 1),
                 new Point(x + width, y + height, 1, 1), new Point(x + width, y, 1, 0)), texture, 0xffffffff, 0);
     }
 
     /** A short UI reveal, separate from any authored model animation. */
-    static List<Quad> entrance(List<Quad> quads, int x, int y, int width, int height, double progress)
-    {
-        if (progress >= 1)
-        {
+    static List<Quad> entrance(List<Quad> quads, int x, int y, int width, int height, double progress) {
+        if (progress >= 1) {
             return quads;
         }
 
@@ -114,29 +96,24 @@ final class PreviewMesh
 
     /** Angles are degrees; zero yaw faces the model's authored negative-Z front. */
     static List<Quad> project(List<BbModel.Vertex> vertices, int x, int y, int width, int height, float yaw,
-            float pitch)
-    {
+            float pitch) {
         return project(vertices, x, y, width, height, yaw, pitch, new Settings(false, false, "", ""));
     }
 
     static List<Quad> project(List<BbModel.Vertex> vertices, int x, int y, int width, int height, float yaw,
-            float pitch, Settings settings)
-    {
+            float pitch, Settings settings) {
         return projectBounds(vertices, x, y, width, height, yaw, pitch, settings).quads();
     }
 
     /** Ordinary bbmodels retain their bounds-fit camera; depth uses the same scale as X/Y. */
     static Projection projectBounds(List<BbModel.Vertex> vertices, int x, int y, int width, int height, float yaw,
-            float pitch, Settings settings)
-    {
+            float pitch, Settings settings) {
         if (width <= 0 || height <= 0 || !Float.isFinite(yaw) || !Float.isFinite(pitch) || vertices.isEmpty()
-                || vertices.size() % 4 != 0)
-        {
+                || vertices.size() % 4 != 0) {
             return Projection.EMPTY;
         }
 
-        if (settings.disableRotation())
-        {
+        if (settings.disableRotation()) {
             yaw = 0;
             pitch = 0;
         }
@@ -145,19 +122,16 @@ final class PreviewMesh
         float[] positions = new float[vertices.size() * 3];
         float minX = Float.POSITIVE_INFINITY, minY = Float.POSITIVE_INFINITY;
         float maxX = Float.NEGATIVE_INFINITY, maxY = Float.NEGATIVE_INFINITY;
-        for (int i = 0; i < vertices.size(); i++)
-        {
+        for (int i = 0; i < vertices.size(); i++) {
             BbModel.Vertex v = vertices.get(i);
-            if (!finite(v))
-            {
+            if (!finite(v)) {
                 return Projection.EMPTY;
             }
 
             double vx = cy * v.x() + sy * v.z(), vz = -sy * v.x() + cy * v.z();
             float px = (float) vx, py = (float) (cp * v.y() - sp * vz);
             float depth = (float) (sp * v.y() + cp * vz);
-            if (!Float.isFinite(px) || !Float.isFinite(py) || !Float.isFinite(depth))
-            {
+            if (!Float.isFinite(px) || !Float.isFinite(py) || !Float.isFinite(depth)) {
                 return Projection.EMPTY;
             }
 
@@ -175,16 +149,13 @@ final class PreviewMesh
                 height * .88f / Math.max(.001f, maxY - minY));
         float centerX = (minX + maxX) * .5f, centerY = (minY + maxY) * .5f;
         List<Quad> quads = new ArrayList<>(vertices.size() / 4);
-        for (int i = 0; i < vertices.size(); i += 4)
-        {
+        for (int i = 0; i < vertices.size(); i += 4) {
             BbModel.Vertex face = vertices.get(i);
             List<Point> points = new ArrayList<>(4);
             float depth = 0;
-            for (int corner = 0; corner < 4; corner++)
-            {
+            for (int corner = 0; corner < 4; corner++) {
                 BbModel.Vertex v = vertices.get(i + corner);
-                if (v.texture() != face.texture())
-                {
+                if (v.texture() != face.texture()) {
                     return Projection.EMPTY;
                 }
 
@@ -216,33 +187,26 @@ final class PreviewMesh
 
     /** Native YSM previews use the entity-height anchor and fixed source size, never geometry bounds. */
     static List<Quad> project(List<BbModel.Vertex> vertices, int x, int y, int width, int height, Settings settings,
-            NativeGuiPreviewCamera.Camera camera)
-    {
-        if (camera == null || width <= 0 || height <= 0 || vertices.isEmpty() || vertices.size() % 4 != 0)
-
-        {
+            NativeGuiPreviewCamera.Camera camera) {
+        if (camera == null || width <= 0 || height <= 0 || vertices.isEmpty() || vertices.size() % 4 != 0) {
             return List.of();
         }
 
         List<Quad> quads = new ArrayList<>(vertices.size() / 4);
-        for (int i = 0; i < vertices.size(); i += 4)
-        {
+        for (int i = 0; i < vertices.size(); i += 4) {
             BbModel.Vertex face = vertices.get(i);
             List<Point> points = new ArrayList<>(4);
             float depth = 0;
-            for (int corner = 0; corner < 4; corner++)
-            {
+            for (int corner = 0; corner < 4; corner++) {
                 BbModel.Vertex vertex = vertices.get(i + corner);
-                if (!finite(vertex) || vertex.texture() != face.texture())
-                {
+                if (!finite(vertex) || vertex.texture() != face.texture()) {
                     return List.of();
                 }
 
                 NativeGuiPreviewCamera.Position projected = camera.project(vertex.x(), vertex.y(), vertex.z(), x, y,
                         width, height);
                 if (!Float.isFinite(projected.x()) || !Float.isFinite(projected.y())
-                        || !Float.isFinite(projected.depth()))
-                {
+                        || !Float.isFinite(projected.depth())) {
                     return List.of();
                 }
 
@@ -263,8 +227,7 @@ final class PreviewMesh
         return List.copyOf(quads);
     }
 
-    private static boolean finite(BbModel.Vertex v)
-    {
+    private static boolean finite(BbModel.Vertex v) {
         return Float.isFinite(v.x()) && Float.isFinite(v.y()) && Float.isFinite(v.z()) && Float.isFinite(v.u())
                 && Float.isFinite(v.v()) && Float.isFinite(v.nx()) && Float.isFinite(v.ny()) && Float.isFinite(v.nz());
     }

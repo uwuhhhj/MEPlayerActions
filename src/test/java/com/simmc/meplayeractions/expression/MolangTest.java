@@ -5,11 +5,9 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.util.Map;
 import java.util.List;
 
-class MolangTest
-{
+class MolangTest {
     @Test
-    void authorCommentsRemainLexicalAndCannotHideHostOperationsInsideStrings()
-    {
+    void authorCommentsRemainLexicalAndCannotHideHostOperationsInsideStrings() {
         Molang.Context c = new Molang.Context();
         c.frame(Map.of());
         assertEquals(5, Molang.compile("// 中文作者说明\r\nv.a=8/* 保留除法运算 */ /2; // 尾部\nv.a+1").evaluate(c));
@@ -20,8 +18,7 @@ class MolangTest
     }
 
     @Test
-    void precedenceAssignmentAndLazyBranchesMatchAuthoredExpressions()
-    {
+    void precedenceAssignmentAndLazyBranchesMatchAuthoredExpressions() {
         Molang.Context c = new Molang.Context();
         c.frame(Map.of("ysm.food_level", 5d, "ysm.head_yaw", -30d));
         assertEquals(-25, Molang.compile("ysm.food_level<=6?-25:0").evaluate(c));
@@ -34,13 +31,11 @@ class MolangTest
     }
 
     @Test
-    void sourcePhysicsAssignmentsPersistAndInstancesAreIsolated()
-    {
+    void sourcePhysicsAssignmentsPersistAndInstancesAreIsolated() {
         Molang.Program update = Molang.compile("'hair';v.p=v.p+0.01*v.d;v.d=v.d+0.01*(30-v.p-0.8*v.d)/0.025;");
         Molang.Context a = new Molang.Context();
         Molang.Context b = new Molang.Context();
-        for (int i = 0; i < 800; i++)
-        {
+        for (int i = 0; i < 800; i++) {
             a.frame(Map.of());
             update.evaluate(a);
         }
@@ -51,12 +46,9 @@ class MolangTest
     }
 
     @Test
-    void unsupportedHostOperationsAndExcessiveRecursionAreRejected()
-    {
-        for (String source : new String[]
-        { "java.lang.Runtime.exec('x')", "query.food_level=9", "loop(100000,v.a=1)", "1e999" })
-
-        {
+    void unsupportedHostOperationsAndExcessiveRecursionAreRejected() {
+        for (String source : new String[] { "java.lang.Runtime.exec('x')", "query.food_level=9", "loop(100000,v.a=1)",
+                "1e999" }) {
             assertThrows(IllegalArgumentException.class, () -> Molang.compile(source), source);
         }
 
@@ -65,13 +57,11 @@ class MolangTest
     }
 
     @Test
-    void modelStringsAndTypedArgumentsSelectOnlyMatchingEquipment()
-    {
+    void modelStringsAndTypedArgumentsSelectOnlyMatchingEquipment() {
         Molang.Context c = new Molang.Context();
         c.frame(Map.of());
         c.stringQuery("ysm.texture_name", "blue");
-        c.functions((name, args) ->
-        {
+        c.functions((name, args) -> {
             assertEquals("query.is_item_name_any", name);
             assertEquals(List.of("slot.weapon.mainhand", "minecraft:bow"), args);
             return true;
@@ -84,8 +74,7 @@ class MolangTest
     }
 
     @Test
-    void boundedBlocksReturnAndRadioScriptsPreserveValues()
-    {
+    void boundedBlocksReturnAndRadioScriptsPreserveValues() {
         Molang.Context c = new Molang.Context();
         c.frame(Map.of());
         assertEquals(3,
@@ -102,8 +91,7 @@ class MolangTest
     }
 
     @Test
-    void queryScopesAndMissingValueFallbackDoNotLeakBetweenFrames()
-    {
+    void queryScopesAndMissingValueFallbackDoNotLeakBetweenFrames() {
         Molang.Context c = new Molang.Context();
         c.frame(Map.of("ctrl.loop", 10d));
         c.query("c.state", "walking");
@@ -122,8 +110,7 @@ class MolangTest
     }
 
     @Test
-    void controllerLocalsSwitchScopesWhileModelVariablesRemainShared()
-    {
+    void controllerLocalsSwitchScopesWhileModelVariablesRemainShared() {
         Molang.Context c = new Molang.Context();
         c.frame(Map.of());
         Molang.compile("c.count=1;v.shared=4").evaluate(c);
@@ -139,12 +126,10 @@ class MolangTest
     }
 
     @Test
-    void boneQueryVectorsHaveOnlySafeReadOnlyCoordinates()
-    {
+    void boneQueryVectorsHaveOnlySafeReadOnlyCoordinates() {
         Molang.Context c = new Molang.Context();
         c.frame(Map.of());
-        c.functions((name, args) ->
-        {
+        c.functions((name, args) -> {
             assertEquals("ysm.bone_rot", name);
             assertEquals(List.of("AllBody"), args);
             return new Molang.VectorValue(1, 2, 3);
@@ -156,8 +141,7 @@ class MolangTest
     }
 
     @Test
-    void forEachAndMathAliasesRemainBoundedAndDoNotReflectOverHostObjects()
-    {
+    void forEachAndMathAliasesRemainBoundedAndDoNotReflectOverHostObjects() {
         Molang.Context c = new Molang.Context();
         c.frame(Map.of());
         c.query("q.parts", new Molang.SequenceValue(List.of(1d, 2d, 3d)));
@@ -170,8 +154,7 @@ class MolangTest
     }
 
     @Test
-    void authorControllerConstantsAreReadOnlyAndAvailableWithoutNativeBindings()
-    {
+    void authorControllerConstantsAreReadOnlyAndAvailableWithoutNativeBindings() {
         Molang.Context c = new Molang.Context();
         c.frame(Map.of());
         assertEquals(12, Molang.compile("ctrl.hold_on_last_frame ?? 99").evaluate(c));
@@ -184,16 +167,14 @@ class MolangTest
     }
 
     @Test
-    void authorFunctionsUseOnlyBoundedReadOnlyTypedArgumentsAndRestoreCallTemporaries()
-    {
+    void authorFunctionsUseOnlyBoundedReadOnlyTypedArgumentsAndRestoreCallTemporaries() {
         Molang.Context c = new Molang.Context();
         c.frame(Map.of());
         c.query("args", new Molang.SequenceValue(List.of(2d, "blue", new Molang.VectorValue(3, 4, 5))));
         assertEquals(7, Molang.compile("args[0]+args[2].z").evaluate(c));
         assertEquals("blue", Molang.compile("args[1]").evaluateValue(c));
         assertEquals(0, Molang.compile("args[-1]+args[99]+args[0.5]").evaluate(c));
-        c.functions((name, args) ->
-        {
+        c.functions((name, args) -> {
             assertEquals("fn.author.scale", name);
             return args.getFirst();
         });

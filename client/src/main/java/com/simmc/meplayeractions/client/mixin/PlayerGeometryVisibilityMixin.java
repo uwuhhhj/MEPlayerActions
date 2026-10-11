@@ -10,14 +10,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /** The player feature override bypasses LivingEntityRenderer's feature gate. */
 @Mixin(PlayerEntityRenderer.class)
-public abstract class PlayerGeometryVisibilityMixin
-{
+public abstract class PlayerGeometryVisibilityMixin {
     @Inject(method = "shouldRenderFeatures(Lnet/minecraft/client/render/entity/state/PlayerEntityRenderState;)Z", at = @At("HEAD"), cancellable = true)
     private void meplayeractions$hideReplacedFeatures(PlayerEntityRenderState state,
-            CallbackInfoReturnable<Boolean> cir)
-    {
-        if (((HiddenPlayerRenderState) state).meplayeractions$isHidden())
-        {
+            CallbackInfoReturnable<Boolean> cir) {
+        if (((HiddenPlayerRenderState) state).meplayeractions$isHidden()) {
             cir.setReturnValue(false);
         }
 

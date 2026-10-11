@@ -8,15 +8,12 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class ServerModelPresentationTest
-{
+class ServerModelPresentationTest {
     @Test
-    void ownSourceMissingOrPendingDoesNotClaimThatTheFileWasObtained()
-    {
+    void ownSourceMissingOrPendingDoesNotClaimThatTheFileWasObtained() {
         ServerModelPresentationTest.Fixture fixture = new Fixture();
         fixture.source = "own";
-        for (String status : List.of("missing", "pending", "invalid"))
-        {
+        for (String status : List.of("missing", "pending", "invalid")) {
             fixture.serverStatus = status;
             ServerModelPresentation.Display display = fixture.display();
             assertTrue(display.tooltip().contains("客户端资源发布目录：plugins/MEPlayerActions/models"));
@@ -27,8 +24,7 @@ class ServerModelPresentationTest
     }
 
     @Test
-    void explicitNoPublicationExplainsMeOnlyWithoutPromisingAFutureAutomaticDownload()
-    {
+    void explicitNoPublicationExplainsMeOnlyWithoutPromisingAFutureAutomaticDownload() {
         ServerModelPresentationTest.Fixture fixture = new Fixture();
         ServerModelPresentation.Display display = fixture
                 .display(new ServerModelPresentation.CatalogResource(false, "modelengine", "boss"));
@@ -41,8 +37,7 @@ class ServerModelPresentationTest
     }
 
     @Test
-    void historicalCacheRemainsAPreviewFactWhenTheCurrentServerPublishesNoResource()
-    {
+    void historicalCacheRemainsAPreviewFactWhenTheCurrentServerPublishesNoResource() {
         ServerModelPresentationTest.Fixture fixture = new Fixture();
         fixture.cached = true;
         ServerModelPresentation.Display display = fixture
@@ -55,8 +50,7 @@ class ServerModelPresentationTest
     }
 
     @Test
-    void aPublishedFileStillNeedsValidationAndDoesNotGrantADownloadOrRenderLease()
-    {
+    void aPublishedFileStillNeedsValidationAndDoesNotGrantADownloadOrRenderLease() {
         ServerModelPresentationTest.Fixture fixture = new Fixture();
         ServerModelPresentation.Display display = fixture
                 .display(new ServerModelPresentation.CatalogResource(true, "own", "服装"));
@@ -68,8 +62,7 @@ class ServerModelPresentationTest
     }
 
     @Test
-    void aStaleDirectoryHintCannotOverrideTheCurrentBindingOrAcknowledgedRendering()
-    {
+    void aStaleDirectoryHintCannotOverrideTheCurrentBindingOrAcknowledgedRendering() {
         ServerModelPresentationTest.Fixture fixture = new Fixture();
         fixture.current = true;
         fixture.serverStatus = "ready";
@@ -86,8 +79,7 @@ class ServerModelPresentationTest
     }
 
     @Test
-    void offlineDirectoryHintsCannotDescribeTheCurrentServerAsAvailableOrMissing()
-    {
+    void offlineDirectoryHintsCannotDescribeTheCurrentServerAsAvailableOrMissing() {
         ServerModelPresentationTest.Fixture fixture = new Fixture();
         fixture.online = false;
         fixture.cached = true;
@@ -99,8 +91,7 @@ class ServerModelPresentationTest
     }
 
     @Test
-    void anUnboundDirectoryEntryDoesNotPromiseADownloadOrInferServerAvailability()
-    {
+    void anUnboundDirectoryEntryDoesNotPromiseADownloadOrInferServerAvailability() {
         ServerModelPresentation.Display display = new Fixture().display();
         assertEquals(ServerModelPresentation.Cloud.UNKNOWN, display.cloud());
         assertTrue(display.tooltip().contains("服务器资源：尚未确认"));
@@ -111,8 +102,7 @@ class ServerModelPresentationTest
     }
 
     @Test
-    void aValidatedLocalCacheDoesNotProveThisServerHasTheResource()
-    {
+    void aValidatedLocalCacheDoesNotProveThisServerHasTheResource() {
         ServerModelPresentationTest.Fixture fixture = new Fixture();
         fixture.cached = true;
         ServerModelPresentation.Display display = fixture.display();
@@ -124,8 +114,7 @@ class ServerModelPresentationTest
     }
 
     @Test
-    void offlineCachedModelsArePreviewOnly()
-    {
+    void offlineCachedModelsArePreviewOnly() {
         ServerModelPresentationTest.Fixture fixture = new Fixture();
         fixture.online = false;
         fixture.cached = true;
@@ -136,8 +125,7 @@ class ServerModelPresentationTest
     }
 
     @Test
-    void readyServerSourceWithoutACacheShowsDownloadAvailabilityInsteadOfCached()
-    {
+    void readyServerSourceWithoutACacheShowsDownloadAvailabilityInsteadOfCached() {
         ServerModelPresentationTest.Fixture fixture = new Fixture();
         fixture.serverStatus = "ready";
         fixture.source = "own";
@@ -149,10 +137,8 @@ class ServerModelPresentationTest
     }
 
     @ParameterizedTest
-    @ValueSource(strings =
-    { "missing", "invalid", "server-only", "model_complexity" })
-    void serverUnavailableStatesKeepTheServerDisguiseAndClearlyDisableTakeover(String serverStatus)
-    {
+    @ValueSource(strings = { "missing", "invalid", "server-only", "model_complexity" })
+    void serverUnavailableStatesKeepTheServerDisguiseAndClearlyDisableTakeover(String serverStatus) {
         ServerModelPresentationTest.Fixture fixture = new Fixture();
         fixture.current = true;
         fixture.serverStatus = serverStatus;
@@ -168,8 +154,7 @@ class ServerModelPresentationTest
     }
 
     @Test
-    void modelEngineBlueprintsAreIdentifiedWithoutClaimingAuthorScriptsAreComplete()
-    {
+    void modelEngineBlueprintsAreIdentifiedWithoutClaimingAuthorScriptsAreComplete() {
         ServerModelPresentationTest.Fixture fixture = new Fixture();
         fixture.serverStatus = "ready";
         fixture.source = "modelengine";
@@ -178,8 +163,7 @@ class ServerModelPresentationTest
     }
 
     @Test
-    void transferAndValidationAreVisibleEvenWhileRenderingIsDisabled()
-    {
+    void transferAndValidationAreVisibleEvenWhileRenderingIsDisabled() {
         ServerModelPresentationTest.Fixture fixture = new Fixture();
         fixture.current = true;
         fixture.serverStatus = "ready";
@@ -195,8 +179,7 @@ class ServerModelPresentationTest
     }
 
     @Test
-    void cachedDoesNotMeanRenderingAndAStaleAssetStateCannotClaimTakeover()
-    {
+    void cachedDoesNotMeanRenderingAndAStaleAssetStateCannotClaimTakeover() {
         ServerModelPresentationTest.Fixture fixture = new Fixture();
         fixture.current = true;
         fixture.serverStatus = "ready";
@@ -213,8 +196,7 @@ class ServerModelPresentationTest
     }
 
     @Test
-    void preparedAssetsWaitForTheActualServerRenderAcknowledgement()
-    {
+    void preparedAssetsWaitForTheActualServerRenderAcknowledgement() {
         ServerModelPresentationTest.Fixture fixture = new Fixture();
         fixture.current = true;
         fixture.serverStatus = "ready";
@@ -228,8 +210,7 @@ class ServerModelPresentationTest
     }
 
     @Test
-    void serverSelfPolicyExplainsWhyPreparedOwnAssetsHaveNoTakeoverLease()
-    {
+    void serverSelfPolicyExplainsWhyPreparedOwnAssetsHaveNoTakeoverLease() {
         ServerModelPresentationTest.Fixture fixture = new Fixture();
         fixture.current = true;
         fixture.prepared = true;
@@ -239,8 +220,7 @@ class ServerModelPresentationTest
     }
 
     @Test
-    void failedCacheValidationDoesNotKeepAGreenCachedIcon()
-    {
+    void failedCacheValidationDoesNotKeepAGreenCachedIcon() {
         ServerModelPresentationTest.Fixture fixture = new Fixture();
         fixture.cached = true;
         fixture.cacheFailed = true;
@@ -250,8 +230,7 @@ class ServerModelPresentationTest
     }
 
     @Test
-    void installedResourcePackAssetsArePreparedWithoutClaimingAPersistentCache()
-    {
+    void installedResourcePackAssetsArePreparedWithoutClaimingAPersistentCache() {
         ServerModelPresentationTest.Fixture fixture = new Fixture();
         fixture.current = true;
         fixture.serverStatus = "ready";
@@ -265,8 +244,7 @@ class ServerModelPresentationTest
     }
 
     @Test
-    void memoryPreparationDoesNotHideAnEarlierDiskCacheFailure()
-    {
+    void memoryPreparationDoesNotHideAnEarlierDiskCacheFailure() {
         ServerModelPresentationTest.Fixture fixture = new Fixture();
         fixture.current = true;
         fixture.serverStatus = "ready";
@@ -281,8 +259,7 @@ class ServerModelPresentationTest
     }
 
     @Test
-    void retainedDisguiseStateWhileOfflineCannotWaitForAnOnlineRenderAcknowledgement()
-    {
+    void retainedDisguiseStateWhileOfflineCannotWaitForAnOnlineRenderAcknowledgement() {
         ServerModelPresentationTest.Fixture fixture = new Fixture();
         fixture.current = true;
         fixture.online = false;
@@ -297,8 +274,7 @@ class ServerModelPresentationTest
     }
 
     @Test
-    void cachedIdentityMustMatchTheCurrentBindingAndCannotSatisfyAnUnavailableHash()
-    {
+    void cachedIdentityMustMatchTheCurrentBindingAndCannotSatisfyAnUnavailableHash() {
         assertTrue(ServerModelPresentation.cacheMatchesCurrentResource(false, "", "old"));
         assertTrue(ServerModelPresentation.cacheMatchesCurrentResource(true, "new", "new"));
         assertFalse(ServerModelPresentation.cacheMatchesCurrentResource(true, "new", "old"));
@@ -307,8 +283,7 @@ class ServerModelPresentationTest
     }
 
     @Test
-    void synchronizationFailureIsDistinctFromMissingServerResources()
-    {
+    void synchronizationFailureIsDistinctFromMissingServerResources() {
         ServerModelPresentationTest.Fixture fixture = new Fixture();
         fixture.current = true;
         fixture.serverStatus = "ready";
@@ -321,19 +296,16 @@ class ServerModelPresentationTest
         assertTrue(display.tooltip().contains("本地接管：未启动，保持服务器显示"));
     }
 
-    private static final class Fixture
-    {
+    private static final class Fixture {
         boolean online = true, current, requestPending, renderEnabled = true, serverSelfAllowed = true,
                 selfVisible = true, active, prepared, loading, cached, cacheLoading, cacheFailed;
         String serverStatus = "", source = "", reason = "", resourceState = "", resourceError = "";
 
-        ServerModelPresentation.Display display()
-        {
+        ServerModelPresentation.Display display() {
             return display(ServerModelPresentation.CatalogResource.unknown());
         }
 
-        ServerModelPresentation.Display display(ServerModelPresentation.CatalogResource catalog)
-        {
+        ServerModelPresentation.Display display(ServerModelPresentation.CatalogResource catalog) {
             return ServerModelPresentation.describe(new ServerModelPresentation.Facts(this.online, this.current,
                     this.requestPending, this.renderEnabled, this.serverSelfAllowed, this.selfVisible, this.active,
                     this.prepared, this.loading, this.cached, this.cacheLoading, this.cacheFailed, this.serverStatus,

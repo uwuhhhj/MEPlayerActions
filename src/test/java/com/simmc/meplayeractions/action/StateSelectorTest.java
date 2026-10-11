@@ -7,13 +7,11 @@ import java.util.function.Predicate;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class StateSelectorTest
-{
+class StateSelectorTest {
     private static final Predicate<SyncFeature> ALL_ENABLED = ignored -> true;
 
     @Test
-    void realPosturesWinWhenNativeFlagsAlsoDescribeFlightOrSwimming()
-    {
+    void realPosturesWinWhenNativeFlagsAlsoDescribeFlightOrSwimming() {
         // GSit crawling uses the swimming pose, so its session must be authoritative.
         StateSelector.Sample sitting = new StateSelector.Sample(true, true, true, true, true, true, false, false, false,
                 true);
@@ -28,8 +26,7 @@ class StateSelectorTest
     }
 
     @Test
-    void disablingRealPostureSynchronizationDoesNotFallThroughToSwimming()
-    {
+    void disablingRealPostureSynchronizationDoesNotFallThroughToSwimming() {
         StateSelector.Sample sittingInWater = new StateSelector.Sample(true, false, false, false, true, true, false,
                 false, false, true);
         StateSelector.Sample crawlingWithSwimmingPose = new StateSelector.Sample(false, true, false, false, true, false,
@@ -40,8 +37,7 @@ class StateSelectorTest
     }
 
     @Test
-    void elytraAndActualFlightHaveIndependentSwitchesAndFlightUsesHoverWhenStill()
-    {
+    void elytraAndActualFlightHaveIndependentSwitchesAndFlightUsesHoverWhenStill() {
         StateSelector.Sample gliding = new StateSelector.Sample(false, false, true, true, false, false, false, false,
                 false, true);
         StateSelector.Sample flying = new StateSelector.Sample(false, false, false, true, false, false, false, false,
@@ -57,8 +53,7 @@ class StateSelectorTest
     }
 
     @Test
-    void disablingSprintKeepsWalkingAndDisablingMovementRemovesThatLayer()
-    {
+    void disablingSprintKeepsWalkingAndDisablingMovementRemovesThatLayer() {
         StateSelector.Sample sprinting = new StateSelector.Sample(false, false, false, false, false, false, true, false,
                 true, true);
 
@@ -68,16 +63,14 @@ class StateSelectorTest
     }
 
     @Test
-    void sleepAndVehiclesNeverFallThroughToJumpOrWalkWhenDisabled()
-    {
+    void sleepAndVehiclesNeverFallThroughToJumpOrWalkWhenDisabled() {
         StateSelector.Sample sleeping = new StateSelector.Sample(true, true, false, false, false, false, false, false,
                 false, true, true, StateSelector.Vehicle.OTHER);
         assertEquals(ActionState.SLEEP, StateSelector.select(sleeping, ALL_ENABLED));
         assertNull(StateSelector.select(sleeping, except(SyncFeature.SLEEP)));
         assertEquals("sleep", sleeping.postureKey());
-        for (StateSelector.Vehicle vehicle : new StateSelector.Vehicle[]
-        { StateSelector.Vehicle.BOAT, StateSelector.Vehicle.MINECART, StateSelector.Vehicle.OTHER })
-        {
+        for (StateSelector.Vehicle vehicle : new StateSelector.Vehicle[] { StateSelector.Vehicle.BOAT,
+                StateSelector.Vehicle.MINECART, StateSelector.Vehicle.OTHER }) {
             StateSelector.Sample riding = new StateSelector.Sample(false, false, false, false, false, false, false,
                     false, true, true, false, vehicle);
             ActionState expected = vehicle == StateSelector.Vehicle.BOAT ? ActionState.BOAT
@@ -88,8 +81,7 @@ class StateSelectorTest
     }
 
     @Test
-    void nativeBedIsDistinctFromGsitSleepAndKeepsSleepSynchronization()
-    {
+    void nativeBedIsDistinctFromGsitSleepAndKeepsSleepSynchronization() {
         StateSelector.Sample bed = new StateSelector.Sample(false, false, false, false, false, false, false, false,
                 false, false, true, true, StateSelector.Vehicle.NONE);
         StateSelector.Sample lay = new StateSelector.Sample(false, false, false, false, false, false, false, false,
@@ -101,8 +93,7 @@ class StateSelectorTest
     }
 
     @Test
-    void horizontalSwimmingAndUprightTreadingUseDifferentAnimations()
-    {
+    void horizontalSwimmingAndUprightTreadingUseDifferentAnimations() {
         StateSelector.Sample horizontal = new StateSelector.Sample(false, false, false, false, true, true, false, false,
                 false, false);
         StateSelector.Sample swimming = new StateSelector.Sample(false, false, false, false, true, true, false, false,
@@ -117,8 +108,7 @@ class StateSelectorTest
     }
 
     @Test
-    void landingTailWinsOverMovementButNotARealPosture()
-    {
+    void landingTailWinsOverMovementButNotARealPosture() {
         StateSelector.Sample grounded = new StateSelector.Sample(false, false, false, false, false, false, true, true,
                 true, true);
         assertEquals(ActionState.JUMP, StateSelector.select(grounded, ALL_ENABLED, ActionState.JUMP));
@@ -131,8 +121,7 @@ class StateSelectorTest
         assertEquals(ActionState.CRAWL_IDLE, StateSelector.select(crawling, ALL_ENABLED, ActionState.JUMP));
     }
 
-    private static Predicate<SyncFeature> except(SyncFeature feature)
-    {
+    private static Predicate<SyncFeature> except(SyncFeature feature) {
         EnumSet<SyncFeature> enabled = EnumSet.allOf(SyncFeature.class);
         enabled.remove(feature);
         return enabled::contains;

@@ -16,8 +16,7 @@ import java.util.Objects;
 import java.util.function.Consumer;
 
 /** Each owner, card and browsing preview has its own clock, author environment, controller state and springs. */
-final class PreviewScene
-{
+final class PreviewScene {
     static final double ENTRY_TICKS = 12;
     private static final Map<String, Double> CARD_QUERIES = Map.ofEntries(Map.entry("ysm.food_level", 20d),
             Map.entry("ysm.has_mainhand", 0d), Map.entry("ysm.has_offhand", 0d), Map.entry("query.ground_speed", 0d),
@@ -36,70 +35,56 @@ final class PreviewScene
     private Sample last;
 
     record NativeInputs(EntityAnimationController.Sample motion, Map<String, Double> queries,
-            Consumer<Molang.Context> configure, boolean cardDummy)
-    {
+            Consumer<Molang.Context> configure, boolean cardDummy) {
 
-        static final NativeInputs EMPTY = new NativeInputs(null, Map.of(), ignored ->
-        {
+        static final NativeInputs EMPTY = new NativeInputs(null, Map.of(), ignored -> {
         });
         NativeInputs(EntityAnimationController.Sample motion, Map<String, Double> queries,
-                Consumer<Molang.Context> configure)
-        {
+                Consumer<Molang.Context> configure) {
             this(motion, queries, configure, false);
         }
 
         /** Only the independently constructed preview dummy can supply a gallery entity binding. */
-        static NativeInputs card(Consumer<Molang.Context> configure)
-        {
+        static NativeInputs card(Consumer<Molang.Context> configure) {
             return new NativeInputs(null, Map.of(), configure, true);
         }
 
-        NativeInputs
-        {
+        NativeInputs {
             queries = Map.copyOf(queries);
             Objects.requireNonNull(configure);
         }
     }
 
     record Sample(List<BbModel.Vertex> vertices, double age, double startedAt, double entryProgress, int startCount,
-            List<String> animations, List<BbModel.Layer> layers, ModelPreview.Context context)
-    {
-        List<String> slots()
-        {
+            List<String> animations, List<BbModel.Layer> layers, ModelPreview.Context context) {
+        List<String> slots() {
             return this.layers.stream().map(BbModel.Layer::layer).toList();
         }
     }
 
-    PreviewScene(BbModel model, String previewAnimation)
-    {
+    PreviewScene(BbModel model, String previewAnimation) {
         this(model, previewAnimation, ModelPreview.Context.CARD);
     }
 
-    PreviewScene(BbModel model, String previewAnimation, ModelPreview.Context context)
-    {
+    PreviewScene(BbModel model, String previewAnimation, ModelPreview.Context context) {
         this.model = Objects.requireNonNull(model);
         this.context = Objects.requireNonNull(context);
         this.player = new AnimationPlayer(model);
         this.policy = LocalMotionPolicy.forModel(model);
         List<BbModel.Layer> selected = new ArrayList<>();
-        if (!model.ysmControllers())
-        {
+        if (!model.ysmControllers()) {
             // Ordinary BB previews retain their existing idle and fit/entrance behavior.
-            if (model.animations().contains("idle"))
-            {
+            if (model.animations().contains("idle")) {
                 selected.add(layer("posture", "idle", "LOOP"));
             }
 
             if (previewAnimation != null && !previewAnimation.equals("idle")
-                    && model.animations().contains(previewAnimation))
-            {
+                    && model.animations().contains(previewAnimation)) {
                 selected.add(layer("gui", previewAnimation, "LOOP"));
             }
 
-        }
-        else if (context != ModelPreview.Context.OWNER && previewAnimation != null
-                && model.animations().contains(previewAnimation))
-        {
+        } else if (context != ModelPreview.Context.OWNER && previewAnimation != null
+                && model.animations().contains(previewAnimation)) {
             // OpenYSM's dummy stops main/hand predicates and submits currentAnimation to cap.
             // An explicit cap slot also keeps ctrl.playing_extra_animation false in the dummy.
             String loop = AnimationFormatValidator.validate(model.animationFormatVersion(),
@@ -110,52 +95,42 @@ final class PreviewScene
         this.staticLayers = List.copyOf(selected);
     }
 
-    private static BbModel.Layer layer(String slot, String animation, String loop)
-    {
+    private static BbModel.Layer layer(String slot, String animation, String loop) {
         return new BbModel.Layer(slot, animation, 0, 1, loop, 0, 0);
     }
 
-    void enableQueryDiagnostics()
-    {
+    void enableQueryDiagnostics() {
         this.player.enableQueryDiagnostics();
     }
 
-    void enableNativeYsm()
-    {
+    void enableNativeYsm() {
         this.player.enableNativeYsm();
     }
 
     /** GUI attachments use this scene's final sampled pose, never the gameplay controller's pose. */
-    AnimationPlayer animationPlayer()
-    {
+    AnimationPlayer animationPlayer() {
         return this.player;
     }
 
-    List<Map<String, Object>> queryDiagnostics()
-    {
+    List<Map<String, Object>> queryDiagnostics() {
         return YsmQueryDiagnostics.describe(this.player);
     }
 
-    Sample sample(double clock, Map<String, Double> parameters)
-    {
+    Sample sample(double clock, Map<String, Double> parameters) {
         return sample(clock, parameters, NativeInputs.EMPTY);
     }
 
-    Sample sample(double clock, Map<String, Double> parameters, NativeInputs inputs)
-    {
-        if (!Double.isFinite(clock) || clock < 0)
-        {
+    Sample sample(double clock, Map<String, Double> parameters, NativeInputs inputs) {
+        if (!Double.isFinite(clock) || clock < 0) {
             throw new IllegalArgumentException("Preview clock");
         }
 
         Objects.requireNonNull(inputs);
-        if (!Double.isNaN(this.previousClock) && clock + 1 < this.previousClock)
-        {
+        if (!Double.isNaN(this.previousClock) && clock + 1 < this.previousClock) {
             restart();
         }
 
-        if (Double.isNaN(this.startedAt))
-        {
+        if (Double.isNaN(this.startedAt)) {
             this.startedAt = clock;
             this.startCount++;
         }
@@ -167,21 +142,17 @@ final class PreviewScene
         double nextAge = Math.max(this.age, clock - this.startedAt);
         if (this.last == null || nextAge != this.age || !this.lastParameters.equals(parameters)
                 || !Objects.equals(this.lastMotion, effective.motion())
-                || !this.lastQueries.equals(effective.queries()))
-        {
+                || !this.lastQueries.equals(effective.queries())) {
             this.age = nextAge;
             List<BbModel.Layer> layers = this.staticLayers;
-            if (owner && effective.motion() != null)
-            {
+            if (owner && effective.motion() != null) {
                 this.motion.update((long) Math.floor(this.age), effective.motion(), this.policy, List.of(),
                         this.model.animationCatalog());
                 layers = this.motion.layers();
             }
-            this.player.configureFrame(environment ->
-            {
+            this.player.configureFrame(environment -> {
                 effective.configure().accept(environment);
-                if (this.context != ModelPreview.Context.OWNER)
-                {
+                if (this.context != ModelPreview.Context.OWNER) {
                     VanillaYsmQueries.populatePreviewDefaults(environment);
                 }
 
@@ -191,11 +162,8 @@ final class PreviewScene
                 environment.query("ysm.is_first_person", 0d);
                 environment.query("query.is_first_person", 0d);
                 environment.query("ysm.person_view", 2d);
-                if (owner && effective.motion() != null)
-
-                {
-                    for (String slot : this.motion.pausedControllers())
-                    {
+                if (owner && effective.motion() != null) {
+                    for (String slot : this.motion.pausedControllers()) {
                         environment.query("ysm.pause." + slot, 1d);
                     }
 
@@ -217,8 +185,7 @@ final class PreviewScene
     }
 
     /** A reopen/selection resets this context alone; camera drags never call this. */
-    void restart()
-    {
+    void restart() {
         this.player.reset();
         this.motion = new EntityAnimationController();
         this.startedAt = Double.NaN;
@@ -231,8 +198,7 @@ final class PreviewScene
     }
 
     /** A retired screen must release its live-entity expression binding as well as pose state. */
-    void dispose()
-    {
+    void dispose() {
         restart();
         this.player.dispose();
     }

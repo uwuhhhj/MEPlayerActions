@@ -13,27 +13,23 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Server-owned action names remain useful without loading any client model or enabling its renderer. */
-class ServerActionLabelFallbackTest
-{
+class ServerActionLabelFallbackTest {
     @Test
-    void unknownRawClipsPublishDistinctAuthorIdsForTheWheelAndPlaybackFeedback()
-    {
+    void unknownRawClipsPublishDistinctAuthorIdsForTheWheelAndPlaybackFeedback() {
         Settings settings = Settings.load(config());
         List<AnimationInfo> directory = ActionDirectory.build(settings,
                 List.of("mounted_ing", "idle_flight", "jumpattack"));
         assertEquals(List.of(new AnimationInfo("idle_flight", "idle_flight"),
                 new AnimationInfo("jumpattack", "jumpattack"), new AnimationInfo("mounted_ing", "mounted_ing")),
                 directory);
-        for (AnimationInfo action : directory)
-        {
+        for (AnimationInfo action : directory) {
             assertEquals(action.id(), settings.animationLabel(action.id()));
             assertEquals(action.label(), settings.actionLabel(action.id()));
         }
     }
 
     @Test
-    void configuredNamesAreSharedByTheRawDirectoryAndPlaybackFeedback()
-    {
+    void configuredNamesAreSharedByTheRawDirectoryAndPlaybackFeedback() {
         YamlConfiguration config = config();
         config.set("menu.animation-labels.mounted_ing", "作者指定坐骑动作");
         Settings settings = Settings.load(config);
@@ -43,8 +39,7 @@ class ServerActionLabelFallbackTest
     }
 
     @Test
-    void customAliasRetainsItsOwnConfiguredNameAheadOfTheRawClipName()
-    {
+    void customAliasRetainsItsOwnConfiguredNameAheadOfTheRawClipName() {
         YamlConfiguration config = config();
         config.set("menu.animation-labels.jumpattack", "作者指定攻击");
         config.set("custom-actions.special_attack.animation", "jumpattack");
@@ -57,8 +52,7 @@ class ServerActionLabelFallbackTest
     }
 
     @Test
-    void unnamedCustomAliasUsesItsTargetsLabelOrOriginalIdWithoutCollapsingToGenericText()
-    {
+    void unnamedCustomAliasUsesItsTargetsLabelOrOriginalIdWithoutCollapsingToGenericText() {
         YamlConfiguration config = config();
         config.set("custom-actions.mounted.animation", "mounted_ing");
         config.set("custom-actions.flight.animation", "idle_flight");
@@ -74,8 +68,7 @@ class ServerActionLabelFallbackTest
     }
 
     @Test
-    void rawPlaybackPolicyStillLimitsThePublishedActionsRatherThanChangingTheirNames()
-    {
+    void rawPlaybackPolicyStillLimitsThePublishedActionsRatherThanChangingTheirNames() {
         YamlConfiguration config = config();
         config.set("manual.allow-raw-animation", false);
         config.set("custom-actions.mounted.animation", "mounted_ing");
@@ -85,19 +78,16 @@ class ServerActionLabelFallbackTest
     }
 
     @Test
-    void unnamedPlaybackAndAnimationListDescriptionsDoNotRepeatTheSameId()
-    {
+    void unnamedPlaybackAndAnimationListDescriptionsDoNotRepeatTheSameId() {
         Settings settings = Settings.load(config());
-        for (String id : List.of("mounted_ing", "idle_flight", "jumpattack"))
-        {
+        for (String id : List.of("mounted_ing", "idle_flight", "jumpattack")) {
             assertEquals(id, AnimationLabels.displayWithId(id, settings.actionLabel(id)));
             assertEquals(id, AnimationLabels.displayWithId(id, settings.animationLabel(id)));
         }
     }
 
     @Test
-    void namedPlaybackDescriptionRetainsTheNameAndExecutableAliasId()
-    {
+    void namedPlaybackDescriptionRetainsTheNameAndExecutableAliasId() {
         YamlConfiguration config = config();
         config.set("menu.animation-labels.jumpattack", "作者指定攻击");
         config.set("custom-actions.special_attack.animation", "jumpattack");
@@ -109,8 +99,7 @@ class ServerActionLabelFallbackTest
                 AnimationLabels.displayWithId("special_attack", settings.actionLabel("special_attack")));
     }
 
-    private static YamlConfiguration config()
-    {
+    private static YamlConfiguration config() {
         YamlConfiguration config = YamlConfiguration.loadConfiguration(new InputStreamReader(
                 ServerActionLabelFallbackTest.class.getResourceAsStream("/config.yml"), StandardCharsets.UTF_8));
         config.set("custom-actions", null);

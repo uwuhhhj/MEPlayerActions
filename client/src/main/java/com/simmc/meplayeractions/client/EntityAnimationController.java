@@ -5,34 +5,30 @@ import com.simmc.meplayeractions.client.model.BbModel.Layer;
 import java.util.*;
 
 /** Per-owner motion sampled from the viewer's vanilla entity, using a local tick clock. */
-public final class EntityAnimationController
-{
+public final class EntityAnimationController {
     public record Sample(double x, double y, double z, boolean grounded, boolean bedSleeping, boolean prone,
             boolean inWater, boolean flying, boolean gliding, boolean sneaking, boolean sprinting, String vehicle,
             boolean swinging, int swingTick, boolean offhand, boolean mining, boolean localPlayer, boolean climbing,
-            VanillaYsmAnimations.VanillaState vanilla, VanillaYsmQueries.MovementFallback nativeFallback)
-    {
+            VanillaYsmAnimations.VanillaState vanilla, VanillaYsmQueries.MovementFallback nativeFallback) {
         public Sample(double x, double y, double z, boolean grounded, boolean bedSleeping, boolean prone,
                 boolean inWater, boolean flying, boolean gliding, boolean sneaking, boolean sprinting, String vehicle,
                 boolean swinging, int swingTick, boolean offhand, boolean mining, boolean localPlayer, boolean climbing,
-                VanillaYsmAnimations.VanillaState vanilla)
-        {
+                VanillaYsmAnimations.VanillaState vanilla) {
             this(x, y, z, grounded, bedSleeping, prone, inWater, flying, gliding, sneaking, sprinting, vehicle,
                     swinging, swingTick, offhand, mining, localPlayer, climbing, vanilla, null);
         }
 
         public Sample(double x, double y, double z, boolean grounded, boolean bedSleeping, boolean prone,
                 boolean inWater, boolean flying, boolean gliding, boolean sneaking, boolean sprinting, String vehicle,
-                boolean swinging, int swingTick, boolean offhand, boolean mining, boolean localPlayer, boolean climbing)
-        {
+                boolean swinging, int swingTick, boolean offhand, boolean mining, boolean localPlayer,
+                boolean climbing) {
             this(x, y, z, grounded, bedSleeping, prone, inWater, flying, gliding, sneaking, sprinting, vehicle,
                     swinging, swingTick, offhand, mining, localPlayer, climbing, null);
         }
 
         public Sample(double x, double y, double z, boolean grounded, boolean bedSleeping, boolean prone,
                 boolean inWater, boolean flying, boolean gliding, boolean sneaking, boolean sprinting, String vehicle,
-                boolean swinging, int swingTick, boolean offhand, boolean mining, boolean localPlayer)
-        {
+                boolean swinging, int swingTick, boolean offhand, boolean mining, boolean localPlayer) {
             this(x, y, z, grounded, bedSleeping, prone, inWater, flying, gliding, sneaking, sprinting, vehicle,
                     swinging, swingTick, offhand, mining, localPlayer, false, null);
         }
@@ -50,24 +46,20 @@ public final class EntityAnimationController
     private Set<String> pausedControllers = Set.of();
     private String automaticAnimation = "";
 
-    public void update(long tick, Sample sample, LocalMotionPolicy policy, List<Layer> serverLayers)
-    {
+    public void update(long tick, Sample sample, LocalMotionPolicy policy, List<Layer> serverLayers) {
         LinkedHashSet<String> names = new LinkedHashSet<String>();
         policy.clips().values().forEach(clip -> names.add(clip.animation()));
         update(tick, sample, policy, serverLayers, names);
     }
 
     public void update(long tick, Sample sample, LocalMotionPolicy policy, List<Layer> serverLayers,
-            Collection<String> availableAnimations)
-    {
-        if (tick == this.lastTick)
-        {
+            Collection<String> availableAnimations) {
+        if (tick == this.lastTick) {
             return;
         }
 
         List<String> names = List.copyOf(availableAnimations);
-        if (this.legacyCatalog == null || !this.animationNames.equals(names))
-        {
+        if (this.legacyCatalog == null || !this.animationNames.equals(names)) {
             this.animationNames = names;
             this.legacyCatalog = new VanillaYsmAnimations.Catalog(names);
         }
@@ -75,10 +67,8 @@ public final class EntityAnimationController
     }
 
     public void update(long tick, Sample sample, LocalMotionPolicy policy, List<Layer> serverLayers,
-            VanillaYsmAnimations.Catalog availableAnimations)
-    {
-        if (tick == this.lastTick)
-        {
+            VanillaYsmAnimations.Catalog availableAnimations) {
+        if (tick == this.lastTick) {
             return;
         }
 
@@ -88,8 +78,7 @@ public final class EntityAnimationController
         double dz = this.previous == null ? 0 : sample.z - this.previous.z;
         boolean discontinuity = this.previous == null || tick < this.lastTick || dx * dx + dy * dy + dz * dz > 16
                 || tick - this.lastTick > 40;
-        if (discontinuity)
-        {
+        if (discontinuity) {
             this.jumping = false;
             this.landed = -1;
             this.state = "";
@@ -102,15 +91,12 @@ public final class EntityAnimationController
         double elapsed = discontinuity ? 1 : Math.max(1, tick - this.lastTick);
         double groundSpeed = discontinuity ? 0 : Math.hypot(dx, dz) * 20 / elapsed;
         double verticalSpeed = discontinuity ? 0 : dy * 20 / elapsed;
-        if (nativeMovement && sample.nativeFallback != null)
-        {
-            if (groundSpeed <= 1e-4)
-            {
+        if (nativeMovement && sample.nativeFallback != null) {
+            if (groundSpeed <= 1e-4) {
                 groundSpeed = sample.nativeFallback.groundSpeed();
             }
 
-            if (discontinuity || Math.abs(dy) <= 1e-4)
-            {
+            if (discontinuity || Math.abs(dy) <= 1e-4) {
                 verticalSpeed = sample.nativeFallback.verticalSpeed();
             }
 
@@ -121,39 +107,30 @@ public final class EntityAnimationController
         String posture = posture(sample, policy);
         boolean blocked = !posture.equals("standing") && !posture.equals("sneak") || !policy.enabled("jump");
         boolean newJump = !discontinuity && !blocked && this.previous.grounded && !sample.grounded && dy > .03;
-        if (blocked)
-        {
+        if (blocked) {
             this.jumping = false;
             this.landed = -1;
-        }
-        else if (newJump)
-        {
+        } else if (newJump) {
             this.jumping = true;
             this.jumpStarted = tick;
             this.landed = -1;
         }
         String air = "";
-        if (!blocked)
-        {
-            if (!sample.grounded)
-            {
+        if (!blocked) {
+            if (!sample.grounded) {
                 this.landed = -1;
                 air = this.jumping && tick - this.jumpStarted < policy.jumpMinTicks() ? "jump" : "fall";
-            }
-            else if (this.jumping)
-            {
-                if (this.landed < 0)
-                {
+            } else if (this.jumping) {
+                if (this.landed < 0) {
                     this.landed = tick;
                 }
 
-                if (tick - this.jumpStarted < policy.jumpMinTicks() && tick - this.landed < policy.landingGraceTicks())
-                {
+                if (tick - this.jumpStarted < policy.jumpMinTicks()
+                        && tick - this.landed < policy.landingGraceTicks()) {
                     air = "jump";
                 }
 
-                else
-                {
+                else {
                     this.jumping = false;
                 }
 
@@ -161,47 +138,40 @@ public final class EntityAnimationController
         }
         String next = select(sample, policy, posture, moving, air, dy);
         String nativeState = "";
-        if (nativeMovement && policy.specialPose().isEmpty() && policy.forcedPose().isEmpty())
-        {
+        if (nativeMovement && policy.specialPose().isEmpty() && policy.forcedPose().isEmpty()) {
             nativeState = VanillaYsmQueries.controlState(new VanillaYsmQueries.ControlSample(sample.vanilla.dead(),
                     sample.vanilla.riptide(), sample.bedSleeping || sample.vanilla.sleeping(),
                     sample.vanilla.swimming(), sample.prone, sample.climbing, verticalSpeed, sample.flying,
                     sample.gliding, sample.inWater, sample.grounded, sample.vanilla.hurtTime() > 0, sample.sneaking,
                     sample.sprinting, moving, sample.vanilla.vehicleAlive() && !sample.vehicle.isEmpty()));
-            if (nativeState.equals("run") && !policy.enabled("sprint"))
-            {
+            if (nativeState.equals("run") && !policy.enabled("sprint")) {
                 nativeState = "walk";
             }
 
             // The canonical RIDE state has an empty animation name and suppresses body actions.
-            if (sample.vanilla.vehicleAlive() && !sample.vehicle.isEmpty())
-            {
+            if (sample.vanilla.vehicleAlive() && !sample.vehicle.isEmpty()) {
                 next = policy.enabled("ride") ? sample.vehicle : "";
             }
 
-            else
-            {
+            else {
                 next = nativePolicyState(nativeState, policy);
             }
 
         }
         if (!nativeMovement && sample.vanilla != null && sample.vanilla.hurtTime() > 0 && policy.enabled("movement")
-                && Set.of("standing", "sneak").contains(posture) && !this.catalog.first("attacked", "hurt").isEmpty())
-        {
+                && Set.of("standing", "sneak").contains(posture) && !this.catalog.first("attacked", "hurt").isEmpty()) {
             next = "attacked";
         }
 
         boolean newHurt = next.equals("attacked") && sample.vanilla != null && (this.previous == null
                 || this.previous.vanilla == null || sample.vanilla.hurtTime() > this.previous.vanilla.hurtTime());
-        if (!next.equals(this.state) || newJump && next.equals("jump") || newHurt)
-        {
+        if (!next.equals(this.state) || newJump && next.equals("jump") || newHurt) {
             this.state = next;
             this.postureStarted = tick;
         }
         List<Layer> result = new ArrayList<>();
         Layer automatic = policy.layer(this.state, "posture", this.postureStarted);
-        if (sample.vanilla != null)
-        {
+        if (sample.vanilla != null) {
             boolean riding = sample.vanilla.vehicleAlive() && !sample.vehicle.isEmpty()
                     && policy.specialPose().isEmpty()
                     && (nativeMovement || !sample.bedSleeping && !sample.vanilla.sleeping() && !sample.vanilla.dead());
@@ -212,17 +182,14 @@ public final class EntityAnimationController
             String nativeClip = !condition.isEmpty() ? condition
                     : (!direct.isEmpty() ? direct
                             : (automatic == null ? nativeClip(this.state) : automatic.animation()));
-            if (!nativeClip.isEmpty())
-            {
-                if (!nativeClip.equals(this.automaticAnimation))
-                {
+            if (!nativeClip.isEmpty()) {
+                if (!nativeClip.equals(this.automaticAnimation)) {
                     this.postureStarted = tick;
                 }
 
                 String loop = automatic == null ? (Set.of("death", "attacked").contains(this.state) ? "ONCE" : "LOOP")
                         : automatic.loop();
-                if (nativeMovement && !nativeState.isEmpty() && this.catalog.contains(nativeClip))
-                {
+                if (nativeMovement && !nativeState.isEmpty() && this.catalog.contains(nativeClip)) {
                     loop = this.catalog.authoredLoop(nativeClip);
                 }
 
@@ -232,82 +199,67 @@ public final class EntityAnimationController
             }
         }
         this.automaticAnimation = automatic == null ? "" : automatic.animation();
-        if (automatic != null)
-        {
+        if (automatic != null) {
             result.add(automatic);
         }
 
         Layer manual = serverLayers.stream().filter(layer -> layer.layer().equals("manual")).findFirst().orElse(null);
         String manualKey = manual == null ? "" : manual.animation() + ":" + manual.startedAtTick();
-        if (manual == null)
-        {
+        if (manual == null) {
             this.suppressedManual = "";
         }
 
         else if (policy.interruptMove() && (moving || newJump || sample.sneaking)
-                || policy.interruptPosture() && !discontinuity && !posture.equals(this.previousPosture))
-        {
+                || policy.interruptPosture() && !discontinuity && !posture.equals(this.previousPosture)) {
             this.suppressedManual = manualKey;
         }
 
         boolean showManual = manual != null && !manualKey.equals(this.suppressedManual)
                 && (sample.vanilla == null || !sample.vanilla.dead());
-        if (showManual)
-        {
+        if (showManual) {
             result.add(manual);
         }
 
-        if (!showManual && !posture.equals("sleep") && !posture.equals("bed-sleep"))
-        {
+        if (!showManual && !posture.equals("sleep") && !posture.equals("bed-sleep")) {
             Layer interaction = serverLayers.stream().filter(layer -> layer.layer().equals("interaction")).findFirst()
                     .orElse(null);
             Layer mining = policy.clips().get("mining");
             boolean remoteMining = !sample.localPlayer && policy.interaction().equals("mining") && interaction != null
                     && mining != null;
-            if (mining != null && policy.enabled("mining") && (sample.mining || remoteMining))
-            {
+            if (mining != null && policy.enabled("mining") && (sample.mining || remoteMining)) {
                 Layer clip = policy.layer("mining", "interaction",
                         interaction == null ? tick : interaction.startedAtTick());
                 // A local mining loop must retain its start across ticks without waiting for server acknowledgement.
-                if (interaction == null)
-                {
+                if (interaction == null) {
                     Layer existing = this.layers.stream().filter(layer -> layer.layer().equals("interaction")
                             && layer.animation().equals(mining.animation())).findFirst().orElse(null);
-                    if (existing != null)
-                    {
+                    if (existing != null) {
                         clip = existing;
                     }
 
                 }
-                if (clip != null)
-                {
+                if (clip != null) {
                     result.add(clip);
                 }
 
-            }
-            else if (policy.enabled("swing") && sample.swinging && sample.vanilla == null)
-            {
-                if (this.previous == null || !this.previous.swinging || sample.swingTick < this.previous.swingTick)
-                {
+            } else if (policy.enabled("swing") && sample.swinging && sample.vanilla == null) {
+                if (this.previous == null || !this.previous.swinging || sample.swingTick < this.previous.swingTick) {
                     this.swingStarted = tick;
                 }
 
                 Layer clip = policy.layer(sample.offhand ? "swing-offhand" : "swing-mainhand", "interaction",
                         this.swingStarted);
-                if (clip != null)
-                {
+                if (clip != null) {
                     result.add(clip);
                 }
 
             }
         }
         this.pausedControllers = Set.of();
-        if (sample.vanilla != null)
-        {
+        if (sample.vanilla != null) {
             VanillaYsmAnimations.Decision decision = VanillaYsmAnimations.select(sample.vanilla, this.catalog);
             this.pausedControllers = decision.pauseSlots();
-            for (Map.Entry<String, VanillaYsmAnimations.Selection> entry : decision.slots().entrySet())
-            {
+            for (Map.Entry<String, VanillaYsmAnimations.Selection> entry : decision.slots().entrySet()) {
                 String slot = entry.getKey();
                 VanillaYsmAnimations.Selection choice = entry.getValue();
                 this.handPlayback.observe(slot, choice, sample.vanilla);
@@ -315,20 +267,17 @@ public final class EntityAnimationController
                         && (!policy.enabled("swing") || showManual
                                 || result.stream().anyMatch(layer -> layer.layer().equals("interaction")))
                         || slot.equals("player.use") && showManual;
-                if (disabled || choice.directive() == VanillaYsmAnimations.Directive.STOP)
-                {
+                if (disabled || choice.directive() == VanillaYsmAnimations.Directive.STOP) {
                     this.handLayers.remove(slot);
                     this.handPlayback.stop(slot);
                     continue;
                 }
                 if (choice.directive() == VanillaYsmAnimations.Directive.PAUSE
-                        || choice.directive() == VanillaYsmAnimations.Directive.CONTINUE)
-                {
+                        || choice.directive() == VanillaYsmAnimations.Directive.CONTINUE) {
                     // OpenYSM PAUSE keeps controller time but submits no transforms; the renderer
                     // receives pausedControllers via numeric queries and owns that controller clock.
                     Layer retained = this.handLayers.get(slot);
-                    if (retained != null)
-                    {
+                    if (retained != null) {
                         result.add(retained);
                     }
 
@@ -347,71 +296,57 @@ public final class EntityAnimationController
         this.lastTick = tick;
     }
 
-    private static String posture(Sample sample, LocalMotionPolicy policy)
-    {
-        if (sample.vanilla != null && sample.vanilla.dead())
-        {
+    private static String posture(Sample sample, LocalMotionPolicy policy) {
+        if (sample.vanilla != null && sample.vanilla.dead()) {
             return "death";
         }
 
-        if (!policy.specialPose().isEmpty())
-        {
+        if (!policy.specialPose().isEmpty()) {
             return policy.specialPose();
         }
 
-        if (sample.bedSleeping || sample.vanilla != null && sample.vanilla.sleeping())
-        {
+        if (sample.bedSleeping || sample.vanilla != null && sample.vanilla.sleeping()) {
             return "bed-sleep";
         }
 
-        if (sample.vanilla != null && sample.vanilla.vehicleAlive() && !sample.vehicle.isEmpty())
-        {
+        if (sample.vanilla != null && sample.vanilla.vehicleAlive() && !sample.vehicle.isEmpty()) {
             return sample.vehicle;
         }
 
-        if (sample.vanilla != null && sample.vanilla.riptide())
-        {
+        if (sample.vanilla != null && sample.vanilla.riptide()) {
             return "riptide";
         }
 
-        if (sample.vanilla != null && sample.vanilla.swimming())
-        {
+        if (sample.vanilla != null && sample.vanilla.swimming()) {
             return "swim-prone";
         }
 
         if ((sample.prone || policy.forcedPose().equals("crawl")) && (!sample.inWater || sample.vanilla != null)
-                && !sample.flying && !sample.gliding)
-        {
+                && !sample.flying && !sample.gliding) {
             return "crawl";
         }
 
-        if (!sample.vehicle.isEmpty() && sample.vanilla == null)
-        {
+        if (!sample.vehicle.isEmpty() && sample.vanilla == null) {
             return sample.vehicle;
         }
 
-        if (sample.gliding)
-        {
+        if (sample.gliding) {
             return "elytra";
         }
 
-        if (sample.flying)
-        {
+        if (sample.flying) {
             return "flight";
         }
 
-        if (sample.prone && sample.inWater)
-        {
+        if (sample.prone && sample.inWater) {
             return "swim-prone";
         }
 
-        if (sample.inWater && !sample.grounded)
-        {
+        if (sample.inWater && !sample.grounded) {
             return "swim";
         }
 
-        if (sample.climbing)
-        {
+        if (sample.climbing) {
             return "ladder";
         }
 
@@ -419,10 +354,8 @@ public final class EntityAnimationController
     }
 
     /** Sparkle ControllerActionResolver uses one native action; policy switches remain authorized overrides. */
-    private static String nativePolicyState(String state, LocalMotionPolicy p)
-    {
-        return switch (state)
-        {
+    private static String nativePolicyState(String state, LocalMotionPolicy p) {
+        return switch (state) {
         case "death" -> "death";
         case "riptide" -> p.enabled("swim") ? "riptide" : "";
         case "sleep" -> p.enabled("sleep") ? "bed-sleep" : "";
@@ -446,10 +379,8 @@ public final class EntityAnimationController
     }
 
     private static String select(Sample sample, LocalMotionPolicy p, String posture, boolean moving, String air,
-            double vertical)
-    {
-        return switch (posture)
-        {
+            double vertical) {
+        return switch (posture) {
         case "death" -> "death";
         case "riptide" -> p.enabled("swim") ? "riptide" : "";
         case "bed-sleep", "sleep" -> p.enabled("sleep") ? posture : "";
@@ -473,10 +404,8 @@ public final class EntityAnimationController
         };
     }
 
-    private String nativeClip(String state)
-    {
-        return switch (state)
-        {
+    private String nativeClip(String state) {
+        return switch (state) {
         case "death" -> this.catalog.first("death");
         case "attacked" -> this.catalog.first("attacked", "hurt");
         case "riptide" -> this.catalog.first("riptide");
@@ -485,18 +414,15 @@ public final class EntityAnimationController
         };
     }
 
-    public String state()
-    {
+    public String state() {
         return this.state;
     }
 
-    public List<Layer> layers()
-    {
+    public List<Layer> layers() {
         return this.layers;
     }
 
-    public Set<String> pausedControllers()
-    {
+    public Set<String> pausedControllers() {
         return this.pausedControllers;
     }
 }

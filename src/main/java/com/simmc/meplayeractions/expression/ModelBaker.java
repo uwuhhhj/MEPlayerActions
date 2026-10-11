@@ -7,20 +7,15 @@ import java.util.*;
 import java.util.stream.Stream;
 
 /** Offline numeric blueprint generator. The authoritative client models retain their expressions. */
-public final class ModelBaker
-{
-    private ModelBaker()
-    {
+public final class ModelBaker {
+    private ModelBaker() {
     }
 
-    public static void main(String[] args) throws Exception
-    {
+    public static void main(String[] args) throws Exception {
         Path raw = Path.of(args[0]), output = Path.of(args[1]);
         Files.createDirectories(output);
-        try (Stream<Path> files = Files.list(raw))
-        {
-            for (Path file : files.filter(p -> p.toString().endsWith(".bbmodel")).toList())
-            {
+        try (Stream<Path> files = Files.list(raw)) {
+            for (Path file : files.filter(p -> p.toString().endsWith(".bbmodel")).toList()) {
                 JsonObject model = JsonParser.parseString(Files.readString(file, StandardCharsets.UTF_8))
                         .getAsJsonObject();
                 JsonObject baked = bake(model);
@@ -32,87 +27,68 @@ public final class ModelBaker
         }
     }
 
-    public static JsonObject bake(JsonObject raw)
-    {
+    public static JsonObject bake(JsonObject raw) {
         JsonObject result = raw.deepCopy();
         result.remove("mpa_runtime");
         JsonArray actions = new JsonArray();
-        for (JsonElement element : raw.getAsJsonArray("animations"))
-        {
+        for (JsonElement element : raw.getAsJsonArray("animations")) {
             JsonObject original = element.getAsJsonObject(), animation = original.deepCopy();
             String name = animation.get("name").getAsString();
-            if (name.equals("parallel1") || name.equals("parallel2"))
-            {
+            if (name.equals("parallel1") || name.equals("parallel2")) {
                 continue;
             }
 
             double length = animation.get("length").getAsDouble();
-            if (length == 0)
-            {
+            if (length == 0) {
                 length = 4;
                 animation.addProperty("length", length);
             }
             JsonObject tracks = new JsonObject();
             YsmRuntime physics = new YsmRuntime(raw, 0);
-            for (Map.Entry<String, JsonElement> entry : original.getAsJsonObject("animators").entrySet())
-            {
+            for (Map.Entry<String, JsonElement> entry : original.getAsJsonObject("animators").entrySet()) {
                 JsonObject track = entry.getValue().getAsJsonObject();
                 if (!track.get("type").getAsString().equals("bone")
-                        || track.get("name").getAsString().startsWith("molang"))
-                {
+                        || track.get("name").getAsString().startsWith("molang")) {
                     continue;
                 }
 
                 JsonObject converted = track.deepCopy();
                 JsonArray frames = new JsonArray();
-                for (String channel : List.of("position", "rotation", "scale"))
-                {
+                for (String channel : List.of("position", "rotation", "scale")) {
                     List<JsonObject> keys = new ArrayList<>();
-                    for (JsonElement key : track.getAsJsonArray("keyframes"))
-                    {
-                        if (key.getAsJsonObject().get("channel").getAsString().equals(channel))
-                        {
+                    for (JsonElement key : track.getAsJsonArray("keyframes")) {
+                        if (key.getAsJsonObject().get("channel").getAsString().equals(channel)) {
                             keys.add(key.getAsJsonObject());
                         }
 
                     }
 
-                    if (keys.isEmpty())
-                    {
+                    if (keys.isEmpty()) {
                         continue;
                     }
                     keys.sort(Comparator.comparingDouble(k -> k.get("time").getAsDouble()));
-                    boolean dynamic = keys.stream().anyMatch(k ->
-                    {
-                        for (JsonElement dp : k.getAsJsonArray("data_points"))
-                        {
-                            for (String axis : List.of("x", "y", "z"))
-                            {
-                                if (!dp.getAsJsonObject().has(axis))
-                                {
+                    boolean dynamic = keys.stream().anyMatch(k -> {
+                        for (JsonElement dp : k.getAsJsonArray("data_points")) {
+                            for (String axis : List.of("x", "y", "z")) {
+                                if (!dp.getAsJsonObject().has(axis)) {
                                     continue;
                                 }
 
-                                try
-                                {
+                                try {
                                     Double.parseDouble(dp.getAsJsonObject().get(axis).getAsString());
-                                }
-                                catch (NumberFormatException e)
-                                {
+                                } catch (NumberFormatException e) {
                                     return true;
                                 }
                             }
                         }
                         return false;
                     });
-                    if (!dynamic)
-                    {
+                    if (!dynamic) {
                         keys.forEach(frames::add);
                         continue;
                     }
                     physics.reset();
-                    for (int step = 0; step <= Math.ceil(length * 20); step++)
-                    {
+                    for (int step = 0; step <= Math.ceil(length * 20); step++) {
                         double time = Math.min(length, step / 20d);
                         Map<String, Double> queries = Map.of("ysm.food_level", 20d, "query.ground_speed",
                                 name.contains("walk") || name.equals("run") ? 3d : 0d, "query.vertical_speed",
@@ -133,8 +109,7 @@ public final class ModelBaker
                 converted.add("keyframes", frames);
                 tracks.add(entry.getKey(), converted);
             }
-            if (tracks.size() == 0)
-            {
+            if (tracks.size() == 0) {
                 continue;
             }
 
@@ -145,17 +120,12 @@ public final class ModelBaker
         return result;
     }
 
-    private static JsonObject sample(List<JsonObject> keys, double time, Molang.Context context)
-    {
+    private static JsonObject sample(List<JsonObject> keys, double time, Molang.Context context) {
         JsonObject left = keys.getFirst(), right = left;
-        for (JsonObject key : keys)
-        {
-            if (key.get("time").getAsDouble() <= time)
-            {
+        for (JsonObject key : keys) {
+            if (key.get("time").getAsDouble() <= time) {
                 left = key;
-            }
-            else
-            {
+            } else {
                 right = key;
                 break;
             }
@@ -166,8 +136,7 @@ public final class ModelBaker
         JsonArray l = left.getAsJsonArray("data_points"), r = right.getAsJsonArray("data_points");
         JsonObject lp = l.get(l.size() - 1).getAsJsonObject(), rp = r.get(0).getAsJsonObject(),
                 point = new JsonObject();
-        for (String axis : List.of("x", "y", "z"))
-        {
+        for (String axis : List.of("x", "y", "z")) {
             double x = Molang.compile(lp.has(axis) ? lp.get(axis).getAsString() : "0").evaluate(context),
                     y = Molang.compile(rp.has(axis) ? rp.get(axis).getAsString() : "0").evaluate(context);
             double value = x + (y - x) * t;

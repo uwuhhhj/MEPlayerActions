@@ -5,15 +5,12 @@ import java.util.concurrent.Executor;
 import java.util.function.BooleanSupplier;
 
 /** Main-thread owner requests, network-thread installation, and a main-thread readiness decision. */
-final class NativeHandlerInstallation
-{
-    enum State
-    {
+final class NativeHandlerInstallation {
+    enum State {
         PENDING, READY, FAILED, CLOSED
     }
 
-    private record Request(Object lease, BooleanSupplier valid)
-    {
+    private record Request(Object lease, BooleanSupplier valid) {
     }
 
     private final Executor network, main;
@@ -25,8 +22,7 @@ final class NativeHandlerInstallation
     private boolean started;
 
     NativeHandlerInstallation(Executor network, Executor main, BooleanSupplier channelLive, BooleanSupplier current,
-            BooleanSupplier install, Runnable remove)
-    {
+            BooleanSupplier install, Runnable remove) {
         this.network = network;
         this.main = main;
         this.channelLive = channelLive;
@@ -35,137 +31,104 @@ final class NativeHandlerInstallation
         this.remove = remove;
     }
 
-    boolean request(Object owner, Object lease, BooleanSupplier valid)
-    {
-        if (this.state == State.CLOSED || !test(valid) || !test(this.channelLive) || !test(this.current))
-        {
+    boolean request(Object owner, Object lease, BooleanSupplier valid) {
+        if (this.state == State.CLOSED || !test(valid) || !test(this.channelLive) || !test(this.current)) {
             return false;
         }
 
         this.requests.put(owner, new Request(lease, valid));
-        if (!this.started)
-        {
+        if (!this.started) {
             this.started = true;
-            try
-            {
+            try {
                 this.network.execute(this::installOnNetwork);
-            }
-            catch (RuntimeException unavailable)
-            {
+            } catch (RuntimeException unavailable) {
                 this.state = State.FAILED;
             }
         }
         return this.state == State.READY;
     }
 
-    boolean pending(Object owner, Object lease)
-    {
+    boolean pending(Object owner, Object lease) {
         Request request = this.requests.get(owner);
         return this.state == State.PENDING && request != null && request.lease == lease && test(request.valid)
                 && test(this.channelLive) && test(this.current);
     }
 
-    void withdraw(Object owner)
-    {
+    void withdraw(Object owner) {
         this.requests.remove(owner);
-        if (this.requests.isEmpty())
-        {
+        if (this.requests.isEmpty()) {
             close();
         }
     }
 
-    boolean empty()
-    {
+    boolean empty() {
         return this.requests.isEmpty();
     }
 
-    State state()
-    {
+    State state() {
         return this.state;
     }
 
-    private void installOnNetwork()
-    {
-        if (this.cancelled)
-        {
+    private void installOnNetwork() {
+        if (this.cancelled) {
             return;
         }
 
         boolean success;
-        try
-        {
+        try {
             success = test(this.channelLive) && this.install.getAsBoolean();
-        }
-        catch (RuntimeException | LinkageError unavailable)
-        {
+        } catch (RuntimeException | LinkageError unavailable) {
             success = false;
         }
-        if (!success || this.cancelled)
-        {
+        if (!success || this.cancelled) {
             this.remove.run();
         }
 
-        if (this.cancelled)
-        {
+        if (this.cancelled) {
             return;
         }
 
         final boolean installed = success;
-        try
-        {
+        try {
             this.main.execute(() -> completeOnMain(installed));
-        }
-        catch (RuntimeException stopped)
-        {
+        } catch (RuntimeException stopped) {
             this.cancelled = true;
             this.state = State.CLOSED;
             this.remove.run();
         }
     }
 
-    private void completeOnMain(boolean success)
-    {
-        if (this.cancelled)
-        {
+    private void completeOnMain(boolean success) {
+        if (this.cancelled) {
             return;
         }
 
         this.requests.values().removeIf(request -> !test(request.valid));
-        if (this.requests.isEmpty() || !test(this.channelLive) || !test(this.current))
-        {
+        if (this.requests.isEmpty() || !test(this.channelLive) || !test(this.current)) {
             close();
             return;
         }
         this.state = success ? State.READY : State.FAILED;
     }
 
-    void close()
-    {
-        if (this.cancelled)
-        {
+    void close() {
+        if (this.cancelled) {
             return;
         }
 
         this.cancelled = true;
         this.state = State.CLOSED;
         this.requests.clear();
-        try
-        {
+        try {
             this.network.execute(this.remove);
-        }
-        catch (RuntimeException stopped)
-        {
+        } catch (RuntimeException stopped) {
             /* A stopped event loop cannot publish a late successful installation. */}
     }
 
-    private static boolean test(BooleanSupplier predicate)
-    {
-        try
-        {
+    private static boolean test(BooleanSupplier predicate) {
+        try {
             return predicate.getAsBoolean();
-        }
-        catch (RuntimeException | LinkageError unavailable)
-        {
+        } catch (RuntimeException | LinkageError unavailable) {
             return false;
         }
     }

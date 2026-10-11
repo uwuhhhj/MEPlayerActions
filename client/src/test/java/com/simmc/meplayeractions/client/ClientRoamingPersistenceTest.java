@@ -16,14 +16,12 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Author roaming changes are batched in memory; explicit lifecycle flush owns the single atomic write. */
-class ClientRoamingPersistenceTest
-{
+class ClientRoamingPersistenceTest {
     @TempDir
     Path directory;
 
     @Test
-    void batchesAcrossModelsPersistOnlyAtFlushAndRetainOrdinaryAuthorSettings() throws Exception
-    {
+    void batchesAcrossModelsPersistOnlyAtFlushAndRetainOrdinaryAuthorSettings() throws Exception {
         Path path = this.directory.resolve("options.json");
         ClientOptions options = new ClientOptions(path);
         ClientOptions.ModelProfile original = new ClientOptions.ModelProfile("blue", Map.of("v.eye", 3d),
@@ -47,8 +45,7 @@ class ClientRoamingPersistenceTest
     }
 
     @Test
-    void repeatedValuesEmptyBatchesAndCleanFlushNeverRewriteTheOptionsFile() throws Exception
-    {
+    void repeatedValuesEmptyBatchesAndCleanFlushNeverRewriteTheOptionsFile() throws Exception {
         Path path = this.directory.resolve("options.json");
         ClientOptions options = new ClientOptions(path);
         Map<String, Double> values = Map.of("variable.roaming.hat", 1d);
@@ -68,12 +65,10 @@ class ClientRoamingPersistenceTest
     }
 
     @Test
-    void completeDirtyBatchesRejectUnsafeNamesValuesAndCountsWithoutPartialMutation()
-    {
+    void completeDirtyBatchesRejectUnsafeNamesValuesAndCountsWithoutPartialMutation() {
         ClientOptions options = new ClientOptions(this.directory.resolve("options.json"));
         Map<String, Double> ordinary = new LinkedHashMap<>(), roaming = new LinkedHashMap<>();
-        for (int i = 0; i < 64; i++)
-        {
+        for (int i = 0; i < 64; i++) {
             ordinary.put("variable.form" + i, (double) i);
             roaming.put("variable.roaming.key" + i, i % 2 == 0 ? 1_000_000d : -1_000_000d);
         }
@@ -83,16 +78,12 @@ class ClientRoamingPersistenceTest
         ClientOptions.ModelProfile before = options.modelProfile("ysm:sample");
         assertEquals(ClientOptions.MAX_MODEL_VARIABLES, before.variables().size());
         for (String name : List.of("variable.x", "variable.roaming", "variable.roaming.", "variable.roaming.1bad",
-                "variable.roaming.a.b", "variable.roaming." + "a".repeat(33), "query.roaming.x"))
-
-        {
+                "variable.roaming.a.b", "variable.roaming." + "a".repeat(33), "query.roaming.x")) {
             assertFalse(options.updateRoamingVariables("ysm:sample", Map.of(name, 1d)), name);
         }
 
-        for (double value : new double[]
-        { Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, 1_000_000.01d })
-
-        {
+        for (double value : new double[] { Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY,
+                1_000_000.01d }) {
             assertFalse(options.updateRoamingVariables("ysm:sample", Map.of("variable.roaming.key0", value)));
         }
 
@@ -116,15 +107,13 @@ class ClientRoamingPersistenceTest
     }
 
     @Test
-    void profileConstructionAndDiskLoadingCannotBypassTheNativeRoamingBudget() throws Exception
-    {
+    void profileConstructionAndDiskLoadingCannotBypassTheNativeRoamingBudget() throws Exception {
         assertTrue(ClientOptions.isRoamingVariable("variable.roaming." + "眼".repeat(32)));
         assertTrue(ClientOptions.isRoamingVariable("variable.roaming._eye٢"));
         assertFalse(ClientOptions.isRoamingVariable("variable.roaming.a.b"));
         assertFalse(ClientOptions.isRoamingVariable("variable.roaming." + "a".repeat(33)));
         Map<String, Double> tooMany = new LinkedHashMap<>();
-        for (int i = 0; i < 65; i++)
-        {
+        for (int i = 0; i < 65; i++) {
             tooMany.put("variable.roaming.key" + i, (double) i);
         }
 
@@ -151,8 +140,7 @@ class ClientRoamingPersistenceTest
     }
 
     @Test
-    void failedFlushAndFailedProfileEditsKeepThePendingBatchForAnExplicitRetry() throws Exception
-    {
+    void failedFlushAndFailedProfileEditsKeepThePendingBatchForAnExplicitRetry() throws Exception {
         Path path = this.directory.resolve("options.json");
         ClientOptions options = new ClientOptions(path);
         assertTrue(options.updateModelProfile("ysm:sample",
@@ -174,8 +162,7 @@ class ClientRoamingPersistenceTest
         options.save();
         assertTrue(options.hasPendingRoamingVariables());
         assertEquals("preserve", Files.readString(sentinel));
-        try (Stream<Path> children = Files.list(this.directory))
-        {
+        try (Stream<Path> children = Files.list(this.directory)) {
             assertEquals(List.of(path), children.toList());
         }
         Files.delete(sentinel);
@@ -188,8 +175,7 @@ class ClientRoamingPersistenceTest
     }
 
     @Test
-    void successfulOrdinaryOptionsSaveAlsoAcknowledgesAllPendingRoamingValues() throws Exception
-    {
+    void successfulOrdinaryOptionsSaveAlsoAcknowledgesAllPendingRoamingValues() throws Exception {
         Path path = this.directory.resolve("options.json");
         ClientOptions options = new ClientOptions(path);
         assertTrue(options.updateRoamingVariables("ysm:sample", Map.of("variable.roaming.hat", 1d)));

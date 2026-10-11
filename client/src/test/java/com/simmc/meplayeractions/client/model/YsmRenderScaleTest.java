@@ -11,19 +11,15 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class YsmRenderScaleTest
-{
+class YsmRenderScaleTest {
     @Test
-    void absentSourcePropertiesUsePointSevenLikeTheOfficialPlayerModels() throws Exception
-    {
+    void absentSourcePropertiesUsePointSevenLikeTheOfficialPlayerModels() throws Exception {
         YsmRenderScale defaults = YsmRenderScale.fromProperties(new JsonObject());
         assertEquals(new YsmRenderScale(.7f, .7f, .7f), defaults);
         assertEquals(defaults, YsmRenderScale.fromProperties(null));
         assertEquals(defaults, YsmRenderScale.fromProperties(properties(.7, .7)));
         for (String id : List.of(YsmFolderModel.DEFAULT_ID, BuiltinYsmModels.TAISHO_MAID_ID,
-                BuiltinYsmModels.NEW_YEAR_ID, BuiltinYsmModels.ASTRONAUT_ID))
-
-        {
+                BuiltinYsmModels.NEW_YEAR_ID, BuiltinYsmModels.ASTRONAUT_ID)) {
             assertEquals(defaults, YsmRenderScale.forProfile(YsmFolderModel.bundledWithProfile(id, null).profile()),
                     id);
         }
@@ -31,8 +27,7 @@ class YsmRenderScaleTest
     }
 
     @Test
-    void nonUniformSourceHeightScaleIsXZAndWidthScaleIsY()
-    {
+    void nonUniformSourceHeightScaleIsXZAndWidthScaleIsY() {
         YsmRenderScale scale = YsmRenderScale.fromProperties(properties(.5, 2));
         assertEquals(new YsmRenderScale(.5f, 2, .5f), scale);
         JsonObject missingWidth = new JsonObject();
@@ -44,8 +39,7 @@ class YsmRenderScaleTest
     }
 
     @Test
-    void onlyNativeYsmProfilesReceiveAuthorScaleAndTheInitialPlayerBodyOffset()
-    {
+    void onlyNativeYsmProfilesReceiveAuthorScaleAndTheInitialPlayerBodyOffset() {
         YsmModelProfile nativeProfile = profile(true, properties(.5, 2));
         YsmModelProfile ordinaryProfile = profile(false, properties(.5, 2));
         assertEquals(new YsmRenderScale(.5f, 2, .5f), YsmRenderScale.forProfile(nativeProfile));
@@ -68,13 +62,11 @@ class YsmRenderScaleTest
     }
 
     @Test
-    void finiteSourceFloatsPreserveZeroNegativeAndNumericStringsButRejectInvalidValues()
-    {
+    void finiteSourceFloatsPreserveZeroNegativeAndNumericStringsButRejectInvalidValues() {
         assertEquals(new YsmRenderScale(0, -2, 0), YsmRenderScale.fromProperties(properties(0, -2)));
         assertEquals(new YsmRenderScale(-.5f, 2, -.5f), YsmRenderScale.fromProperties(
                 JsonParser.parseString("{\"height_scale\":\"-0.5\",\"width_scale\":\"2\"}").getAsJsonObject()));
-        for (String source : List.of("null", "{}", "[1,2]", "true", "\"NaN\"", "\"Infinity\"", "1e100"))
-        {
+        for (String source : List.of("null", "{}", "[1,2]", "true", "\"NaN\"", "\"Infinity\"", "1e100")) {
             JsonObject height = new JsonObject();
             height.add("height_scale", JsonParser.parseString(source));
             JsonObject width = new JsonObject();
@@ -88,8 +80,7 @@ class YsmRenderScaleTest
     }
 
     @Test
-    void initialBodyTransformKeepsUserScaleRotationAndAttachedHandInTheSameParentMatrix()
-    {
+    void initialBodyTransformKeepsUserScaleRotationAndAttachedHandInTheSameParentMatrix() {
         YsmRenderScale scale = YsmRenderScale.fromProperties(properties(.5, 2));
         Matrix4f parent = new Matrix4f().translation(10, 20, 30).rotateY((float) Math.PI / 2).scale(.65f);
         Matrix4f body = scale.applyInitialPlayerBody(new Matrix4f(parent), true);
@@ -114,19 +105,16 @@ class YsmRenderScaleTest
                 "Uniform user scale and non-uniform author scale must not be baked into animation clocks or bone poses");
     }
 
-    private static JsonObject properties(double height, double width)
-    {
+    private static JsonObject properties(double height, double width) {
         JsonObject result = new JsonObject();
         result.addProperty("height_scale", height);
         result.addProperty("width_scale", width);
         return result;
     }
 
-    private static YsmModelProfile profile(boolean nativeYsm, JsonObject properties)
-    {
+    private static YsmModelProfile profile(boolean nativeYsm, JsonObject properties) {
         JsonObject manifest = new JsonObject();
-        if (nativeYsm)
-        {
+        if (nativeYsm) {
             manifest.addProperty("spec", 2);
         }
 

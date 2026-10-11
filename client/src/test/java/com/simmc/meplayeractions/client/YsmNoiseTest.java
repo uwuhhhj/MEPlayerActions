@@ -3,11 +3,9 @@ package com.simmc.meplayeractions.client;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
-class YsmNoiseTest
-{
+class YsmNoiseTest {
     @Test
-    void matchesSeededStbV05ReferenceVectorsIncludingNegativeCoordinates()
-    {
+    void matchesSeededStbV05ReferenceVectorsIncludingNegativeCoordinates() {
         assertEquals(-.5f, YsmNoise.sample(0, .5, .5, .5), 1e-7f);
         assertEquals(.25f, YsmNoise.sample(0, .5, 0, 0), 1e-7f);
         assertEquals(.3477816581726074f, YsmNoise.sample(17, .25, .5, .75), 1e-7f);
@@ -16,8 +14,7 @@ class YsmNoiseTest
     }
 
     @Test
-    void usesLowestSeedByteAndStb256CoordinatePeriod()
-    {
+    void usesLowestSeedByteAndStb256CoordinatePeriod() {
         float sample = YsmNoise.sample(17, .25, .5, .75);
         assertEquals(sample, YsmNoise.sample(273, .25, .5, .75));
         assertEquals(sample, YsmNoise.sample(17, 256.25, -255.5, 512.75));
@@ -25,13 +22,9 @@ class YsmNoiseTest
     }
 
     @Test
-    void integerLatticeIsZeroAndCellBoundariesRemainContinuous()
-    {
-        for (int seed : new int[]
-        { 0, 1, 17, -1 })
-        {
-            for (int x = -3; x <= 3; x++)
-            {
+    void integerLatticeIsZeroAndCellBoundariesRemainContinuous() {
+        for (int seed : new int[] { 0, 1, 17, -1 }) {
+            for (int x = -3; x <= 3; x++) {
                 assertEquals(0, YsmNoise.sample(seed, x, -2, 7));
             }
 
@@ -41,8 +34,7 @@ class YsmNoiseTest
     }
 
     @Test
-    void rejectsNonFiniteAndUnsafeCoordinateRange()
-    {
+    void rejectsNonFiniteAndUnsafeCoordinateRange() {
         assertThrows(IllegalArgumentException.class, () -> YsmNoise.sample(0, Double.NaN, 0, 0));
         assertThrows(IllegalArgumentException.class, () -> YsmNoise.sample(0, 0, Double.POSITIVE_INFINITY, 0));
         assertThrows(IllegalArgumentException.class, () -> YsmNoise.sample(0, 0, 0, 1_000_000_001d));

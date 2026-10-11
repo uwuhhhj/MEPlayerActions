@@ -5,10 +5,8 @@ import com.simmc.meplayeractions.client.model.nativebbmodel.BBModelFile;
 import com.simmc.meplayeractions.client.model.nativeysm.RawYsmModel;
 
 /** Author BBModel channels retain their editor axes through the existing native runtime. */
-final class NativeBbModelAnimations
-{
-    private NativeBbModelAnimations()
-    {
+final class NativeBbModelAnimations {
+    private NativeBbModelAnimations() {
     }
 
     /**
@@ -20,22 +18,18 @@ final class NativeBbModelAnimations
      * https://github.com/JannisX11/blockbench/blob/v4.10.0/js/animations/timeline_animators.js#L324-L353
      * https://github.com/JannisX11/blockbench/blob/v5.0.0/js/io/format.ts#L632
      */
-    static void retainEditorAxes(BBModelFile source, RawYsmModel raw)
-    {
+    static void retainEditorAxes(BBModelFile source, RawYsmModel raw) {
         String version = source.meta.format_version;
         int separator = version.indexOf('.');
         int major = Integer.parseInt(separator < 0 ? version : version.substring(0, separator));
         RawYsmModel.RawAnimationFile file = raw.mainEntity.animationFiles.get("animation-main");
-        if (file == null)
-        {
+        if (file == null) {
             return;
         }
 
-        for (BBAnimation authored : source.animations)
-        {
+        for (BBAnimation authored : source.animations) {
             RawYsmModel.RawAnimation animation = file.animations.get(authored.name);
-            if (animation != null)
-            {
+            if (animation != null) {
                 animation.bbEditorAxes = major < 5 ? 4 : 5;
             }
 

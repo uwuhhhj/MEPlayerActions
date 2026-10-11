@@ -17,8 +17,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import javax.sound.sampled.AudioFormat;
 
 /** Ref-counted compressed OGG bytes. Private identifiers never fall through to an unrelated pack. */
-public final class YsmAudioRegistry
-{
+public final class YsmAudioRegistry {
     public static final String NAMESPACE = "meplayeractions_model_audio";
     public static final int MAX_FILE_BYTES = 8 * 1024 * 1024, MAX_TOTAL_BYTES = 16 * 1024 * 1024, MAX_ASSETS = 64;
     private static final Map<String, Resource> RESOURCES = new HashMap<>();
@@ -26,61 +25,50 @@ public final class YsmAudioRegistry
     private static final AtomicLong STREAM_OPENS = new AtomicLong(), STREAM_FAILURES = new AtomicLong();
     private static final AtomicInteger ACTIVE_STREAMS = new AtomicInteger();
     private static final ExecutorService DECODER = new ThreadPoolExecutor(1, 2, 30, TimeUnit.SECONDS,
-            new ArrayBlockingQueue<>(64), runnable ->
-            {
+            new ArrayBlockingQueue<>(64), runnable -> {
                 Thread thread = new Thread(runnable, "MPA-model-audio");
                 thread.setDaemon(true);
                 return thread;
             }, new ThreadPoolExecutor.AbortPolicy());
     private static int totalBytes;
 
-    private YsmAudioRegistry()
-    {
+    private YsmAudioRegistry() {
     }
 
-    private static final class Resource
-    {
+    private static final class Resource {
         final String hash;
         final byte[] ogg;
         int leases;
 
-        Resource(String hash, byte[] ogg)
-        {
+        Resource(String hash, byte[] ogg) {
             this.hash = hash;
             this.ogg = ogg.clone();
         }
     }
 
-    public static final class Lease implements AutoCloseable
-    {
+    public static final class Lease implements AutoCloseable {
         private final Identifier soundId, location;
         private Resource resource;
 
-        private Lease(Identifier soundId, Identifier location, Resource resource)
-        {
+        private Lease(Identifier soundId, Identifier location, Resource resource) {
             this.soundId = soundId;
             this.location = location;
             this.resource = resource;
         }
 
-        public Identifier soundId()
-        {
+        public Identifier soundId() {
             return this.soundId;
         }
 
         @Override
-        public void close()
-        {
-            synchronized (RESOURCES)
-            {
-                if (this.resource == null)
-                {
+        public void close() {
+            synchronized (RESOURCES) {
+                if (this.resource == null) {
                     return;
                 }
 
                 ROUTES.remove(this.location, this.resource);
-                if (--this.resource.leases == 0 && RESOURCES.remove(this.resource.hash, this.resource))
-                {
+                if (--this.resource.leases == 0 && RESOURCES.remove(this.resource.hash, this.resource)) {
                     totalBytes -= this.resource.ogg.length;
                 }
 
@@ -89,37 +77,27 @@ public final class YsmAudioRegistry
         }
     }
 
-    public static Lease register(byte[] ogg)
-    {
+    public static Lease register(byte[] ogg) {
         Objects.requireNonNull(ogg);
-        if (ogg.length < 58 || ogg.length > MAX_FILE_BYTES)
-        {
+        if (ogg.length < 58 || ogg.length > MAX_FILE_BYTES) {
             throw new IllegalArgumentException("Model OGG size");
         }
 
         String hash;
-        try
-        {
+        try {
             hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(ogg));
-        }
-        catch (NoSuchAlgorithmException impossible)
-        {
+        } catch (NoSuchAlgorithmException impossible) {
             throw new IllegalStateException(impossible);
         }
-        synchronized (RESOURCES)
-        {
-            if (ROUTES.size() >= MAX_ASSETS)
-            {
+        synchronized (RESOURCES) {
+            if (ROUTES.size() >= MAX_ASSETS) {
                 throw new IllegalArgumentException("Model OGG route budget");
             }
 
             Resource resource = RESOURCES.get(hash);
-            if (resource == null)
-            {
+            if (resource == null) {
                 validateOgg(ogg);
-                if (RESOURCES.size() >= MAX_ASSETS || (long) totalBytes + ogg.length > MAX_TOTAL_BYTES)
-
-                {
+                if (RESOURCES.size() >= MAX_ASSETS || (long) totalBytes + ogg.length > MAX_TOTAL_BYTES) {
                     throw new IllegalArgumentException("Model OGG registry budget");
                 }
 
@@ -136,30 +114,23 @@ public final class YsmAudioRegistry
         }
     }
 
-    public static boolean isPrivate(Identifier id)
-    {
+    public static boolean isPrivate(Identifier id) {
         return id != null && id.getNamespace().equals(NAMESPACE);
     }
 
-    public static CompletableFuture<AudioStream> openStream(Identifier location, boolean repeat)
-    {
+    public static CompletableFuture<AudioStream> openStream(Identifier location, boolean repeat) {
         Resource resource;
-        synchronized (RESOURCES)
-        {
+        synchronized (RESOURCES) {
             resource = ROUTES.get(location);
-            if (resource == null)
-            {
+            if (resource == null) {
                 return CompletableFuture.failedFuture(new IOException("Inactive model audio"));
             }
 
         }
-        try
-        {
-            return CompletableFuture.supplyAsync(() ->
-            {
+        try {
+            return CompletableFuture.supplyAsync(() -> {
                 AudioStream decoded = null;
-                try
-                {
+                try {
                     checkRoute(location, resource);
                     decoded = repeat ? new LoopStream(resource.ogg)
                             : new OggAudioStream(new ByteArrayInputStream(resource.ogg));
@@ -167,17 +138,11 @@ public final class YsmAudioRegistry
                     AudioStream stream = new RegisteredStream(decoded, location, resource);
                     STREAM_OPENS.incrementAndGet();
                     return stream;
-                }
-                catch (IOException | RuntimeException invalid)
-                {
-                    if (decoded != null)
-                    {
-                        try
-                        {
+                } catch (IOException | RuntimeException invalid) {
+                    if (decoded != null) {
+                        try {
                             decoded.close();
-                        }
-                        catch (IOException ignored)
-                        {
+                        } catch (IOException ignored) {
                         }
                     }
 
@@ -185,33 +150,26 @@ public final class YsmAudioRegistry
                     throw new CompletionException(invalid);
                 }
             }, DECODER);
-        }
-        catch (RejectedExecutionException busy)
-        {
+        } catch (RejectedExecutionException busy) {
             return CompletableFuture.failedFuture(busy);
         }
     }
 
-    private static void checkRoute(Identifier location, Resource resource) throws IOException
-    {
-        synchronized (RESOURCES)
-        {
-            if (ROUTES.get(location) != resource)
-            {
+    private static void checkRoute(Identifier location, Resource resource) throws IOException {
+        synchronized (RESOURCES) {
+            if (ROUTES.get(location) != resource) {
                 throw new IOException("Retired model audio");
             }
         }
     }
 
-    private static final class RegisteredStream implements AudioStream
-    {
+    private static final class RegisteredStream implements AudioStream {
         private final AudioStream delegate;
         private final Identifier location;
         private final Resource resource;
         private boolean closed;
 
-        RegisteredStream(AudioStream delegate, Identifier location, Resource resource)
-        {
+        RegisteredStream(AudioStream delegate, Identifier location, Resource resource) {
             this.delegate = delegate;
             this.location = location;
             this.resource = resource;
@@ -219,48 +177,36 @@ public final class YsmAudioRegistry
         }
 
         @Override
-        public AudioFormat getFormat()
-        {
+        public AudioFormat getFormat() {
             return this.delegate.getFormat();
         }
 
         @Override
-        public ByteBuffer read(int size) throws IOException
-        {
-            if (this.closed)
-            {
+        public ByteBuffer read(int size) throws IOException {
+            if (this.closed) {
                 throw new IOException("Closed model audio");
             }
 
-            try
-            {
+            try {
                 checkRoute(this.location, this.resource);
-                if (size < 0 || size > 1_048_576)
-                {
+                if (size < 0 || size > 1_048_576) {
                     throw new IOException("Model audio read budget");
                 }
 
                 return this.delegate.read(size);
-            }
-            catch (IOException failure)
-            {
+            } catch (IOException failure) {
                 close();
                 throw failure;
             }
         }
 
         @Override
-        public void close() throws IOException
-        {
-            if (!this.closed)
-            {
+        public void close() throws IOException {
+            if (!this.closed) {
                 this.closed = true;
-                try
-                {
+                try {
                     this.delegate.close();
-                }
-                finally
-                {
+                } finally {
                     ACTIVE_STREAMS.decrementAndGet();
                 }
             }
@@ -268,42 +214,35 @@ public final class YsmAudioRegistry
     }
 
     /** Restarts the bounded immutable input; unlike a buffering repeat stream it never copies the whole file per player. */
-    private static final class LoopStream implements AudioStream
-    {
+    private static final class LoopStream implements AudioStream {
         private final byte[] bytes;
         private final AudioFormat format;
         private OggAudioStream delegate;
         private boolean closed;
 
-        LoopStream(byte[] bytes) throws IOException
-        {
+        LoopStream(byte[] bytes) throws IOException {
             this.bytes = bytes;
             this.delegate = new OggAudioStream(new ByteArrayInputStream(bytes));
             this.format = this.delegate.getFormat();
         }
 
         @Override
-        public AudioFormat getFormat()
-        {
+        public AudioFormat getFormat() {
             return this.format;
         }
 
         @Override
-        public ByteBuffer read(int count) throws IOException
-        {
-            if (this.closed)
-            {
+        public ByteBuffer read(int count) throws IOException {
+            if (this.closed) {
                 throw new IOException("Closed model audio");
             }
 
-            if (count < 0 || count > 1_048_576)
-            {
+            if (count < 0 || count > 1_048_576) {
                 throw new IOException("Model audio read budget");
             }
 
             ByteBuffer data = this.delegate.read(count);
-            if (data.hasRemaining() || count == 0)
-            {
+            if (data.hasRemaining() || count == 0) {
                 return data;
             }
 
@@ -313,20 +252,16 @@ public final class YsmAudioRegistry
         }
 
         @Override
-        public void close() throws IOException
-        {
-            if (!this.closed)
-            {
+        public void close() throws IOException {
+            if (!this.closed) {
                 this.closed = true;
                 this.delegate.close();
             }
         }
     }
 
-    public static Map<String, Number> diagnostics()
-    {
-        synchronized (RESOURCES)
-        {
+    public static Map<String, Number> diagnostics() {
+        synchronized (RESOURCES) {
             return Map.of("assets", RESOURCES.size(), "routes", ROUTES.size(), "compressedBytes", totalBytes,
                     "streamsOpened", STREAM_OPENS.get(), "streamsFailed", STREAM_FAILURES.get(), "activeStreams",
                     ACTIVE_STREAMS.get());
@@ -334,47 +269,37 @@ public final class YsmAudioRegistry
     }
 
     /** Validate a single Vorbis logical stream, all page bounds/sequences and OGG CRCs before registering bytes. */
-    public static void validateOgg(byte[] bytes)
-    {
-        if (bytes.length < 58 || bytes.length > MAX_FILE_BYTES)
-        {
+    public static void validateOgg(byte[] bytes) {
+        if (bytes.length < 58 || bytes.length > MAX_FILE_BYTES) {
             throw new IllegalArgumentException("Model OGG size");
         }
 
         int position = 0, sequence = 0, serial = 0;
         boolean first = true, ended = false;
-        while (position < bytes.length)
-        {
+        while (position < bytes.length) {
             if (ended || bytes.length - position < 27 || bytes[position] != 'O' || bytes[position + 1] != 'g'
-                    || bytes[position + 2] != 'g' || bytes[position + 3] != 'S' || bytes[position + 4] != 0)
-
-            {
+                    || bytes[position + 2] != 'g' || bytes[position + 3] != 'S' || bytes[position + 4] != 0) {
                 throw new IllegalArgumentException("Model OGG page");
             }
 
             int flags = bytes[position + 5] & 255, segments = bytes[position + 26] & 255;
-            if ((flags & ~7) != 0 || bytes.length - position < 27 + segments)
-            {
+            if ((flags & ~7) != 0 || bytes.length - position < 27 + segments) {
                 throw new IllegalArgumentException("Model OGG header");
             }
 
             int length = 27 + segments;
-            for (int index = 0; index < segments; index++)
-            {
+            for (int index = 0; index < segments; index++) {
                 length += bytes[position + 27 + index] & 255;
             }
 
-            if (length > bytes.length - position)
-            {
+            if (length > bytes.length - position) {
                 throw new IllegalArgumentException("Model OGG page size");
             }
 
             int pageSerial = little(bytes, position + 14), pageSequence = little(bytes, position + 18);
-            if (first)
-            {
+            if (first) {
                 if ((flags & 2) == 0 || (flags & 1) != 0 || pageSequence != 0 || segments == 0
-                        || (bytes[position + 27] & 255) < 30)
-                {
+                        || (bytes[position + 27] & 255) < 30) {
                     throw new IllegalArgumentException("Model OGG first page");
                 }
 
@@ -382,43 +307,35 @@ public final class YsmAudioRegistry
                 int payload = position + 27 + segments;
                 if (bytes[payload] != 1
                         || !new String(bytes, payload + 1, 6, StandardCharsets.US_ASCII).equals("vorbis")
-                        || little(bytes, payload + 7) != 0)
-                {
+                        || little(bytes, payload + 7) != 0) {
                     throw new IllegalArgumentException("Model OGG codec");
                 }
 
                 int channels = bytes[payload + 11] & 255, rate = little(bytes, payload + 12);
                 int blocks = bytes[payload + 28] & 255, small = blocks & 15, large = blocks >> 4;
                 if (channels < 1 || channels > 2 || rate < 8_000 || rate > 192_000 || small < 6 || large < small
-                        || large > 13 || (bytes[payload + 29] & 1) == 0)
-                {
+                        || large > 13 || (bytes[payload + 29] & 1) == 0) {
                     throw new IllegalArgumentException("Model OGG format");
                 }
 
-            }
-            else if ((flags & 2) != 0)
-            {
+            } else if ((flags & 2) != 0) {
                 throw new IllegalArgumentException("Model OGG chained stream");
             }
 
-            if (pageSerial != serial || pageSequence != sequence++)
-            {
+            if (pageSerial != serial || pageSequence != sequence++) {
                 throw new IllegalArgumentException("Model OGG sequence");
             }
 
             int crc = 0;
-            for (int offset = 0; offset < length; offset++)
-            {
+            for (int offset = 0; offset < length; offset++) {
                 int value = offset >= 22 && offset < 26 ? 0 : bytes[position + offset] & 255;
                 crc ^= value << 24;
-                for (int bit = 0; bit < 8; bit++)
-                {
+                for (int bit = 0; bit < 8; bit++) {
                     crc = (crc << 1) ^ (crc < 0 ? 0x04c11db7 : 0);
                 }
 
             }
-            if (crc != little(bytes, position + 22))
-            {
+            if (crc != little(bytes, position + 22)) {
                 throw new IllegalArgumentException("Model OGG CRC");
             }
 
@@ -426,15 +343,13 @@ public final class YsmAudioRegistry
             first = false;
             position += length;
         }
-        if (!ended)
-        {
+        if (!ended) {
             throw new IllegalArgumentException("Model OGG truncated stream");
         }
 
     }
 
-    private static int little(byte[] bytes, int offset)
-    {
+    private static int little(byte[] bytes, int offset) {
         return (bytes[offset] & 255) | (bytes[offset + 1] & 255) << 8 | (bytes[offset + 2] & 255) << 16
                 | (bytes[offset + 3] & 255) << 24;
     }

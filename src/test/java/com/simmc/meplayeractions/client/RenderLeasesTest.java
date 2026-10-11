@@ -5,16 +5,13 @@ import java.util.List;
 import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
-class RenderLeasesTest
-{
-    private static RenderLeases.Binding binding(UUID owner)
-    {
+class RenderLeasesTest {
+    private static RenderLeases.Binding binding(UUID owner) {
         return new RenderLeases.Binding(owner, UUID.randomUUID(), "a".repeat(64));
     }
 
     @Test
-    void onlyExactReadyBindingsCanRenewAndOmittedEntriesExpire()
-    {
+    void onlyExactReadyBindingsCanRenewAndOmittedEntriesExpire() {
         RenderLeases leases = new RenderLeases();
         RenderLeases.Binding first = binding(UUID.randomUUID());
         RenderLeases.Binding other = binding(UUID.randomUUID());
@@ -31,8 +28,7 @@ class RenderLeasesTest
     }
 
     @Test
-    void replacingAnInstanceInvalidatesOldHeartbeatAndCleanupReturnsOnlyCurrentInstance()
-    {
+    void replacingAnInstanceInvalidatesOldHeartbeatAndCleanupReturnsOnlyCurrentInstance() {
         RenderLeases leases = new RenderLeases();
         RenderLeases.Binding old = binding(UUID.randomUUID());
         RenderLeases.Binding next = binding(old.owner());
@@ -48,8 +44,7 @@ class RenderLeasesTest
     }
 
     @Test
-    void expiryWorksAcrossUnsignedPaperTickRolloverAndRemovalEndsLease()
-    {
+    void expiryWorksAcrossUnsignedPaperTickRolloverAndRemovalEndsLease() {
         RenderLeases leases = new RenderLeases();
         RenderLeases.Binding bound = binding(UUID.randomUUID());
         leases.ready(bound, 0xfffffff0L);

@@ -10,11 +10,9 @@ import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class PrivateYsmBehaviorTest
-{
+class PrivateYsmBehaviorTest {
     @Test
-    void movingPosturesAndOffhandUseAuthoredMovingClips() throws Exception
-    {
+    void movingPosturesAndOffhandUseAuthoredMovingClips() throws Exception {
         BbModel model = BbModel.parse(YsmFolderModel.bundledDefault());
         LocalMotionPolicy policy = LocalMotionPolicy.forModel(model);
         assertEquals("sneaking", policy.clips().get("crouch-idle").animation());
@@ -29,15 +27,13 @@ class PrivateYsmBehaviorTest
         assertTrue(controller.layers().stream().anyMatch(layer -> layer.animation().equals("sneak")));
     }
 
-    private EntityAnimationController.Sample sample(double x, boolean crouched)
-    {
+    private EntityAnimationController.Sample sample(double x, boolean crouched) {
         return new EntityAnimationController.Sample(x, 0, 0, true, false, false, false, false, false, crouched, false,
                 "", false, 0, false, false, true, false);
     }
 
     @Test
-    void actualDefaultHeaddressOptionChangesTheAuthoredMesh() throws Exception
-    {
+    void actualDefaultHeaddressOptionChangesTheAuthoredMesh() throws Exception {
         BbModel model = BbModel.parse(YsmFolderModel.bundledDefault());
         List<BbModel.Layer> layers = List.of(new BbModel.Layer("posture", "idle", 0, 1, "LOOP", 0, 0));
         AnimationPlayer visible = new AnimationPlayer(model);
@@ -60,14 +56,11 @@ class PrivateYsmBehaviorTest
     }
 
     @Test
-    void privateParametersCannotInjectQueriesOrCode() throws Exception
-    {
+    void privateParametersCannotInjectQueriesOrCode() throws Exception {
         AnimationPlayer player = new AnimationPlayer(BbModel.parse(YsmFolderModel.bundledDefault()));
         for (Map<String, Double> invalid : List.of(Map.of("query.is_flying", 1d),
                 Map.of("variable.roaming.a;query.foo", 1d), Map.of("variable.roaming.bow", Double.NaN),
-                Map.of("variable.roaming.bow", 1_000_001d)))
-
-        {
+                Map.of("variable.roaming.bow", 1_000_001d))) {
             assertThrows(IllegalArgumentException.class,
                     () -> player.sample(0, List.of(), 0, 0, Map.of(), Map.of(), invalid));
         }

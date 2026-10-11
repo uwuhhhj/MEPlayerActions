@@ -6,27 +6,23 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.*;
 
-class ResourceSettingsTest
-{
+class ResourceSettingsTest {
     @Test
-    void shippedConfigurationMatchesRuntimeDefaults() throws Exception
-    {
+    void shippedConfigurationMatchesRuntimeDefaults() throws Exception {
         YamlConfiguration config = new YamlConfiguration();
         config.loadFromString(Files.readString(Path.of("src/main/resources/config.yml")));
         assertEquals(ResourceSettings.defaults(), ResourceSettings.fromConfiguration(config));
     }
 
     @Test
-    void olderConfigurationsReceiveBoundedDefaults()
-    {
+    void olderConfigurationsReceiveBoundedDefaults() {
         assertEquals(ResourceSettings.defaults(), ResourceSettings.fromConfiguration(new YamlConfiguration()));
         assertEquals(2, ResourceSettings.defaults().tasks().workerThreads());
         assertEquals(600, ResourceSettings.defaults().protection().recoveryTicks());
     }
 
     @Test
-    void overridesApplyWithoutEditingConfiguration()
-    {
+    void overridesApplyWithoutEditingConfiguration() {
         YamlConfiguration config = new YamlConfiguration();
         config.set("resource-protection.tasks.worker-threads", 3);
         config.set("resource-protection.network.global-transfers", 20);
@@ -42,11 +38,9 @@ class ResourceSettingsTest
     }
 
     @Test
-    void unsafeLimitsAndContradictoryThresholdsFailBeforeReload()
-    {
-        for (String key : new String[]
-        { "tasks.worker-threads", "tasks.queue-capacity", "network.global-transfers", "models.max-relations" })
-        {
+    void unsafeLimitsAndContradictoryThresholdsFailBeforeReload() {
+        for (String key : new String[] { "tasks.worker-threads", "tasks.queue-capacity", "network.global-transfers",
+                "models.max-relations" }) {
             YamlConfiguration config = new YamlConfiguration();
             config.set("resource-protection." + key, 0);
             assertThrows(IllegalArgumentException.class, () -> ResourceSettings.fromConfiguration(config), key);
@@ -63,8 +57,7 @@ class ResourceSettingsTest
     }
 
     @Test
-    void playerAndGlobalMemoryBudgetsCannotContradict()
-    {
+    void playerAndGlobalMemoryBudgetsCannotContradict() {
         YamlConfiguration config = new YamlConfiguration();
         config.set("resource-protection.tasks.max-reserved-bytes", 1048576);
         assertThrows(IllegalArgumentException.class, () -> ResourceSettings.fromConfiguration(config));
@@ -73,8 +66,7 @@ class ResourceSettingsTest
     }
 
     @Test
-    void errorsExposeStableFieldsWithoutArbitraryExceptionMessages()
-    {
+    void errorsExposeStableFieldsWithoutArbitraryExceptionMessages() {
         ResourceError error = new ResourceError("memory_limit", "upload_validate", true, 21);
         assertEquals(2, error.retryAfterSeconds());
         assertEquals("memory_limit", error.json().get("code").getAsString());

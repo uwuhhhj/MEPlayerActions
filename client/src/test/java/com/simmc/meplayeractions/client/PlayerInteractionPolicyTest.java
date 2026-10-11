@@ -7,14 +7,12 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class PlayerInteractionPolicyTest
-{
+class PlayerInteractionPolicyTest {
     private static final UUID SELF = UUID.fromString("11111111-1111-1111-1111-111111111111");
     private static final UUID REMOTE = UUID.fromString("22222222-2222-2222-2222-222222222222");
 
     @Test
-    void independentClientAppearanceDoesNotNeedAWorldOrServerBridge()
-    {
+    void independentClientAppearanceDoesNotNeedAWorldOrServerBridge() {
         PlayerInteractionPolicy policy = new PlayerInteractionPolicy();
         policy.observe(false, "", false);
         assertEquals(PlayerInteractionPolicy.Scope.CLIENT, policy.preferredScope());
@@ -30,8 +28,7 @@ class PlayerInteractionPolicyTest
     }
 
     @Test
-    void aServerDisguiseOwnsTheOnlyAppearanceBeforeAssetsOrHandshakeAreReady()
-    {
+    void aServerDisguiseOwnsTheOnlyAppearanceBeforeAssetsOrHandshakeAreReady() {
         PlayerInteractionPolicy policy = new PlayerInteractionPolicy();
         assertTrue(policy.isCurrentLocalAppearance(true, true));
         policy.observe(true, "first", false);
@@ -52,8 +49,7 @@ class PlayerInteractionPolicyTest
     }
 
     @Test
-    void neitherSourceSelectionNorAnActivationAttemptCanOverrideTheServer()
-    {
+    void neitherSourceSelectionNorAnActivationAttemptCanOverrideTheServer() {
         PlayerInteractionPolicy policy = new PlayerInteractionPolicy();
         policy.observe(true, "first", true);
         assertFalse(policy.allowsScope(PlayerInteractionPolicy.Scope.CLIENT));
@@ -71,8 +67,7 @@ class PlayerInteractionPolicyTest
     }
 
     @Test
-    void sameInstanceSnapshotsReloadsAndTemporaryBindingLossPreserveServerPriority()
-    {
+    void sameInstanceSnapshotsReloadsAndTemporaryBindingLossPreserveServerPriority() {
         PlayerInteractionPolicy policy = new PlayerInteractionPolicy();
         policy.observe(true, "first", true);
         policy.observe(true, "first", false);
@@ -89,8 +84,7 @@ class PlayerInteractionPolicyTest
     }
 
     @Test
-    void authoritativeRemovalKeepsPrivateRenderingPausedUntilExplicitModelUse()
-    {
+    void authoritativeRemovalKeepsPrivateRenderingPausedUntilExplicitModelUse() {
         PlayerInteractionPolicy policy = new PlayerInteractionPolicy();
         policy.observe(true, "first", true);
         policy.observe(false, "", true);
@@ -111,8 +105,7 @@ class PlayerInteractionPolicyTest
     }
 
     @Test
-    void onlyAuthoritativeRemovalAllowsALaterExplicitPrivateActivationAfterFailedTakeover()
-    {
+    void onlyAuthoritativeRemovalAllowsALaterExplicitPrivateActivationAfterFailedTakeover() {
         LocalAppearanceVisibility visibility = withServerDisguise("first");
         PlayerInteractionPolicy policy = new PlayerInteractionPolicy();
         policy.observe(true, "first", true);
@@ -136,8 +129,7 @@ class PlayerInteractionPolicyTest
     }
 
     @Test
-    void aWorldOrSessionResetCannotImplicitlyResumeASelectionPausedByAServer()
-    {
+    void aWorldOrSessionResetCannotImplicitlyResumeASelectionPausedByAServer() {
         PlayerInteractionPolicy policy = new PlayerInteractionPolicy();
         policy.observe(true, "first", true);
         policy.reset();
@@ -156,8 +148,7 @@ class PlayerInteractionPolicyTest
     }
 
     @Test
-    void enabledDraftsAndUnpreparedAssetsCannotBeReportedAsCurrentlyUsedPrivateModels()
-    {
+    void enabledDraftsAndUnpreparedAssetsCannotBeReportedAsCurrentlyUsedPrivateModels() {
         PlayerInteractionPolicy policy = new PlayerInteractionPolicy();
         assertFalse(policy.isCurrentLocalAppearance(true, false));
         assertFalse(policy.isCurrentLocalAppearance(false, true));
@@ -171,8 +162,7 @@ class PlayerInteractionPolicyTest
     }
 
     @Test
-    void restoringTheSavedSuspensionDoesNotActivateAnEnabledDraftOrPermitAServerOverride()
-    {
+    void restoringTheSavedSuspensionDoesNotActivateAnEnabledDraftOrPermitAServerOverride() {
         PlayerInteractionPolicy policy = new PlayerInteractionPolicy();
         policy.pauseLocalAppearance();
         policy.observe(false, "", false);
@@ -188,8 +178,7 @@ class PlayerInteractionPolicyTest
         assertTrue(policy.isCurrentLocalAppearance(true, true));
     }
 
-    private static LocalAppearanceVisibility withServerDisguise(String instance)
-    {
+    private static LocalAppearanceVisibility withServerDisguise(String instance) {
         LocalAppearanceVisibility visibility = new LocalAppearanceVisibility();
         visibility.serverSessionStarted();
         visibility.beginSnapshot(1);

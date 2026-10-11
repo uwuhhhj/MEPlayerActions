@@ -19,8 +19,7 @@ import net.minecraft.util.math.random.Random;
 import java.util.*;
 
 /** Local effects belong to one exact owner/instance/hash/world. No network or external paths are used. */
-public final class YsmModelEffects implements AutoCloseable
-{
+public final class YsmModelEffects implements AutoCloseable {
     public static final int MAX_INSTANCE_LIVE = 32, MAX_GLOBAL_LIVE = 64;
     public static final int MAX_SOUNDS_PER_SECOND = 8, MAX_PARTICLES_PER_SECOND = 64;
     private static final long SOUND_LIFE_NANOS = 300_000_000_000L;
@@ -35,25 +34,21 @@ public final class YsmModelEffects implements AutoCloseable
     private YsmModelProfile profile = YsmModelProfile.empty();
     private long soundStarts, particleStarts, rejected;
 
-    public YsmModelEffects(MinecraftClient client)
-    {
+    public YsmModelEffects(MinecraftClient client) {
         this.client = Objects.requireNonNull(client);
     }
 
-    public void update(Entity player, String instance, String hash, YsmModelProfile profile)
-    {
+    public void update(Entity player, String instance, String hash, YsmModelProfile profile) {
         requireThread();
         if (player == null || this.client.world == null || player.getEntityWorld() != this.client.world
                 || player.isRemoved() || instance == null || instance.isEmpty() || instance.length() > 128
-                || hash == null || !hash.matches("[a-f0-9]{64}"))
-        {
+                || hash == null || !hash.matches("[a-f0-9]{64}")) {
             close();
             return;
         }
         YsmModelProfile currentProfile = profile == null ? YsmModelProfile.empty() : profile;
         if (this.owner != player || this.world != this.client.world || !this.instance.equals(instance)
-                || !this.hash.equals(hash) || this.profile != currentProfile)
-        {
+                || !this.hash.equals(hash) || this.profile != currentProfile) {
             close();
         }
 
@@ -65,30 +60,24 @@ public final class YsmModelEffects implements AutoCloseable
         tick();
     }
 
-    public Object handle(String function, List<Object> arguments)
-    {
+    public Object handle(String function, List<Object> arguments) {
         return handle(function, arguments, false);
     }
 
     /** Native YSM function arity/ranges are separate from the legacy bbmodel keyframe shorthand. */
-    public Object handle(String function, List<Object> arguments, boolean nativeYsm)
-    {
+    public Object handle(String function, List<Object> arguments, boolean nativeYsm) {
         return handle(function, arguments, nativeYsm, "");
     }
 
-    public Object handle(String function, List<Object> arguments, boolean nativeYsm, String controllerScope)
-    {
+    public Object handle(String function, List<Object> arguments, boolean nativeYsm, String controllerScope) {
         requireThread();
         tick();
-        if (this.owner == null || this.world == null || arguments == null)
-        {
+        if (this.owner == null || this.world == null || arguments == null) {
             return false;
         }
 
-        try
-        {
-            return switch (function)
-            {
+        try {
+            return switch (function) {
             case "ysm.play_sound" ->
                 play(nativeYsm ? SoundRequest.parseNative(arguments) : SoundRequest.parse(arguments), nativeYsm,
                         controllerScope);
@@ -98,23 +87,18 @@ public final class YsmModelEffects implements AutoCloseable
             case "ysm.abs_particle" -> emit(ParticleSpec.parse(arguments), true);
             default -> false;
             };
-        }
-        catch (IllegalArgumentException invalid)
-        {
+        } catch (IllegalArgumentException invalid) {
             this.rejected++;
             return false;
         }
     }
 
-    private boolean play(SoundRequest request, boolean nativeYsm, String controllerScope)
-    {
+    private boolean play(SoundRequest request, boolean nativeYsm, String controllerScope) {
         String scope = soundScope(nativeYsm, request.global(), controllerScope);
-        if (request.name().contains(":"))
-        {
+        if (request.name().contains(":")) {
             Identifier id = Identifier.tryParse(request.name());
             // The private namespace is issued only after this profile authorizes its bytes.
-            if (id == null || YsmAudioRegistry.isPrivate(id))
-            {
+            if (id == null || YsmAudioRegistry.isPrivate(id)) {
                 return false;
             }
 
@@ -122,60 +106,47 @@ public final class YsmModelEffects implements AutoCloseable
         Playing existing = this.sounds.stream().filter(
                 playing -> !request.key().isEmpty() && playing.key.equals(request.key()) && playing.scope.equals(scope))
                 .findFirst().orElse(null);
-        if (existing != null && !request.replace())
-        {
+        if (existing != null && !request.replace()) {
             return false;
         }
 
-        if (live() - (existing == null ? 0 : 1) >= MAX_INSTANCE_LIVE || !GLOBAL.charge(true, System.nanoTime()))
-        {
+        if (live() - (existing == null ? 0 : 1) >= MAX_INSTANCE_LIVE || !GLOBAL.charge(true, System.nanoTime())) {
             this.rejected++;
             return false;
         }
         Identifier identifier;
         boolean custom = !request.name().contains(":");
-        try
-        {
-            if (custom)
-            {
+        try {
+            if (custom) {
                 YsmAudioRegistry.Lease lease = this.audio.get(request.name());
-                if (lease == null)
-                {
+                if (lease == null) {
                     byte[] ogg = this.profile.soundResource(request.name())
                             .orElseThrow(() -> new IllegalArgumentException("Missing model sound"));
                     lease = YsmAudioRegistry.register(ogg);
                     this.audio.put(request.name(), lease);
                 }
                 identifier = lease.soundId();
-            }
-            else
-            {
+            } else {
                 identifier = Objects.requireNonNull(Identifier.tryParse(request.name()));
             }
 
-        }
-        catch (RuntimeException invalid)
-        {
+        } catch (RuntimeException invalid) {
             this.rejected++;
             return false;
         }
-        if (existing != null)
-        {
+        if (existing != null) {
             release(existing);
         }
 
-        if (!GLOBAL.reserve())
-        {
+        if (!GLOBAL.reserve()) {
             this.rejected++;
             return false;
         }
-        try
-        {
+        try {
             ModelSound sound = new ModelSound(identifier, this.owner, this.world, custom, request.loop(),
                     request.volume(), request.pitch());
             SoundSystem.PlayResult result = this.client.getSoundManager().play(sound);
-            if (result == SoundSystem.PlayResult.NOT_STARTED)
-            {
+            if (result == SoundSystem.PlayResult.NOT_STARTED) {
                 sound.finish();
                 GLOBAL.release();
                 return false;
@@ -183,53 +154,43 @@ public final class YsmModelEffects implements AutoCloseable
             this.sounds.add(new Playing(request.key(), scope, sound, System.nanoTime()));
             this.soundStarts++;
             return true;
-        }
-        catch (RuntimeException invalid)
-        {
+        } catch (RuntimeException invalid) {
             GLOBAL.release();
             this.rejected++;
             return false;
         }
     }
 
-    private boolean stop(List<Object> arguments, boolean nativeYsm, String controllerScope)
-    {
-        if (arguments.size() < 1 || arguments.size() > 2)
-        {
+    private boolean stop(List<Object> arguments, boolean nativeYsm, String controllerScope) {
+        if (arguments.size() < 1 || arguments.size() > 2) {
             throw new IllegalArgumentException("Sound stop arguments");
         }
 
         String key = nativeYsm ? nativeSoundKey(arguments.getFirst()) : soundKey(arguments.getFirst());
         boolean global = arguments.size() == 2 && number(arguments.get(1)) != 0;
         String scope = soundScope(nativeYsm, global, controllerScope);
-        if (key.isEmpty())
-        {
+        if (key.isEmpty()) {
             return false;
         }
 
         Playing found = this.sounds.stream().filter(playing -> playing.key.equals(key) && playing.scope.equals(scope))
                 .findFirst().orElse(null);
-        if (found == null)
-        {
+        if (found == null) {
             return false;
         }
         release(found);
         return true;
     }
 
-    private boolean stopAll(List<Object> arguments, boolean nativeYsm, String controllerScope)
-    {
-        if (arguments.size() > 1)
-        {
+    private boolean stopAll(List<Object> arguments, boolean nativeYsm, String controllerScope) {
+        if (arguments.size() > 1) {
             throw new IllegalArgumentException("Sound stop arguments");
         }
 
         boolean global = !arguments.isEmpty() && number(arguments.getFirst()) != 0;
         String scope = soundScope(nativeYsm, global, controllerScope);
-        for (Playing playing : List.copyOf(this.sounds))
-        {
-            if (playing.scope.equals(scope))
-            {
+        for (Playing playing : List.copyOf(this.sounds)) {
+            if (playing.scope.equals(scope)) {
                 release(playing);
             }
 
@@ -238,10 +199,8 @@ public final class YsmModelEffects implements AutoCloseable
         return true;
     }
 
-    private void release(Playing playing)
-    {
-        if (!this.sounds.remove(playing))
-        {
+    private void release(Playing playing) {
+        if (!this.sounds.remove(playing)) {
             return;
         }
 
@@ -250,38 +209,30 @@ public final class YsmModelEffects implements AutoCloseable
         GLOBAL.release();
     }
 
-    private boolean emit(ParticleSpec spec, boolean absolute)
-    {
+    private boolean emit(ParticleSpec spec, boolean absolute) {
         ParticleEffect effect;
-        try
-        {
+        try {
             StringReader reader = new StringReader(spec.id());
             effect = ParticleEffectArgumentType.readParameters(reader, this.world.getRegistryManager());
             reader.skipWhitespace();
-            if (reader.canRead())
-            {
+            if (reader.canRead()) {
                 return false;
             }
 
-        }
-        catch (Exception invalid)
-        {
+        } catch (Exception invalid) {
             this.rejected++;
             return false;
         }
         int spawned = 0, count = spec.count() == 0 ? 1 : spec.count();
-        for (int index = 0; index < count; index++)
-        {
-            if (live() >= MAX_INSTANCE_LIVE || !GLOBAL.acquire(false, System.nanoTime()))
-            {
+        for (int index = 0; index < count; index++) {
+            if (live() >= MAX_INSTANCE_LIVE || !GLOBAL.acquire(false, System.nanoTime())) {
                 this.rejected++;
                 break;
             }
             double spreadX = 0, spreadY = 0, spreadZ = 0;
             double velocityX = spec.speed() * spec.deltaX(), velocityY = spec.speed() * spec.deltaY(),
                     velocityZ = spec.speed() * spec.deltaZ();
-            if (spec.count() != 0)
-            {
+            if (spec.count() != 0) {
                 Random random = this.owner.getRandom();
                 spreadX = bounded(random.nextGaussian() * spec.deltaX(), -32, 32);
                 spreadY = bounded(random.nextGaussian() * spec.deltaY(), -32, 32);
@@ -295,20 +246,16 @@ public final class YsmModelEffects implements AutoCloseable
             double[] offset = rotate(spec.offsetX() + spreadX, spec.offsetY() + spreadY, spec.offsetZ() + spreadZ, yaw,
                     absolute);
             Particle particle;
-            try
-            {
+            try {
                 particle = this.client.particleManager.addParticle(effect, this.owner.getX() + offset[0],
                         this.owner.getY() + offset[1], this.owner.getZ() + offset[2], bounded(velocityX, -16, 16),
                         bounded(velocityY, -16, 16), bounded(velocityZ, -16, 16));
-            }
-            catch (RuntimeException invalid)
-            {
+            } catch (RuntimeException invalid) {
                 GLOBAL.release();
                 this.rejected++;
                 continue;
             }
-            if (particle == null)
-            {
+            if (particle == null) {
                 GLOBAL.release();
                 continue;
             }
@@ -320,53 +267,43 @@ public final class YsmModelEffects implements AutoCloseable
         return spawned > 0;
     }
 
-    public void tick()
-    {
+    public void tick() {
         requireThread();
         if (this.owner != null && (this.client.world != this.world || this.owner.getEntityWorld() != this.world
-                || this.owner.isRemoved()))
-        {
+                || this.owner.isRemoved())) {
             close();
             return;
         }
         long now = System.nanoTime();
-        for (Playing playing : List.copyOf(this.sounds))
-        {
+        for (Playing playing : List.copyOf(this.sounds)) {
             playing.sound.tick();
             if (playing.sound.isDone() || now - playing.started > SOUND_LIFE_NANOS
                     || now - playing.started > 1_000_000_000L
-                            && !this.client.getSoundManager().isPlaying(playing.sound))
-            {
+                            && !this.client.getSoundManager().isPlaying(playing.sound)) {
                 release(playing);
             }
 
         }
-        for (Iterator<Particle> iterator = this.particles.iterator(); iterator.hasNext();)
-        {
-            if (!iterator.next().isAlive())
-            {
+        for (Iterator<Particle> iterator = this.particles.iterator(); iterator.hasNext();) {
+            if (!iterator.next().isAlive()) {
                 iterator.remove();
                 GLOBAL.release();
             }
         }
     }
 
-    private int live()
-    {
+    private int live() {
         return this.sounds.size() + this.particles.size();
     }
 
     @Override
-    public void close()
-    {
+    public void close() {
         requireThread();
-        for (Playing playing : List.copyOf(this.sounds))
-        {
+        for (Playing playing : List.copyOf(this.sounds)) {
             release(playing);
         }
 
-        for (Particle particle : this.particles)
-        {
+        for (Particle particle : this.particles) {
             particle.markDead();
             GLOBAL.release();
         }
@@ -380,8 +317,7 @@ public final class YsmModelEffects implements AutoCloseable
         this.profile = YsmModelProfile.empty();
     }
 
-    public Map<String, Object> diagnostics()
-    {
+    public Map<String, Object> diagnostics() {
         return Map.of("soundsStarted", this.soundStarts, "particlesStarted", this.particleStarts, "rejected",
                 this.rejected, "liveSounds", this.sounds.size(), "liveParticles", this.particles.size(), "audioAssets",
                 this.audio.size(), "globalLive", GLOBAL.live(), "customPlaying",
@@ -395,28 +331,23 @@ public final class YsmModelEffects implements AutoCloseable
                         .count());
     }
 
-    private void requireThread()
-    {
-        if (!this.client.isOnThread())
-        {
+    private void requireThread() {
+        if (!this.client.isOnThread()) {
             throw new IllegalStateException("Model effects require the client thread");
         }
     }
 
-    private record Playing(String key, String scope, ModelSound sound, long started)
-    {
+    private record Playing(String key, String scope, ModelSound sound, long started) {
     }
 
-    private static final class ModelSound extends AbstractSoundInstance implements TickableSoundInstance
-    {
+    private static final class ModelSound extends AbstractSoundInstance implements TickableSoundInstance {
         private final Entity owner;
         private final ClientWorld world;
         private final boolean custom;
         private boolean done;
 
         ModelSound(Identifier id, Entity owner, ClientWorld world, boolean custom, boolean loop, float volume,
-                float pitch)
-        {
+                float pitch) {
             super(id, SoundCategory.PLAYERS, SoundInstance.createRandom());
             this.owner = owner;
             this.world = world;
@@ -430,10 +361,8 @@ public final class YsmModelEffects implements AutoCloseable
         }
 
         @Override
-        public WeightedSoundSet getSoundSet(SoundManager manager)
-        {
-            if (!this.custom)
-            {
+        public WeightedSoundSet getSoundSet(SoundManager manager) {
+            if (!this.custom) {
                 return super.getSoundSet(manager);
             }
 
@@ -445,22 +374,18 @@ public final class YsmModelEffects implements AutoCloseable
         }
 
         @Override
-        public boolean isDone()
-        {
+        public boolean isDone() {
             return this.done;
         }
 
         @Override
-        public boolean canPlay()
-        {
+        public boolean canPlay() {
             return !this.done && this.owner.getEntityWorld() == this.world && !this.owner.isRemoved();
         }
 
         @Override
-        public void tick()
-        {
-            if (this.owner.isRemoved() || this.owner.getEntityWorld() != this.world)
-            {
+        public void tick() {
+            if (this.owner.isRemoved() || this.owner.getEntityWorld() != this.world) {
                 this.done = true;
             }
 
@@ -469,34 +394,27 @@ public final class YsmModelEffects implements AutoCloseable
             super.z = this.owner.getZ();
         }
 
-        void finish()
-        {
+        void finish() {
             this.done = true;
         }
     }
 
     public record SoundRequest(String key, String name, boolean replace, boolean global, boolean loop, float volume,
-            float pitch)
-    {
-        public static SoundRequest parse(List<Object> arguments)
-        {
+            float pitch) {
+        public static SoundRequest parse(List<Object> arguments) {
             return parse(arguments, false);
         }
 
-        public static SoundRequest parseNative(List<Object> arguments)
-        {
+        public static SoundRequest parseNative(List<Object> arguments) {
             return parse(arguments, true);
         }
 
-        private static SoundRequest parse(List<Object> arguments, boolean nativeYsm)
-        {
-            if (arguments.isEmpty() || arguments.size() > 5)
-            {
+        private static SoundRequest parse(List<Object> arguments, boolean nativeYsm) {
+            if (arguments.isEmpty() || arguments.size() > 5) {
                 throw new IllegalArgumentException("Sound arguments");
             }
 
-            if (nativeYsm && arguments.size() < 2)
-            {
+            if (nativeYsm && arguments.size() < 2) {
                 throw new IllegalArgumentException("Native PlaySound requires id and soundName");
             }
 
@@ -505,9 +423,7 @@ public final class YsmModelEffects implements AutoCloseable
             Object sound = arguments.get(keyframe ? 0 : 1);
             if (!(sound instanceof String name) || name.isBlank() || name.length() > 256
                     || name.chars().anyMatch(Character::isISOControl)
-                    || !name.contains(":") && (name.contains("/") || name.contains("\\") || name.contains("..")))
-
-            {
+                    || !name.contains(":") && (name.contains("/") || name.contains("\\") || name.contains(".."))) {
                 throw new IllegalArgumentException("Sound name");
             }
 
@@ -524,14 +440,10 @@ public final class YsmModelEffects implements AutoCloseable
     }
 
     public record ParticleSpec(String id, double offsetX, double offsetY, double offsetZ, double deltaX, double deltaY,
-            double deltaZ, double speed, int count, int lifetime)
-    {
-        public static ParticleSpec parse(List<Object> arguments)
-        {
+            double deltaZ, double speed, int count, int lifetime) {
+        public static ParticleSpec parse(List<Object> arguments) {
             if (arguments.isEmpty() || arguments.size() > 10 || !(arguments.getFirst() instanceof String id)
-                    || id.isBlank() || id.length() > 512)
-
-            {
+                    || id.isBlank() || id.length() > 512) {
                 throw new IllegalArgumentException("Particle arguments");
             }
 
@@ -543,17 +455,14 @@ public final class YsmModelEffects implements AutoCloseable
         }
     }
 
-    static String soundKey(Object value)
-    {
+    static String soundKey(Object value) {
         if (value instanceof String name && !name.isBlank() && name.length() <= 128
-                && name.chars().noneMatch(Character::isISOControl))
-        {
+                && name.chars().noneMatch(Character::isISOControl)) {
             return "s:" + name;
         }
 
         double number = number(value);
-        if (number < 0 || number > Integer.MAX_VALUE)
-        {
+        if (number < 0 || number > Integer.MAX_VALUE) {
             throw new IllegalArgumentException("Sound id");
         }
 
@@ -562,22 +471,18 @@ public final class YsmModelEffects implements AutoCloseable
     }
 
     /** Upstream truncates numeric IDs before rejecting negative IDs; string and numeric namespaces stay distinct. */
-    static String nativeSoundKey(Object value)
-    {
-        if (!(value instanceof Number))
-        {
+    static String nativeSoundKey(Object value) {
+        if (!(value instanceof Number)) {
             return soundKey(value);
         }
 
         double number = number(value);
-        if (number < Integer.MIN_VALUE || number > Integer.MAX_VALUE)
-        {
+        if (number < Integer.MIN_VALUE || number > Integer.MAX_VALUE) {
             throw new IllegalArgumentException("Sound id");
         }
 
         int id = (int) number;
-        if (id < 0)
-        {
+        if (id < 0) {
             throw new IllegalArgumentException("Sound id");
         }
 
@@ -585,143 +490,113 @@ public final class YsmModelEffects implements AutoCloseable
     }
 
     /** An entity's global manager is also the native fallback when no controller/playback context exists. */
-    static String soundScope(boolean nativeYsm, boolean global, String controllerScope)
-    {
-        if (!nativeYsm)
-        {
+    static String soundScope(boolean nativeYsm, boolean global, String controllerScope) {
+        if (!nativeYsm) {
             return global ? "bbmodel.global" : "bbmodel.local";
         }
 
-        if (global || controllerScope == null || controllerScope.isEmpty())
-        {
+        if (global || controllerScope == null || controllerScope.isEmpty()) {
             return "ysm.global";
         }
 
-        if (controllerScope.length() > 512)
-        {
+        if (controllerScope.length() > 512) {
             throw new IllegalArgumentException("Sound context");
         }
 
         return "ysm.local:" + controllerScope;
     }
 
-    private static int nativeInteger(Object value, int min, int max)
-    {
+    private static int nativeInteger(Object value, int min, int max) {
         double valueNumber = number(value);
-        if (valueNumber < Integer.MIN_VALUE || valueNumber > Integer.MAX_VALUE)
-        {
+        if (valueNumber < Integer.MIN_VALUE || valueNumber > Integer.MAX_VALUE) {
             throw new IllegalArgumentException("Effect integer");
         }
 
         int integer = (int) valueNumber;
-        if (integer < min || integer > max)
-        {
+        if (integer < min || integer > max) {
             throw new IllegalArgumentException("Effect integer");
         }
 
         return integer;
     }
 
-    private static int integer(Object value, int min, int max)
-    {
+    private static int integer(Object value, int min, int max) {
         double number = number(value);
-        if (number < min || number > max)
-        {
+        if (number < min || number > max) {
             throw new IllegalArgumentException("Effect integer");
         }
         return (int) number;
     }
 
-    private static double number(Object value)
-    {
+    private static double number(Object value) {
         double number = value instanceof Number numeric ? numeric.doubleValue()
                 : (value instanceof Boolean bool ? (bool ? 1 : 0) : Double.NaN);
-        if (!Double.isFinite(number))
-        {
+        if (!Double.isFinite(number)) {
             throw new IllegalArgumentException("Effect number");
         }
         return number;
     }
 
-    private static double optional(List<Object> args, int index, double fallback, double min, double max)
-    {
+    private static double optional(List<Object> args, int index, double fallback, double min, double max) {
         return index >= args.size() ? fallback : bounded(number(args.get(index)), min, max);
     }
 
-    private static double bounded(double number, double min, double max)
-    {
+    private static double bounded(double number, double min, double max) {
         return Math.max(min, Math.min(max, number));
     }
 
-    static double[] rotate(double x, double y, double z, double yaw, boolean absolute)
-    {
-        if (absolute)
-        {
-            return new double[]
-            { x, y, z };
+    static double[] rotate(double x, double y, double z, double yaw, boolean absolute) {
+        if (absolute) {
+            return new double[] { x, y, z };
         }
 
         double angle = -yaw * Math.PI / 180, cosine = Math.cos(angle), sine = Math.sin(angle);
-        return new double[]
-        { x * cosine + z * sine, y, z * cosine - x * sine };
+        return new double[] { x * cosine + z * sine, y, z * cosine - x * sine };
     }
 
     /** A shared monotonic window survives rebinding; new contexts cannot reset the global quota. */
-    static final class Budget
-    {
+    static final class Budget {
         private long window = Long.MIN_VALUE;
         private int sounds, particles, live;
 
-        synchronized boolean charge(boolean sound, long now)
-        {
-            if (this.window == Long.MIN_VALUE || now - this.window >= 1_000_000_000L)
-            {
+        synchronized boolean charge(boolean sound, long now) {
+            if (this.window == Long.MIN_VALUE || now - this.window >= 1_000_000_000L) {
                 this.window = now;
                 this.sounds = 0;
                 this.particles = 0;
             }
-            if (sound ? this.sounds >= MAX_SOUNDS_PER_SECOND : this.particles >= MAX_PARTICLES_PER_SECOND)
-            {
+            if (sound ? this.sounds >= MAX_SOUNDS_PER_SECOND : this.particles >= MAX_PARTICLES_PER_SECOND) {
                 return false;
             }
 
-            if (sound)
-            {
+            if (sound) {
                 this.sounds++;
-            }
-            else
-            {
+            } else {
                 this.particles++;
             }
             return true;
         }
 
-        synchronized boolean reserve()
-        {
-            if (this.live >= MAX_GLOBAL_LIVE)
-            {
+        synchronized boolean reserve() {
+            if (this.live >= MAX_GLOBAL_LIVE) {
                 return false;
             }
             this.live++;
             return true;
         }
 
-        synchronized boolean acquire(boolean sound, long now)
-        {
+        synchronized boolean acquire(boolean sound, long now) {
             return charge(sound, now) && reserve();
         }
 
-        synchronized void release()
-        {
-            if (this.live <= 0)
-            {
+        synchronized void release() {
+            if (this.live <= 0) {
                 throw new IllegalStateException("Effect budget underflow");
             }
             this.live--;
         }
 
-        synchronized int live()
-        {
+        synchronized int live() {
             return this.live;
         }
     }

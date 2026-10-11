@@ -11,11 +11,9 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NativeBbmodelActionPresetTest
-{
+class NativeBbmodelActionPresetTest {
     @Test
-    void realNativeImporterRetainsAuthorClipAndRemapsSourcePresetsToAuthorSkeleton() throws Exception
-    {
+    void realNativeImporterRetainsAuthorClipAndRemapsSourcePresetsToAuthorSkeleton() throws Exception {
         JsonObject source = humanoid();
         source.getAsJsonArray("animations").get(0).getAsJsonObject().addProperty("name", "idle");
         byte[] input = source.toString().getBytes(StandardCharsets.UTF_8);
@@ -35,8 +33,7 @@ class NativeBbmodelActionPresetTest
     }
 
     @Test
-    void sourceFallbackKeepsAuthoredRotationsAndHeadWhileCompletingUnusedHumanoidParts() throws Exception
-    {
+    void sourceFallbackKeepsAuthoredRotationsAndHeadWhileCompletingUnusedHumanoidParts() throws Exception {
         byte[] input = humanoid().toString().getBytes(StandardCharsets.UTF_8);
         YsmFolderModel.Imported imported = NativeBbModel.read(input, Map.of("model.bbmodel", input), null);
         BbModel model = BbModel.parseLocal(imported.raw());
@@ -57,20 +54,13 @@ class NativeBbmodelActionPresetTest
         assertNull(pose.channels[forearm][2]);
     }
 
-    private static JsonObject humanoid() throws Exception
-    {
+    private static JsonObject humanoid() throws Exception {
         JsonObject source = NativeBbModelTest.source();
         JsonArray groups = source.getAsJsonArray("groups");
         JsonObject root = source.getAsJsonArray("outliner").get(0).getAsJsonObject();
-        for (String[] part : new String[][]
-        {
-                { "head", "Head" },
-                { "leftarm", "Left Upper Arm" },
-                { "forearm", "Left ForeArm" },
-                { "rightarm", "RightArm" },
-                { "leftleg", "LeftLeg" },
-                { "rightleg", "RightLeg" } })
-        {
+        for (String[] part : new String[][] { { "head", "Head" }, { "leftarm", "Left Upper Arm" },
+                { "forearm", "Left ForeArm" }, { "rightarm", "RightArm" }, { "leftleg", "LeftLeg" },
+                { "rightleg", "RightLeg" } }) {
             JsonObject group = new JsonObject();
             group.addProperty("uuid", part[0]);
             group.addProperty("name", part[1]);
@@ -88,14 +78,10 @@ class NativeBbmodelActionPresetTest
         return source;
     }
 
-    private static JsonObject runtimeClip(byte[] runtime, String name)
-    {
+    private static JsonObject runtimeClip(byte[] runtime, String name) {
         for (JsonElement element : JsonParser.parseString(new String(runtime, StandardCharsets.UTF_8)).getAsJsonObject()
-                .getAsJsonArray("animations"))
-
-        {
-            if (element.getAsJsonObject().get("name").getAsString().equals(name))
-            {
+                .getAsJsonArray("animations")) {
+            if (element.getAsJsonObject().get("name").getAsString().equals(name)) {
                 return element.getAsJsonObject();
             }
 

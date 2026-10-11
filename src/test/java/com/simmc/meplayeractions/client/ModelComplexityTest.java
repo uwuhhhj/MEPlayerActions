@@ -6,17 +6,14 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import static org.junit.jupiter.api.Assertions.*;
 
-class ModelComplexityTest
-{
+class ModelComplexityTest {
     private static ModelComplexityLimits limits(int bones, int animations, int frames, int expressions, int chars,
-            int nodes)
-    {
+            int nodes) {
         return new ModelComplexityLimits(bones, animations, frames, expressions, chars, nodes, 256, 8388608, 16777216);
     }
 
     @Test
-    void nativeTimestampChannelsAndBlockbenchKeyframesShareWholeAssetBudget() throws Exception
-    {
+    void nativeTimestampChannelsAndBlockbenchKeyframesShareWholeAssetBudget() throws Exception {
         ModelComplexity budget = new ModelComplexity(limits(4096, 10, 3, 32768, 2097152, 200000));
         budget.document(JsonParser.parseString(
                 "{\"animations\":{\"walk\":{\"bones\":{\"Head\":{\"rotation\":{\"0.0\":[0,0,0],\"0.5\":[1,0,0]}}}}}}"));
@@ -26,8 +23,7 @@ class ModelComplexityTest
     }
 
     @Test
-    void manySmallDocumentsCannotResetJsonAndExpressionBudget() throws Exception
-    {
+    void manySmallDocumentsCannotResetJsonAndExpressionBudget() throws Exception {
         ModelComplexity json = new ModelComplexity(limits(4096, 1024, 65536, 32768, 2097152, 10));
         json.document(JsonParser.parseString("[1,2,3,4,5]"));
         assertEquals("model_complexity:json_nodes",
@@ -40,8 +36,7 @@ class ModelComplexityTest
     }
 
     @Test
-    void independentGroupsAndNativeBonesCountWithoutCountingAnimationTrackNames() throws Exception
-    {
+    void independentGroupsAndNativeBonesCountWithoutCountingAnimationTrackNames() throws Exception {
         ModelComplexity groups = new ModelComplexity(limits(1, 1024, 65536, 32768, 2097152, 200000));
         groups.document(JsonParser.parseString("{\"groups\":[{\"uuid\":\"bone\"}],\"outliner\":[\"bone\"]}"));
         assertEquals("model_complexity:bones", assertThrows(IOException.class,
@@ -53,8 +48,7 @@ class ModelComplexityTest
     }
 
     @Test
-    void modelDisplayNamesAreNotMistakenForProgramsAndLimitsCannotDisableHardCeilings() throws Exception
-    {
+    void modelDisplayNamesAreNotMistakenForProgramsAndLimitsCannotDisableHardCeilings() throws Exception {
         new ModelComplexity(limits(1, 1024, 65536, 1, 1, 200000)).document(JsonParser.parseString(
                 "{\"name\":\"long author display name\",\"animation\":\"walk\",\"rotation\":[\"0.0\",1,2]}"));
         assertThrows(IllegalArgumentException.class,

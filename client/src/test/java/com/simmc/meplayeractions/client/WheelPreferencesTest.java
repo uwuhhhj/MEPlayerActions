@@ -4,18 +4,15 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class WheelPreferencesTest
-{
+class WheelPreferencesTest {
     @Test
-    void oldConstructorAndDefaultsKeepTheWheelClosedAfterChoosingAnAction()
-    {
+    void oldConstructorAndDefaultsKeepTheWheelClosedAfterChoosingAnAction() {
         assertEquals(new WheelPreferences(WheelPreferences.Source.CLIENT, 0, 0, false), WheelPreferences.defaults());
         assertFalse(new WheelPreferences(WheelPreferences.Source.SERVER, 3, 7).keepOpen());
     }
 
     @Test
-    void switchingSourcesRetainsSeparatePagesAndTheKeepOpenChoice()
-    {
+    void switchingSourcesRetainsSeparatePagesAndTheKeepOpenChoice() {
         WheelPreferences client = WheelPreferences.defaults().withPage(WheelPreferences.Source.CLIENT, 3)
                 .withKeepOpen(true);
         WheelPreferences server = client.withSource(WheelPreferences.Source.SERVER)
@@ -31,8 +28,7 @@ class WheelPreferencesTest
     }
 
     @Test
-    void aSmallerCatalogClampsOnlyTheDisplayedPageAndRetainsTheSavedMemory()
-    {
+    void aSmallerCatalogClampsOnlyTheDisplayedPageAndRetainsTheSavedMemory() {
         WheelPreferences preferences = new WheelPreferences(WheelPreferences.Source.CLIENT, 11, 127, true);
         assertEquals(2, preferences.page(WheelPreferences.Source.CLIENT, 3));
         assertEquals(0, preferences.page(WheelPreferences.Source.SERVER, 1));
@@ -43,11 +39,8 @@ class WheelPreferencesTest
     }
 
     @Test
-    void invalidPageMemoryAndNullSourcesAreRejectedBeforeSaving()
-    {
-        for (int invalid : new int[]
-        { -1, 128, Integer.MAX_VALUE })
-        {
+    void invalidPageMemoryAndNullSourcesAreRejectedBeforeSaving() {
+        for (int invalid : new int[] { -1, 128, Integer.MAX_VALUE }) {
             assertThrows(IllegalArgumentException.class,
                     () -> new WheelPreferences(WheelPreferences.Source.CLIENT, invalid, 0));
             assertThrows(IllegalArgumentException.class,

@@ -13,11 +13,9 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NativeYsmSamplingTest
-{
+class NativeYsmSamplingTest {
     @Test
-    void thisUsesPreviousControllerAxesAndRestoresContextAfterSampling() throws Exception
-    {
+    void thisUsesPreviousControllerAxesAndRestoresContextAfterSampling() throws Exception {
         RawYsmModel raw = NativeYsmFileTest.model();
         RawYsmModel.RawAnimationFile file = new RawYsmModel.RawAnimationFile();
         RawYsmModel.RawAnimation clip = new RawYsmModel.RawAnimation();
@@ -26,11 +24,9 @@ class NativeYsmSamplingTest
         clip.loopMode = 1;
         RawYsmModel.RawBoneAnimation track = new RawYsmModel.RawBoneAnimation();
         track.boneName = "ysmGlowEyes";
-        for (List<RawYsmModel.RawKeyframe> keys : List.of(track.position, track.rotation, track.scale))
-        {
+        for (List<RawYsmModel.RawKeyframe> keys : List.of(track.position, track.rotation, track.scale)) {
             RawYsmModel.RawKeyframe key = new RawYsmModel.RawKeyframe();
-            key.postData = new Object[]
-            { "this", "this", "this" };
+            key.postData = new Object[] { "this", "this", "this" };
             keys.add(key);
         }
         clip.boneAnimations.add(track);
@@ -59,8 +55,7 @@ class NativeYsmSamplingTest
     }
 
     @Test
-    void nativeSoundKeyframeUsesMatureDefaultChannelAndTwoArguments() throws Exception
-    {
+    void nativeSoundKeyframeUsesMatureDefaultChannelAndTwoArguments() throws Exception {
         RawYsmModel raw = NativeYsmFileTest.model();
         RawYsmModel.RawAnimationFile file = new RawYsmModel.RawAnimationFile();
         RawYsmModel.RawAnimation clip = new RawYsmModel.RawAnimation();
@@ -76,10 +71,8 @@ class NativeYsmSamplingTest
         List<List<Object>> calls = new ArrayList<>();
         Molang.Context context = new Molang.Context();
         context.enableNativeYsm();
-        context.functions((name, args) ->
-        {
-            if (name.equals("ysm.play_sound"))
-            {
+        context.functions((name, args) -> {
+            if (name.equals("ysm.play_sound")) {
                 calls.add(List.copyOf(args));
             }
             return null;
@@ -92,12 +85,10 @@ class NativeYsmSamplingTest
     }
 
     @Test
-    void nativeInventoryBeyondLegacyBbLimitRemainsBounded() throws Exception
-    {
+    void nativeInventoryBeyondLegacyBbLimitRemainsBounded() throws Exception {
         RawYsmModel raw = NativeYsmFileTest.model();
         RawYsmModel.RawAnimationFile file = new RawYsmModel.RawAnimationFile();
-        for (int i = 0; i < 129; i++)
-        {
+        for (int i = 0; i < 129; i++) {
             RawYsmModel.RawAnimation clip = new RawYsmModel.RawAnimation();
             clip.name = "extra" + i;
             clip.length = 1;

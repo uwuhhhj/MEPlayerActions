@@ -12,14 +12,12 @@ import java.util.function.Consumer;
 import java.util.stream.IntStream;
 import static org.junit.jupiter.api.Assertions.*;
 
-class ServerModelFolderMetadataTest
-{
+class ServerModelFolderMetadataTest {
     @TempDir
     Path temporary;
 
     @Test
-    void explicitMpaFilesTakePriorityWhileMeDirectoryOnlyClassifiesRemainingModels() throws Exception
-    {
+    void explicitMpaFilesTakePriorityWhileMeDirectoryOnlyClassifiesRemainingModels() throws Exception {
         Path own = this.temporary.resolve("MPA/models"), engine = this.temporary.resolve("ME/blueprints");
         file(own, "ysm_01_jk.bbmodel");
         file(own, "动物/尾巴/fox.bbmodel");
@@ -38,8 +36,7 @@ class ServerModelFolderMetadataTest
     }
 
     @Test
-    void rootExplicitFileWinsButAmbiguousChildFilesDoNotGuessOrFallBackToMePublication() throws Exception
-    {
+    void rootExplicitFileWinsButAmbiguousChildFilesDoNotGuessOrFallBackToMePublication() throws Exception {
         Path own = this.temporary.resolve("own"), engine = this.temporary.resolve("engine");
         file(own, "a/same.bbmodel");
         file(own, "b/same.bbmodel");
@@ -52,8 +49,7 @@ class ServerModelFolderMetadataTest
     }
 
     @Test
-    void missingOwnDirectoryKeepsMeFoldersAndExplicitlySaysNoClientResource() throws Exception
-    {
+    void missingOwnDirectoryKeepsMeFoldersAndExplicitlySaysNoClientResource() throws Exception {
         Path engine = this.temporary.resolve("engine");
         file(engine, "boss/dragon.bbmodel");
         ServerModelCatalog.MetadataSnapshot metadata = ServerModelFolders.scan(this.temporary.resolve("not-created"),
@@ -63,8 +59,7 @@ class ServerModelFolderMetadataTest
     }
 
     @Test
-    void failedOwnScanCannotClaimAbsenceOrInferPriorityFromAnotherSource()
-    {
+    void failedOwnScanCannotClaimAbsenceOrInferPriorityFromAnotherSource() {
         ExplicitModelFiles.Catalog own = new ExplicitModelFiles.Catalog(List.of(), "model_complexity", "budget");
         ExplicitModelFiles.Catalog engine = new ExplicitModelFiles.Catalog(
                 List.of(new ExplicitModelFiles.Entry("boss", this.temporary.resolve("boss.bbmodel"), "bosses")),
@@ -76,8 +71,7 @@ class ServerModelFolderMetadataTest
     }
 
     @Test
-    void invalidEngineDirectoryDoesNotEraseConfirmedOwnFiles() throws Exception
-    {
+    void invalidEngineDirectoryDoesNotEraseConfirmedOwnFiles() throws Exception {
         Path own = this.temporary.resolve("own"), engine = this.temporary.resolve("not-a-folder");
         file(own, "fox.bbmodel");
         Files.writeString(engine, "not a directory");
@@ -87,15 +81,13 @@ class ServerModelFolderMetadataTest
     }
 
     @Test
-    void directoryWorkIsSharedQueuedAndDoesNotInspectFilesOnTheViewerThread() throws Exception
-    {
+    void directoryWorkIsSharedQueuedAndDoesNotInspectFilesOnTheViewerThread() throws Exception {
         Path own = this.temporary.resolve("own");
         ArrayDeque<ServerModelFolderMetadataTest.Job> tasks = new ArrayDeque<Job>();
         ServerModelFolders folders = new ServerModelFolders(own, null,
                 (work, success, failure) -> tasks.add(new Job(work, success, failure)));
         folders.refresh(100);
-        for (int viewer = 0; viewer < 1000; viewer++)
-        {
+        for (int viewer = 0; viewer < 1000; viewer++) {
             folders.refresh(200);
         }
 
@@ -114,8 +106,7 @@ class ServerModelFolderMetadataTest
     }
 
     @Test
-    void failedRefreshClearsStalePublicationAndCompletionAfterCloseCannotReplaceSnapshot() throws Exception
-    {
+    void failedRefreshClearsStalePublicationAndCompletionAfterCloseCannotReplaceSnapshot() throws Exception {
         Path own = this.temporary.resolve("own");
         file(own, "fox.bbmodel");
         ArrayDeque<ServerModelFolderMetadataTest.Job> tasks = new ArrayDeque<Job>();
@@ -137,8 +128,7 @@ class ServerModelFolderMetadataTest
     }
 
     @Test
-    void completeChangedSnapshotNotifiesPublicationWithdrawalOnlyOnceAndPreservesExplicitFiles() throws Exception
-    {
+    void completeChangedSnapshotNotifiesPublicationWithdrawalOnlyOnceAndPreservesExplicitFiles() throws Exception {
         Path own = this.temporary.resolve("own"), engine = this.temporary.resolve("engine");
         file(own, "kept.bbmodel");
         file(own, "removed.bbmodel");
@@ -167,8 +157,7 @@ class ServerModelFolderMetadataTest
     }
 
     @Test
-    void failedOrIncompleteSnapshotCannotNotifyPublicationWithdrawal() throws Exception
-    {
+    void failedOrIncompleteSnapshotCannotNotifyPublicationWithdrawal() throws Exception {
         Path own = this.temporary.resolve("own");
         file(own, "kept.bbmodel");
         ArrayDeque<ServerModelFolderMetadataTest.Job> tasks = new ArrayDeque<Job>();
@@ -193,8 +182,7 @@ class ServerModelFolderMetadataTest
     }
 
     @Test
-    void closedFolderIndexCannotNotifyPublicationWithdrawalFromAnOutstandingCompletion() throws Exception
-    {
+    void closedFolderIndexCannotNotifyPublicationWithdrawalFromAnOutstandingCompletion() throws Exception {
         ArrayDeque<ServerModelFolderMetadataTest.Job> tasks = new ArrayDeque<Job>();
         AtomicInteger changes = new AtomicInteger();
         ServerModelFolders folders = new ServerModelFolders(this.temporary.resolve("missing"), null,
@@ -208,8 +196,7 @@ class ServerModelFolderMetadataTest
     }
 
     @Test
-    void rootModelsRemainInCatalogWithOptionalPresentationMetadataAndOwnSortedFirst()
-    {
+    void rootModelsRemainInCatalogWithOptionalPresentationMetadataAndOwnSortedFirst() {
         ServerModelCatalog.MetadataSnapshot metadata = new ServerModelCatalog.MetadataSnapshot(
                 Map.of("own_root", new ServerModelCatalog.Metadata("own", "", true), "own_child",
                         new ServerModelCatalog.Metadata("own", "custom", true), "me_child",
@@ -230,13 +217,11 @@ class ServerModelFolderMetadataTest
     }
 
     @Test
-    void aNewMetadataSnapshotUpdatesSharedPlanWithoutAddingUnregisteredFiles()
-    {
-        ServerModelCatalog.MetadataSnapshot[] snapshot = new ServerModelCatalog.MetadataSnapshot[]
-        { new ServerModelCatalog.MetadataSnapshot(Map.of(), false) };
+    void aNewMetadataSnapshotUpdatesSharedPlanWithoutAddingUnregisteredFiles() {
+        ServerModelCatalog.MetadataSnapshot[] snapshot = new ServerModelCatalog.MetadataSnapshot[] {
+                new ServerModelCatalog.MetadataSnapshot(Map.of(), false) };
         AtomicInteger reads = new AtomicInteger();
-        ServerModelCatalog catalog = new ServerModelCatalog(() ->
-        {
+        ServerModelCatalog catalog = new ServerModelCatalog(() -> {
             reads.incrementAndGet();
             return List.of("one");
         }, () -> snapshot[0]);
@@ -250,8 +235,7 @@ class ServerModelFolderMetadataTest
         catalog.refresh(101);
         ServerModelCatalog.Plan updated = catalog.plan(true, 1024);
         assertNotSame(before, updated);
-        for (int viewer = 0; viewer < 1000; viewer++)
-        {
+        for (int viewer = 0; viewer < 1000; viewer++) {
             catalog.refresh(101);
         }
 
@@ -261,8 +245,7 @@ class ServerModelFolderMetadataTest
     }
 
     @Test
-    void catalogLimitRetainsOwnPublishedModelsBeforeAlphabeticalMeModels()
-    {
+    void catalogLimitRetainsOwnPublishedModelsBeforeAlphabeticalMeModels() {
         ArrayList<String> names = new ArrayList<>(
                 IntStream.range(0, 4100).mapToObj(id -> "a" + String.format("%04d", id)).toList());
         names.add("z_owned");
@@ -276,11 +259,9 @@ class ServerModelFolderMetadataTest
     }
 
     @Test
-    void unsafeFolderValuesNeverRevealAbsolutePathsAndLongUnicodeFoldersFitLegacyBudget()
-    {
+    void unsafeFolderValuesNeverRevealAbsolutePathsAndLongUnicodeFoldersFitLegacyBudget() {
         for (String invalid : Arrays.asList(null, "../outside", "C:/secrets", "/absolute", "a\\b", "a//b", "a/",
-                "a\nsecret", "a§b", "a/../b", "a/./b", "a".repeat(257), "a/".repeat(16) + "a"))
-        {
+                "a\nsecret", "a§b", "a/../b", "a/./b", "a".repeat(257), "a/".repeat(16) + "a")) {
             ServerModelCatalog.Metadata metadata = new ServerModelCatalog.Metadata("own", invalid, true);
             assertEquals("unknown", metadata.source());
             assertEquals("", metadata.folder());
@@ -298,23 +279,19 @@ class ServerModelFolderMetadataTest
         assertTrue(entry.get("clientResource").getAsBoolean());
     }
 
-    private static void file(Path root, String relative) throws Exception
-    {
+    private static void file(Path root, String relative) throws Exception {
         Path file = root.resolve(relative);
         Files.createDirectories(file.getParent());
         // Deliberately not model JSON: metadata must only examine filenames and parent directories.
         Files.writeString(file, "not JSON and never parsed for folder classification");
     }
 
-    private static List<JsonObject> entries(ServerModelCatalog.Plan plan)
-    {
+    private static List<JsonObject> entries(ServerModelCatalog.Plan plan) {
         ArrayList<JsonObject> entries = new ArrayList<JsonObject>();
-        for (int index = 0; index < plan.count(); index++)
-        {
+        for (int index = 0; index < plan.count(); index++) {
             JsonObject message = JsonParser.parseString(new String(plan.packet(index, 1), StandardCharsets.UTF_8))
                     .getAsJsonObject();
-            for (JsonElement entry : message.getAsJsonArray("models"))
-            {
+            for (JsonElement entry : message.getAsJsonArray("models")) {
                 entries.add(entry.getAsJsonObject());
             }
 
@@ -323,10 +300,8 @@ class ServerModelFolderMetadataTest
     }
 
     private record Job(Callable<ServerModelCatalog.MetadataSnapshot> work,
-            Consumer<ServerModelCatalog.MetadataSnapshot> success, Runnable failure)
-    {
-        void complete() throws Exception
-        {
+            Consumer<ServerModelCatalog.MetadataSnapshot> success, Runnable failure) {
+        void complete() throws Exception {
             this.success.accept(this.work.call());
         }
     }

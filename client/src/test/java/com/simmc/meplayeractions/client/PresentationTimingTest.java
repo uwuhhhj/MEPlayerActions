@@ -4,11 +4,9 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class PresentationTimingTest
-{
+class PresentationTimingTest {
     @Test
-    void interpolatesFeetAndWrappedYawWithoutApplyingPoseOffsets()
-    {
+    void interpolatesFeetAndWrappedYawWithoutApplyingPoseOffsets() {
         TransformTimeline timeline = new TransformTimeline();
         timeline.add(new TransformTimeline.Transform(10, 1, 64, 2, 179, 179, 10));
         timeline.add(new TransformTimeline.Transform(12, 3, 64, 4, -179, -179, 20));
@@ -21,8 +19,7 @@ class PresentationTimingTest
     }
 
     @Test
-    void ignoresOlderSamplesSnapsTeleportsAndNeverExtrapolates()
-    {
+    void ignoresOlderSamplesSnapsTeleportsAndNeverExtrapolates() {
         TransformTimeline timeline = new TransformTimeline();
         timeline.add(new TransformTimeline.Transform(10, 0, 64, 0, 0, 0, 0));
         assertFalse(timeline.add(new TransformTimeline.Transform(9, -1, 64, 0, 0, 0, 0)));
@@ -34,8 +31,7 @@ class PresentationTimingTest
     }
 
     @Test
-    void clockAdvancesWithoutAnyClientWorldTicksAndTracksSlowerServers()
-    {
+    void clockAdvancesWithoutAnyClientWorldTicksAndTracksSlowerServers() {
         ServerClock clock = new ServerClock();
         long start = 100_000_000_000L;
         clock.observe(100, start);
@@ -48,8 +44,7 @@ class PresentationTimingTest
     }
 
     @Test
-    void jumpLayersFinishAtTheSameBufferedTimeAsTheVisualTrajectory()
-    {
+    void jumpLayersFinishAtTheSameBufferedTimeAsTheVisualTrajectory() {
         SnapshotTimeline<String> layers = new SnapshotTimeline<>();
         layers.add(100, "jump");
         layers.add(117, "idle");
@@ -60,8 +55,7 @@ class PresentationTimingTest
     }
 
     @Test
-    void unsignedServerTickRolloverKeepsThePresentationTimeContinuous()
-    {
+    void unsignedServerTickRolloverKeepsThePresentationTimeContinuous() {
         ServerClock clock = new ServerClock();
         long now = 1_000_000_000L;
         clock.observe(0xffff_fffeL, now);

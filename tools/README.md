@@ -8,7 +8,7 @@
 | [package_release.py](package_release.py) | 资源、许可和 ZIP 校验辅助函数；其 `full`、`interactions` 流程不作为当前交付入口。 |
 | [prepare_models.py](prepare_models.py) | 根据研究源模型生成 `examples/models/` 原模型及 `examples/blueprints/` 的 ME 数值动画版本，并更新清单；日常安装无需运行。 |
 | [build_client_resource_pack.py](build_client_resource_pack.py) | 构建兼容资源包；客户端主动推送部署无需运行。 |
-| [java-formatter.xml](java-formatter.xml) | 可导入 Eclipse 或 IntelliJ Eclipse 插件的 Java 格式配置：四空格缩进、大括号独占一行、方法之间留空行。 |
+| [java-formatter.xml](java-formatter.xml) | 可导入 Eclipse 或 IntelliJ Eclipse 插件的 Java 格式配置：四空格缩进、左大括号与声明或控制条件同行、块内逻辑从下一行开始、方法之间留空行。 |
 
 ## 当前打包入口
 

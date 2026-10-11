@@ -8,13 +8,11 @@ import com.google.gson.JsonObject;
 import java.util.*;
 
 /** Owner-only saved upload metadata. It grants neither publication nor resource access. */
-public final class PrivateUploadCatalogSnapshot
-{
+public final class PrivateUploadCatalogSnapshot {
     public static final String CAPABILITY = "private_upload_catalog_v1";
     public static final int MAX_MODELS = 64;
 
-    public record Model(String modelId, String hash, String kind, int bytes)
-    {
+    public record Model(String modelId, String hash, String kind, int bytes) {
     }
 
     private List<Model> models = List.of();
@@ -22,35 +20,29 @@ public final class PrivateUploadCatalogSnapshot
     private boolean available;
     private Pending pending;
 
-    private static final class Pending
-    {
+    private static final class Pending {
         final long revision;
         final int count;
         final boolean available;
         final Map<Integer, List<Model>> chunks = new HashMap<>();
         final Set<String> ids = new HashSet<>();
 
-        Pending(long revision, int count, boolean available)
-        {
+        Pending(long revision, int count, boolean available) {
             this.revision = revision;
             this.count = count;
             this.available = available;
         }
     }
 
-    public void reset()
-    {
+    public void reset() {
         this.models = List.of();
         this.revision = 0;
         this.available = false;
         this.pending = null;
     }
 
-    public boolean accept(JsonObject packet)
-    {
-        if (!packet.keySet().equals(Set.of("protocol", "type", "revision", "index", "count", "available", "models")))
-
-        {
+    public boolean accept(JsonObject packet) {
+        if (!packet.keySet().equals(Set.of("protocol", "type", "revision", "index", "count", "available", "models"))) {
             throw new IllegalArgumentException("Private upload directory fields");
         }
 
@@ -59,82 +51,67 @@ public final class PrivateUploadCatalogSnapshot
                 index = (int) WireJson.integer(packet, "index", 0, count - 1);
         boolean allowed = WireJson.bool(packet, "available");
         JsonElement values = packet.get("models");
-        if (values == null || !values.isJsonArray() || values.getAsJsonArray().size() > MAX_MODELS)
-
-        {
+        if (values == null || !values.isJsonArray() || values.getAsJsonArray().size() > MAX_MODELS) {
             throw new IllegalArgumentException("Private upload directory budget");
         }
 
         ArrayList<PrivateUploadCatalogSnapshot.Model> entries = new ArrayList<Model>();
         HashSet<String> ids = new HashSet<String>();
-        for (JsonElement value : values.getAsJsonArray())
-        {
-            if (!value.isJsonObject())
-            {
+        for (JsonElement value : values.getAsJsonArray()) {
+            if (!value.isJsonObject()) {
                 throw new IllegalArgumentException("Private upload directory entry");
             }
 
             JsonObject entry = value.getAsJsonObject();
-            if (!entry.keySet().equals(Set.of("modelId", "hash", "kind", "bytes")))
-            {
+            if (!entry.keySet().equals(Set.of("modelId", "hash", "kind", "bytes"))) {
                 throw new IllegalArgumentException("Private upload directory entry fields");
             }
 
             String id = WireJson.string(entry, "modelId", 128), hash = WireJson.hash(entry, "hash"),
                     kind = WireJson.string(entry, "kind", 16);
             int bytes = (int) WireJson.integer(entry, "bytes", 22, AssetTransfer.MAX_RAW);
-            if (!LocalAppearanceSettings.isValidModelId(id) || !ids.add(id) || !Set.of("ysm", "bbmodel").contains(kind))
-
-            {
+            if (!LocalAppearanceSettings.isValidModelId(id) || !ids.add(id)
+                    || !Set.of("ysm", "bbmodel").contains(kind)) {
                 throw new IllegalArgumentException("Private upload directory identity");
             }
 
             entries.add(new Model(id, hash, kind, bytes));
         }
-        if ((!allowed || entries.isEmpty()) && (count != 1 || !entries.isEmpty()))
-        {
+        if ((!allowed || entries.isEmpty()) && (count != 1 || !entries.isEmpty())) {
             throw new IllegalArgumentException("Private upload directory availability");
         }
 
-        if (incoming <= this.revision || this.pending != null && incoming < this.pending.revision)
-        {
+        if (incoming <= this.revision || this.pending != null && incoming < this.pending.revision) {
             return false;
         }
 
         Pending next = this.pending == null || incoming > this.pending.revision ? new Pending(incoming, count, allowed)
                 : this.pending;
-        if (count != next.count || allowed != next.available)
-        {
+        if (count != next.count || allowed != next.available) {
             throw new IllegalArgumentException("Private upload directory revision");
         }
 
         List<Model> prior = next.chunks.get(index);
-        if (prior != null)
-        {
-            if (!prior.equals(entries))
-            {
+        if (prior != null) {
+            if (!prior.equals(entries)) {
                 throw new IllegalArgumentException("Private upload directory changed fragment");
             }
             return false;
         }
         if (next.ids.size() + entries.size() > MAX_MODELS
-                || entries.stream().anyMatch(model -> next.ids.contains(model.modelId())))
-
-        {
+                || entries.stream().anyMatch(model -> next.ids.contains(model.modelId()))) {
             throw new IllegalArgumentException("Private upload directory duplicate or budget");
         }
 
         next.chunks.put(index, List.copyOf(entries));
         next.ids.addAll(ids);
         this.pending = next;
-        if (next.chunks.size() != count)
-        {
+        if (next.chunks.size() != count) {
             return false;
         }
 
         ArrayList<PrivateUploadCatalogSnapshot.Model> complete = new ArrayList<Model>();
-        for (int i = 0; i < count; i++)
-        {
+        for (int i = 0; i < count; i++) {
             complete.addAll(next.chunks.get(i));
         }
 
@@ -145,34 +122,28 @@ public final class PrivateUploadCatalogSnapshot
         return true;
     }
 
-    public List<Model> models()
-    {
+    public List<Model> models() {
         return ready() && this.available ? this.models : List.of();
     }
 
-    public boolean ready()
-    {
+    public boolean ready() {
         return this.revision > 0 && this.pending == null;
     }
 
-    public boolean receiving()
-    {
+    public boolean receiving() {
         return this.pending != null;
     }
 
-    public long revision()
-    {
+    public long revision() {
         return this.revision;
     }
 
-    public boolean available()
-    {
+    public boolean available() {
         return ready() && this.available;
     }
 
     /** A matching server deletion ACK can remove an already displayed entry before its next full snapshot. */
-    public void deleted(String id, String hash)
-    {
+    public void deleted(String id, String hash) {
         this.models = this.models.stream().filter(model -> !model.modelId().equals(id) || !model.hash().equals(hash))
                 .toList();
     }

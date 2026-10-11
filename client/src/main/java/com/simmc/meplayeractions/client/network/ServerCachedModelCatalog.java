@@ -12,14 +12,11 @@ import java.util.Optional;
 import java.util.function.Predicate;
 
 /** Local preview inventory, independent of current server command or resource permissions. */
-public final class ServerCachedModelCatalog
-{
-    public record Model(String id, String label, String hash, boolean identified)
-    {
+public final class ServerCachedModelCatalog {
+    public record Model(String id, String label, String hash, boolean identified) {
     }
 
-    private record Validation(ServerModelCache.Fingerprint fingerprint, boolean accepted)
-    {
+    private record Validation(ServerModelCache.Fingerprint fingerprint, boolean accepted) {
     }
 
     private final ServerModelCache cache;
@@ -27,67 +24,53 @@ public final class ServerCachedModelCatalog
     // Keep only stat identities and outcomes, never every model's parsed geometry or raw bytes.
     private final Map<String, Validation> validated = new LinkedHashMap<>();
 
-    public ServerCachedModelCatalog(ServerModelCache cache)
-    {
-        this(cache, bytes ->
-        {
-            try
-            {
+    public ServerCachedModelCatalog(ServerModelCache cache) {
+        this(cache, bytes -> {
+            try {
                 BbModelAsset.read(bytes);
                 return true;
-            }
-            catch (Exception rejected)
-            {
+            } catch (Exception rejected) {
                 return false;
             }
         });
     }
 
-    ServerCachedModelCatalog(ServerModelCache cache, Predicate<byte[]> parser)
-    {
+    ServerCachedModelCatalog(ServerModelCache cache, Predicate<byte[]> parser) {
         this.cache = Objects.requireNonNull(cache);
         this.parser = Objects.requireNonNull(parser);
     }
 
-    public static List<Model> load(ServerModelCache cache)
-    {
+    public static List<Model> load(ServerModelCache cache) {
         return new ServerCachedModelCatalog(cache).load();
     }
 
     /** Caller runs on a bounded worker; unchanged files reuse a bounded fingerprint validation outcome. */
-    public synchronized List<Model> load()
-    {
+    public synchronized List<Model> load() {
         ArrayList<ServerCachedModelCatalog.Model> models = new ArrayList<Model>();
         HashSet<String> hashes = new HashSet<String>();
-        for (ServerModelCache.GalleryEntry entry : this.cache.galleryEntries())
-        {
+        for (ServerModelCache.GalleryEntry entry : this.cache.galleryEntries()) {
             hashes.add(entry.hash());
             ServerModelCache.Fingerprint fingerprint = this.cache.fingerprint(entry.hash()).orElse(null);
-            if (fingerprint == null)
-            {
+            if (fingerprint == null) {
                 continue;
             }
 
             Validation previous = this.validated.get(entry.hash());
             boolean accepted;
-            if (previous != null && previous.fingerprint().equals(fingerprint))
-            {
+            if (previous != null && previous.fingerprint().equals(fingerprint)) {
                 accepted = previous.accepted();
             }
 
-            else
-            {
+            else {
                 Optional<byte[]> bytes = this.cache.inspectValidated(entry.hash());
                 accepted = bytes.isPresent() && this.parser.test(bytes.get());
-                if (!Objects.equals(fingerprint, this.cache.fingerprint(entry.hash()).orElse(null)))
-                {
+                if (!Objects.equals(fingerprint, this.cache.fingerprint(entry.hash()).orElse(null))) {
                     this.validated.remove(entry.hash());
                     continue;
                 }
                 this.validated.put(entry.hash(), new Validation(fingerprint, accepted));
             }
-            if (accepted)
-            {
+            if (accepted) {
                 models.add(new Model(entry.id(),
                         entry.identified() ? entry.id() : "缓存模型 · " + entry.hash().substring(0, 12), entry.hash(),
                         entry.identified()));
@@ -95,8 +78,7 @@ public final class ServerCachedModelCatalog
 
         }
         this.validated.keySet().retainAll(hashes);
-        while (this.validated.size() > ServerModelCache.MAX_FILES)
-        {
+        while (this.validated.size() > ServerModelCache.MAX_FILES) {
             this.validated.remove(this.validated.keySet().iterator().next());
         }
 

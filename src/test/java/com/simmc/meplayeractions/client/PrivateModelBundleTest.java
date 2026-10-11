@@ -10,24 +10,19 @@ import java.util.*;
 import java.util.zip.*;
 import static org.junit.jupiter.api.Assertions.*;
 
-class PrivateModelBundleTest
-{
+class PrivateModelBundleTest {
     private static final String PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
     private static final String MODEL = "{\"elements\":[],\"outliner\":[],\"textures\":[{\"source\":\"data:image/png;base64,"
             + PNG + "\"}],\"animations\":[]}";
 
-    private static byte[] bytes(String text)
-    {
+    private static byte[] bytes(String text) {
         return text.getBytes(StandardCharsets.UTF_8);
     }
 
-    private static byte[] zip(Map<String, byte[]> entries) throws IOException
-    {
+    private static byte[] zip(Map<String, byte[]> entries) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        try (ZipOutputStream zip = new ZipOutputStream(out, StandardCharsets.UTF_8))
-        {
-            for (Map.Entry<String, byte[]> entry : entries.entrySet())
-            {
+        try (ZipOutputStream zip = new ZipOutputStream(out, StandardCharsets.UTF_8)) {
+            for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
                 zip.putNextEntry(new ZipEntry(entry.getKey()));
                 zip.write(entry.getValue());
                 zip.closeEntry();
@@ -36,8 +31,7 @@ class PrivateModelBundleTest
         return out.toByteArray();
     }
 
-    private static Map<String, byte[]> bb()
-    {
+    private static Map<String, byte[]> bb() {
         Map<String, byte[]> files = new LinkedHashMap<>();
         files.put("manifest.json", bytes("{\"format\":1,\"kind\":\"bbmodel\",\"entry\":\"model.bbmodel\"}"));
         files.put("model.bbmodel", bytes(MODEL));
@@ -45,8 +39,7 @@ class PrivateModelBundleTest
     }
 
     @Test
-    void preservesCompleteBundleIdentityAndValidatesEachNativeResource() throws IOException
-    {
+    void preservesCompleteBundleIdentityAndValidatesEachNativeResource() throws IOException {
         Map<String, byte[]> files = new LinkedHashMap<>();
         files.put("manifest.json", bytes("{\"format\":1,\"kind\":\"ysm\",\"entry\":\"ysm.json\"}"));
         files.put("ysm.json",
@@ -66,15 +59,13 @@ class PrivateModelBundleTest
     }
 
     @Test
-    void bbmodelHasOriginalEmbeddedTextureAndNativeFields() throws IOException
-    {
+    void bbmodelHasOriginalEmbeddedTextureAndNativeFields() throws IOException {
         byte[] raw = zip(bb());
         assertEquals("model.bbmodel", PrivateModelBundle.validate(raw, "bbmodel").entry());
         assertThrows(IOException.class, () -> PrivateModelBundle.validate(raw, "ysm"));
     }
 
-    private static JsonObject texture(String name, String source, String relative)
-    {
+    private static JsonObject texture(String name, String source, String relative) {
         JsonObject value = new JsonObject();
         value.addProperty("name", name);
         value.addProperty("source", source);
@@ -82,13 +73,11 @@ class PrivateModelBundleTest
         return value;
     }
 
-    private static Map<String, byte[]> withTextures(JsonObject... textures)
-    {
+    private static Map<String, byte[]> withTextures(JsonObject... textures) {
         Map<String, byte[]> files = bb();
         JsonObject model = JsonParser.parseString(MODEL).getAsJsonObject();
         JsonArray values = new JsonArray();
-        for (JsonObject value : textures)
-        {
+        for (JsonObject value : textures) {
             values.add(value);
         }
 
@@ -98,11 +87,9 @@ class PrivateModelBundleTest
     }
 
     @Test
-    void bbmodelAcceptsIncludedPngByNameOptionalExtensionAndRelativeBasename() throws IOException
-    {
+    void bbmodelAcceptsIncludedPngByNameOptionalExtensionAndRelativeBasename() throws IOException {
         for (JsonObject texture : List.of(texture("skin.PNG", "", "unused.png"), texture("skin", "", "unused.png"),
-                texture("author label", "", "textures\\skin.PNG")))
-        {
+                texture("author label", "", "textures\\skin.PNG"))) {
             // An editor-only absolute path remains inert; the host never opens it.
             texture.addProperty("path", "C:\\Users\\author\\source.png");
             Map<String, byte[]> files = withTextures(texture);
@@ -117,8 +104,7 @@ class PrivateModelBundleTest
     }
 
     @Test
-    void bbmodelNamePrecedenceDoesNotConsultUnusedEmbeddedEditorRelativePath() throws IOException
-    {
+    void bbmodelNamePrecedenceDoesNotConsultUnusedEmbeddedEditorRelativePath() throws IOException {
         JsonObject texture = texture("skin", "data:image/png;base64," + PNG, "../unused.png");
         Map<String, byte[]> files = withTextures(texture);
         files.put("skin.png", Base64.getDecoder().decode(PNG));
@@ -129,25 +115,23 @@ class PrivateModelBundleTest
     }
 
     @Test
-    void bbmodelRejectsMissingCompanionsUnsafeSelectedPathsAndExternalSources() throws IOException
-    {
+    void bbmodelRejectsMissingCompanionsUnsafeSelectedPathsAndExternalSources() throws IOException {
         Map<String, byte[]> missing = withTextures(texture("skin", "", "textures/skin.png"));
         assertThrows(IOException.class, () -> PrivateModelBundle.validate(zip(missing), "bbmodel"));
         // A header-valid JPEG remains a valid general asset, but cannot satisfy BB's PNG map.
-        missing.put("skin.jpg", new byte[]
-        { (byte) 0xff, (byte) 0xd8, (byte) 0xff, (byte) 0xc0, 0, 8, 8, 0, 1, 0, 1, 1 });
+        missing.put("skin.jpg",
+                new byte[] { (byte) 0xff, (byte) 0xd8, (byte) 0xff, (byte) 0xc0, 0, 8, 8, 0, 1, 0, 1, 1 });
         assertEquals("bundle_bbmodel_texture",
                 assertThrows(IOException.class, () -> PrivateModelBundle.validate(zip(missing), "bbmodel"))
                         .getMessage());
         for (String reference : List.of("../skin.png", "/skin.png", "C:/skin.png", "textures/../skin.png",
-                "https://example.com/skin.png", "file:/skin.png", "\\\\host/skin.png"))
-        {
+                "https://example.com/skin.png", "file:/skin.png", "\\\\host/skin.png")) {
             Map<String, byte[]> files = withTextures(texture("unmatched label", "", reference));
             files.put("skin.png", Base64.getDecoder().decode(PNG));
             assertThrows(IOException.class, () -> PrivateModelBundle.validate(zip(files), "bbmodel"), reference);
         }
-        for (String reference : List.of("https://example.com/skin.png", "file:/skin.png", "C:/skin.png", "../skin.png"))
-        {
+        for (String reference : List.of("https://example.com/skin.png", "file:/skin.png", "C:/skin.png",
+                "../skin.png")) {
             Map<String, byte[]> files = withTextures(texture("skin", reference, "skin.png"));
             files.put("skin.png", Base64.getDecoder().decode(PNG));
             assertThrows(IOException.class, () -> PrivateModelBundle.validate(zip(files), "bbmodel"), reference);
@@ -155,8 +139,7 @@ class PrivateModelBundleTest
     }
 
     @Test
-    void bbmodelRejectsAmbiguousCompanionLeafNamesAndMalformedIncludedPng() throws IOException
-    {
+    void bbmodelRejectsAmbiguousCompanionLeafNamesAndMalformedIncludedPng() throws IOException {
         Map<String, byte[]> files = withTextures(texture("skin", "", "skin.png"));
         files.put("a/skin.png", Base64.getDecoder().decode(PNG));
         files.put("b/SKIN.PNG", Base64.getDecoder().decode(PNG));
@@ -169,19 +152,16 @@ class PrivateModelBundleTest
     }
 
     @Test
-    void bbmodelStillValidatesEmbeddedDataUrlsWhenSidePngOverrides() throws IOException
-    {
+    void bbmodelStillValidatesEmbeddedDataUrlsWhenSidePngOverrides() throws IOException {
         for (String source : List.of("data:image/jpeg;base64," + PNG, "data:image/png;base64,%%%",
-                "data:image/png;base64," + Base64.getEncoder().encodeToString(bytes("not a PNG"))))
-        {
+                "data:image/png;base64," + Base64.getEncoder().encodeToString(bytes("not a PNG")))) {
             Map<String, byte[]> files = withTextures(texture("skin", source, "skin.png"));
             files.put("skin.png", Base64.getDecoder().decode(PNG));
             assertThrows(IOException.class, () -> PrivateModelBundle.validate(zip(files), "bbmodel"), source);
         }
     }
 
-    private static byte[] pngHeader(int width, int height)
-    {
+    private static byte[] pngHeader(int width, int height) {
         byte[] data = Base64.getDecoder().decode(PNG);
         ByteBuffer buffer = ByteBuffer.wrap(data);
         buffer.putInt(16, width);
@@ -190,8 +170,7 @@ class PrivateModelBundleTest
     }
 
     @Test
-    void bbmodelCompanionsAndEmbeddedTexturesShareExistingPixelAndExpansionBudgets() throws IOException
-    {
+    void bbmodelCompanionsAndEmbeddedTexturesShareExistingPixelAndExpansionBudgets() throws IOException {
         Map<String, byte[]> maximum = withTextures(texture("skin", "", "skin.png"));
         maximum.put("skin.png", pngHeader(4096, 4096));
         assertEquals("bbmodel", PrivateModelBundle.validate(zip(maximum), "bbmodel").kind());
@@ -209,11 +188,9 @@ class PrivateModelBundleTest
     }
 
     @Test
-    void rejectsTraversalAliasesCasefoldDuplicatesExternalSourcesAndManifestExtras() throws IOException
-    {
+    void rejectsTraversalAliasesCasefoldDuplicatesExternalSourcesAndManifestExtras() throws IOException {
         for (String path : List.of("../secret.json", "/absolute.json", "C:/model.json", "models\\main.json",
-                "models//main.json", "models/./main.json", "models/../main.json"))
-        {
+                "models//main.json", "models/./main.json", "models/../main.json")) {
             Map<String, byte[]> files = bb();
             files.put(path, bytes("{}"));
             assertThrows(IOException.class, () -> PrivateModelBundle.validate(zip(files), "bbmodel"), path);
@@ -232,29 +209,23 @@ class PrivateModelBundleTest
     }
 
     @Test
-    void rejectsDuplicateJsonFieldsDeepJsonNonFiniteNumbersAndInvalidUtf8() throws IOException
-    {
+    void rejectsDuplicateJsonFieldsDeepJsonNonFiniteNumbersAndInvalidUtf8() throws IOException {
         for (byte[] json : List.of(bytes("{\"x\":1,\"x\":2}"), bytes("[".repeat(66) + "0" + "]".repeat(66)),
-                bytes("{\"x\":1e999}"), new byte[]
-                { (byte) 0xc3, (byte) 0x28 }, bytes("{} {}")))
-
-        {
+                bytes("{\"x\":1e999}"), new byte[] { (byte) 0xc3, (byte) 0x28 }, bytes("{} {}"))) {
             assertThrows(IOException.class, () -> PrivateModelBundle.parseJson(json, PrivateModelBundle.MAX_BYTES));
         }
 
     }
 
     @Test
-    void stopsHighlyCompressedExpansionAndCountsDirectoryEntriesToo() throws IOException
-    {
+    void stopsHighlyCompressedExpansionAndCountsDirectoryEntriesToo() throws IOException {
         Map<String, byte[]> files = bb();
         files.put("large.molang", new byte[PrivateModelBundle.MAX_BYTES]);
         byte[] bomb = zip(files);
         assertTrue(bomb.length < 100_000);
         assertThrows(IOException.class, () -> PrivateModelBundle.validate(bomb, "bbmodel"));
         Map<String, byte[]> many = bb();
-        for (int i = 0; i < PrivateModelBundle.MAX_ENTRIES; i++)
-        {
+        for (int i = 0; i < PrivateModelBundle.MAX_ENTRIES; i++) {
             many.put("directories/" + i + "/", new byte[0]);
         }
 
@@ -265,13 +236,10 @@ class PrivateModelBundleTest
     }
 
     @Test
-    void rejectsSymlinkMetadataAndDamagedArchiveWithoutExtractingAnything() throws IOException
-    {
+    void rejectsSymlinkMetadataAndDamagedArchiveWithoutExtractingAnything() throws IOException {
         byte[] raw = zip(bb()), symlink = raw.clone();
-        for (int i = 0; i < symlink.length - 46; i++)
-        {
-            if (symlink[i] == 0x50 && symlink[i + 1] == 0x4b && symlink[i + 2] == 1 && symlink[i + 3] == 2)
-            {
+        for (int i = 0; i < symlink.length - 46; i++) {
+            if (symlink[i] == 0x50 && symlink[i + 1] == 0x4b && symlink[i + 2] == 1 && symlink[i + 3] == 2) {
                 symlink[i + 40] = (byte) 0xff;
                 symlink[i + 41] = (byte) 0xa1;
                 break;
@@ -284,8 +252,7 @@ class PrivateModelBundleTest
     }
 
     @Test
-    void configuredBundleLimitsApplyAcrossFilesAndKeepExistingFormatValidation() throws IOException
-    {
+    void configuredBundleLimitsApplyAcrossFilesAndKeepExistingFormatValidation() throws IOException {
         Map<String, byte[]> files = bb();
         files.put("first.molang", bytes("v.a=1;"));
         files.put("second.molang", bytes("v.b=1;"));

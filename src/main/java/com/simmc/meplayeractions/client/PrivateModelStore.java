@@ -23,8 +23,7 @@ import java.io.OutputStream;
 import java.nio.charset.CharsetDecoder;
 
 /** Bounded owner-scoped storage. Disk operations run on a worker; directory snapshots never perform I/O. */
-public final class PrivateModelStore
-{
+public final class PrivateModelStore {
     private static final Pattern FILE = Pattern
             .compile("[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}_[a-f0-9]{64}\\.zip");
     private static final Pattern METADATA_FILE = Pattern
@@ -42,51 +41,40 @@ public final class PrivateModelStore
     private long cacheHits, cacheMisses;
     private volatile Statistics statistics = new Statistics(0, 0, 0, 0);
 
-    public record Statistics(long bytes, int models, long hits, long misses)
-    {
+    public record Statistics(long bytes, int models, long hits, long misses) {
     }
 
     /** Receipt metadata is not a publication and never grants another owner access to this bundle. */
-    public record UploadedModel(String sourceId, String hash, String kind, int bytes)
-    {
+    public record UploadedModel(String sourceId, String hash, String kind, int bytes) {
     }
 
-    public record CatalogSnapshot(long revision, Map<UUID, List<UploadedModel>> modelsByOwner)
-    {
-        public CatalogSnapshot
-        {
+    public record CatalogSnapshot(long revision, Map<UUID, List<UploadedModel>> modelsByOwner) {
+        public CatalogSnapshot {
             Map<UUID, List<UploadedModel>> copy = new HashMap<>();
             modelsByOwner.forEach((owner, models) -> copy.put(owner, List.copyOf(models)));
             modelsByOwner = Map.copyOf(copy);
         }
 
-        public List<UploadedModel> models(UUID owner)
-        {
+        public List<UploadedModel> models(UUID owner) {
             return this.modelsByOwner.getOrDefault(owner, List.of());
         }
     }
 
-    public record Settings(boolean enabled, long maxBytes, int maxModels, int maxModelsPerPlayer)
-    {
-        public Settings
-        {
+    public record Settings(boolean enabled, long maxBytes, int maxModels, int maxModelsPerPlayer) {
+        public Settings {
             if (maxBytes < PrivateModelBundle.MAX_BYTES || maxBytes > 4L * 1024 * 1024 * 1024 || maxModels < 1
                     || maxModels > 4096 || maxModelsPerPlayer < 1 || maxModelsPerPlayer > 64
-                    || maxModelsPerPlayer > maxModels)
-
-            {
+                    || maxModelsPerPlayer > maxModels) {
                 throw new IllegalArgumentException("Invalid private model cache settings");
             }
 
         }
 
-        public static Settings defaults()
-        {
+        public static Settings defaults() {
             return new Settings(true, 128L * 1024 * 1024, 512, 4);
         }
 
-        public static Settings fromConfiguration(ConfigurationSection config)
-        {
+        public static Settings fromConfiguration(ConfigurationSection config) {
             Objects.requireNonNull(config);
             return new Settings(config.getBoolean("client-sync.private-models.cache-enabled", true),
                     config.getLong("client-sync.private-models.max-cache-bytes", 128L * 1024 * 1024),
@@ -95,72 +83,58 @@ public final class PrivateModelStore
         }
     }
 
-    public PrivateModelStore(Path directory, Settings settings)
-    {
+    public PrivateModelStore(Path directory, Settings settings) {
         this(directory, settings, null);
     }
 
-    public PrivateModelStore(Path directory, Settings settings, ResourceProtection resources)
-    {
+    public PrivateModelStore(Path directory, Settings settings, ResourceProtection resources) {
         this.directory = Objects.requireNonNull(directory).toAbsolutePath().normalize();
         this.settings = Objects.requireNonNull(settings);
         this.resources = resources;
     }
 
-    public boolean enabled()
-    {
+    public boolean enabled() {
         return this.settings.enabled();
     }
 
-    public CatalogSnapshot snapshot()
-    {
+    public CatalogSnapshot snapshot() {
         return this.catalog;
     }
 
     /** Cached counters only; status never scans or waits for the storage worker monitor. */
-    public Statistics statistics()
-    {
+    public Statistics statistics() {
         return this.statistics;
     }
 
-    public List<UploadedModel> listUploaded(UUID owner)
-    {
+    public List<UploadedModel> listUploaded(UUID owner) {
         return this.catalog.models(owner);
     }
 
     /** Matches the current local model identifier contract without treating an identifier as a disk path. */
-    static boolean validSourceId(String id)
-    {
-        if (BUILTIN_IDS.contains(id == null ? "" : id))
-        {
+    static boolean validSourceId(String id) {
+        if (BUILTIN_IDS.contains(id == null ? "" : id)) {
             return true;
         }
 
-        if (id == null || id.length() > 128)
-        {
+        if (id == null || id.length() > 128) {
             return false;
         }
 
-        if (id.startsWith("local:"))
-        {
+        if (id.startsWith("local:")) {
             String filename = id.substring(6);
             return filename.length() > 8 && filename.endsWith(".bbmodel") && safeSourceName(filename);
         }
-        if (!id.startsWith("ysm:"))
-        {
+        if (!id.startsWith("ysm:")) {
             return false;
         }
 
         String[] segments = id.substring(4).split("/", -1);
-        if (segments.length > 9)
-        {
+        if (segments.length > 9) {
             return false;
         }
 
-        for (String segment : segments)
-        {
-            if (!safeSourceName(segment))
-            {
+        for (String segment : segments) {
+            if (!safeSourceName(segment)) {
                 return false;
             }
 
@@ -169,21 +143,18 @@ public final class PrivateModelStore
         return true;
     }
 
-    private static boolean safeSourceName(String name)
-    {
+    private static boolean safeSourceName(String name) {
         return !name.isBlank() && !name.startsWith(".") && !name.contains("..") && name.equals(name.strip())
                 && name.chars().noneMatch(Character::isISOControl) && !name.matches(".*[<>:\"/\\\\|?*\\p{Cntrl}].*");
     }
 
     /** An owner can only reuse bytes that were previously stored under that owner's UUID. */
-    synchronized byte[] load(UUID owner, String hash, String kind, int expectedBytes) throws IOException
-    {
+    synchronized byte[] load(UUID owner, String hash, String kind, int expectedBytes) throws IOException {
         Path path = path(owner, hash);
         this.cacheMisses++;
         this.statistics = new Statistics(this.statistics.bytes, this.statistics.models, this.cacheHits,
                 this.cacheMisses);
-        if (!enabled() || !Files.exists(this.directory, LinkOption.NOFOLLOW_LINKS))
-        {
+        if (!enabled() || !Files.exists(this.directory, LinkOption.NOFOLLOW_LINKS)) {
             return null;
         }
 
@@ -192,24 +163,19 @@ public final class PrivateModelStore
         trimToLimits(entries);
         publishVerified(entries);
         if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) || Files.size(path) != expectedBytes
-                || expectedBytes > PrivateModelBundle.MAX_BYTES)
-        {
+                || expectedBytes > PrivateModelBundle.MAX_BYTES) {
             return null;
         }
 
         ResourceProtection.checkCancelled();
         byte[] bytes = readBundle(path, expectedBytes);
-        try
-        {
-            if (!PrivateModelBundle.hash(bytes).equals(hash))
-            {
+        try {
+            if (!PrivateModelBundle.hash(bytes).equals(hash)) {
                 throw new IOException("cache_hash");
             }
 
             validateBundle(bytes, kind);
-        }
-        catch (IOException | RuntimeException invalid)
-        {
+        } catch (IOException | RuntimeException invalid) {
             ResourceProtection.checkCancelled();
             deleteEntry(path);
             publishVerified(entries());
@@ -220,9 +186,7 @@ public final class PrivateModelStore
         Fingerprint identity = fingerprint(path);
         this.validatedLoads.put(path, new ValidatedLoad(hash, kind, expectedBytes, identity));
         VerifiedMetadata metadata = this.verified.get(path);
-        if (metadata != null && metadata.model.hash().equals(hash) && metadata.model.kind().equals(kind))
-
-        {
+        if (metadata != null && metadata.model.hash().equals(hash) && metadata.model.kind().equals(kind)) {
             this.verified.put(path, new VerifiedMetadata(metadata.model, identity, metadata.sidecar));
         }
 
@@ -233,40 +197,31 @@ public final class PrivateModelStore
     }
 
     /** Only the relay's successful whole-bundle validator may call this method. */
-    synchronized void saveValidated(UUID owner, String hash, byte[] bytes) throws IOException
-    {
+    synchronized void saveValidated(UUID owner, String hash, byte[] bytes) throws IOException {
         saveValidated(owner, null, hash, null, bytes);
     }
 
     /** Only a successfully validated upload can create an owner-scoped persistent directory receipt. */
     synchronized void saveValidated(UUID owner, String sourceId, String hash, String kind, byte[] bytes)
-            throws IOException
-    {
+            throws IOException {
         Path target = path(owner, hash);
-        if (!enabled())
-        {
+        if (!enabled()) {
             return;
         }
 
         if (sourceId != null
-                && (!validSourceId(sourceId) || !Set.of("ysm", "bbmodel").contains(kind == null ? "" : kind)))
-
-        {
+                && (!validSourceId(sourceId) || !Set.of("ysm", "bbmodel").contains(kind == null ? "" : kind))) {
             throw new IOException("cache_metadata_identity");
         }
 
         if (bytes == null || bytes.length < 22 || bytes.length > PrivateModelBundle.MAX_BYTES
-                || !PrivateModelBundle.hash(bytes).equals(hash))
-
-        {
+                || !PrivateModelBundle.hash(bytes).equals(hash)) {
             throw new IOException("cache_identity");
         }
 
         Path sidecar = metadataPath(target);
         if (sourceId != null && Files.exists(sidecar, LinkOption.NOFOLLOW_LINKS)
-                && !Files.isRegularFile(sidecar, LinkOption.NOFOLLOW_LINKS))
-
-        {
+                && !Files.isRegularFile(sidecar, LinkOption.NOFOLLOW_LINKS)) {
             throw new IOException("cache_metadata_file");
         }
 
@@ -279,11 +234,9 @@ public final class PrivateModelStore
         int owned = (int) entries.stream().filter(entry -> entry.owner.equals(owner)).count();
         // Each successful write first bounds the per-owner library, then the shared disk budget.
         for (Iterator<Entry> iterator = entries.iterator(); owned >= this.settings.maxModelsPerPlayer()
-                && iterator.hasNext();)
-        {
+                && iterator.hasNext();) {
             Entry entry = iterator.next();
-            if (!entry.owner.equals(owner))
-            {
+            if (!entry.owner.equals(owner)) {
                 continue;
             }
 
@@ -293,45 +246,36 @@ public final class PrivateModelStore
             owned--;
         }
         while (!entries.isEmpty()
-                && (entries.size() >= this.settings.maxModels() || total + bytes.length > this.settings.maxBytes()))
-        {
+                && (entries.size() >= this.settings.maxModels() || total + bytes.length > this.settings.maxBytes())) {
             Entry entry = entries.removeFirst();
             deleteEntry(entry.path);
             total -= entry.bytes;
         }
-        if (entries.size() >= this.settings.maxModels() || total + bytes.length > this.settings.maxBytes())
-        {
+        if (entries.size() >= this.settings.maxModels() || total + bytes.length > this.settings.maxBytes()) {
             throw new IOException("cache_capacity");
         }
 
-        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS) && !Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS))
-        {
+        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)
+                && !Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
             throw new IOException("cache_file");
         }
 
         atomicWrite(target, bytes, ".private-upload-");
         this.validatedLoads.remove(target);
-        if (sourceId != null)
-        {
+        if (sourceId != null) {
             UploadedModel model = new UploadedModel(sourceId, hash, kind, bytes.length);
-            try
-            {
+            try {
                 atomicWrite(sidecar, encodeMetadata(owner, model), ".private-metadata-");
                 this.verified.put(target, new VerifiedMetadata(model, fingerprint(target), fingerprint(sidecar)));
-            }
-            catch (IOException failure)
-            {
+            } catch (IOException failure) {
                 this.verified.remove(target);
                 deleteMetadata(target);
                 publishVerified(entries());
                 throw failure;
             }
-        }
-        else
-        {
+        } else {
             VerifiedMetadata previous = this.verified.get(target);
-            if (previous != null)
-            {
+            if (previous != null) {
                 this.verified.put(target, new VerifiedMetadata(previous.model, fingerprint(target), previous.sidecar));
             }
 
@@ -341,24 +285,20 @@ public final class PrivateModelStore
 
     /** A cache probe has already checked the ZIP; associate its exact owner/hash with a name without rewriting bytes. */
     synchronized void recordValidatedIdentity(UUID owner, String sourceId, String hash, String kind, int expectedBytes)
-            throws IOException
-    {
+            throws IOException {
         Path target = path(owner, hash);
-        if (!enabled())
-        {
+        if (!enabled()) {
             return;
         }
 
-        if (!validSourceId(sourceId) || !Set.of("ysm", "bbmodel").contains(kind == null ? "" : kind))
-        {
+        if (!validSourceId(sourceId) || !Set.of("ysm", "bbmodel").contains(kind == null ? "" : kind)) {
             throw new IOException("cache_metadata_identity");
         }
 
         requireDirectory();
         ValidatedLoad proof = this.validatedLoads.get(target);
         if (proof == null || !proof.hash.equals(hash) || !proof.kind.equals(kind) || proof.bytes != expectedBytes
-                || !proof.bundle.equals(fingerprint(target)))
-        {
+                || !proof.bundle.equals(fingerprint(target))) {
             throw new IOException("cache_unvalidated_identity");
         }
 
@@ -371,111 +311,89 @@ public final class PrivateModelStore
 
     /** The current exact receipt guards deletion of this owner's verified versions of the same source. */
     synchronized boolean deleteValidated(UUID owner, String sourceId, String hash, String kind, int expectedBytes)
-            throws IOException
-    {
+            throws IOException {
         Path target = path(owner, hash);
-        if (!enabled())
-        {
+        if (!enabled()) {
             return false;
         }
 
         if (!validSourceId(sourceId) || !Set.of("ysm", "bbmodel").contains(kind == null ? "" : kind)
-                || expectedBytes < 22 || expectedBytes > PrivateModelBundle.MAX_BYTES)
-        {
+                || expectedBytes < 22 || expectedBytes > PrivateModelBundle.MAX_BYTES) {
             throw new IOException("cache_metadata_identity");
         }
 
         UploadedModel expected = new UploadedModel(sourceId, hash, kind, expectedBytes);
-        if (!this.catalog.models(owner).contains(expected))
-        {
+        if (!this.catalog.models(owner).contains(expected)) {
             return false;
         }
 
-        if (!Files.exists(this.directory, LinkOption.NOFOLLOW_LINKS))
-        {
+        if (!Files.exists(this.directory, LinkOption.NOFOLLOW_LINKS)) {
             this.verified.clear();
             this.validatedLoads.clear();
             publish(Map.of());
             return false;
         }
-        try
-        {
+        try {
             requireDirectory();
             VerifiedMetadata current = this.verified.get(target);
             if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)
-                    || !Files.exists(metadataPath(target), LinkOption.NOFOLLOW_LINKS))
-            {
+                    || !Files.exists(metadataPath(target), LinkOption.NOFOLLOW_LINKS)) {
                 invalidateReceipt(target);
                 return false;
             }
-            if (current == null || !current.model.equals(expected))
-            {
+            if (current == null || !current.model.equals(expected)) {
                 invalidateReceipt(target);
                 throw new IOException("cache_delete_changed");
             }
             List<Deletion> candidates = new ArrayList<>();
-            for (Map.Entry<Path, PrivateModelStore.VerifiedMetadata> entry : this.verified.entrySet())
-            {
+            for (Map.Entry<Path, PrivateModelStore.VerifiedMetadata> entry : this.verified.entrySet()) {
                 UploadedModel model = entry.getValue().model;
-                if (model.sourceId().equals(sourceId) && entry.getKey().equals(path(owner, model.hash())))
-
-                {
+                if (model.sourceId().equals(sourceId) && entry.getKey().equals(path(owner, model.hash()))) {
                     candidates.add(new Deletion(entry.getKey(), entry.getValue()));
                 }
 
             }
             // Preflight every version before deleting any bytes. Another source or an unverified file is never selected.
-            for (Deletion candidate : candidates)
-            {
+            for (Deletion candidate : candidates) {
                 Path bundle = candidate.path, sidecar = metadataPath(bundle);
                 VerifiedMetadata metadata = candidate.metadata;
                 if (!Files.exists(bundle, LinkOption.NOFOLLOW_LINKS)
-                        || !Files.exists(sidecar, LinkOption.NOFOLLOW_LINKS))
-                {
+                        || !Files.exists(sidecar, LinkOption.NOFOLLOW_LINKS)) {
                     invalidateReceipt(bundle);
                     return false;
                 }
                 if (!Files.isRegularFile(bundle, LinkOption.NOFOLLOW_LINKS)
                         || !Files.isRegularFile(sidecar, LinkOption.NOFOLLOW_LINKS)
                         || !metadata.bundle.equals(fingerprint(bundle))
-                        || !metadata.sidecar.equals(fingerprint(sidecar)))
-                {
+                        || !metadata.sidecar.equals(fingerprint(sidecar))) {
                     invalidateReceipt(bundle);
                     throw new IOException("cache_delete_changed");
                 }
             }
             // A progressive bootstrap may not have checked an older version yet. Wait instead of resurrecting it later.
-            for (Entry entry : entries())
-            {
-                if (!entry.owner.equals(owner))
-                {
+            for (Entry entry : entries()) {
+                if (!entry.owner.equals(owner)) {
                     continue;
                 }
 
                 Path sidecar = metadataPath(entry.path);
-                if (!Files.isRegularFile(sidecar, LinkOption.NOFOLLOW_LINKS))
-                {
+                if (!Files.isRegularFile(sidecar, LinkOption.NOFOLLOW_LINKS)) {
                     continue;
                 }
 
                 VerifiedMetadata previous = this.verified.get(entry.path);
                 if (previous != null && previous.bundle.equals(entry.identity)
-                        && previous.sidecar.equals(fingerprint(sidecar)))
-                {
+                        && previous.sidecar.equals(fingerprint(sidecar))) {
                     continue;
                 }
 
                 UploadedModel pending;
-                try
-                {
+                try {
                     pending = readMetadata(entry, sidecar);
-                }
-                catch (IOException | RuntimeException invalid)
-                {
+                } catch (IOException | RuntimeException invalid) {
                     continue;
                 }
-                if (pending.sourceId().equals(sourceId))
-                {
+                if (pending.sourceId().equals(sourceId)) {
                     throw new IOException("cache_delete_pending_validation");
                 }
 
@@ -484,33 +402,23 @@ public final class PrivateModelStore
             candidates.sort(Comparator.comparing((Deletion candidate) -> candidate.path.equals(target))
                     .thenComparing(candidate -> candidate.metadata.bundle.modified)
                     .thenComparing(candidate -> candidate.path.toString()));
-            try
-            {
-                for (Deletion candidate : candidates)
-                {
+            try {
+                for (Deletion candidate : candidates) {
                     deleteEntry(candidate.path);
                 }
 
-            }
-            finally
-            {
+            } finally {
                 publishVerified(entries());
             }
             return true;
-        }
-        catch (IOException failure)
-        {
-            if ("cache_delete_pending_validation".equals(failure.getMessage()))
-            {
+        } catch (IOException failure) {
+            if ("cache_delete_pending_validation".equals(failure.getMessage())) {
                 throw failure;
             }
 
-            try
-            {
+            try {
                 publishVerified(entries());
-            }
-            catch (IOException unavailable)
-            {
+            } catch (IOException unavailable) {
                 this.verified.clear();
                 this.validatedLoads.clear();
                 publish(Map.of());
@@ -519,22 +427,17 @@ public final class PrivateModelStore
         }
     }
 
-    private void invalidateReceipt(Path target) throws IOException
-    {
+    private void invalidateReceipt(Path target) throws IOException {
         this.verified.remove(target);
         this.validatedLoads.remove(target);
         publishVerified(entries());
     }
 
     /** One shared background refresh; unchanged metadata and bundles are reused from their verified fingerprints. */
-    public synchronized void refreshCatalog() throws IOException
-    {
-        try
-        {
+    public synchronized void refreshCatalog() throws IOException {
+        try {
             refreshCatalogContents();
-        }
-        catch (IOException failure)
-        {
+        } catch (IOException failure) {
             this.verified.clear();
             this.validatedLoads.clear();
             publish(Map.of());
@@ -542,17 +445,14 @@ public final class PrivateModelStore
         }
     }
 
-    private void refreshCatalogContents() throws IOException
-    {
-        if (!enabled())
-        {
+    private void refreshCatalogContents() throws IOException {
+        if (!enabled()) {
             this.verified.clear();
             this.validatedLoads.clear();
             publish(Map.of());
             return;
         }
-        if (!Files.exists(this.directory, LinkOption.NOFOLLOW_LINKS))
-        {
+        if (!Files.exists(this.directory, LinkOption.NOFOLLOW_LINKS)) {
             this.verified.clear();
             this.validatedLoads.clear();
             publish(Map.of());
@@ -565,67 +465,55 @@ public final class PrivateModelStore
         long validationBytes = 0;
         int validations = 0;
         // Recent uploads become available first when a large cache must be checked over several refreshes.
-        for (int index = entries.size() - 1; index >= 0; index--)
-        {
+        for (int index = entries.size() - 1; index >= 0; index--) {
             Entry entry = entries.get(index);
             Path path = entry.path, sidecar = metadataPath(path);
             present.add(path);
             if (entry.bytes < 22 || entry.bytes > PrivateModelBundle.MAX_BYTES
-                    || !Files.isRegularFile(sidecar, LinkOption.NOFOLLOW_LINKS))
-            {
+                    || !Files.isRegularFile(sidecar, LinkOption.NOFOLLOW_LINKS)) {
                 this.verified.remove(path);
-                if (entry.bytes < 22 || entry.bytes > PrivateModelBundle.MAX_BYTES)
-                {
+                if (entry.bytes < 22 || entry.bytes > PrivateModelBundle.MAX_BYTES) {
                     deleteMetadata(path);
                 }
                 continue;
             }
             Fingerprint bundleIdentity = fingerprint(path), metadataIdentity = fingerprint(sidecar);
             VerifiedMetadata previous = this.verified.get(path);
-            if (previous != null && previous.bundle.equals(bundleIdentity) && previous.sidecar.equals(metadataIdentity))
-            {
+            if (previous != null && previous.bundle.equals(bundleIdentity)
+                    && previous.sidecar.equals(metadataIdentity)) {
                 continue;
             }
 
             this.verified.remove(path);
             UploadedModel model;
-            try
-            {
+            try {
                 model = readMetadata(entry, sidecar);
-            }
-            catch (IOException | RuntimeException invalid)
-            {
+            } catch (IOException | RuntimeException invalid) {
                 ResourceProtection.checkCancelled();
                 deleteMetadata(path);
                 continue;
             }
             if (validations >= MAX_VALIDATIONS_PER_REFRESH
-                    || validationBytes + entry.bytes > MAX_VALIDATION_BYTES_PER_REFRESH)
-            {
+                    || validationBytes + entry.bytes > MAX_VALIDATION_BYTES_PER_REFRESH) {
                 continue;
             }
 
             validations++;
             validationBytes += entry.bytes;
-            try
-            {
+            try {
                 byte[] bytes = readBundle(path, model.bytes());
-                if (!PrivateModelBundle.hash(bytes).equals(model.hash()))
-                {
+                if (!PrivateModelBundle.hash(bytes).equals(model.hash())) {
                     throw new IOException("cache_hash");
                 }
 
                 ResourceProtection.checkCancelled();
                 validateBundle(bytes, model.kind());
-                if (!bundleIdentity.equals(fingerprint(path)) || !metadataIdentity.equals(fingerprint(sidecar)))
-                {
+                if (!bundleIdentity.equals(fingerprint(path)) || !metadataIdentity.equals(fingerprint(sidecar))) {
                     continue;
                 }
 
                 this.verified.put(path, new VerifiedMetadata(model, bundleIdentity, metadataIdentity));
-            }
-            catch (IOException | RuntimeException invalid)
-            {
+            } catch (IOException | RuntimeException invalid) {
                 ResourceProtection.checkCancelled();
                 deleteEntry(path);
             }
@@ -635,26 +523,21 @@ public final class PrivateModelStore
         publishVerified(entries);
     }
 
-    private void publishVerified(List<Entry> entries)
-    {
+    private void publishVerified(List<Entry> entries) {
         Map<UUID, LinkedHashMap<String, UploadedModel>> newest = new HashMap<>();
         Set<Path> present = new HashSet<>();
-        for (Entry entry : entries)
-        {
+        for (Entry entry : entries) {
             present.add(entry.path);
         }
         this.validatedLoads.keySet().retainAll(present);
-        for (int index = entries.size() - 1; index >= 0; index--)
-        {
+        for (int index = entries.size() - 1; index >= 0; index--) {
             Entry entry = entries.get(index);
             VerifiedMetadata metadata = this.verified.get(entry.path);
-            if (metadata == null)
-            {
+            if (metadata == null) {
                 continue;
             }
 
-            if (!metadata.bundle.equals(entry.identity))
-            {
+            if (!metadata.bundle.equals(entry.identity)) {
                 continue;
             }
 
@@ -666,20 +549,16 @@ public final class PrivateModelStore
         publish(models);
     }
 
-    private void publish(Map<UUID, List<UploadedModel>> models)
-    {
-        if (!this.catalog.modelsByOwner().equals(models))
-        {
+    private void publish(Map<UUID, List<UploadedModel>> models) {
+        if (!this.catalog.modelsByOwner().equals(models)) {
             this.catalog = new CatalogSnapshot(this.catalog.revision() + 1, models);
         }
 
     }
 
-    private UploadedModel readMetadata(Entry entry, Path sidecar) throws IOException
-    {
+    private UploadedModel readMetadata(Entry entry, Path sidecar) throws IOException {
         Fingerprint attributes = fingerprint(sidecar);
-        if (attributes.bytes < 2 || attributes.bytes > MAX_METADATA_BYTES)
-        {
+        if (attributes.bytes < 2 || attributes.bytes > MAX_METADATA_BYTES) {
             throw new IOException("cache_metadata_size");
         }
 
@@ -689,50 +568,38 @@ public final class PrivateModelStore
         Map<String, String> strings = new HashMap<>();
         Map<String, Long> numbers = new HashMap<>();
         Set<String> names = new HashSet<>();
-        try (JsonReader reader = new JsonReader(new InputStreamReader(new ByteArrayInputStream(bytes), decoder)))
-        {
+        try (JsonReader reader = new JsonReader(new InputStreamReader(new ByteArrayInputStream(bytes), decoder))) {
             reader.setStrictness(Strictness.STRICT);
             reader.beginObject();
-            while (reader.hasNext())
-            {
+            while (reader.hasNext()) {
                 String name = reader.nextName();
-                if (!names.add(name))
-                {
+                if (!names.add(name)) {
                     throw new IOException("cache_metadata_duplicate");
                 }
 
-                if (Set.of("owner", "sourceId", "hash", "kind").contains(name))
-                {
-                    if (reader.peek() != JsonToken.STRING)
-                    {
+                if (Set.of("owner", "sourceId", "hash", "kind").contains(name)) {
+                    if (reader.peek() != JsonToken.STRING) {
                         throw new IOException("cache_metadata_string");
                     }
                     strings.put(name, reader.nextString());
-                }
-                else if (Set.of("format", "bytes").contains(name))
-                {
-                    if (reader.peek() != JsonToken.NUMBER)
-                    {
+                } else if (Set.of("format", "bytes").contains(name)) {
+                    if (reader.peek() != JsonToken.NUMBER) {
                         throw new IOException("cache_metadata_number");
                     }
 
                     String number = reader.nextString();
-                    if (!number.matches("[0-9]{1,10}"))
-                    {
+                    if (!number.matches("[0-9]{1,10}")) {
                         throw new IOException("cache_metadata_number");
                     }
 
                     numbers.put(name, Long.parseLong(number));
-                }
-                else
-                {
+                } else {
                     throw new IOException("cache_metadata_field");
                 }
 
             }
             reader.endObject();
-            if (reader.peek() != JsonToken.END_DOCUMENT)
-            {
+            if (reader.peek() != JsonToken.END_DOCUMENT) {
                 throw new IOException("cache_metadata_trailing");
             }
 
@@ -742,19 +609,16 @@ public final class PrivateModelStore
         if (names.size() != 6 || !Objects.equals(numbers.get("format"), 1L)
                 || !entry.owner.toString().equals(strings.get("owner")) || !hash.equals(strings.get("hash"))
                 || !validSourceId(sourceId) || !Set.of("ysm", "bbmodel").contains(kind == null ? "" : kind)
-                || !Objects.equals(numbers.get("bytes"), entry.bytes))
-        {
+                || !Objects.equals(numbers.get("bytes"), entry.bytes)) {
             throw new IOException("cache_metadata_identity");
         }
 
         return new UploadedModel(sourceId, hash, kind, (int) entry.bytes);
     }
 
-    private static byte[] encodeMetadata(UUID owner, UploadedModel model) throws IOException
-    {
+    private static byte[] encodeMetadata(UUID owner, UploadedModel model) throws IOException {
         StringWriter output = new StringWriter();
-        try (JsonWriter writer = new JsonWriter(output))
-        {
+        try (JsonWriter writer = new JsonWriter(output)) {
             writer.beginObject();
             writer.name("format").value(1);
             writer.name("owner").value(owner.toString());
@@ -765,33 +629,27 @@ public final class PrivateModelStore
             writer.endObject();
         }
         byte[] bytes = output.toString().getBytes(StandardCharsets.UTF_8);
-        if (bytes.length > MAX_METADATA_BYTES)
-        {
+        if (bytes.length > MAX_METADATA_BYTES) {
             throw new IOException("cache_metadata_size");
         }
         return bytes;
     }
 
-    private static byte[] readBundle(Path path, int expectedBytes) throws IOException
-    {
+    private static byte[] readBundle(Path path, int expectedBytes) throws IOException {
         ResourceProtection.checkCancelled();
         byte[] bytes = new byte[expectedBytes];
-        try (InputStream input = Files.newInputStream(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS))
-        {
+        try (InputStream input = Files.newInputStream(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
             int offset = 0;
-            while (offset < bytes.length)
-            {
+            while (offset < bytes.length) {
                 ResourceProtection.checkCancelled();
                 int count = input.read(bytes, offset, Math.min(64 * 1024, bytes.length - offset));
-                if (count < 0)
-                {
+                if (count < 0) {
                     throw new IOException("cache_size");
                 }
                 offset += count;
                 ResourceProtection.progress();
             }
-            if (input.read() != -1)
-            {
+            if (input.read() != -1) {
                 throw new IOException("cache_size");
             }
 
@@ -799,165 +657,128 @@ public final class PrivateModelStore
         return bytes;
     }
 
-    private void validateBundle(byte[] bytes, String kind) throws IOException
-    {
-        if (this.resources == null)
-        {
+    private void validateBundle(byte[] bytes, String kind) throws IOException {
+        if (this.resources == null) {
             PrivateModelBundle.validate(bytes, kind);
-        }
-        else
-        {
+        } else {
             PrivateModelBundle.validate(bytes, kind, this.resources.complexityLimits());
         }
 
     }
 
-    private void atomicWrite(Path target, byte[] bytes, String prefix) throws IOException
-    {
-        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS) && !Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS))
-        {
+    private void atomicWrite(Path target, byte[] bytes, String prefix) throws IOException {
+        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)
+                && !Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
             throw new IOException("cache_file");
         }
 
         ResourceProtection.checkCancelled();
         ResourceError rejection = this.resources == null ? null
                 : this.resources.reserveTemporary(null, bytes.length, this.directory);
-        if (rejection != null)
-        {
+        if (rejection != null) {
             throw new IOException(rejection.code());
         }
 
         Path temporary = null;
-        try
-        {
+        try {
             temporary = Files.createTempFile(this.directory, prefix, ".tmp");
-            try (OutputStream output = Files.newOutputStream(temporary, StandardOpenOption.TRUNCATE_EXISTING))
-            {
-                for (int offset = 0; offset < bytes.length; offset += 64 * 1024)
-                {
+            try (OutputStream output = Files.newOutputStream(temporary, StandardOpenOption.TRUNCATE_EXISTING)) {
+                for (int offset = 0; offset < bytes.length; offset += 64 * 1024) {
                     ResourceProtection.checkCancelled();
                     output.write(bytes, offset, Math.min(64 * 1024, bytes.length - offset));
                     ResourceProtection.progress();
                 }
             }
             ResourceProtection.checkCancelled();
-            try
-            {
+            try {
                 Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            }
-            catch (AtomicMoveNotSupportedException unsupported)
-            {
+            } catch (AtomicMoveNotSupportedException unsupported) {
                 Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
             }
-        }
-        finally
-        {
-            try
-            {
-                if (temporary != null)
-                {
+        } finally {
+            try {
+                if (temporary != null) {
                     Files.deleteIfExists(temporary);
                 }
-            }
-            finally
-            {
-                if (this.resources != null)
-                {
+            } finally {
+                if (this.resources != null) {
                     this.resources.releaseTemporary(null, bytes.length);
                 }
             }
         }
     }
 
-    private Path metadataPath(Path bundle)
-    {
+    private Path metadataPath(Path bundle) {
         return this.directory.resolve(bundle.getFileName().toString().replace(".zip", ".meta.json"));
     }
 
-    private void deleteMetadata(Path bundle) throws IOException
-    {
+    private void deleteMetadata(Path bundle) throws IOException {
         Path sidecar = metadataPath(bundle);
-        if (Files.isRegularFile(sidecar, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(sidecar))
-        {
+        if (Files.isRegularFile(sidecar, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(sidecar)) {
             Files.deleteIfExists(sidecar);
         }
 
     }
 
-    private void deleteEntry(Path path) throws IOException
-    {
+    private void deleteEntry(Path path) throws IOException {
         this.verified.remove(path);
         this.validatedLoads.remove(path);
         Files.deleteIfExists(path);
         deleteMetadata(path);
     }
 
-    private static Fingerprint fingerprint(Path path) throws IOException
-    {
+    private static Fingerprint fingerprint(Path path) throws IOException {
         BasicFileAttributes attributes = Files.readAttributes(path, BasicFileAttributes.class,
                 LinkOption.NOFOLLOW_LINKS);
-        if (!attributes.isRegularFile())
-        {
+        if (!attributes.isRegularFile()) {
             throw new IOException("cache_file");
         }
 
         return new Fingerprint(attributes.size(), attributes.lastModifiedTime(), attributes.fileKey());
     }
 
-    private Path path(UUID owner, String hash) throws IOException
-    {
-        if (owner == null || hash == null || !hash.matches("[a-f0-9]{64}"))
-        {
+    private Path path(UUID owner, String hash) throws IOException {
+        if (owner == null || hash == null || !hash.matches("[a-f0-9]{64}")) {
             throw new IOException("cache_identity");
         }
 
         Path path = this.directory.resolve(owner + "_" + hash + ".zip").normalize();
-        if (!Objects.equals(path.getParent(), this.directory))
-        {
+        if (!Objects.equals(path.getParent(), this.directory)) {
             throw new IOException("cache_path");
         }
         return path;
     }
 
-    private void requireDirectory() throws IOException
-    {
-        if (!Files.isDirectory(this.directory, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(this.directory))
-        {
+    private void requireDirectory() throws IOException {
+        if (!Files.isDirectory(this.directory, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(this.directory)) {
             throw new IOException("cache_directory");
         }
 
     }
 
-    private List<Entry> entries() throws IOException
-    {
+    private List<Entry> entries() throws IOException {
         requireDirectory();
         List<Entry> entries = new ArrayList<>();
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(this.directory))
-        {
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(this.directory)) {
             int scanned = 0;
-            for (Path path : stream)
-            {
+            for (Path path : stream) {
                 ResourceProtection.checkCancelled();
                 // A manually polluted directory must not turn a client upload into unbounded I/O.
-                if (++scanned > MAX_SCANNED_FILES)
-                {
+                if (++scanned > MAX_SCANNED_FILES) {
                     throw new IOException("cache_directory_limit");
                 }
 
                 String name = path.getFileName().toString();
                 if (METADATA_FILE.matcher(name).matches()
-                        && (Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(path)))
-                {
+                        && (Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(path))) {
                     Path bundle = this.directory.resolve(name.substring(0, name.length() - 10) + ".zip");
-                    if (!Files.isRegularFile(bundle, LinkOption.NOFOLLOW_LINKS))
-                    {
+                    if (!Files.isRegularFile(bundle, LinkOption.NOFOLLOW_LINKS)) {
                         Files.deleteIfExists(path);
                     }
 
                     continue;
                 }
-                if (!FILE.matcher(name).matches() || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
-                {
+                if (!FILE.matcher(name).matches() || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
                     continue;
                 }
 
@@ -972,20 +793,16 @@ public final class PrivateModelStore
         return entries;
     }
 
-    private void trimToLimits(List<Entry> entries) throws IOException
-    {
+    private void trimToLimits(List<Entry> entries) throws IOException {
         Map<UUID, Integer> owned = new HashMap<>();
-        for (Entry entry : entries)
-        {
+        for (Entry entry : entries) {
             owned.merge(entry.owner, 1, Integer::sum);
         }
 
         long total = entries.stream().mapToLong(Entry::bytes).sum();
-        for (Iterator<Entry> iterator = entries.iterator(); iterator.hasNext();)
-        {
+        for (Iterator<Entry> iterator = entries.iterator(); iterator.hasNext();) {
             Entry entry = iterator.next();
-            if (owned.get(entry.owner) <= this.settings.maxModelsPerPlayer())
-            {
+            if (owned.get(entry.owner) <= this.settings.maxModelsPerPlayer()) {
                 continue;
             }
 
@@ -994,31 +811,25 @@ public final class PrivateModelStore
             total -= entry.bytes;
             owned.merge(entry.owner, -1, Integer::sum);
         }
-        while (!entries.isEmpty() && (entries.size() > this.settings.maxModels() || total > this.settings.maxBytes()))
-        {
+        while (!entries.isEmpty() && (entries.size() > this.settings.maxModels() || total > this.settings.maxBytes())) {
             Entry entry = entries.removeFirst();
             deleteEntry(entry.path);
             total -= entry.bytes;
         }
     }
 
-    private record Entry(Path path, UUID owner, long bytes, long accessed, Fingerprint identity)
-    {
+    private record Entry(Path path, UUID owner, long bytes, long accessed, Fingerprint identity) {
     }
 
-    private record Fingerprint(long bytes, FileTime modified, Object fileKey)
-    {
+    private record Fingerprint(long bytes, FileTime modified, Object fileKey) {
     }
 
-    private record VerifiedMetadata(UploadedModel model, Fingerprint bundle, Fingerprint sidecar)
-    {
+    private record VerifiedMetadata(UploadedModel model, Fingerprint bundle, Fingerprint sidecar) {
     }
 
-    private record ValidatedLoad(String hash, String kind, int bytes, Fingerprint bundle)
-    {
+    private record ValidatedLoad(String hash, String kind, int bytes, Fingerprint bundle) {
     }
 
-    private record Deletion(Path path, VerifiedMetadata metadata)
-    {
+    private record Deletion(Path path, VerifiedMetadata metadata) {
     }
 }

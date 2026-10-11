@@ -11,10 +11,8 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-class ActionDirectoryTest
-{
-    private YamlConfiguration config()
-    {
+class ActionDirectoryTest {
+    private YamlConfiguration config() {
         YamlConfiguration config = YamlConfiguration.loadConfiguration(
                 new InputStreamReader(getClass().getResourceAsStream("/config.yml"), StandardCharsets.UTF_8));
         config.set("custom-actions", null);
@@ -22,8 +20,7 @@ class ActionDirectoryTest
     }
 
     @Test
-    void rawPlaybackDisabledPublishesOnlyAvailableCustomAliases()
-    {
+    void rawPlaybackDisabledPublishesOnlyAvailableCustomAliases() {
         YamlConfiguration config = config();
         config.set("manual.allow-raw-animation", false);
         config.set("custom-actions.greeting.animation", "wave");
@@ -34,8 +31,7 @@ class ActionDirectoryTest
     }
 
     @Test
-    void customAliasUsesTheActionIdAndLabelInsteadOfItsAnimationName()
-    {
+    void customAliasUsesTheActionIdAndLabelInsteadOfItsAnimationName() {
         YamlConfiguration config = config();
         config.set("manual.allow-raw-animation", true);
         config.set("custom-actions.greeting.animation", "wave");
@@ -46,8 +42,7 @@ class ActionDirectoryTest
     }
 
     @Test
-    void rawClipsAreDeduplicatedSortedAndRestrictedToExecutableCommandIds()
-    {
+    void rawClipsAreDeduplicatedSortedAndRestrictedToExecutableCommandIds() {
         YamlConfiguration config = config();
         config.set("manual.allow-raw-animation", true);
         config.set("menu.animation-labels.walk", "走路");
@@ -58,8 +53,7 @@ class ActionDirectoryTest
     }
 
     @Test
-    void customIdTakesPriorityAndNeverFallsThroughToAnUnplayableRawClip()
-    {
+    void customIdTakesPriorityAndNeverFallsThroughToAnUnplayableRawClip() {
         YamlConfiguration config = config();
         config.set("manual.allow-raw-animation", true);
         config.set("custom-actions.wave.animation", "idle");

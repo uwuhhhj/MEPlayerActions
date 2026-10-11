@@ -10,13 +10,10 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 import com.google.gson.JsonObject;
 
-class YsmAccessoriesTest
-{
+class YsmAccessoriesTest {
     @Test
-    void sourceAccessoryEventsRemainAvailableToNewViewersWithoutExportingSpringState() throws Exception
-    {
-        for (String model : List.of("ysm_01_jk", "ysm_02_jk"))
-        {
+    void sourceAccessoryEventsRemainAvailableToNewViewersWithoutExportingSpringState() throws Exception {
+        for (String model : List.of("ysm_01_jk", "ysm_02_jk")) {
             JsonObject raw = JsonParser.parseString(Files.readString(Path.of("examples/models/" + model + ".bbmodel")))
                     .getAsJsonObject();
             YsmRuntime runtime = new YsmRuntime(raw, 0);

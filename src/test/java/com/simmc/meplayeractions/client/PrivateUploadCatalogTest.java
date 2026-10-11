@@ -8,21 +8,17 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 import com.google.gson.JsonElement;
 
-class PrivateUploadCatalogTest
-{
+class PrivateUploadCatalogTest {
     private static final Gson WIRE = new Gson();
 
     @Test
-    void maximumLengthUnicodeAndEscapedLocalNamesRespectTheActualWireBudgetInEveryFragment()
-    {
-        for (boolean escaped : List.of(false, true))
-        {
+    void maximumLengthUnicodeAndEscapedLocalNamesRespectTheActualWireBudgetInEveryFragment() {
+        for (boolean escaped : List.of(false, true)) {
             List<PrivateModelStore.UploadedModel> models = models(64, escaped);
             List<JsonObject> packets = PrivateUploadCatalog.packets(models, true, 1024, 9_007_199_254_740_991L);
             assertTrue(packets.size() > 1);
             ArrayList<String> received = new ArrayList<String>();
-            for (int index = 0; index < packets.size(); index++)
-            {
+            for (int index = 0; index < packets.size(); index++) {
                 JsonObject packet = packets.get(index);
                 byte[] bytes = WIRE.toJson(packet).getBytes(StandardCharsets.UTF_8);
                 assertTrue(bytes.length <= 1024, "Actual serializer exceeded the negotiated budget: " + bytes.length);
@@ -34,15 +30,13 @@ class PrivateUploadCatalogTest
                 assertEquals(packets.size(), packet.get("count").getAsInt());
                 assertEquals(9_007_199_254_740_991L, packet.get("revision").getAsLong());
                 assertTrue(packet.get("available").getAsBoolean());
-                for (JsonElement value : packet.getAsJsonArray("models"))
-                {
+                for (JsonElement value : packet.getAsJsonArray("models")) {
                     JsonObject entry = value.getAsJsonObject();
                     assertEquals(Set.of("modelId", "hash", "kind", "bytes"), entry.keySet());
                     received.add(entry.get("modelId").getAsString());
                 }
                 String text = new String(bytes, StandardCharsets.UTF_8);
-                for (String secret : List.of("owner", "http://", "https://", "token", "download", "generation"))
-                {
+                for (String secret : List.of("owner", "http://", "https://", "token", "download", "generation")) {
                     assertFalse(text.contains(secret), secret);
                 }
 
@@ -53,8 +47,7 @@ class PrivateUploadCatalogTest
     }
 
     @Test
-    void unavailableDirectoriesAreExplicitlyEmptyAndMalformedBudgetsOrDuplicatesAreRejected()
-    {
+    void unavailableDirectoriesAreExplicitlyEmptyAndMalformedBudgetsOrDuplicatesAreRejected() {
         JsonObject empty = PrivateUploadCatalog.packets(models(64, false), false, 1024, 1).getFirst();
         assertFalse(empty.get("available").getAsBoolean());
         assertTrue(empty.getAsJsonArray("models").isEmpty());
@@ -71,11 +64,9 @@ class PrivateUploadCatalogTest
                 () -> PrivateUploadCatalog.packets(List.of(repeated, repeated), true, 1024, 1));
     }
 
-    static List<PrivateModelStore.UploadedModel> models(int count, boolean escaped)
-    {
+    static List<PrivateModelStore.UploadedModel> models(int count, boolean escaped) {
         ArrayList<PrivateModelStore.UploadedModel> result = new ArrayList<PrivateModelStore.UploadedModel>();
-        for (int index = 0; index < count; index++)
-        {
+        for (int index = 0; index < count; index++) {
             String prefix = "ysm:" + index, tail = escaped ? "&='".repeat(128) : "鲸".repeat(128);
             String id = prefix + tail.substring(0, 128 - prefix.length());
             assertTrue(PrivateModelStore.validSourceId(id));

@@ -17,61 +17,45 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 /** Adapts the mature Sparkle public binary model into the same native YSM runtime as a folder. */
-public final class NativeYsmFile
-{
-    private NativeYsmFile()
-    {
+public final class NativeYsmFile {
+    private NativeYsmFile() {
     }
 
-    public static YsmFolderModel.Imported read(byte[] encoded, String textureId) throws IOException
-    {
-        if (encoded == null || encoded.length == 0 || encoded.length > LocalModelBudget.MAX_BYTES)
-
-        {
+    public static YsmFolderModel.Imported read(byte[] encoded, String textureId) throws IOException {
+        if (encoded == null || encoded.length == 0 || encoded.length > LocalModelBudget.MAX_BYTES) {
             throw new IOException("原生 .ysm 文件大小无效");
         }
 
-        try
-        {
+        try {
             byte[] clear = PublicYsmCodec.decode(encoded);
             YsmFolderModel.Imported parsed = readDecompressed(clear, textureId);
             return parsed;
-        }
-        catch (Exception invalid)
-        {
+        } catch (Exception invalid) {
             throw new IOException("公开 .ysm 模型无法导入: " + invalid.getMessage(), invalid);
         }
     }
 
     /** Public decompressed model format; no key lookup, cache access, network or filesystem operation. */
-    public static YsmFolderModel.Imported readDecompressed(byte[] clear, String textureId) throws IOException
-    {
-        if (clear == null || clear.length < 4 || clear.length > LocalModelBudget.MAX_BYTES)
-        {
+    public static YsmFolderModel.Imported readDecompressed(byte[] clear, String textureId) throws IOException {
+        if (clear == null || clear.length < 4 || clear.length > LocalModelBudget.MAX_BYTES) {
             throw new IOException("YSM 二进制大小无效");
         }
 
         int format = ByteBuffer.wrap(clear).order(ByteOrder.LITTLE_ENDIAN).getInt();
-        if (format < 1 || format > 32)
-        {
+        if (format < 1 || format > 32) {
             throw new IOException("不支持的公开 YSM 二进制格式: " + format);
         }
 
-        try (YSMBinaryDeserializer decoder = new YSMBinaryDeserializer(clear))
-        {
+        try (YSMBinaryDeserializer decoder = new YSMBinaryDeserializer(clear)) {
             RawYsmModel model = decoder.deserializeKeepOpen();
             return importModel(model, textureId);
-        }
-        catch (Exception invalid)
-        {
+        } catch (Exception invalid) {
             throw new IOException("YSM 二进制资源无法解析: " + invalid.getMessage(), invalid);
         }
     }
 
-    static YsmFolderModel.Imported importModel(RawYsmModel model, String textureId) throws IOException
-    {
-        if (model.mainEntity.mainModel == null || model.mainEntity.textures.isEmpty())
-        {
+    static YsmFolderModel.Imported importModel(RawYsmModel model, String textureId) throws IOException {
+        if (model.mainEntity.mainModel == null || model.mainEntity.textures.isEmpty()) {
             throw new IOException("YSM 主模型或贴图缺失");
         }
 
@@ -79,14 +63,11 @@ public final class NativeYsmFile
         JsonObject manifest = new JsonObject();
         manifest.addProperty("spec", 2);
         // Sparkle's BB converter uses the folder profile (65535), not a public binary version.
-        if (model.formatVersion != 65535)
-        {
+        if (model.formatVersion != 65535) {
             manifest.addProperty("mpa_native_format", model.formatVersion);
         }
 
-        if ("sparkle_morpher:bbmodel_import".equals(model.footer.extra))
-
-        {
+        if ("sparkle_morpher:bbmodel_import".equals(model.footer.extra)) {
             manifest.addProperty("mpa_source_format", "bbmodel");
         }
 
@@ -98,32 +79,27 @@ public final class NativeYsmFile
         manifest.add("files", declarations);
         geometry.addProperty("main", "models/main.json");
         putJson(files, "models/main.json", geometry(model.mainEntity.mainModel));
-        if (model.mainEntity.armModel != null)
-        {
+        if (model.mainEntity.armModel != null) {
             geometry.addProperty("arm", "models/arm.json");
             putJson(files, "models/arm.json", geometry(model.mainEntity.armModel));
         }
         player.add("model", geometry);
-        for (Map.Entry<String, RawYsmModel.RawAnimationFile> entry : model.mainEntity.animationFiles.entrySet())
-        {
+        for (Map.Entry<String, RawYsmModel.RawAnimationFile> entry : model.mainEntity.animationFiles.entrySet()) {
             // BBToRawConverter stores animation-main; binary files already use main/arm/extra.
             String family = entry.getKey().startsWith("animation-") ? entry.getKey().substring(10) : entry.getKey();
             String path = "animations/" + family + ".json";
-            if (!YsmFolderModel.safeRelativePath(path))
-            {
+            if (!YsmFolderModel.safeRelativePath(path)) {
                 throw new IOException("YSM 动画族名称无效");
             }
 
-            if (animationFiles.has(family))
-            {
+            if (animationFiles.has(family)) {
                 throw new IOException("YSM 动画族名称重复");
             }
 
             putJson(files, path, animations(entry.getValue()));
             animationFiles.addProperty(family, path);
         }
-        if (!animationFiles.has("main"))
-        {
+        if (!animationFiles.has("main")) {
             JsonObject empty = new JsonObject();
             empty.add("animations", new JsonObject());
             putJson(files, "animations/main.json", empty);
@@ -136,18 +112,15 @@ public final class NativeYsmFile
         declarations.add("vehicles", subEntities(model.vehicles, "vehicles", files));
         declarations.add("projectiles", subEntities(model.projectiles, "projectiles", files));
         declarations.addProperty("sound_path", "sounds");
-        for (Map.Entry<String, RawYsmModel.RawDataFile> sound : model.soundFiles.entrySet())
-        {
+        for (Map.Entry<String, RawYsmModel.RawDataFile> sound : model.soundFiles.entrySet()) {
             files.put("sounds/" + leaf(sound.getKey(), ".ogg"), sound.getValue().data);
         }
 
-        for (Map.Entry<String, RawYsmModel.RawDataFile> function : model.functionFiles.entrySet())
-        {
+        for (Map.Entry<String, RawYsmModel.RawDataFile> function : model.functionFiles.entrySet()) {
             files.put("functions/" + leaf(function.getKey(), ".molang"), function.getValue().data);
         }
 
-        for (Map.Entry<String, RawYsmModel.RawLanguageFile> locale : model.languageFiles.entrySet())
-        {
+        for (Map.Entry<String, RawYsmModel.RawLanguageFile> locale : model.languageFiles.entrySet()) {
             JsonObject strings = new JsonObject();
             locale.getValue().data.forEach(strings::addProperty);
             putJson(files, "lang/" + leaf(locale.getKey(), ".json"), strings);
@@ -156,8 +129,7 @@ public final class NativeYsmFile
         return YsmFolderModel.readMemoryWithProfile(files, textureId, model.formatVersion);
     }
 
-    private static JsonObject geometry(RawYsmModel.RawGeometry source) throws IOException
-    {
+    private static JsonObject geometry(RawYsmModel.RawGeometry source) throws IOException {
         JsonObject body = new JsonObject(), description = new JsonObject(), result = new JsonObject();
         description.addProperty("identifier", source.identifier);
         description.addProperty("texture_width", source.textureWidth);
@@ -167,14 +139,12 @@ public final class NativeYsmFile
         body.add("description", description);
         JsonArray bones = new JsonArray();
         body.add("bones", bones);
-        if (source.bones.size() > 2047)
-        {
+        if (source.bones.size() > 2047) {
             throw new IOException("YSM 骨骼数量超出限制");
         }
 
         int faceCount = 0;
-        for (RawYsmModel.RawBone bone : source.bones)
-        {
+        for (RawYsmModel.RawBone bone : source.bones) {
             JsonObject entry = new JsonObject();
             entry.addProperty("name", bone.name);
             entry.addProperty("parent", bone.parentName);
@@ -183,19 +153,15 @@ public final class NativeYsmFile
                     Math.toDegrees(bone.rotation[2])));
             JsonArray faces = new JsonArray();
             entry.add("ysm_baked_faces", faces);
-            for (RawYsmModel.RawCube cube : bone.cubes)
-            {
-                for (RawYsmModel.RawFace face : cube.faces)
-                {
-                    if (++faceCount > 24_576)
-                    {
+            for (RawYsmModel.RawCube cube : bone.cubes) {
+                for (RawYsmModel.RawFace face : cube.faces) {
+                    if (++faceCount > 24_576) {
                         throw new IOException("YSM 烘焙面数量超出限制");
                     }
 
                     JsonObject converted = new JsonObject();
                     JsonArray positions = new JsonArray(), uv = new JsonArray();
-                    for (int i = 0; i < 4; i++)
-                    {
+                    for (int i = 0; i < 4; i++) {
                         // Raw binary positions are already cube-baked block coordinates, and UVs are already normalized.
                         positions.add(
                                 array(face.positions[i][0] * 16, face.positions[i][1] * 16, face.positions[i][2] * 16));
@@ -217,32 +183,26 @@ public final class NativeYsmFile
         return result;
     }
 
-    private static JsonObject animations(RawYsmModel.RawAnimationFile file)
-    {
+    private static JsonObject animations(RawYsmModel.RawAnimationFile file) {
         JsonObject result = new JsonObject(), animations = new JsonObject();
         result.add("animations", animations);
-        for (RawYsmModel.RawAnimation animation : file.animations.values())
-        {
+        for (RawYsmModel.RawAnimation animation : file.animations.values()) {
             JsonObject value = new JsonObject(), bones = new JsonObject();
             value.addProperty("loop",
                     animation.loopMode == 1 ? "loop" : (animation.loopMode == 3 ? "hold_on_last_frame" : "once"));
-            if (Float.isFinite(animation.length))
-            {
+            if (Float.isFinite(animation.length)) {
                 value.addProperty("animation_length", animation.length);
             }
 
-            if (animation.bbEditorAxes != 0)
-            {
+            if (animation.bbEditorAxes != 0) {
                 value.addProperty("mpa_bb_editor_axes", animation.bbEditorAxes);
             }
 
-            if (animation.blendWeight != null)
-            {
+            if (animation.blendWeight != null) {
                 value.add("blend_weight", scalar(animation.blendWeight));
             }
 
-            for (RawYsmModel.RawBoneAnimation bone : animation.boneAnimations)
-            {
+            for (RawYsmModel.RawBoneAnimation bone : animation.boneAnimations) {
                 JsonObject channels = new JsonObject();
                 channel(channels, "rotation", bone.rotation);
                 channel(channels, "position", bone.position);
@@ -251,21 +211,18 @@ public final class NativeYsmFile
             }
             value.add("bones", bones);
             JsonObject timeline = new JsonObject();
-            for (RawYsmModel.RawTimelineEvent event : animation.timelineEvents)
-            {
+            for (RawYsmModel.RawTimelineEvent event : animation.timelineEvents) {
                 String time = Float.toString(event.timestamp);
                 JsonArray programs = timeline.has(time) ? timeline.getAsJsonArray(time) : new JsonArray();
                 event.events.forEach(programs::add);
                 timeline.add(time, programs);
             }
-            if (!timeline.isEmpty())
-            {
+            if (!timeline.isEmpty()) {
                 value.add("timeline", timeline);
             }
 
             JsonObject sounds = new JsonObject();
-            for (RawYsmModel.RawSoundEffect effect : animation.soundEffects)
-            {
+            for (RawYsmModel.RawSoundEffect effect : animation.soundEffects) {
                 String time = Float.toString(effect.timestamp);
                 JsonObject sound = new JsonObject();
                 sound.addProperty("effect", effect.effectName);
@@ -273,8 +230,7 @@ public final class NativeYsmFile
                 events.add(sound);
                 sounds.add(time, events);
             }
-            if (!sounds.isEmpty())
-            {
+            if (!sounds.isEmpty()) {
                 value.add("sound_effects", sounds);
             }
 
@@ -283,27 +239,22 @@ public final class NativeYsmFile
         return result;
     }
 
-    private static void channel(JsonObject target, String name, List<RawYsmModel.RawKeyframe> source)
-    {
-        if (source.isEmpty())
-        {
+    private static void channel(JsonObject target, String name, List<RawYsmModel.RawKeyframe> source) {
+        if (source.isEmpty()) {
             return;
         }
 
         JsonObject frames = new JsonObject();
-        for (RawYsmModel.RawKeyframe key : source)
-        {
+        for (RawYsmModel.RawKeyframe key : source) {
             JsonObject value = new JsonObject();
             value.addProperty("lerp_mode",
                     key.interpolationMode == 1 ? "step" : (key.interpolationMode == 2 ? "catmullrom" : "linear"));
             value.add("post", expressions(key.postData));
-            if (key.hasPreData)
-            {
+            if (key.hasPreData) {
                 value.add("pre", expressions(key.preData));
             }
 
-            if (key.bbSynthetic)
-            {
+            if (key.bbSynthetic) {
                 value.addProperty("mpa_bb_synthetic", true);
             }
 
@@ -313,35 +264,28 @@ public final class NativeYsmFile
     }
 
     private static JsonArray controllers(List<RawYsmModel.RawAnimationControllerFile> source, String path,
-            Map<String, byte[]> files)
-    {
+            Map<String, byte[]> files) {
         JsonArray paths = new JsonArray();
-        if (source.isEmpty())
-        {
+        if (source.isEmpty()) {
             return paths;
         }
 
         JsonObject root = new JsonObject(), definitions = new JsonObject();
         root.add("animation_controllers", definitions);
-        for (RawYsmModel.RawAnimationControllerFile file : source)
-        {
-            for (RawYsmModel.RawAnimationController controller : file.controllers.values())
-            {
+        for (RawYsmModel.RawAnimationControllerFile file : source) {
+            for (RawYsmModel.RawAnimationController controller : file.controllers.values()) {
                 JsonObject entry = new JsonObject(), states = new JsonObject();
                 entry.addProperty("initial_state", controller.initialState);
                 entry.add("states", states);
-                for (RawYsmModel.RawControllerState state : controller.states)
-                {
+                for (RawYsmModel.RawControllerState state : controller.states) {
                     JsonObject definition = new JsonObject();
                     JsonArray animations = new JsonArray(), transitions = new JsonArray();
-                    state.animations.forEach((name, weight) ->
-                    {
+                    state.animations.forEach((name, weight) -> {
                         JsonObject pair = new JsonObject();
                         pair.addProperty(name, weight);
                         animations.add(pair);
                     });
-                    state.transitions.forEach((name, condition) ->
-                    {
+                    state.transitions.forEach((name, condition) -> {
                         JsonObject pair = new JsonObject();
                         pair.addProperty(name, condition);
                         transitions.add(pair);
@@ -350,24 +294,20 @@ public final class NativeYsmFile
                     definition.add("transitions", transitions);
                     definition.add("on_entry", texts(state.onEntry));
                     definition.add("on_exit", texts(state.onExit));
-                    if (state.blendTransitions.isEmpty())
-                    {
+                    if (state.blendTransitions.isEmpty()) {
                         definition.addProperty("blend_transition", state.blendTransitionValue);
                     }
 
-                    else
-                    {
+                    else {
                         JsonObject curve = new JsonObject();
                         state.blendTransitions
                                 .forEach((time, weight) -> curve.addProperty(Float.toString(time), weight));
                         definition.add("blend_transition", curve);
                     }
                     definition.addProperty("blend_via_shortest_path", state.blendViaShortestPath);
-                    if (!state.soundEffects.isEmpty())
-                    {
+                    if (!state.soundEffects.isEmpty()) {
                         JsonArray sounds = new JsonArray();
-                        state.soundEffects.forEach(name ->
-                        {
+                        state.soundEffects.forEach(name -> {
                             JsonObject sound = new JsonObject();
                             sound.addProperty("effect", name);
                             sounds.add(sound);
@@ -386,20 +326,16 @@ public final class NativeYsmFile
     }
 
     private static JsonArray textures(Map<String, RawYsmModel.RawTexture> source, String folder,
-            Map<String, byte[]> files) throws IOException
-    {
+            Map<String, byte[]> files) throws IOException {
         JsonArray values = new JsonArray();
-        for (RawYsmModel.RawTexture texture : source.values())
-        {
+        for (RawYsmModel.RawTexture texture : source.values()) {
             String path = folder + "/" + imageLeaf(texture.name);
             JsonObject material = new JsonObject();
             files.put(path, png(texture.data, texture.imageFormat, texture.width, texture.height));
             material.addProperty("uv", path);
-            for (RawYsmModel.RawTexture.SubTexture sub : texture.subTextures)
-            {
+            for (RawYsmModel.RawTexture.SubTexture sub : texture.subTextures) {
                 String type = sub.specularType == 1 ? "normal" : (sub.specularType == 2 ? "specular" : null);
-                if (type == null)
-                {
+                if (type == null) {
                     throw new IOException("YSM 未知材质贴图类型: " + sub.specularType);
                 }
 
@@ -413,14 +349,11 @@ public final class NativeYsmFile
     }
 
     private static JsonArray subEntities(Map<String, RawYsmModel.RawSubEntity> source, String kind,
-            Map<String, byte[]> files) throws IOException
-    {
+            Map<String, byte[]> files) throws IOException {
         JsonArray result = new JsonArray();
         int index = 0;
-        for (RawYsmModel.RawSubEntity entity : source.values())
-        {
-            if (entity.model == null || entity.textures.isEmpty())
-            {
+        for (RawYsmModel.RawSubEntity entity : source.values()) {
+            if (entity.model == null || entity.textures.isEmpty()) {
                 continue;
             }
 
@@ -432,8 +365,7 @@ public final class NativeYsmFile
             putJson(files, folder + "/model.json", geometry(entity.model));
             JsonObject merged = new JsonObject(), animations = new JsonObject();
             merged.add("animations", animations);
-            for (RawYsmModel.RawAnimationFile animationFile : entity.animationFiles.values())
-            {
+            for (RawYsmModel.RawAnimationFile animationFile : entity.animationFiles.values()) {
                 animations(animationFile).getAsJsonObject("animations").entrySet()
                         .forEach(entry -> animations.add(entry.getKey(), entry.getValue()));
             }
@@ -448,8 +380,7 @@ public final class NativeYsmFile
         return result;
     }
 
-    private static JsonObject metadata(RawYsmModel.RawMetadata source, Map<String, byte[]> files) throws IOException
-    {
+    private static JsonObject metadata(RawYsmModel.RawMetadata source, Map<String, byte[]> files) throws IOException {
         JsonObject result = new JsonObject(), license = new JsonObject();
         result.addProperty("name", source.name);
         result.addProperty("tips", source.tips);
@@ -458,8 +389,7 @@ public final class NativeYsmFile
         result.add("license", license);
         JsonArray authors = new JsonArray();
         int index = 0;
-        for (RawYsmModel.RawMetadata.Author author : source.authors)
-        {
+        for (RawYsmModel.RawMetadata.Author author : source.authors) {
             JsonObject entry = new JsonObject();
             entry.addProperty("name", author.name);
             entry.addProperty("role", author.role);
@@ -467,8 +397,7 @@ public final class NativeYsmFile
             JsonObject contacts = new JsonObject();
             author.contacts.forEach(contacts::addProperty);
             entry.add("contact", contacts);
-            if (author.avatarImage != null && author.avatarImage.format != 5)
-            {
+            if (author.avatarImage != null && author.avatarImage.format != 5) {
                 String path = "avatar/" + index + ".png";
                 RawYsmModel.RawImage image = author.avatarImage;
                 files.put(path, png(image.data, image.format, image.width, image.height));
@@ -484,8 +413,8 @@ public final class NativeYsmFile
         return result;
     }
 
-    private static JsonObject properties(RawYsmModel.RawProperties source, Map<String, byte[]> files) throws IOException
-    {
+    private static JsonObject properties(RawYsmModel.RawProperties source, Map<String, byte[]> files)
+            throws IOException {
         JsonObject result = new JsonObject();
         result.addProperty("height_scale", source.heightScale);
         result.addProperty("width_scale", source.widthScale);
@@ -501,8 +430,7 @@ public final class NativeYsmFile
         source.extraAnimations.forEach(extra::addProperty);
         result.add("extra_animation", extra);
         JsonArray groups = new JsonArray();
-        for (RawYsmModel.ExtraAnimationClassify group : source.extraAnimationClassifies)
-        {
+        for (RawYsmModel.ExtraAnimationClassify group : source.extraAnimationClassifies) {
             JsonObject entry = new JsonObject(), items = new JsonObject();
             entry.addProperty("id", group.id);
             group.extras.forEach(items::addProperty);
@@ -511,15 +439,13 @@ public final class NativeYsmFile
         }
         result.add("extra_animation_classify", groups);
         JsonArray buttons = new JsonArray();
-        for (RawYsmModel.ExtraAnimationButton button : source.extraAnimationButtons)
-        {
+        for (RawYsmModel.ExtraAnimationButton button : source.extraAnimationButtons) {
             JsonObject entry = new JsonObject();
             entry.addProperty("id", button.id);
             entry.addProperty("name", button.name);
             entry.addProperty("description", button.description);
             JsonArray forms = new JsonArray();
-            for (RawYsmModel.ConfigForm form : button.forms)
-            {
+            for (RawYsmModel.ConfigForm form : button.forms) {
                 JsonObject value = new JsonObject(), labels = new JsonObject();
                 value.addProperty("type", form.type);
                 value.addProperty("title", form.title);
@@ -536,17 +462,14 @@ public final class NativeYsmFile
             buttons.add(entry);
         }
         result.add("extra_animation_buttons", buttons);
-        for (RawYsmModel.RawImage image : source.backgroundImages)
-        {
+        for (RawYsmModel.RawImage image : source.backgroundImages) {
             String path = "backgrounds/" + imageLeaf(image.name);
             files.put(path, png(image.data, image.format, image.width, image.height));
-            if (image.name.equals(source.guiBackground))
-            {
+            if (image.name.equals(source.guiBackground)) {
                 result.addProperty("gui_background", path);
             }
 
-            if (image.name.equals(source.guiForeground))
-            {
+            if (image.name.equals(source.guiForeground)) {
                 result.addProperty("gui_foreground", path);
             }
 
@@ -554,75 +477,61 @@ public final class NativeYsmFile
         return result;
     }
 
-    private static byte[] png(byte[] data, int format, int width, int height) throws IOException
-    {
+    private static byte[] png(byte[] data, int format, int width, int height) throws IOException {
         return NativeYsmImages.png(data, format, width, height);
     }
 
-    private static String leaf(String name, String suffix) throws IOException
-    {
-        if (name == null || name.isBlank())
-        {
+    private static String leaf(String name, String suffix) throws IOException {
+        if (name == null || name.isBlank()) {
             throw new IOException("YSM 资源名称缺失");
         }
 
         String value = name.endsWith(suffix) ? name : name + suffix;
-        if (value.contains("/") || !YsmFolderModel.safeRelativePath(value))
-        {
+        if (value.contains("/") || !YsmFolderModel.safeRelativePath(value)) {
             throw new IOException("YSM 资源名称无效: " + name);
         }
 
         return value;
     }
 
-    private static String imageLeaf(String name) throws IOException
-    {
-        if ("/ARROW\\".equals(name))
-        {
+    private static String imageLeaf(String name) throws IOException {
+        if ("/ARROW\\".equals(name)) {
             return "arrow.png";
         }
         // Mature LegacyV15 reserved texture identifier, not an author path.
         return leaf(name != null && name.matches("(?i).+\\.(png|bmp|jpg|jpeg|webp|avif)") ? stem(name) : name, ".png");
     }
 
-    private static String stem(String value)
-    {
+    private static String stem(String value) {
         int dot = value.lastIndexOf('.');
         return dot < 0 ? value : value.substring(0, dot);
     }
 
-    private static void putJson(Map<String, byte[]> files, String path, JsonObject json)
-    {
+    private static void putJson(Map<String, byte[]> files, String path, JsonObject json) {
         files.put(path, json.toString().getBytes(StandardCharsets.UTF_8));
     }
 
-    private static JsonArray texts(Collection<String> values)
-    {
+    private static JsonArray texts(Collection<String> values) {
         JsonArray result = new JsonArray();
         values.forEach(result::add);
         return result;
     }
 
-    private static JsonArray expressions(Object[] values)
-    {
+    private static JsonArray expressions(Object[] values) {
         JsonArray result = new JsonArray();
-        for (Object value : values)
-        {
+        for (Object value : values) {
             result.add(scalar(value == null ? 0 : value));
         }
         return result;
     }
 
-    private static JsonElement scalar(Object value)
-    {
+    private static JsonElement scalar(Object value) {
         return value instanceof Number number ? new JsonPrimitive(number) : new JsonPrimitive(value.toString());
     }
 
-    private static JsonArray array(double... values)
-    {
+    private static JsonArray array(double... values) {
         JsonArray result = new JsonArray();
-        for (double value : values)
-        {
+        for (double value : values) {
             result.add(value);
         }
         return result;

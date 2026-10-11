@@ -16,8 +16,7 @@ import java.util.*;
 import org.bukkit.Location;
 
 /** Private dynamic clips for a disguise; shared ME blueprints and other sessions remain immutable. */
-final class YsmAnimations
-{
+final class YsmAnimations {
     private static final YsmModelTemplates TEMPLATES = new YsmModelTemplates(64, YsmAnimations::readModel);
     final Map<String, BlueprintAnimation> clips = new LinkedHashMap<>();
     private final Map<String, String> sources = new LinkedHashMap<>();
@@ -28,25 +27,21 @@ final class YsmAnimations
     private final PositionMotion motion = new PositionMotion();
     private final String diagnosis;
 
-    private static final class Cache
-    {
+    private static final class Cache {
         YsmRuntime.Snapshot snapshot;
         double time;
         String animation;
         Molang.Context context;
     }
 
-    YsmAnimations(ModelBlueprint blueprint)
-    {
+    YsmAnimations(ModelBlueprint blueprint) {
         this(blueprint, TEMPLATES.get(blueprint.getName()));
     }
 
     /** Production receives a background-prepared immutable template, so this path never reads or compiles a source. */
-    YsmAnimations(ModelBlueprint blueprint, Optional<YsmModelTemplates.Model> prepared)
-    {
+    YsmAnimations(ModelBlueprint blueprint, Optional<YsmModelTemplates.Model> prepared) {
         YsmModelTemplates.Model model = Objects.requireNonNull(prepared).orElse(null);
-        if (model == null)
-        {
+        if (model == null) {
             this.template = null;
             this.runtime = null;
             this.diagnosis = "使用模型自带数值动画";
@@ -56,12 +51,10 @@ final class YsmAnimations
         this.runtime = new YsmRuntime(this.template, 0);
         this.runtime.update(0, Map.of("ysm.food_level", 20d), Map.of("idle", 0d));
         this.snapshot = this.runtime.snapshot();
-        for (YsmModelTemplates.Clip animation : model.clips())
-        {
+        for (YsmModelTemplates.Clip animation : model.clips()) {
             String name = animation.name();
             BlueprintAnimation base = blueprint.getAnimations().get(name);
-            if (base == null)
-            {
+            if (base == null) {
                 continue;
             }
 
@@ -69,11 +62,9 @@ final class YsmAnimations
             clip.setLength(base.getLength());
             clip.setLoopMode(base.getLoopMode());
             clip.setOverride(base.isOverride());
-            for (YsmModelTemplates.Bone bone : animation.bones())
-            {
+            for (YsmModelTemplates.Bone bone : animation.bones()) {
                 Timeline timeline = new Timeline(clip, false);
-                for (YsmModelTemplates.Frame frame : bone.frames())
-                {
+                for (YsmModelTemplates.Frame frame : bone.frames()) {
                     String channel = frame.channel();
                     VectorKeyframe vector = new VectorKeyframe();
                     YsmModelTemplates.Point pre = frame.pre(), post = frame.post();
@@ -85,8 +76,7 @@ final class YsmAnimations
                     vector.setPostZ(data(post, "z", channel));
                     vector.setDiscontinuous(frame.discontinuous());
                     vector.setInterpolation(frame.interpolation());
-                    switch (channel)
-                    {
+                    switch (channel) {
                     case "position" -> timeline.getInterpolator(KeyframeTypes.POSITION).put(frame.time(), vector);
                     case "rotation" -> timeline.getInterpolator(KeyframeTypes.ROTATION).put(frame.time(), vector);
                     case "scale" -> timeline.getInterpolator(KeyframeTypes.SCALE).put(frame.time(), vector);
@@ -101,41 +91,31 @@ final class YsmAnimations
         this.diagnosis = "原始尺寸；YSM 条件动作与物理已接入（ME 按服务器 tick 更新）";
     }
 
-    private static JsonObject readModel(String name)
-    {
+    private static JsonObject readModel(String name) {
         try (InputStream stream = YsmAnimations.class.getClassLoader()
-                .getResourceAsStream("models/" + name + ".bbmodel"))
-        {
+                .getResourceAsStream("models/" + name + ".bbmodel")) {
             return stream == null ? null
                     : JsonParser.parseString(new String(stream.readAllBytes(), StandardCharsets.UTF_8))
                             .getAsJsonObject();
-        }
-        catch (IOException error)
-        {
+        } catch (IOException error) {
             throw new IllegalStateException("Cannot read runtime model", error);
         }
     }
 
-    private IKeyframeData data(YsmModelTemplates.Point point, String axis, String channel)
-    {
+    private IKeyframeData data(YsmModelTemplates.Point point, String axis, String channel) {
         String text = point.axis(axis);
         double factor = channel.equals("position") ? (axis.equals("z") ? -1 : 1) / 16d
                 : (channel.equals("rotation") ? (axis.equals("x") ? 1 : -1) * Math.PI / 180 : 1);
-        try
-        {
+        try {
             return new DoubleData(Double.parseDouble(text) * factor);
-        }
-        catch (NumberFormatException expression)
-        {
+        } catch (NumberFormatException expression) {
             Molang.Program program = this.template.expression(text);
-            return property ->
-            {
+            return property -> {
                 YsmRuntime.Snapshot current = this.snapshot;
                 Cache cache = this.evaluator.get();
                 double time = property == null ? 0 : property.getTime();
                 String name = property == null ? "" : property.getName();
-                if (cache.snapshot != current || cache.time != time || !Objects.equals(cache.animation, name))
-                {
+                if (cache.snapshot != current || cache.time != time || !Objects.equals(cache.animation, name)) {
                     cache.snapshot = current;
                     cache.time = time;
                     cache.animation = name;
@@ -148,10 +128,8 @@ final class YsmAnimations
         }
     }
 
-    void update(Player player, long tick, float bodyYaw, float headYaw, float pitch, Map<String, Double> active)
-    {
-        if (this.runtime == null)
-        {
+    void update(Player player, long tick, float bodyYaw, float headYaw, float pitch, Map<String, Double> active) {
+        if (this.runtime == null) {
             return;
         }
 
@@ -178,20 +156,16 @@ final class YsmAnimations
         this.snapshot = this.runtime.snapshot();
     }
 
-    private static double wrap(double value)
-    {
+    private static double wrap(double value) {
         return value - Math.floor((value + 180) / 360) * 360;
     }
 
-    Map<String, Double> accessories()
-    {
+    Map<String, Double> accessories() {
         return accessories(this.runtime == null ? null : this.snapshot);
     }
 
-    static Map<String, Double> accessories(YsmRuntime.Snapshot state)
-    {
-        if (state == null)
-        {
+    static Map<String, Double> accessories(YsmRuntime.Snapshot state) {
+        if (state == null) {
             return Map.of();
         }
 
@@ -200,18 +174,15 @@ final class YsmAnimations
                 Math.max(0, Math.min(1, Molang.finite(state.variables().getOrDefault("variable.roaming.b", 0d)))));
     }
 
-    Map<String, BlueprintAnimation> clips()
-    {
+    Map<String, BlueprintAnimation> clips() {
         return this.clips;
     }
 
-    Map<String, String> sources()
-    {
+    Map<String, String> sources() {
         return this.sources;
     }
 
-    String diagnosis()
-    {
+    String diagnosis() {
         return this.diagnosis;
     }
 }

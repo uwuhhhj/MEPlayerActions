@@ -5,17 +5,14 @@ import org.bukkit.configuration.ConfigurationSection;
 
 /** Immutable limits: configuration mistakes fail reload before replacing the running backend. */
 public record ResourceSettings(Tasks tasks, Network network, Protection protection, Models models, Disk disk,
-        ModelComplexityLimits complexity)
-{
+        ModelComplexityLimits complexity) {
 
     private static final long MIB = 1024L * 1024;
     private static final String P = "resource-protection.";
     public record Tasks(int workerThreads, int queueCapacity, int jobsPerPlayer, long maxReservedBytes,
             long perPlayerReservedBytes, int pendingCompletions, long maxPendingCompletionBytes, int callbacksPerTick,
-            int queueTimeoutTicks, int taskIdleTicks, int taskTimeoutTicks)
-    {
-        public Tasks
-        {
+            int queueTimeoutTicks, int taskIdleTicks, int taskTimeoutTicks) {
+        public Tasks {
             bound("worker-threads", workerThreads, 1, 16);
             bound("queue-capacity", queueCapacity, 1, 1024);
             bound("jobs-per-player", jobsPerPlayer, 1, 64);
@@ -34,10 +31,8 @@ public record ResourceSettings(Tasks tasks, Network network, Protection protecti
             long downloadBytesPerSecond, long assetDownloadBytesPerSecond, int globalPacketsPerSecond,
             int packetsPerSecond, long burstBytes, int bytesPerTick, int assetBytesPerTick, int globalTransfers,
             int transfersPerPlayer, int waitingTransfers, int transferQueueTicks, int transferIdleTicks,
-            int transferTotalTicks, int readyTicks, long maxQueuedOutgoingBytes)
-    {
-        public Network
-        {
+            int transferTotalTicks, int readyTicks, long maxQueuedOutgoingBytes) {
+        public Network {
             bound("global-upload-bytes-per-second", globalUploadBytesPerSecond, 16384, 1024 * MIB);
             bound("global-download-bytes-per-second", globalDownloadBytesPerSecond, 16384, 1024 * MIB);
             bound("upload-bytes-per-second", uploadBytesPerSecond, 16384, globalUploadBytesPerSecond);
@@ -61,10 +56,8 @@ public record ResourceSettings(Tasks tasks, Network network, Protection protecti
 
     public record Protection(boolean enabled, double throttledTps, double protectedTps, double emergencyTps,
             double throttledMspt, double protectedMspt, double emergencyMspt, double recoveryTps, double recoveryMspt,
-            int recoveryTicks, double mainBudgetMillis, int mainWorkPerTick)
-    {
-        public Protection
-        {
+            int recoveryTicks, double mainBudgetMillis, int mainWorkPerTick) {
+        public Protection {
             finite("throttled-tps", throttledTps, 1, 20);
             finite("protected-tps", protectedTps, 1, throttledTps);
             finite("emergency-tps", emergencyTps, 1, protectedTps);
@@ -81,10 +74,8 @@ public record ResourceSettings(Tasks tasks, Network network, Protection protecti
 
     public record Models(int maxDisguises, int maxPublications, int maxRelations, int maxModelsPerViewer,
             int newDisguisesPerSecond, int disguiseCooldownTicks, int emergencyRemovalsPerTick, long maxAssetCacheBytes,
-            int maxAssetCacheModels)
-    {
-        public Models
-        {
+            int maxAssetCacheModels) {
+        public Models {
             bound("max-disguises", maxDisguises, 1, 10000);
             bound("max-publications", maxPublications, 1, 10000);
             bound("max-relations", maxRelations, 1, 100000);
@@ -97,17 +88,14 @@ public record ResourceSettings(Tasks tasks, Network network, Protection protecti
         }
     }
 
-    public record Disk(long maxTemporaryBytes, long minFreeBytes)
-    {
-        public Disk
-        {
+    public record Disk(long maxTemporaryBytes, long minFreeBytes) {
+        public Disk {
             bound("max-temporary-bytes", maxTemporaryBytes, MIB, 64L * 1024 * MIB);
             bound("min-free-bytes", minFreeBytes, 0, 1024L * 1024 * MIB);
         }
     }
 
-    public static ResourceSettings defaults()
-    {
+    public static ResourceSettings defaults() {
         return new ResourceSettings(new Tasks(2, 32, 4, 128 * MIB, 64 * MIB, 64, 128 * MIB, 8, 600, 600, 2400),
                 new Network(4 * MIB, 8 * MIB, 256 * 1024, 2 * MIB, 512 * 1024, 4096, 48, 8 * MIB, 512 * 1024,
                         256 * 1024, 32, 2, 128, 600, 300, 2400, 300, 16 * MIB),
@@ -116,8 +104,7 @@ public record ResourceSettings(Tasks tasks, Network network, Protection protecti
                 ModelComplexityLimits.defaults());
     }
 
-    public static ResourceSettings fromConfiguration(ConfigurationSection config)
-    {
+    public static ResourceSettings fromConfiguration(ConfigurationSection config) {
         ResourceSettings d = defaults();
         Tasks t = d.tasks;
         Network n = d.network;
@@ -181,53 +168,42 @@ public record ResourceSettings(Tasks tasks, Network network, Protection protecti
                         l(config, "complexity.max-texture-pixels", d.complexity.maxTexturePixels())));
     }
 
-    public int maxServerDisguises()
-    {
+    public int maxServerDisguises() {
         return this.models.maxDisguises;
     }
 
-    public int disguiseCooldownTicks()
-    {
+    public int disguiseCooldownTicks() {
         return this.models.disguiseCooldownTicks;
     }
 
-    public int emergencyRemovalsPerTick()
-    {
+    public int emergencyRemovalsPerTick() {
         return this.models.emergencyRemovalsPerTick;
     }
 
-    private static int i(ConfigurationSection c, String key, int d)
-    {
+    private static int i(ConfigurationSection c, String key, int d) {
         long value = l(c, key, d);
-        if (value < Integer.MIN_VALUE || value > Integer.MAX_VALUE)
-        {
+        if (value < Integer.MIN_VALUE || value > Integer.MAX_VALUE) {
             throw new IllegalArgumentException(P + key + " exceeds integer range");
         }
         return (int) value;
     }
 
-    private static long l(ConfigurationSection c, String key, long d)
-    {
+    private static long l(ConfigurationSection c, String key, long d) {
         return c.getLong(P + key, d);
     }
 
-    private static double v(ConfigurationSection c, String key, double d)
-    {
+    private static double v(ConfigurationSection c, String key, double d) {
         return c.getDouble(P + "protection." + key, d);
     }
 
-    private static void bound(String key, long value, long min, long max)
-    {
-        if (value < min || value > max)
-        {
+    private static void bound(String key, long value, long min, long max) {
+        if (value < min || value > max) {
             throw new IllegalArgumentException(P + key + " must be " + min + "–" + max);
         }
     }
 
-    private static void finite(String key, double value, double min, double max)
-    {
-        if (!Double.isFinite(value) || value < min || value > max)
-        {
+    private static void finite(String key, double value, double min, double max) {
+        if (!Double.isFinite(value) || value < min || value > max) {
             throw new IllegalArgumentException(P + key + " must be " + min + "–" + max);
         }
     }

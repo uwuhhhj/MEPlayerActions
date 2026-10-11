@@ -17,28 +17,21 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NativePlayerPresentationTest
-{
+class NativePlayerPresentationTest {
     private static final Unsafe FIXTURE_ALLOCATOR = fixtureAllocator();
 
-    private static Unsafe fixtureAllocator()
-    {
-        try
-        {
+    private static Unsafe fixtureAllocator() {
+        try {
             Field field = Unsafe.class.getDeclaredField("theUnsafe");
             field.setAccessible(true);
             return (Unsafe) field.get(null);
-        }
-        catch (ReflectiveOperationException error)
-        {
+        } catch (ReflectiveOperationException error) {
             throw new AssertionError("Cannot allocate native render-state fixtures", error);
         }
     }
 
-    private static PlayerEntityRenderState nativeState()
-    {
-        try
-        {
+    private static PlayerEntityRenderState nativeState() {
+        try {
             // These tests exercise real vanilla state fields, not Minecraft's item registry.
             // The normal constructor initializes ItemStack.EMPTY, which needs Fabric's remap
             // access transformations unavailable on the plain JUnit classpath. No production
@@ -47,22 +40,18 @@ class NativePlayerPresentationTest
                     .allocateInstance(PlayerEntityRenderState.class);
             state.pose = EntityPose.STANDING;
             return state;
-        }
-        catch (InstantiationException error)
-        {
+        } catch (InstantiationException error) {
             throw new AssertionError("Cannot allocate native render-state fixture", error);
         }
     }
 
     @AfterEach
-    void releaseFrame()
-    {
+    void releaseFrame() {
         NativePlayerPresentation.beginFrame(List.of());
     }
 
     @Test
-    void sharedBodyUsesTheActualNativeFrameIncludingRendererOnlyOffsets()
-    {
+    void sharedBodyUsesTheActualNativeFrameIncludingRendererOnlyOffsets() {
         UUID owner = UUID.randomUUID();
         PlayerEntityRenderState state = nativeState();
         state.x = 25.125;
@@ -92,8 +81,7 @@ class NativePlayerPresentationTest
     }
 
     @Test
-    void laterVanillaStateAndMatrixChangesCannotMoveAnAlreadyExtractedModel()
-    {
+    void laterVanillaStateAndMatrixChangesCannotMoveAnAlreadyExtractedModel() {
         UUID owner = UUID.randomUUID();
         PlayerEntityRenderState state = nativeState();
         state.y = 72;
@@ -113,8 +101,7 @@ class NativePlayerPresentationTest
     }
 
     @Test
-    void upsideDownBodyDoesNotReverseAuthorHeadQueriesTwice()
-    {
+    void upsideDownBodyDoesNotReverseAuthorHeadQueriesTwice() {
         PlayerEntityRenderState state = nativeState();
         state.bodyYaw = 45;
         state.relativeHeadYaw = -20;
@@ -130,8 +117,7 @@ class NativePlayerPresentationTest
     }
 
     @Test
-    void newFrameNeverReusesACulledOrUntrackedRemoteBody()
-    {
+    void newFrameNeverReusesACulledOrUntrackedRemoteBody() {
         UUID remote = UUID.randomUUID();
         PlayerEntityRenderState state = nativeState();
         state.y = 80;
@@ -147,8 +133,7 @@ class NativePlayerPresentationTest
     }
 
     @Test
-    void vehicleAndProjectileFramesUseNativeOriginsOffsetsFrozenDeltaAndVisibility()
-    {
+    void vehicleAndProjectileFramesUseNativeOriginsOffsetsFrozenDeltaAndVisibility() {
         UUID entity = UUID.randomUUID();
         EntityRenderState state = new EntityRenderState();
         state.x = 18.25;
@@ -185,8 +170,7 @@ class NativePlayerPresentationTest
     }
 
     @Test
-    void worldFrameCameraAndAllEntitySnapshotsAreClearedTogether()
-    {
+    void worldFrameCameraAndAllEntitySnapshotsAreClearedTogether() {
         Vec3d camera = new Vec3d(30.5, 80.125, -40.75);
         NativePlayerPresentation.beginFrame(List.of(), camera);
         UUID entity = UUID.randomUUID();
@@ -199,8 +183,7 @@ class NativePlayerPresentationTest
     }
 
     @Test
-    void sleepingAndUpsideDownParentStateIsCopiedWithoutDisablingVanillaAnimations()
-    {
+    void sleepingAndUpsideDownParentStateIsCopiedWithoutDisablingVanillaAnimations() {
         PlayerEntityRenderState actual = nativeState();
         actual.age = 123.75f;
         actual.height = 1.8f;

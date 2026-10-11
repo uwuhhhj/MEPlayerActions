@@ -7,44 +7,38 @@ import java.lang.reflect.Proxy;
 import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
-class NativeEntityRestorationTest
-{
-    private static World world()
-    {
-        return (World) Proxy.newProxyInstance(World.class.getClassLoader(), new Class[]
-        { World.class }, (p, m, a) -> m.getName().equals("equals") ? p == a[0]
-                : (m.getName().equals("hashCode") ? System.identityHashCode(p) : null));
+class NativeEntityRestorationTest {
+    private static World world() {
+        return (World) Proxy.newProxyInstance(World.class.getClassLoader(), new Class[] { World.class },
+                (p, m, a) -> m.getName().equals("equals") ? p == a[0]
+                        : (m.getName().equals("hashCode") ? System.identityHashCode(p) : null));
     }
 
-    private static final class Person
-    {
+    private static final class Person {
         final UUID id = UUID.randomUUID();
         final Player player;
         final Set<Player> tracked = new HashSet<>();
         World world;
         boolean online = true, visible = true;
 
-        Person(World world)
-        {
+        Person(World world) {
             this.world = world;
-            this.player = (Player) Proxy.newProxyInstance(Player.class.getClassLoader(), new Class[]
-            { Player.class }, (p, m, a) -> switch (m.getName())
-            {
-            case "getUniqueId" -> this.id;
-            case "getWorld" -> this.world;
-            case "isOnline" -> this.online;
-            case "canSee" -> this.visible;
-            case "getTrackedBy" -> this.tracked;
-            case "equals" -> p == a[0];
-            case "hashCode" -> this.id.hashCode();
-            default -> null;
-            });
+            this.player = (Player) Proxy.newProxyInstance(Player.class.getClassLoader(), new Class[] { Player.class },
+                    (p, m, a) -> switch (m.getName()) {
+                    case "getUniqueId" -> this.id;
+                    case "getWorld" -> this.world;
+                    case "isOnline" -> this.online;
+                    case "canSee" -> this.visible;
+                    case "getTrackedBy" -> this.tracked;
+                    case "equals" -> p == a[0];
+                    case "hashCode" -> this.id.hashCode();
+                    default -> null;
+                    });
         }
     }
 
     @Test
-    void onlyFormerLocalViewersStillTrackedReceivePairing()
-    {
+    void onlyFormerLocalViewersStillTrackedReceivePairing() {
         World world = world();
         Person owner = new Person(world), local = new Person(world), plain = new Person(world), far = new Person(world);
         owner.tracked.addAll(List.of(local.player, plain.player));
@@ -52,8 +46,7 @@ class NativeEntityRestorationTest
     }
 
     @Test
-    void vanishWorldChangeOfflineAndMissingPlayersAreExcluded()
-    {
+    void vanishWorldChangeOfflineAndMissingPlayersAreExcluded() {
         World world = world();
         Person owner = new Person(world), hidden = new Person(world), departed = new Person(world),
                 otherWorld = new Person(world());
@@ -66,8 +59,7 @@ class NativeEntityRestorationTest
     }
 
     @Test
-    void disconnectedOwnerOrAbsentVanillaTrackingNeverRespawns()
-    {
+    void disconnectedOwnerOrAbsentVanillaTrackingNeverRespawns() {
         World world = world();
         Person owner = new Person(world), local = new Person(world);
         owner.online = false;
@@ -79,8 +71,7 @@ class NativeEntityRestorationTest
     }
 
     @Test
-    void historicalPairingDoesNotForceAPlayerOutsideCurrentVanillaTracking()
-    {
+    void historicalPairingDoesNotForceAPlayerOutsideCurrentVanillaTracking() {
         World world = world();
         Person owner = new Person(world), former = new Person(world), current = new Person(world);
         owner.tracked.add(current.player);

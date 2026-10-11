@@ -7,22 +7,17 @@ import com.google.gson.*;
 import java.util.*;
 
 /** Extra animation keys are clips/categories; their values are labels or configuration links. */
-public final class ModelActionMenu
-{
-    public record Entry(String id, String label, String configGroup, String description)
-    {
-        public Entry(String id, String label, String configGroup)
-        {
+public final class ModelActionMenu {
+    public record Entry(String id, String label, String configGroup, String description) {
+        public Entry(String id, String label, String configGroup) {
             this(id, label, configGroup, "");
         }
 
-        public boolean category()
-        {
+        public boolean category() {
             return this.id.startsWith("#") && !this.id.equals("#return");
         }
 
-        public boolean back()
-        {
+        public boolean back() {
             return this.id.equals("#return");
         }
     }
@@ -31,10 +26,8 @@ public final class ModelActionMenu
     private final Map<String, List<Entry>> categories;
     private final Deque<String> path = new ArrayDeque<>();
 
-    public ModelActionMenu(YsmModelProfile profile, String locale)
-    {
-        if (profile == null)
-        {
+    public ModelActionMenu(YsmModelProfile profile, String locale) {
+        if (profile == null) {
             this.root = List.of();
             this.categories = Map.of();
             return;
@@ -42,15 +35,12 @@ public final class ModelActionMenu
         ModelConfigSchema forms = ModelConfigSchema.from(profile, locale);
         this.root = entries(profile.extraAnimations(), forms, profile, locale);
         Map<String, List<Entry>> classified = new LinkedHashMap<>();
-        for (JsonElement value : profile.extraAnimationClassify())
-        {
+        for (JsonElement value : profile.extraAnimationClassify()) {
             JsonObject definition = value.getAsJsonObject();
             String id = definition.get("id").getAsString();
             JsonObject extras = definition.has("extra_animation") ? definition.getAsJsonObject("extra_animation")
                     : new JsonObject();
-            if (classified.size() >= 32 || classified.containsKey(id) || extras.size() > 128)
-
-            {
+            if (classified.size() >= 32 || classified.containsKey(id) || extras.size() > 128) {
                 throw new IllegalArgumentException("模型动作分类无效");
             }
 
@@ -62,21 +52,17 @@ public final class ModelActionMenu
     }
 
     private static List<Entry> entries(Map<String, String> mapping, ModelConfigSchema forms, YsmModelProfile profile,
-            String locale)
-    {
+            String locale) {
         List<Entry> entries = new ArrayList<>();
-        mapping.forEach((id, value) ->
-        {
+        mapping.forEach((id, value) -> {
             String config = value.startsWith("#") ? value.substring(1) : "";
             ModelConfigSchema.Group group = config.isEmpty() ? null : forms.group(config);
             String label = config.isEmpty() ? (value.isEmpty() ? id : value) : (group == null ? id : group.name());
-            if (id.equals("#return"))
-            {
+            if (id.equals("#return")) {
                 label = "返回上级";
             }
 
-            else if (id.startsWith("#") && value.isEmpty())
-            {
+            else if (id.startsWith("#") && value.isEmpty()) {
                 label = id.substring(1);
             }
 
@@ -87,36 +73,29 @@ public final class ModelActionMenu
         return List.copyOf(entries);
     }
 
-    public List<Entry> entries()
-    {
+    public List<Entry> entries() {
         return this.path.isEmpty() ? this.root : this.categories.getOrDefault(this.path.peekLast(), List.of());
     }
 
-    public String categoryId()
-    {
+    public String categoryId() {
         return this.path.isEmpty() ? "" : this.path.peekLast();
     }
 
-    public int depth()
-    {
+    public int depth() {
         return this.path.size();
     }
 
-    public boolean enter(Entry entry)
-    {
-        if (entry.back())
-        {
+    public boolean enter(Entry entry) {
+        if (entry.back()) {
             return back();
         }
 
-        if (!entry.category())
-        {
+        if (!entry.category()) {
             return false;
         }
 
         String id = entry.id().substring(1);
-        if (!this.categories.containsKey(id) || this.path.contains(id) || this.path.size() >= 32)
-        {
+        if (!this.categories.containsKey(id) || this.path.contains(id) || this.path.size() >= 32) {
             return false;
         }
 
@@ -124,10 +103,8 @@ public final class ModelActionMenu
         return true;
     }
 
-    public boolean back()
-    {
-        if (this.path.isEmpty())
-        {
+    public boolean back() {
+        if (this.path.isEmpty()) {
             return false;
         }
         this.path.removeLast();

@@ -8,8 +8,7 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 
 /** The transform and special renderer used by this native render layer. */
 @Mixin(ItemRenderState.LayerRenderState.class)
-public interface ItemLayerRenderStateAccessor
-{
+public interface ItemLayerRenderStateAccessor {
     @Accessor("transform")
     Transformation meplayeractions$getTransform();
 

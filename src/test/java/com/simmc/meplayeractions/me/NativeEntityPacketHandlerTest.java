@@ -7,42 +7,32 @@ import org.junit.jupiter.api.Test;
 import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
-class NativeEntityPacketHandlerTest
-{
-    private record EntityPacket(int owner, String kind)
-    {
+class NativeEntityPacketHandlerTest {
+    private record EntityPacket(int owner, String kind) {
     }
 
-    private record Bundle(List<Object> packets)
-    {
+    private record Bundle(List<Object> packets) {
     }
 
-    private record RemovalPacket(List<Integer> ids)
-    {
+    private record RemovalPacket(List<Integer> ids) {
     }
 
-    private record PassengersPacket(int vehicle, List<Integer> passengers)
-    {
+    private record PassengersPacket(int vehicle, List<Integer> passengers) {
     }
 
-    private static NativeEntityPacketHandler handler()
-    {
+    private static NativeEntityPacketHandler handler() {
         return new NativeEntityPacketHandler((p, ids) -> p instanceof EntityPacket e && ids.contains(e.owner),
-                p -> p instanceof Bundle b ? b.packets : null, (p, owners) ->
-                {
-                    if (!(p instanceof RemovalPacket removal))
-                    {
+                p -> p instanceof Bundle b ? b.packets : null, (p, owners) -> {
+                    if (!(p instanceof RemovalPacket removal)) {
                         return null;
                     }
 
                     NativeEntityPackets.IdPartition ids = NativeEntityPackets.partitionIds(removal.ids, owners);
-                    if (ids.approved().length == 0)
-                    {
+                    if (ids.approved().length == 0) {
                         return null;
                     }
 
-                    if (ids.remaining().length == 0)
-                    {
+                    if (ids.remaining().length == 0) {
                         return new NativeEntityPacketHandler.Removal(p, null);
                     }
 
@@ -50,14 +40,12 @@ class NativeEntityPacketHandlerTest
                 });
     }
 
-    private static RemovalPacket removal(int... ids)
-    {
+    private static RemovalPacket removal(int... ids) {
         return new RemovalPacket(Arrays.stream(ids).boxed().toList());
     }
 
     @Test
-    void onlyApprovedViewerOwnerPacketsBypassMe()
-    {
+    void onlyApprovedViewerOwnerPacketsBypassMe() {
         NativeEntityPacketHandler handler = handler();
         handler.owners = Set.of(10);
         EmbeddedChannel channel = new EmbeddedChannel(handler);
@@ -72,8 +60,7 @@ class NativeEntityPacketHandlerTest
     }
 
     @Test
-    void unmoddedOrUnconfirmedViewerKeepsAllMeFiltering()
-    {
+    void unmoddedOrUnconfirmedViewerKeepsAllMeFiltering() {
         EmbeddedChannel channel = new EmbeddedChannel(handler());
         NativeEntityPacketHandlerTest.Bundle bundle = new Bundle(
                 List.of(new EntityPacket(10, "spawn"), new EntityPacket(10, "metadata")));
@@ -84,8 +71,7 @@ class NativeEntityPacketHandlerTest
     }
 
     @Test
-    void mixedBundlesKeepPacketOrderWithoutExemptingUnrelatedEntities()
-    {
+    void mixedBundlesKeepPacketOrderWithoutExemptingUnrelatedEntities() {
         NativeEntityPacketHandler handler = handler();
         handler.owners = Set.of(10);
         EmbeddedChannel channel = new EmbeddedChannel(handler);
@@ -103,8 +89,7 @@ class NativeEntityPacketHandlerTest
     }
 
     @Test
-    void withdrawingLeaseImmediatelyRestoresMePacketHandling()
-    {
+    void withdrawingLeaseImmediatelyRestoresMePacketHandling() {
         NativeEntityPacketHandler handler = handler();
         handler.owners = Set.of(10);
         EmbeddedChannel channel = new EmbeddedChannel(handler);
@@ -118,8 +103,7 @@ class NativeEntityPacketHandlerTest
     }
 
     @Test
-    void alreadyProtectedPacketsAreNotWrappedAgain()
-    {
+    void alreadyProtectedPacketsAreNotWrappedAgain() {
         NativeEntityPacketHandler handler = handler();
         handler.owners = Set.of(10);
         EmbeddedChannel channel = new EmbeddedChannel(handler);
@@ -130,8 +114,7 @@ class NativeEntityPacketHandlerTest
     }
 
     @Test
-    void mixedBatchRemovalProtectsOnlyApprovedIds()
-    {
+    void mixedBatchRemovalProtectsOnlyApprovedIds() {
         NativeEntityPacketHandler handler = handler();
         handler.owners = Set.of(10, 11);
         EmbeddedChannel channel = new EmbeddedChannel(handler);
@@ -143,8 +126,7 @@ class NativeEntityPacketHandlerTest
     }
 
     @Test
-    void fullyApprovedRemovalPreservesOriginalPacketWithoutExemptingAnotherId()
-    {
+    void fullyApprovedRemovalPreservesOriginalPacketWithoutExemptingAnotherId() {
         NativeEntityPacketHandler handler = handler();
         handler.owners = Set.of(10, 11);
         EmbeddedChannel channel = new EmbeddedChannel(handler);
@@ -156,8 +138,7 @@ class NativeEntityPacketHandlerTest
     }
 
     @Test
-    void fullyUnapprovedAndEmptyRemovalsKeepOriginalMeHandling()
-    {
+    void fullyUnapprovedAndEmptyRemovalsKeepOriginalMeHandling() {
         NativeEntityPacketHandler handler = handler();
         handler.owners = Set.of(10);
         EmbeddedChannel channel = new EmbeddedChannel(handler);
@@ -171,32 +152,25 @@ class NativeEntityPacketHandlerTest
     }
 
     @Test
-    void partitionPreservesIdOrderAndDuplicatesInBothAccessorForms()
-    {
-        NativeEntityPackets.IdPartition primitive = NativeEntityPackets.partitionIds(new int[]
-        { 20, 10, 20, 11, 10, 30 }, Set.of(10, 11));
+    void partitionPreservesIdOrderAndDuplicatesInBothAccessorForms() {
+        NativeEntityPackets.IdPartition primitive = NativeEntityPackets
+                .partitionIds(new int[] { 20, 10, 20, 11, 10, 30 }, Set.of(10, 11));
         NativeEntityPackets.IdPartition iterable = NativeEntityPackets.partitionIds(List.of(20, 10, 20, 11, 10, 30),
                 Set.of(10, 11));
-        assertArrayEquals(new int[]
-        { 10, 11, 10 }, primitive.approved());
-        assertArrayEquals(new int[]
-        { 20, 20, 30 }, primitive.remaining());
+        assertArrayEquals(new int[] { 10, 11, 10 }, primitive.approved());
+        assertArrayEquals(new int[] { 20, 20, 30 }, primitive.remaining());
         assertArrayEquals(primitive.approved(), iterable.approved());
         assertArrayEquals(primitive.remaining(), iterable.remaining());
     }
 
     @Test
-    void mixedBatchRemainderStillPassesThroughMeVisibilityFiltering()
-    {
+    void mixedBatchRemainderStillPassesThroughMeVisibilityFiltering() {
         NativeEntityPacketHandler handler = handler();
         handler.owners = Set.of(10);
-        ChannelOutboundHandlerAdapter me = new ChannelOutboundHandlerAdapter()
-        {
+        ChannelOutboundHandlerAdapter me = new ChannelOutboundHandlerAdapter() {
             @Override
-            public void write(ChannelHandlerContext context, Object packet, ChannelPromise promise)
-            {
-                if (packet instanceof RemovalPacket removal)
-                {
+            public void write(ChannelHandlerContext context, Object packet, ChannelPromise promise) {
+                if (packet instanceof RemovalPacket removal) {
                     packet = new RemovalPacket(removal.ids.stream().filter(id -> id != 20).toList());
                 }
 
@@ -212,17 +186,13 @@ class NativeEntityPacketHandlerTest
     }
 
     @Test
-    void passengerRelationshipsRetainOriginalIdsAndMePivotAugmentation()
-    {
+    void passengerRelationshipsRetainOriginalIdsAndMePivotAugmentation() {
         NativeEntityPacketHandler handler = handler();
         handler.owners = Set.of(10);
-        ChannelOutboundHandlerAdapter me = new ChannelOutboundHandlerAdapter()
-        {
+        ChannelOutboundHandlerAdapter me = new ChannelOutboundHandlerAdapter() {
             @Override
-            public void write(ChannelHandlerContext context, Object packet, ChannelPromise promise)
-            {
-                if (packet instanceof PassengersPacket passengers)
-                {
+            public void write(ChannelHandlerContext context, Object packet, ChannelPromise promise) {
+                if (packet instanceof PassengersPacket passengers) {
                     LinkedHashSet<Integer> ids = new LinkedHashSet<>(passengers.passengers);
                     ids.add(99);
                     packet = new PassengersPacket(passengers.vehicle, List.copyOf(ids));
@@ -239,8 +209,7 @@ class NativeEntityPacketHandlerTest
     }
 
     @Test
-    void nestedBundlesRouteApprovedDescendantsAndSplitMixedRemovalInOrder()
-    {
+    void nestedBundlesRouteApprovedDescendantsAndSplitMixedRemovalInOrder() {
         NativeEntityPacketHandler handler = handler();
         handler.owners = Set.of(10);
         EmbeddedChannel channel = new EmbeddedChannel(handler);
@@ -260,8 +229,7 @@ class NativeEntityPacketHandlerTest
     }
 
     @Test
-    void whollyUnapprovedNestedBundlesRemainIntact()
-    {
+    void whollyUnapprovedNestedBundlesRemainIntact() {
         NativeEntityPacketHandler handler = handler();
         handler.owners = Set.of(10);
         EmbeddedChannel channel = new EmbeddedChannel(handler);

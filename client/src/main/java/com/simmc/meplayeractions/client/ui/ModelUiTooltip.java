@@ -12,16 +12,12 @@ import java.util.List;
 import java.util.Optional;
 
 /** Use Minecraft's glyph widths and word wrapping, with an explicit compact line budget. */
-final class ModelUiTooltip
-{
-    static Tooltip of(TextRenderer renderer, int screenWidth, String content)
-    {
+final class ModelUiTooltip {
+    static Tooltip of(TextRenderer renderer, int screenWidth, String content) {
         MutableText styled = Text.empty();
         String[] paragraphs = content.split("\n", -1);
-        for (int index = 0; index < paragraphs.length; index++)
-        {
-            if (index > 0)
-            {
+        for (int index = 0; index < paragraphs.length; index++) {
+            if (index > 0) {
                 styled.append("\n");
             }
 
@@ -30,49 +26,41 @@ final class ModelUiTooltip
             if (line.startsWith("请先") || line.startsWith("无法") || line.startsWith("当前无法") || line.startsWith("失败")
                     || line.startsWith("服务器未") || line.startsWith("服务器拒绝") || line.startsWith("尚未")
                     || line.startsWith("本机未找到") || line.startsWith("本机文件内容不同") || line.startsWith("没有私人模型上传权限")
-                    || line.startsWith("参数未保存") || line.startsWith("当前未允许") || line.startsWith("此模型不在"))
-            {
+                    || line.startsWith("参数未保存") || line.startsWith("当前未允许") || line.startsWith("此模型不在")) {
                 color = Formatting.RED;
             }
 
             else if (line.startsWith("等待") || line.startsWith("正在") || line.startsWith("删除中")
-                    || line.startsWith("请求已发送") || line.startsWith("需要连接") || line.startsWith("未收到"))
-            {
+                    || line.startsWith("请求已发送") || line.startsWith("需要连接") || line.startsWith("未收到")) {
                 color = Formatting.GOLD;
             }
 
-            else if (line.startsWith("当前正在使用") || line.startsWith("服务器已保存") || line.startsWith("已分享"))
-            {
+            else if (line.startsWith("当前正在使用") || line.startsWith("服务器已保存") || line.startsWith("已分享")) {
                 color = Formatting.GREEN;
             }
 
-            if (line.startsWith("服务器资源：") || line.startsWith("客户端资源：") || line.startsWith("本地接管："))
-            {
+            if (line.startsWith("服务器资源：") || line.startsWith("客户端资源：") || line.startsWith("本地接管：")) {
                 if (line.contains("未找到") || line.contains("校验失败") || line.contains("同步失败") || line.contains("不允许")
                         || line.contains("不可用") || line.contains("超出") || line.contains("超过") || line.contains("预算不足")
-                        || line.contains("限流"))
-                {
+                        || line.contains("限流")) {
                     color = Formatting.RED;
                 }
 
-                else if (line.contains("已找到") || line.contains("已就绪") || line.contains("已启动") || line.contains("已有缓存"))
-                {
+                else if (line.contains("已找到") || line.contains("已就绪") || line.contains("已启动")
+                        || line.contains("已有缓存")) {
                     color = Formatting.GREEN;
                 }
 
-                else if (line.contains("等待") || line.contains("正在") || line.contains("尚未确认"))
-                {
+                else if (line.contains("等待") || line.contains("正在") || line.contains("尚未确认")) {
                     color = Formatting.GOLD;
                 }
 
-                else
-                {
+                else {
                     color = Formatting.GRAY;
                 }
 
             }
-            if (line.startsWith("接管／同步提示："))
-            {
+            if (line.startsWith("接管／同步提示：")) {
                 color = Formatting.RED;
             }
 
@@ -81,33 +69,27 @@ final class ModelUiTooltip
         return of(renderer, screenWidth, styled);
     }
 
-    static Tooltip of(TextRenderer renderer, int screenWidth, Text content)
-    {
+    static Tooltip of(TextRenderer renderer, int screenWidth, Text content) {
         int width = Math.max(40, Math.min(160, screenWidth - 24));
         List<StringVisitable> lines = renderer.getTextHandler().wrapLines(content, width, Style.EMPTY);
         MutableText wrapped = Text.empty();
-        for (int index = 0; index < Math.min(12, lines.size()); index++)
-        {
-            if (index > 0)
-            {
+        for (int index = 0; index < Math.min(12, lines.size()); index++) {
+            if (index > 0) {
                 wrapped.append("\n");
             }
 
-            lines.get(index).visit((style, value) ->
-            {
+            lines.get(index).visit((style, value) -> {
                 wrapped.append(Text.literal(value).setStyle(style));
                 return Optional.empty();
             }, Style.EMPTY);
         }
-        if (lines.size() > 12)
-        {
+        if (lines.size() > 12) {
             wrapped.append(Text.literal("\n…").formatted(Formatting.GRAY));
         }
 
         return Tooltip.of(wrapped, content);
     }
 
-    private ModelUiTooltip()
-    {
+    private ModelUiTooltip() {
     }
 }

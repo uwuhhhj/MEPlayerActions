@@ -5,11 +5,9 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class PerformanceSettingsTest
-{
+class PerformanceSettingsTest {
     @Test
-    void olderConfigurationUsesBackgroundDefaultsWithoutChangingAnimation() throws Exception
-    {
+    void olderConfigurationUsesBackgroundDefaultsWithoutChangingAnimation() throws Exception {
         YamlConfiguration config = new YamlConfiguration();
         config.loadFromString("controller:\n  sample-interval-ticks: 1\n  animation-update-interval-ticks: 1\n");
         assertEquals(new PerformanceSettings(40, 20, 100), PerformanceSettings.fromConfiguration(config));
@@ -19,8 +17,7 @@ class PerformanceSettingsTest
     }
 
     @Test
-    void independentCadencesAreLoaded() throws Exception
-    {
+    void independentCadencesAreLoaded() throws Exception {
         YamlConfiguration config = new YamlConfiguration();
         config.loadFromString(
                 "performance:\n  audience-refresh-ticks: 100\n  validation-ticks: 5\n  adoption-scan-ticks: 60\n");
@@ -28,8 +25,7 @@ class PerformanceSettingsTest
     }
 
     @Test
-    void rejectsCadencesOutsideDiscoveryAndLeaseMargins()
-    {
+    void rejectsCadencesOutsideDiscoveryAndLeaseMargins() {
         assertThrows(IllegalArgumentException.class, () -> new PerformanceSettings(19, 20, 100));
         assertThrows(IllegalArgumentException.class, () -> new PerformanceSettings(101, 20, 100));
         assertThrows(IllegalArgumentException.class, () -> new PerformanceSettings(40, 21, 100));

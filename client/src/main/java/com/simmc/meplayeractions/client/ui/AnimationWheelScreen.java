@@ -31,8 +31,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * The mirrored left-side disguise controls are MPA additions, not upstream roulette features.
  * See THIRD_PARTY_NOTICES.md for the original license and source attribution.
  */
-public final class AnimationWheelScreen extends Screen
-{
+public final class AnimationWheelScreen extends Screen {
     private static final int SLOTS = WheelSelection.PAGE_SIZE;
     private static final Identifier SETTINGS_ICON = Identifier.of("meplayeractions", "textures/gui/settings.png");
     private final ClientRuntime runtime;
@@ -60,15 +59,13 @@ public final class AnimationWheelScreen extends Screen
     private List<ModelActionMenu.Entry> localEntries = List.of();
     private FlatButton centerButton, scrollUpButton, scrollDownButton, undisguiseButton;
 
-    public AnimationWheelScreen(ClientRuntime runtime)
-    {
+    public AnimationWheelScreen(ClientRuntime runtime) {
         this(runtime, true, null);
         beginHoldSelection();
     }
 
     /** The compatibility source argument never changes Runtime's per-instance action source. */
-    public AnimationWheelScreen(ClientRuntime runtime, boolean localMode, Screen parent)
-    {
+    public AnimationWheelScreen(ClientRuntime runtime, boolean localMode, Screen parent) {
         super(Text.literal("动作轮盘"));
         this.runtime = runtime;
         this.parent = parent;
@@ -76,15 +73,12 @@ public final class AnimationWheelScreen extends Screen
         this.releaseConsumed = true;
     }
 
-    public void setReleaseKey(int keyCode)
-    {
+    public void setReleaseKey(int keyCode) {
         this.releaseKey = keyCode;
         this.releaseType = InputUtil.Type.KEYSYM;
-        if (MEPlayerActionsClient.actionWheelKey != null)
-        {
+        if (MEPlayerActionsClient.actionWheelKey != null) {
             InputUtil.Key bound = KeyBindingHelper.getBoundKeyOf(MEPlayerActionsClient.actionWheelKey);
-            if (bound.getCode() == keyCode)
-            {
+            if (bound.getCode() == keyCode) {
                 this.releaseType = bound.getCategory();
             }
 
@@ -92,93 +86,73 @@ public final class AnimationWheelScreen extends Screen
         beginHoldSelection();
     }
 
-    public void setReleaseKey(InputUtil.Key key)
-    {
+    public void setReleaseKey(InputUtil.Key key) {
         this.releaseKey = key.getCode();
         this.releaseType = key.getCategory();
         beginHoldSelection();
     }
 
-    public void beginHoldSelection()
-    {
+    public void beginHoldSelection() {
         this.releaseConsumed = false;
         this.releaseKeyDown = true;
     }
 
-    private boolean releaseMatches(KeyInput input)
-    {
+    private boolean releaseMatches(KeyInput input) {
         return this.releaseType != InputUtil.Type.MOUSE
                 && (this.releaseType == InputUtil.Type.SCANCODE ? input.scancode() : input.key()) == this.releaseKey;
     }
 
     /** Release dispatches once and cannot submit a previous appearance's selection. */
-    public void releaseSelection()
-    {
+    public void releaseSelection() {
         this.releaseKeyDown = false;
-        if (this.releaseConsumed || super.client.currentScreen != this)
-        {
+        if (this.releaseConsumed || super.client.currentScreen != this) {
             return;
         }
 
         this.releaseConsumed = true;
-        if (!sameSource())
-        {
+        if (!sameSource()) {
             return;
         }
 
-        if (index(this.hovered) >= 0)
-        {
-            if (this.hoveredConfig)
-            {
+        if (index(this.hovered) >= 0) {
+            if (this.hoveredConfig) {
                 openConfig(this.hovered);
-            }
-            else
-            {
+            } else {
                 select(this.hovered);
             }
-        }
-        else if (this.hoveredCenter)
-        {
+        } else if (this.hoveredCenter) {
             activateCenter();
-            if (!this.localMode && !this.locked)
-            {
+            if (!this.localMode && !this.locked) {
                 close();
             }
-        }
-        else if (!this.locked)
-        {
+        } else if (!this.locked) {
             close();
         }
 
     }
 
-    private WheelPreferences.Source source()
-    {
+    private WheelPreferences.Source source() {
         return this.localMode ? WheelPreferences.Source.CLIENT : WheelPreferences.Source.SERVER;
     }
 
-    private void clearHover()
-    {
+    private void clearHover() {
         this.hovered = -1;
         this.hoveredConfig = false;
         this.hoveredCenter = false;
         this.keyboardSelection = false;
     }
 
-    private void clearConfig()
-    {
+    private void clearConfig() {
         this.configGroup = null;
         this.configGroupId = "";
         this.configScroll = 0;
         this.configContentHeight = 0;
     }
 
-    private void syncSource()
-    {
+    private void syncSource() {
         WheelPreferences preferences = this.runtime.wheelPreferences();
         boolean local = this.runtime.interactionLocalMode();
-        if (!this.sourceInitialized || local != this.localMode)
-        {
+        if (!this.sourceInitialized || local != this.localMode) {
             this.localMode = local;
             this.page = preferences.page(source());
             this.sourceInitialized = true;
@@ -198,11 +172,9 @@ public final class AnimationWheelScreen extends Screen
         this.locked = preferences.keepOpen();
     }
 
-    private boolean sameSource()
-    {
+    private boolean sameSource() {
         if (this.localMode == this.runtime.interactionLocalMode()
-                && this.serverInstance.equals(this.runtime.serverOwnModelInstance()))
-        {
+                && this.serverInstance.equals(this.runtime.serverOwnModelInstance())) {
             return true;
         }
 
@@ -213,8 +185,7 @@ public final class AnimationWheelScreen extends Screen
     }
 
     @Override
-    protected void init()
-    {
+    protected void init() {
         syncSource();
         this.navigationControls.clear();
         this.formRows.clear();
@@ -224,8 +195,7 @@ public final class AnimationWheelScreen extends Screen
         this.scrollDownButton = null;
         this.serverAvailable = this.runtime.canUseServerActions();
         this.actions = currentActions();
-        if (this.restorePageOnCatalog && !this.actions.isEmpty())
-        {
+        if (this.restorePageOnCatalog && !this.actions.isEmpty()) {
             this.page = this.runtime.wheelPreferences().page(source());
             this.restorePageOnCatalog = false;
         }
@@ -242,8 +212,7 @@ public final class AnimationWheelScreen extends Screen
         this.centerButton.setTooltip(
                 ModelUiTooltip.of(super.textRenderer, super.width, this.localMode ? "移动时保留本地动作" : "停止服务器手动动作"));
         AnimationWheelScreen.SettingsIconButton settings = addControl("settings",
-                new SettingsIconButton(super.width - 28, 8, () ->
-                {
+                new SettingsIconButton(super.width - 28, 8, () -> {
                     this.releaseConsumed = true;
                     super.client.setScreen(new PlayerModelScreen(this.runtime, this));
                 }));
@@ -264,22 +233,18 @@ public final class AnimationWheelScreen extends Screen
         previous.active = this.page > 0;
         next.active = this.page + 1 < WheelSelection.pageCount(this.actions.size(), SLOTS);
         addControl("back", new FlatButton(this.layout.panelX(), this.layout.backY(), this.layout.panelWidth(),
-                this.layout.backHeight(), "返回", () ->
-                {
+                this.layout.backHeight(), "返回", () -> {
                     this.releaseConsumed = true;
                     close();
                 }));
-        if (this.configGroup != null && this.localMode && this.runtime.canEditLocalAppearance())
-        {
+        if (this.configGroup != null && this.localMode && this.runtime.canEditLocalAppearance()) {
             buildConfigForms();
         }
 
     }
 
-    private String centerLabel()
-    {
-        if (!this.localMode)
-        {
+    private String centerLabel() {
+        if (!this.localMode) {
             return "停止";
         }
 
@@ -287,27 +252,22 @@ public final class AnimationWheelScreen extends Screen
         return prefix + (this.runtime.localActionLocked() ? "开" : "关");
     }
 
-    private <T extends FlatButton> T addControl(String id, T widget)
-    {
+    private <T extends FlatButton> T addControl(String id, T widget) {
         this.navigationControls.add(new NavigationControl(id, widget));
         return addDrawableChild(widget);
     }
 
-    private List<ClientRuntime.Action> currentActions()
-    {
-        if (!this.localMode)
-        {
+    private List<ClientRuntime.Action> currentActions() {
+        if (!this.localMode) {
             return this.runtime.serverActions();
         }
 
-        if (!this.runtime.canUseLocalActions())
-        {
+        if (!this.runtime.canUseLocalActions()) {
             return List.of();
         }
 
         YsmModelProfile profile = this.runtime.localModelProfile();
-        if (profile != this.menuProfile)
-        {
+        if (profile != this.menuProfile) {
             this.menuProfile = profile;
             this.menu = null;
             this.configSchema = null;
@@ -315,22 +275,17 @@ public final class AnimationWheelScreen extends Screen
             this.categoryPath.clear();
             clearConfig();
             this.restorePageOnCatalog = true;
-            try
-            {
-                if (profile != null && profile.isYsm())
-                {
+            try {
+                if (profile != null && profile.isYsm()) {
                     String language = super.client.getLanguageManager().getLanguage();
                     this.menu = new ModelActionMenu(profile, language);
                     this.configSchema = ModelConfigSchema.from(profile, language);
                 }
-            }
-            catch (RuntimeException invalid)
-            {
+            } catch (RuntimeException invalid) {
                 this.message = "模型动作配置无法使用";
             }
         }
-        if (this.menu == null)
-        {
+        if (this.menu == null) {
             this.localEntries = List.of();
             return this.runtime.localActions();
         }
@@ -338,44 +293,35 @@ public final class AnimationWheelScreen extends Screen
         return this.localEntries.stream().map(entry -> new ClientRuntime.Action(entry.id(), entry.label())).toList();
     }
 
-    private int visibleSlots()
-    {
+    private int visibleSlots() {
         return WheelSelection.visibleSlots(this.page, this.actions.size());
     }
 
-    private int index(int slot)
-    {
+    private int index(int slot) {
         return WheelSelection.actionIndex(this.page, slot, this.actions.size(), SLOTS);
     }
 
-    private String category()
-    {
+    private String category() {
         return this.localMode && this.menu != null ? this.menu.categoryId() : "";
     }
 
-    private void rememberPage()
-    {
-        if (this.localMode && this.menu != null)
-        {
+    private void rememberPage() {
+        if (this.localMode && this.menu != null) {
             this.categoryPages.put(category(), this.page);
         }
 
-        if (!this.localMode || this.menu == null || this.menu.depth() == 0)
-        {
+        if (!this.localMode || this.menu == null || this.menu.depth() == 0) {
             WheelPreferences preferences = this.runtime.wheelPreferences();
-            if (preferences.page(source()) != this.page)
-            {
+            if (preferences.page(source()) != this.page) {
                 this.runtime.updateWheelPreferences(preferences.withPage(source(), this.page));
             }
 
         }
     }
 
-    private void changePage(int direction)
-    {
+    private void changePage(int direction) {
         int next = WheelSelection.clampPage(this.page + direction, this.actions.size(), SLOTS);
-        if (next == this.page)
-        {
+        if (next == this.page) {
             return;
         }
 
@@ -387,8 +333,7 @@ public final class AnimationWheelScreen extends Screen
         clearAndInit();
     }
 
-    private void changedCategory()
-    {
+    private void changedCategory() {
         this.page = this.categoryPages.getOrDefault(category(),
                 this.menu.depth() == 0 ? this.runtime.wheelPreferences().page(source()) : 0);
         this.restorePageOnCatalog = false;
@@ -398,43 +343,31 @@ public final class AnimationWheelScreen extends Screen
         clearAndInit();
     }
 
-    private void select(int slot)
-    {
-        if (!sameSource())
-        {
+    private void select(int slot) {
+        if (!sameSource()) {
             return;
         }
 
         int selected = index(slot);
-        if (selected < 0)
-        {
+        if (selected < 0) {
             return;
         }
 
-        if (this.localMode && this.menu != null)
-        {
+        if (this.localMode && this.menu != null) {
             ModelActionMenu.Entry entry = this.localEntries.get(selected);
-            if (entry.category() || entry.back())
-            {
+            if (entry.category() || entry.back()) {
                 rememberPage();
-                if (this.menu.enter(entry))
-                {
-                    if (entry.back())
-                    {
-                        if (!this.categoryPath.isEmpty())
-                        {
+                if (this.menu.enter(entry)) {
+                    if (entry.back()) {
+                        if (!this.categoryPath.isEmpty()) {
                             this.categoryPath.removeLast();
                         }
-                    }
-                    else
-                    {
+                    } else {
                         this.categoryPath.add(entry.label());
                     }
 
                     changedCategory();
-                }
-                else
-                {
+                } else {
                     this.message = "此动作分类不可进入";
                 }
 
@@ -443,46 +376,38 @@ public final class AnimationWheelScreen extends Screen
         }
         String id = this.actions.get(selected).id();
         boolean played;
-        if (this.localMode)
-        {
+        if (this.localMode) {
             played = this.runtime.canUseLocalActions() && this.runtime.playLocal(id);
         }
 
-        else
-        {
+        else {
             played = this.runtime.canUseServerActions();
-            if (played)
-            {
+            if (played) {
                 this.runtime.request("play", id);
             }
         }
-        if (!played)
-        {
+        if (!played) {
             this.message = this.localMode ? "选择并启用本地模型后可播放动作" : "等待服务器动作频道";
             return;
         }
         rememberPage();
         this.releaseConsumed = true;
         this.message = "已选择：" + this.actions.get(selected).label();
-        if (!this.locked)
-        {
+        if (!this.locked) {
             super.client.setScreen(this.parent);
         }
 
     }
 
-    private boolean hasConfig(int slot)
-    {
+    private boolean hasConfig(int slot) {
         int selected = index(slot);
         return this.localMode && this.runtime.canEditLocalAppearance() && this.menu != null && this.configSchema != null
                 && selected >= 0 && !this.localEntries.get(selected).configGroup().isEmpty()
                 && this.configSchema.group(this.localEntries.get(selected).configGroup()) != null;
     }
 
-    private void openConfig(int slot)
-    {
-        if (!sameSource() || !hasConfig(slot))
-        {
+    private void openConfig(int slot) {
+        if (!sameSource() || !hasConfig(slot)) {
             return;
         }
 
@@ -493,49 +418,38 @@ public final class AnimationWheelScreen extends Screen
         clearAndInit(); // This same Screen continues to render both roulette and author form.
     }
 
-    private void activateCenter()
-    {
-        if (!sameSource())
-        {
+    private void activateCenter() {
+        if (!sameSource()) {
             return;
         }
 
         this.releaseConsumed = true;
-        if (this.localMode)
-        {
-            if (this.runtime.canUseLocalActions())
-            {
+        if (this.localMode) {
+            if (this.runtime.canUseLocalActions()) {
                 this.runtime.setLocalActionLocked(!this.runtime.localActionLocked());
             }
 
             this.centerButton.setMessage(Text.literal(centerLabel()));
-        }
-        else
-        {
+        } else {
             stop();
         }
 
     }
 
-    private void stop()
-    {
-        if (!sameSource())
-        {
+    private void stop() {
+        if (!sameSource()) {
             return;
         }
 
-        if (this.localMode)
-        {
+        if (this.localMode) {
             this.runtime.stopLocal();
         }
 
-        else if (this.runtime.canUseServerActions())
-        {
+        else if (this.runtime.canUseServerActions()) {
             this.runtime.request("stop", "");
         }
 
-        else
-        {
+        else {
             this.message = "等待服务器动作频道";
             return;
         }
@@ -543,48 +457,37 @@ public final class AnimationWheelScreen extends Screen
         this.message = "已停止";
     }
 
-    private boolean canUndisguiseCurrentSource()
-    {
+    private boolean canUndisguiseCurrentSource() {
         return this.localMode ? this.runtime.canEditLocalAppearance() && this.runtime.localAppearance().enabled()
                 : this.runtime.canRequestServerUndisguise();
     }
 
-    private void undisguiseCurrentSource()
-    {
-        if (!sameSource())
-        {
+    private void undisguiseCurrentSource() {
+        if (!sameSource()) {
             return;
         }
 
         this.releaseConsumed = true;
         clearHover();
-        if (!canUndisguiseCurrentSource())
-        {
+        if (!canUndisguiseCurrentSource()) {
             this.message = this.localMode ? "私人伪装未启用" : "当前没有可请求解除的服务器伪装";
             return;
         }
-        if (this.localMode)
-        {
+        if (this.localMode) {
             this.runtime.disableLocalAppearance();
-            if (this.runtime.localAppearance().enabled())
-            {
+            if (this.runtime.localAppearance().enabled()) {
                 this.message = "私人伪装未关闭";
                 return;
             }
-            if (this.runtime.serverOwnModelPresent())
-            {
+            if (this.runtime.serverOwnModelPresent()) {
                 this.runtime.selectInteractionSource(false);
             }
 
             super.client.setScreen(this.parent);
-        }
-        else if (!this.runtime.requestServerUndisguise())
-        {
+        } else if (!this.runtime.requestServerUndisguise()) {
             this.message = "解除服务器伪装的请求未发送";
             return;
-        }
-        else
-        {
+        } else {
             // A server request is complete only after the normal server state/unbind confirmation.
             this.message = "已请求解除服务器伪装，等待服务器确认";
             this.undisguiseButton.active = false;
@@ -592,41 +495,35 @@ public final class AnimationWheelScreen extends Screen
     }
 
     @Override
-    public void tick()
-    {
+    public void tick() {
         boolean present = this.runtime.hasOwnServerDisguise(), available = this.runtime.canUseServerActions();
         YsmModelProfile previousProfile = this.menuProfile;
         List<ClientRuntime.Action> current = currentActions();
         if (this.localMode != this.runtime.interactionLocalMode()
                 || !this.serverInstance.equals(this.runtime.serverOwnModelInstance())
                 || present != this.ownServerDisguise || available != this.serverAvailable
-                || previousProfile != this.menuProfile || !current.equals(this.actions))
-        {
+                || previousProfile != this.menuProfile || !current.equals(this.actions)) {
             clearHover();
             this.releaseConsumed = true;
             clearAndInit();
         }
         this.locked = this.runtime.wheelPreferences().keepOpen();
-        if (this.centerButton != null)
-        {
+        if (this.centerButton != null) {
             this.centerButton.setMessage(Text.literal(centerLabel()));
         }
 
-        if (this.undisguiseButton != null)
-        {
+        if (this.undisguiseButton != null) {
             this.undisguiseButton.active = canUndisguiseCurrentSource();
         }
 
     }
 
-    private void hover(double mouseX, double mouseY)
-    {
+    private void hover(double mouseX, double mouseY) {
         double x = (mouseX - this.centerX) / this.layout.scale(), y = (mouseY - this.centerY) / this.layout.scale();
         this.hovered = WheelSelection.classicSlotAt(x, y, 50, 100, visibleSlots());
         this.hoveredConfig = false;
         int configSlot = WheelSelection.classicSlotAt(x, y, 20, 50, visibleSlots());
-        if (hasConfig(configSlot))
-        {
+        if (hasConfig(configSlot)) {
             this.hovered = configSlot;
             this.hoveredConfig = true;
         }
@@ -634,43 +531,33 @@ public final class AnimationWheelScreen extends Screen
     }
 
     @Override
-    public void mouseMoved(double mouseX, double mouseY)
-    {
+    public void mouseMoved(double mouseX, double mouseY) {
         this.keyboardSelection = false;
         hover(mouseX, mouseY);
         super.mouseMoved(mouseX, mouseY);
     }
 
     @Override
-    public boolean mouseClicked(Click click, boolean doubled)
-    {
-        if (this.releaseType == InputUtil.Type.MOUSE && click.button() == this.releaseKey)
-        {
-            if (!this.releaseKeyDown)
-            {
+    public boolean mouseClicked(Click click, boolean doubled) {
+        if (this.releaseType == InputUtil.Type.MOUSE && click.button() == this.releaseKey) {
+            if (!this.releaseKeyDown) {
                 beginHoldSelection();
             }
             return true;
         }
         hover(click.x(), click.y());
-        if (super.mouseClicked(click, doubled))
-        {
+        if (super.mouseClicked(click, doubled)) {
             this.releaseConsumed = true;
             return true;
         }
-        if (click.button() != GLFW.GLFW_MOUSE_BUTTON_LEFT)
-        {
+        if (click.button() != GLFW.GLFW_MOUSE_BUTTON_LEFT) {
             return false;
         }
 
-        if (index(this.hovered) >= 0)
-        {
-            if (this.hoveredConfig)
-            {
+        if (index(this.hovered) >= 0) {
+            if (this.hoveredConfig) {
                 openConfig(this.hovered);
-            }
-            else
-            {
+            } else {
                 select(this.hovered);
             }
             return true;
@@ -679,10 +566,8 @@ public final class AnimationWheelScreen extends Screen
     }
 
     @Override
-    public boolean mouseReleased(Click click)
-    {
-        if (this.releaseType == InputUtil.Type.MOUSE && click.button() == this.releaseKey)
-        {
+    public boolean mouseReleased(Click click) {
+        if (this.releaseType == InputUtil.Type.MOUSE && click.button() == this.releaseKey) {
             releaseSelection();
             return true;
         }
@@ -690,15 +575,12 @@ public final class AnimationWheelScreen extends Screen
     }
 
     @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double horizontal, double vertical)
-    {
-        if (vertical == 0)
-        {
+    public boolean mouseScrolled(double mouseX, double mouseY, double horizontal, double vertical) {
+        if (vertical == 0) {
             return super.mouseScrolled(mouseX, mouseY, horizontal, vertical);
         }
 
-        if (mouseX >= this.layout.panelX() && this.configGroup != null)
-        {
+        if (mouseX >= this.layout.panelX() && this.configGroup != null) {
             scrollConfig(vertical > 0 ? -20 : 20);
             return true;
         }
@@ -707,24 +589,19 @@ public final class AnimationWheelScreen extends Screen
     }
 
     @Override
-    public boolean keyPressed(KeyInput input)
-    {
+    public boolean keyPressed(KeyInput input) {
         int key = input.key();
-        if (releaseMatches(input))
-        {
-            if (!this.releaseKeyDown)
-            {
+        if (releaseMatches(input)) {
+            if (!this.releaseKeyDown) {
                 beginHoldSelection();
             }
             return true;
         }
-        if (getFocused() instanceof SliderWidget && key != GLFW.GLFW_KEY_ESCAPE && super.keyPressed(input))
-        {
+        if (getFocused() instanceof SliderWidget && key != GLFW.GLFW_KEY_ESCAPE && super.keyPressed(input)) {
             return true;
         }
 
-        if (key >= GLFW.GLFW_KEY_1 && key <= GLFW.GLFW_KEY_8)
-        {
+        if (key >= GLFW.GLFW_KEY_1 && key <= GLFW.GLFW_KEY_8) {
             this.hovered = key - GLFW.GLFW_KEY_1;
             this.keyboardSelection = true;
             this.hoveredConfig = false;
@@ -732,30 +609,23 @@ public final class AnimationWheelScreen extends Screen
             select(this.hovered);
             return true;
         }
-        if (key == GLFW.GLFW_KEY_ENTER || key == GLFW.GLFW_KEY_KP_ENTER)
-        {
-            if (getFocused() != null && super.keyPressed(input))
-            {
+        if (key == GLFW.GLFW_KEY_ENTER || key == GLFW.GLFW_KEY_KP_ENTER) {
+            if (getFocused() != null && super.keyPressed(input)) {
                 return true;
             }
 
-            if (this.hoveredCenter)
-            {
+            if (this.hoveredCenter) {
                 activateCenter();
-            }
-            else
-            {
+            } else {
                 select(this.hovered);
             }
             return true;
         }
-        if (key == GLFW.GLFW_KEY_LEFT || key == GLFW.GLFW_KEY_PAGE_UP)
-        {
+        if (key == GLFW.GLFW_KEY_LEFT || key == GLFW.GLFW_KEY_PAGE_UP) {
             changePage(-1);
             return true;
         }
-        if (key == GLFW.GLFW_KEY_RIGHT || key == GLFW.GLFW_KEY_PAGE_DOWN)
-        {
+        if (key == GLFW.GLFW_KEY_RIGHT || key == GLFW.GLFW_KEY_PAGE_DOWN) {
             changePage(1);
             return true;
         }
@@ -763,10 +633,8 @@ public final class AnimationWheelScreen extends Screen
     }
 
     @Override
-    public boolean keyReleased(KeyInput input)
-    {
-        if (releaseMatches(input))
-        {
+    public boolean keyReleased(KeyInput input) {
+        if (releaseMatches(input)) {
             releaseSelection();
             return true;
         }
@@ -774,33 +642,26 @@ public final class AnimationWheelScreen extends Screen
     }
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta)
-    {
+    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         context.fill(0, 0, super.width, super.height, 0x35000000);
-        if (!this.keyboardSelection)
-        {
+        if (!this.keyboardSelection) {
             hover(mouseX, mouseY);
         }
 
         context.drawCenteredTextWithShadow(super.textRenderer, this.localMode ? "本地动作" : "服务器动作", super.width / 2, 8,
                 0xfff3f0e0);
         ArrayList<Map<String, Object>> polygons = new ArrayList<Map<String, Object>>();
-        for (int slot = 0; slot < visibleSlots(); slot++)
-        {
+        for (int slot = 0; slot < visibleSlots(); slot++) {
             boolean selected = this.hovered == slot && !this.hoveredConfig, config = hasConfig(slot);
-            if (selected && config)
-            {
+            if (selected && config) {
                 drawRadialSegment(context, polygons, slot, 50, 115, 0xf0ffb100, "action");
                 drawRadialSegment(context, polygons, slot, 25, 50, 0x90000000, "action");
-            }
-            else
-            {
+            } else {
                 drawRadialSegment(context, polygons, slot, 25, selected ? 115 : 105, selected ? 0xf0ffb100 : 0x90000000,
                         "action");
             }
 
-            if (config)
-            {
+            if (config) {
                 drawRadialSegment(context, polygons, slot, this.hoveredConfig && this.hovered == slot ? 15 : 25, 50,
                         this.hoveredConfig && this.hovered == slot ? 0xf000ceff : 0x7000ceff, "config");
             }
@@ -811,8 +672,7 @@ public final class AnimationWheelScreen extends Screen
         renderPathAndPage(context);
         super.render(context, mouseX, mouseY, delta);
         renderConfigForms(context, mouseX, mouseY, delta);
-        if (this.configGroup == null)
-        {
+        if (this.configGroup == null) {
             String detail = this.actions.isEmpty() ? (this.localMode ? "暂无本地动作" : "等待服务器动作")
                     : (this.localMode ? "点击动作内侧 ⚙ 配置组件" : "服务器下发动作");
             context.drawWrappedTextWithShadow(super.textRenderer, Text.literal(detail), this.layout.panelX() + 2,
@@ -821,16 +681,14 @@ public final class AnimationWheelScreen extends Screen
         context.drawCenteredTextWithShadow(super.textRenderer,
                 super.textRenderer.trimToWidth(scrollHint(), Math.max(1, super.width - 24)), super.width / 2,
                 super.height - 28, 0xffb8bec8);
-        if (!this.message.isEmpty())
-        {
+        if (!this.message.isEmpty()) {
             context.drawCenteredTextWithShadow(super.textRenderer,
                     super.textRenderer.trimToWidth(this.message, Math.max(1, super.width - 24)), super.width / 2,
                     super.height - 15, 0xfff3f0e0);
         }
 
         int selected = index(this.hovered);
-        if (selected >= 0)
-        {
+        if (selected >= 0) {
             String description = this.localMode && this.menu != null ? this.localEntries.get(selected).description()
                     : "";
             context.drawTooltip(
@@ -841,8 +699,7 @@ public final class AnimationWheelScreen extends Screen
     }
 
     private void drawRadialSegment(DrawContext context, List<Map<String, Object>> polygons, int slot,
-            double innerRadius, double outerRadius, int color, String kind)
-    {
+            double innerRadius, double outerRadius, int color, String kind) {
         List<WheelSelection.Point> vertices = WheelSelection
                 .polygon(slot, innerRadius * this.layout.scale(), outerRadius * this.layout.scale()).stream()
                 .map(point -> new WheelSelection.Point(this.centerX + point.x(), this.centerY + point.y())).toList();
@@ -852,28 +709,23 @@ public final class AnimationWheelScreen extends Screen
                 vertices.stream().map(point -> List.of(point.x(), point.y())).toList()));
     }
 
-    private WheelSelection.Point pointAt(int slot, double radius)
-    {
+    private WheelSelection.Point pointAt(int slot, double radius) {
         WheelSelection.Point point = WheelSelection.labelPoint(slot, radius * this.layout.scale());
         return new WheelSelection.Point(this.centerX + point.x(), this.centerY + point.y());
     }
 
-    private boolean showShortcutHints()
-    {
+    private boolean showShortcutHints() {
         return this.page == 0 && (this.menu == null || this.menu.depth() == 0);
     }
 
-    private List<OrderedText> wrappedLabel(int selected)
-    {
+    private List<OrderedText> wrappedLabel(int selected) {
         List<OrderedText> lines = super.textRenderer.wrapLines(Text.literal(this.actions.get(selected).label()),
                 Math.max(32, this.layout.scaled(50)));
         return lines.size() <= 4 ? lines : lines.subList(0, 4);
     }
 
-    private void renderRadialLabels(DrawContext context)
-    {
-        for (int slot = 0; slot < visibleSlots(); slot++)
-        {
+    private void renderRadialLabels(DrawContext context) {
+        for (int slot = 0; slot < visibleSlots(); slot++) {
             int selected = index(slot);
             WheelSelection.Point point = pointAt(slot, 65);
             int x = Math.round(point.x()), y = Math.round(point.y()) - 4;
@@ -881,20 +733,17 @@ public final class AnimationWheelScreen extends Screen
             int firstY = y - lines.size() * super.textRenderer.fontHeight + 2 + (showShortcutHints() ? 0 : 9);
             boolean category = this.localMode && this.menu != null
                     && (this.localEntries.get(selected).category() || this.localEntries.get(selected).back());
-            for (OrderedText line : lines)
-            {
+            for (OrderedText line : lines) {
                 context.drawCenteredTextWithShadow(super.textRenderer, line, x, firstY,
                         category ? 0xffff6262 : 0xfff3f0e0);
                 firstY += super.textRenderer.fontHeight;
             }
             // Actual Screen numeric bindings, without inventing unregistered author global hotkeys.
-            if (showShortcutHints())
-            {
+            if (showShortcutHints()) {
                 context.drawCenteredTextWithShadow(super.textRenderer, "[ " + (slot + 1) + " ]", x, y + 4, 0xffffff55);
             }
 
-            if (hasConfig(slot))
-            {
+            if (hasConfig(slot)) {
                 WheelSelection.Point gear = pointAt(slot, 35);
                 context.drawCenteredTextWithShadow(super.textRenderer, "⚙", Math.round(gear.x()),
                         Math.round(gear.y()) - 4, 0xffffc44f);
@@ -902,25 +751,21 @@ public final class AnimationWheelScreen extends Screen
         }
     }
 
-    private String pathText()
-    {
+    private String pathText() {
         String root = this.localMode ? "本地" : "服务器";
         return this.categoryPath.isEmpty() ? root : root + " > " + String.join(" > ", this.categoryPath);
     }
 
-    private String scrollHint()
-    {
+    private String scrollHint() {
         boolean paged = WheelSelection.pageCount(this.actions.size(), SLOTS) > 1;
-        if (this.configGroup != null)
-        {
+        if (this.configGroup != null) {
             return paged ? "滚轮快捷调整轮盘：切页；右侧滚动配置" : "当前仅一页；右侧滚轮滚动配置";
         }
 
         return paged ? "滚轮快捷调整轮盘：切换动作页" : "当前仅一页；悬停选择或点击动作";
     }
 
-    private void renderPathAndPage(DrawContext context)
-    {
+    private void renderPathAndPage(DrawContext context) {
         int left = this.layout.panelX() + this.layout.navigationWidth() + 2,
                 right = this.layout.panelRight() - this.layout.navigationWidth() - 2;
         context.drawCenteredTextWithShadow(super.textRenderer,
@@ -934,18 +779,15 @@ public final class AnimationWheelScreen extends Screen
                 pageTop + (pageBottom - pageTop - super.textRenderer.fontHeight) / 2, 0xff55ffff);
     }
 
-    private void buildConfigForms()
-    {
+    private void buildConfigForms() {
         String modelId = this.runtime.localAppearance().modelId();
         int contentWidth = this.layout.formWidth(), offset = 0, savedScroll = this.configScroll;
         this.configScroll = 0;
         Map<String, Double> variables = this.runtime.localModelVariables(modelId);
-        for (ModelConfigSchema.Form form : this.configGroup.forms())
-        {
+        for (ModelConfigSchema.Form form : this.configGroup.forms()) {
             int top = offset;
             List<ClickableWidget> widgets = new ArrayList<>();
-            if (form.kind() == ModelConfigSchema.Kind.CHECKBOX)
-            {
+            if (form.kind() == ModelConfigSchema.Kind.CHECKBOX) {
                 AuthorFormWidgets.Check widget = new AuthorFormWidgets.Check(super.textRenderer, this.layout.panelX(),
                         this.layout.viewportY() + offset, contentWidth, 12, form.title(), () -> readForm(form) > 0,
                         () -> applyForm(modelId, form.checkboxScript(readForm(form) <= 0), null, -1),
@@ -954,9 +796,7 @@ public final class AnimationWheelScreen extends Screen
                 widgets.add(widget);
                 registerFormWidget(widget);
                 offset += 14;
-            }
-            else if (form.kind() == ModelConfigSchema.Kind.RANGE)
-            {
+            } else if (form.kind() == ModelConfigSchema.Kind.RANGE) {
                 AuthorFormWidgets.Range widget = new AuthorFormWidgets.Range(super.textRenderer, this.layout.panelX(),
                         this.layout.viewportY() + offset, contentWidth, 15, form, readForm(form, variables),
                         requested -> applyForm(modelId, form.rangeScript(requested), null, -1),
@@ -965,20 +805,16 @@ public final class AnimationWheelScreen extends Screen
                 widgets.add(widget);
                 registerFormWidget(widget);
                 offset += 17;
-            }
-            else
-            {
+            } else {
                 int maxLabel = 0;
-                for (ModelConfigSchema.Radio choice : form.choices())
-                {
+                for (ModelConfigSchema.Radio choice : form.choices()) {
                     maxLabel = Math.max(maxLabel, super.textRenderer.getWidth(choice.label()));
                 }
 
                 int columns = AuthorFormLayout.radioColumns(contentWidth, maxLabel, form.choices().size()),
                         cellWidth = Math.max(1, contentWidth / columns);
                 offset += 14;
-                for (int choice = 0; choice < form.choices().size(); choice++)
-                {
+                for (int choice = 0; choice < form.choices().size(); choice++) {
                     int choiceIndex = choice;
                     AuthorFormWidgets.Check widget = new AuthorFormWidgets.Check(super.textRenderer,
                             this.layout.panelX() + choice % columns * cellWidth,
@@ -1003,60 +839,48 @@ public final class AnimationWheelScreen extends Screen
         scrollConfig(savedScroll);
     }
 
-    private void registerFormWidget(ClickableWidget widget)
-    {
+    private void registerFormWidget(ClickableWidget widget) {
         this.formWidgets.add(widget);
         addSelectableChild(widget);
     }
 
-    private double readForm(ModelConfigSchema.Form form)
-    {
+    private double readForm(ModelConfigSchema.Form form) {
         return readForm(form, this.runtime.localModelVariables(this.runtime.localAppearance().modelId()));
     }
 
-    private double readForm(ModelConfigSchema.Form form, Map<String, Double> values)
-    {
-        if (this.formValues.containsKey(form.key()))
-        {
+    private double readForm(ModelConfigSchema.Form form, Map<String, Double> values) {
+        if (this.formValues.containsKey(form.key())) {
             return this.formValues.get(form.key());
         }
 
-        try
-        {
+        try {
             double value = this.runtime.readLocalModelExpression(this.runtime.localAppearance().modelId(),
                     form.expression(), values);
-            if (Double.isFinite(value))
-            {
+            if (Double.isFinite(value)) {
                 this.formValues.put(form.key(), value);
                 return value;
             }
-        }
-        catch (RuntimeException invalid)
-        {
+        } catch (RuntimeException invalid) {
         }
         this.formValues.put(form.key(), 0d);
         this.message = "模型配置值无法读取：" + form.title();
         return 0;
     }
 
-    private boolean applyForm(String modelId, String script, String radioKey, int radioIndex)
-    {
+    private boolean applyForm(String modelId, String script, String radioKey, int radioIndex) {
         this.releaseConsumed = true;
         if (!sameSource() || !this.localMode || !this.runtime.canEditLocalAppearance()
-                || !this.runtime.localAppearance().modelId().equals(modelId))
-        {
+                || !this.runtime.localAppearance().modelId().equals(modelId)) {
             return false;
         }
 
         Map<String, Integer> radios = new LinkedHashMap<>(this.runtime.options.modelProfile(modelId).radioSelections());
-        if (radioKey != null)
-        {
+        if (radioKey != null) {
             radios.put(radioKey, radioIndex);
         }
 
         boolean accepted = this.runtime.runLocalScripts(modelId, List.of(script), radios);
-        if (accepted)
-        {
+        if (accepted) {
             this.formValues.clear();
         }
 
@@ -1064,60 +888,49 @@ public final class AnimationWheelScreen extends Screen
         return accepted;
     }
 
-    private boolean insideFormViewport(double x, double y)
-    {
+    private boolean insideFormViewport(double x, double y) {
         return this.configGroup != null && x >= this.layout.panelX() && x < this.layout.formRight()
                 && y >= this.layout.viewportY() && y < this.layout.viewportY() + this.layout.viewportHeight();
     }
 
-    private void scrollConfig(int amount)
-    {
+    private void scrollConfig(int amount) {
         int next = WheelSelection.clampScroll(this.configScroll + amount, this.configContentHeight,
                 this.layout.viewportHeight());
         int shift = this.configScroll - next;
         this.configScroll = next;
-        for (ClickableWidget widget : this.formWidgets)
-        {
+        for (ClickableWidget widget : this.formWidgets) {
             widget.setY(widget.getY() + shift);
             widget.visible = widget.getBottom() > this.layout.viewportY()
                     && widget.getY() < this.layout.viewportY() + this.layout.viewportHeight();
             widget.active = widget.visible && this.runtime.canEditLocalAppearance()
                     && (!(widget instanceof AuthorFormWidgets.Range range)
                             || range.form.maximum() != range.form.minimum());
-            if (!widget.visible && getFocused() == widget)
-            {
+            if (!widget.visible && getFocused() == widget) {
                 setFocused(null);
                 setDragging(false);
             }
         }
-        if (this.scrollUpButton != null)
-        {
+        if (this.scrollUpButton != null) {
             this.scrollUpButton.active = this.configScroll > 0;
         }
 
-        if (this.scrollDownButton != null)
-        {
+        if (this.scrollDownButton != null) {
             this.scrollDownButton.active = this.configScroll < Math.max(0,
                     this.configContentHeight - this.layout.viewportHeight());
         }
 
     }
 
-    private void renderConfigForms(DrawContext context, int mouseX, int mouseY, float delta)
-    {
-        if (this.configGroup == null)
-        {
+    private void renderConfigForms(DrawContext context, int mouseX, int mouseY, float delta) {
+        if (this.configGroup == null) {
             return;
         }
 
         context.enableScissor(this.layout.panelX(), this.layout.viewportY(), this.layout.formRight(),
                 this.layout.viewportY() + this.layout.viewportHeight());
         int clippedMouseY = insideFormViewport(mouseX, mouseY) ? mouseY : -1000;
-        for (AnimationWheelScreen.FormRow row : this.formRows)
-        {
-            if (row.form.kind() == ModelConfigSchema.Kind.RADIO)
-
-            {
+        for (AnimationWheelScreen.FormRow row : this.formRows) {
+            if (row.form.kind() == ModelConfigSchema.Kind.RADIO) {
                 context.drawTextWithShadow(super.textRenderer,
                         super.textRenderer.trimToWidth(row.form.title(), this.layout.formWidth()), this.layout.panelX(),
                         this.layout.viewportY() + row.top - this.configScroll + 2, 0xfff3f0e0);
@@ -1125,37 +938,30 @@ public final class AnimationWheelScreen extends Screen
 
         }
 
-        for (ClickableWidget widget : this.formWidgets)
-        {
+        for (ClickableWidget widget : this.formWidgets) {
             widget.render(context, mouseX, clippedMouseY, delta);
         }
 
         context.disableScissor();
     }
 
-    private record NavigationControl(String id, FlatButton widget)
-    {
+    private record NavigationControl(String id, FlatButton widget) {
     }
 
-    private record FormRow(ModelConfigSchema.Form form, int top, List<ClickableWidget> controls)
-    {
+    private record FormRow(ModelConfigSchema.Form form, int top, List<ClickableWidget> controls) {
     }
 
     /** OpenYSM FlatColorButton's flat fill and cream hover outline, with native focus/narration. */
-    private class FlatButton extends ButtonWidget
-    {
-        FlatButton(int x, int y, int width, int height, String label, Runnable action)
-        {
+    private class FlatButton extends ButtonWidget {
+        FlatButton(int x, int y, int width, int height, String label, Runnable action) {
             super(x, y, width, height, net.minecraft.text.Text.literal(label), button -> action.run(),
                     DEFAULT_NARRATION_SUPPLIER);
         }
 
         @Override
-        protected void drawIcon(DrawContext context, int mouseX, int mouseY, float delta)
-        {
+        protected void drawIcon(DrawContext context, int mouseX, int mouseY, float delta) {
             context.fill(getX(), getY(), getRight(), getBottom(), super.active ? -12369342 : 0x80525252);
-            if (isHovered() || isFocused())
-            {
+            if (isHovered() || isFocused()) {
                 context.drawStrokedRectangle(getX(), getY(), getWidth(), getHeight(), -790560);
             }
 
@@ -1169,19 +975,15 @@ public final class AnimationWheelScreen extends Screen
     }
 
     /** Same source settings texture and flat icon treatment as the existing gallery settings entry. */
-    private final class SettingsIconButton extends FlatButton
-    {
-        SettingsIconButton(int x, int y, Runnable action)
-        {
+    private final class SettingsIconButton extends FlatButton {
+        SettingsIconButton(int x, int y, Runnable action) {
             super(x, y, 20, 20, "玩家模型设置", action);
         }
 
         @Override
-        protected void drawIcon(DrawContext context, int mouseX, int mouseY, float delta)
-        {
+        protected void drawIcon(DrawContext context, int mouseX, int mouseY, float delta) {
             context.fill(getX(), getY(), getRight(), getBottom(), -12369342);
-            if (isHovered() || isFocused())
-            {
+            if (isHovered() || isFocused()) {
                 context.drawStrokedRectangle(getX(), getY(), getWidth(), getHeight(), -790560);
             }
 
@@ -1190,14 +992,11 @@ public final class AnimationWheelScreen extends Screen
         }
     }
 
-    public Map<String, Object> diagnostics()
-    {
+    public Map<String, Object> diagnostics() {
         List<Map<String, Object>> labels = new ArrayList<>(), configSlots = new ArrayList<>(),
                 visibleActions = new ArrayList<>();
-        if (this.layout != null)
-        {
-            for (int slot = 0; slot < visibleSlots(); slot++)
-            {
+        if (this.layout != null) {
+            for (int slot = 0; slot < visibleSlots(); slot++) {
                 int selected = index(slot);
                 WheelSelection.Point point = pointAt(slot, 65);
                 int x = Math.round(point.x()), y = Math.round(point.y());
@@ -1208,20 +1007,17 @@ public final class AnimationWheelScreen extends Screen
                         this.localMode && this.menu != null && this.localEntries.get(selected).back()));
                 List<OrderedText> lines = wrappedLabel(selected);
                 int ly = y - 4 - lines.size() * super.textRenderer.fontHeight + 2 + (showShortcutHints() ? 0 : 9);
-                for (OrderedText line : lines)
-                {
+                for (OrderedText line : lines) {
                     int lw = super.textRenderer.getWidth(line);
                     labels.add(Map.of("slot", slot, "text", this.actions.get(selected).label(), "x", x - lw / 2, "y",
                             ly, "width", lw, "height", super.textRenderer.fontHeight));
                     ly += super.textRenderer.fontHeight;
                 }
-                if (showShortcutHints())
-                {
+                if (showShortcutHints()) {
                     labels.add(textRectangle("[ " + (slot + 1) + " ]", x, y, slot));
                 }
 
-                if (hasConfig(slot))
-                {
+                if (hasConfig(slot)) {
                     WheelSelection.Point gear = pointAt(slot, 35);
                     int gx = Math.round(gear.x()), gy = Math.round(gear.y());
                     labels.add(textRectangle("⚙", gx, gy - 4, slot));
@@ -1290,31 +1086,25 @@ public final class AnimationWheelScreen extends Screen
         return result;
     }
 
-    private Map<String, Object> formDiagnostics()
-    {
+    private Map<String, Object> formDiagnostics() {
         List<Map<String, Object>> forms = new ArrayList<>();
-        for (AnimationWheelScreen.FormRow row : this.formRows)
-        {
+        for (AnimationWheelScreen.FormRow row : this.formRows) {
             ArrayList<Map<String, Object>> controls = new ArrayList<Map<String, Object>>();
-            for (int i = 0; i < row.controls.size(); i++)
-            {
+            for (int i = 0; i < row.controls.size(); i++) {
                 ClickableWidget widget = row.controls.get(i);
                 String id = row.form.kind() == ModelConfigSchema.Kind.RADIO ? "radio:" + i
                         : (row.form.kind() == ModelConfigSchema.Kind.RANGE ? "range" : "checkbox");
                 LinkedHashMap<String, Object> data = new LinkedHashMap<>(widgetRectangle(id, widget));
                 data.put("visible", widget.visible);
-                if (widget instanceof AuthorFormWidgets.Check checkbox)
-                {
+                if (widget instanceof AuthorFormWidgets.Check checkbox) {
                     data.put("selected", checkbox.selected());
                 }
 
-                if (widget instanceof AuthorFormWidgets.Range range)
-                {
+                if (widget instanceof AuthorFormWidgets.Range range) {
                     data.put("value", range.currentValue());
                 }
 
-                if (row.form.kind() == ModelConfigSchema.Kind.RADIO)
-                {
+                if (row.form.kind() == ModelConfigSchema.Kind.RADIO) {
                     data.put("choice", i);
                 }
 
@@ -1341,28 +1131,22 @@ public final class AnimationWheelScreen extends Screen
                 forms);
     }
 
-    private static Map<String, Object> widgetRectangle(String id, ClickableWidget widget)
-    {
+    private static Map<String, Object> widgetRectangle(String id, ClickableWidget widget) {
         return Map.of("id", id, "label", widget.getMessage().getString(), "x", widget.getX(), "y", widget.getY(),
                 "width", widget.getWidth(), "height", widget.getHeight(), "active", widget.active);
     }
 
-    private Map<String, Object> textRectangle(String text, int center, int y, int slot)
-    {
+    private Map<String, Object> textRectangle(String text, int center, int y, int slot) {
         int textWidth = super.textRenderer.getWidth(text);
         return Map.of("slot", slot, "text", text, "x", center - textWidth / 2, "y", y, "width", textWidth, "height",
                 super.textRenderer.fontHeight);
     }
 
-    public boolean navigateBack()
-    {
-        if (this.localMode && this.menu != null && this.menu.depth() > 0)
-        {
+    public boolean navigateBack() {
+        if (this.localMode && this.menu != null && this.menu.depth() > 0) {
             rememberPage();
-            if (this.menu.back())
-            {
-                if (!this.categoryPath.isEmpty())
-                {
+            if (this.menu.back()) {
+                if (!this.categoryPath.isEmpty()) {
                     this.categoryPath.removeLast();
                 }
                 changedCategory();
@@ -1373,17 +1157,14 @@ public final class AnimationWheelScreen extends Screen
     }
 
     @Override
-    public void close()
-    {
-        if (!navigateBack())
-        {
+    public void close() {
+        if (!navigateBack()) {
             super.client.setScreen(this.parent);
         }
     }
 
     @Override
-    public boolean shouldPause()
-    {
+    public boolean shouldPause() {
         return false;
     }
 }

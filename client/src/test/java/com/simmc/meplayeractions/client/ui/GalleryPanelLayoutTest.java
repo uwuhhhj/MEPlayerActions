@@ -4,11 +4,9 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class GalleryPanelLayoutTest
-{
+class GalleryPanelLayoutTest {
     @Test
-    void largeWindowKeepsTheSourceFiveByTwoDeckInsideACompactCenteredPanel()
-    {
+    void largeWindowKeepsTheSourceFiveByTwoDeckInsideACompactCenteredPanel() {
         GalleryPanelLayout.Bounds panel = home(1200, 660);
         assertEquals(420, panel.panelWidth());
         assertEquals(135, panel.previewWidth());
@@ -23,8 +21,7 @@ class GalleryPanelLayoutTest
     }
 
     @Test
-    void enlargingTheGameWindowMovesTheWholePanelWithoutExpandingOnlyItsEmptyBackground()
-    {
+    void enlargingTheGameWindowMovesTheWholePanelWithoutExpandingOnlyItsEmptyBackground() {
         GalleryPanelLayout.Bounds before = home(640, 360);
         GalleryPanelLayout.Bounds after = home(1920, 1080);
         assertEquals(before.panelWidth(), after.panelWidth());
@@ -36,8 +33,7 @@ class GalleryPanelLayoutTest
     }
 
     @Test
-    void smallGuiWindowFitsSourceHeaderCardsAndFooterWithoutOverlap()
-    {
+    void smallGuiWindowFitsSourceHeaderCardsAndFooterWithoutOverlap() {
         GalleryPanelLayout.Bounds panel = home(320, 240);
         assertTrue(panel.compact());
         assertEquals(3, panel.columns());
@@ -51,33 +47,28 @@ class GalleryPanelLayoutTest
         assertCardsFit(panel);
     }
 
-    private static GalleryPanelLayout.Bounds home(int width, int height)
-    {
+    private static GalleryPanelLayout.Bounds home(int width, int height) {
         return GalleryPanelLayout.create(width, height, GalleryPanelLayout.HOME_HEADER_HEIGHT,
                 GalleryPanelLayout.HOME_COMPACT_HEADER_HEIGHT);
     }
 
     @Test
-    void standaloneGalleryAndServerViewUseTheirOwnHeaderSpaceInsideThePanel()
-    {
-        for (GalleryPanelLayout.Bounds panel : new GalleryPanelLayout.Bounds[]
-        { GalleryPanelLayout.create(640, 360, 38, 29), GalleryPanelLayout.create(640, 360, 49, 37),
-                GalleryPanelLayout.create(320, 240, 49, 37) })
-        {
+    void standaloneGalleryAndServerViewUseTheirOwnHeaderSpaceInsideThePanel() {
+        for (GalleryPanelLayout.Bounds panel : new GalleryPanelLayout.Bounds[] {
+                GalleryPanelLayout.create(640, 360, 38, 29), GalleryPanelLayout.create(640, 360, 49, 37),
+                GalleryPanelLayout.create(320, 240, 49, 37) }) {
             assertTrue(panel.titleY() + 9 < panel.top());
             assertEquals(panel.frameBottom(), panel.footerY() + 20);
             assertCardsFit(panel);
         }
     }
 
-    private static void assertCentered(GalleryPanelLayout.Bounds panel, int width, int height)
-    {
+    private static void assertCentered(GalleryPanelLayout.Bounds panel, int width, int height) {
         assertTrue(Math.abs(2 * panel.left() + panel.panelWidth() - width) <= 1);
         assertTrue(Math.abs(panel.frameTop() + panel.frameBottom() - height) <= 1);
     }
 
-    private static void assertCardsFit(GalleryPanelLayout.Bounds panel)
-    {
+    private static void assertCardsFit(GalleryPanelLayout.Bounds panel) {
         int cardRight = panel.right() + 5 + (panel.columns() - 1) * 55 + 52;
         int cardBottom = panel.top() + 29 + (panel.rows() - 1) * 93 + 90;
         assertTrue(cardRight <= panel.right() + panel.rightWidth() - 5);

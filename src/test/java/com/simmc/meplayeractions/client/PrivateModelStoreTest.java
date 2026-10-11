@@ -13,14 +13,12 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.io.IOException;
 import java.util.stream.Stream;
 
-class PrivateModelStoreTest
-{
+class PrivateModelStoreTest {
     @TempDir
     Path temporary;
 
     @Test
-    void uploadedDirectorySurvivesRestartAndOnlyItsOwnerCanReadTheImmutableSnapshot() throws Exception
-    {
+    void uploadedDirectorySurvivesRestartAndOnlyItsOwnerCanReadTheImmutableSnapshot() throws Exception {
         Path directory = this.temporary.resolve("private-models");
         UUID owner = UUID.randomUUID(), other = UUID.randomUUID();
         byte[] bytes = bundle(1, 0);
@@ -49,8 +47,7 @@ class PrivateModelStoreTest
     }
 
     @Test
-    void legacyBundlesRemainReusableButAreNeverGivenAGuessedSourceId() throws Exception
-    {
+    void legacyBundlesRemainReusableButAreNeverGivenAGuessedSourceId() throws Exception {
         Path directory = this.temporary.resolve("private-models");
         UUID owner = UUID.randomUUID();
         byte[] bytes = bundle(1, 0);
@@ -68,8 +65,7 @@ class PrivateModelStoreTest
     }
 
     @Test
-    void aValidatedCacheHitRecordsOnlyMetadataAndRequiresAnUnchangedOwnerScopedLoad() throws Exception
-    {
+    void aValidatedCacheHitRecordsOnlyMetadataAndRequiresAnUnchangedOwnerScopedLoad() throws Exception {
         Path directory = this.temporary.resolve("private-models");
         UUID owner = UUID.randomUUID();
         byte[] bytes = bundle(1, 0);
@@ -95,8 +91,7 @@ class PrivateModelStoreTest
     }
 
     @Test
-    void aHashKeepsItsLatestSourceNameAndASourceNameUsesItsMostRecentlyAccessedBundle() throws Exception
-    {
+    void aHashKeepsItsLatestSourceNameAndASourceNameUsesItsMostRecentlyAccessedBundle() throws Exception {
         Path directory = this.temporary.resolve("private-models");
         UUID owner = UUID.randomUUID();
         byte[] first = bundle(1, 0), second = bundle(2, 0);
@@ -115,8 +110,7 @@ class PrivateModelStoreTest
     }
 
     @Test
-    void evictionAndCorruptionRemoveTheMatchingPersistentReceipt() throws Exception
-    {
+    void evictionAndCorruptionRemoveTheMatchingPersistentReceipt() throws Exception {
         Path directory = this.temporary.resolve("private-models");
         UUID owner = UUID.randomUUID();
         byte[] first = bundle(1, 0), second = bundle(2, 0);
@@ -140,8 +134,7 @@ class PrivateModelStoreTest
     }
 
     @Test
-    void changedBundleSizeAndAnInvalidSidecarCannotKeepAnOldReceiptVisible() throws Exception
-    {
+    void changedBundleSizeAndAnInvalidSidecarCannotKeepAnOldReceiptVisible() throws Exception {
         Path directory = this.temporary.resolve("private-models");
         UUID owner = UUID.randomUUID();
         byte[] bytes = bundle(1, 0);
@@ -162,8 +155,7 @@ class PrivateModelStoreTest
     }
 
     @Test
-    void sidecarsCannotChangeOwnerHashSizeKindOrSourceIdentity() throws Exception
-    {
+    void sidecarsCannotChangeOwnerHashSizeKindOrSourceIdentity() throws Exception {
         Path directory = this.temporary.resolve("private-models");
         UUID owner = UUID.randomUUID();
         byte[] bytes = bundle(1, 0);
@@ -178,8 +170,7 @@ class PrivateModelStoreTest
                 receiptJson(owner, "ysm:model.ysm", hash, "ysm", bytes.length).replace("\"format\":1",
                         "\"format\":1,\"unknown\":0"),
                 " ".repeat(4097));
-        for (String json : invalid)
-        {
+        for (String json : invalid) {
             PrivateModelStore writer = new PrivateModelStore(directory, PrivateModelStore.Settings.defaults());
             writer.saveValidated(owner, "ysm:model.ysm", hash, "ysm", bytes);
             Files.writeString(metadata(directory, owner, hash), json, StandardCharsets.UTF_8);
@@ -191,14 +182,12 @@ class PrivateModelStoreTest
     }
 
     @Test
-    void bootstrapUsesABoundedValidationBatchAndSnapshotsDoNotTouchTheFilesystem() throws Exception
-    {
+    void bootstrapUsesABoundedValidationBatchAndSnapshotsDoNotTouchTheFilesystem() throws Exception {
         Path directory = this.temporary.resolve("private-models");
         UUID owner = UUID.randomUUID();
         PrivateModelStore.Settings settings = new PrivateModelStore.Settings(true, 8 * 1024 * 1024, 16, 16);
         PrivateModelStore writer = new PrivateModelStore(directory, settings);
-        for (int marker = 0; marker < 16; marker++)
-        {
+        for (int marker = 0; marker < 16; marker++) {
             byte[] bytes = bundle(marker, 0);
             writer.saveValidated(owner, "ysm:model" + marker + ".ysm", PrivateModelBundle.hash(bytes), "ysm", bytes);
         }
@@ -219,8 +208,7 @@ class PrivateModelStoreTest
     }
 
     @Test
-    void loweredLimitsAndOrphanMetadataAreReconciledOnceInTheSharedBackgroundRefresh() throws Exception
-    {
+    void loweredLimitsAndOrphanMetadataAreReconciledOnceInTheSharedBackgroundRefresh() throws Exception {
         Path directory = this.temporary.resolve("private-models");
         UUID owner = UUID.randomUUID();
         PrivateModelStore writer = new PrivateModelStore(directory, PrivateModelStore.Settings.defaults());
@@ -240,21 +228,16 @@ class PrivateModelStoreTest
     }
 
     @Test
-    void sourceIdsFollowLocalNamesRatherThanTheServerModelCommandAlphabet() throws Exception
-    {
+    void sourceIdsFollowLocalNamesRatherThanTheServerModelCommandAlphabet() throws Exception {
         for (String id : List.of("openysm_default", "openysm_alex", "openysm_steve", "wine_fox_01_taisho_maid",
                 "wine_fox_02_new_year", "wine_fox_03_astronaut", "ysm:DS鲸鱼娘flash.ysm", "ysm:人物/酒狐.zip",
-                "local:鲸鱼娘.bbmodel"))
-
-        {
+                "local:鲸鱼娘.bbmodel")) {
             assertTrue(PrivateModelStore.validSourceId(id), id);
         }
 
         for (String id : List.of("ysm:", "ysm:../model", "ysm:.hidden", "ysm:model//skin", "ysm:model\\skin",
                 "ysm:model\n", "ysm: model", "ysm:model ", "ysm:" + "x".repeat(125), "local:.bbmodel",
-                "local:model.json", "unknown_default", "ysm:" + "a/".repeat(9) + "b"))
-
-        {
+                "local:model.json", "unknown_default", "ysm:" + "a/".repeat(9) + "b")) {
             assertFalse(PrivateModelStore.validSourceId(id), id);
         }
 
@@ -268,8 +251,7 @@ class PrivateModelStoreTest
     }
 
     @Test
-    void deletingTheOwnersExactReceiptRemovesOnlyItsPrivateZipAndSidecarAcrossRestart() throws Exception
-    {
+    void deletingTheOwnersExactReceiptRemovesOnlyItsPrivateZipAndSidecarAcrossRestart() throws Exception {
         Path directory = this.temporary.resolve("private-models"), original = this.temporary.resolve("原始鲸鱼娘.bbmodel");
         Files.writeString(original, "original local source stays intact");
         UUID owner = UUID.randomUUID(), other = UUID.randomUUID();
@@ -297,8 +279,7 @@ class PrivateModelStoreTest
 
     @Test
     void deletingTheLatestReceiptRemovesAllVerifiedHistoryOfThatOwnersSourceWithoutResurrectingAnOlderVersion()
-            throws Exception
-    {
+            throws Exception {
         Path directory = this.temporary.resolve("private-models");
         UUID owner = UUID.randomUUID(), other = UUID.randomUUID();
         byte[] old = bundle(1, 0), latest = bundle(2, 0), unrelated = bundle(3, 0);
@@ -312,8 +293,7 @@ class PrivateModelStoreTest
         store.saveValidated(owner, "ysm:unrelated.ysm", unrelatedHash, "ysm", unrelated);
         store.saveValidated(other, source, oldHash, "ysm", old);
         assertTrue(store.deleteValidated(owner, source, latestHash, "ysm", latest.length));
-        for (String hash : List.of(oldHash, latestHash))
-        {
+        for (String hash : List.of(oldHash, latestHash)) {
             assertFalse(Files.exists(directory.resolve(owner + "_" + hash + ".zip")));
             assertFalse(Files.exists(metadata(directory, owner, hash)));
         }
@@ -333,8 +313,7 @@ class PrivateModelStoreTest
 
     @Test
     void anOldConfirmationCannotExpandToANewerVersionAndEveryHistoryFingerprintIsCheckedBeforeAnyDeletion()
-            throws Exception
-    {
+            throws Exception {
         Path directory = this.temporary.resolve("private-models");
         UUID owner = UUID.randomUUID();
         byte[] old = bundle(1, 0), latest = bundle(2, 0);
@@ -362,8 +341,7 @@ class PrivateModelStoreTest
     }
 
     @Test
-    void unverifiedSameSourceHistoryBlocksDeletionUntilTheBoundedBackgroundBootstrapChecksIt() throws Exception
-    {
+    void unverifiedSameSourceHistoryBlocksDeletionUntilTheBoundedBackgroundBootstrapChecksIt() throws Exception {
         Path directory = this.temporary.resolve("private-models");
         UUID owner = UUID.randomUUID();
         PrivateModelStore.Settings settings = new PrivateModelStore.Settings(true, 8 * 1024 * 1024, 16, 16);
@@ -373,8 +351,7 @@ class PrivateModelStoreTest
                 source = "ysm:角色.ysm";
         writer.saveValidated(owner, source, oldHash, "ysm", old);
         Files.setLastModifiedTime(directory.resolve(owner + "_" + oldHash + ".zip"), FileTime.fromMillis(1));
-        for (int marker = 2; marker <= 8; marker++)
-        {
+        for (int marker = 2; marker <= 8; marker++) {
             byte[] bytes = bundle(marker, 0);
             String hash = PrivateModelBundle.hash(bytes);
             writer.saveValidated(owner, "ysm:unrelated" + marker + ".ysm", hash, "ysm", bytes);
@@ -402,8 +379,7 @@ class PrivateModelStoreTest
     }
 
     @Test
-    void deletingWithAnotherOwnersIdentityOrAChangedHashKindSizeOrSourceNeverTouchesTheBundle() throws Exception
-    {
+    void deletingWithAnotherOwnersIdentityOrAChangedHashKindSizeOrSourceNeverTouchesTheBundle() throws Exception {
         Path directory = this.temporary.resolve("private-models");
         UUID owner = UUID.randomUUID(), other = UUID.randomUUID();
         byte[] bytes = bundle(1, 0);
@@ -428,8 +404,7 @@ class PrivateModelStoreTest
     }
 
     @Test
-    void deletionRejectsServerSideFileChangesAndMissingResourcesReconcileAsNotFound() throws Exception
-    {
+    void deletionRejectsServerSideFileChangesAndMissingResourcesReconcileAsNotFound() throws Exception {
         Path directory = this.temporary.resolve("private-models");
         UUID owner = UUID.randomUUID();
         byte[] bytes = bundle(1, 0);
@@ -465,12 +440,9 @@ class PrivateModelStoreTest
         Files.delete(zip);
         Path outside = this.temporary.resolve("outside.zip");
         Files.write(outside, bytes);
-        try
-        {
+        try {
             Files.createSymbolicLink(zip, outside);
-        }
-        catch (UnsupportedOperationException | IOException unavailable)
-        {
+        } catch (UnsupportedOperationException | IOException unavailable) {
             System.out.println(
                     "SYMLINK_BRANCH_NOT_EXECUTED: delete links unavailable; fingerprint and missing-file guards were exercised");
             return;
@@ -494,8 +466,7 @@ class PrivateModelStoreTest
     }
 
     @Test
-    void metadataSymlinksAreNeverFollowedOrOverwrittenAndInvalidRootsFailClosed() throws Exception
-    {
+    void metadataSymlinksAreNeverFollowedOrOverwrittenAndInvalidRootsFailClosed() throws Exception {
         Path directory = this.temporary.resolve("private-models"), outside = this.temporary.resolve("outside.json");
         UUID owner = UUID.randomUUID();
         byte[] bytes = bundle(1, 0);
@@ -511,12 +482,9 @@ class PrivateModelStoreTest
         Files.move(moved, directory);
         Files.delete(metadata(directory, owner, hash));
         Files.writeString(outside, "outside remains");
-        try
-        {
+        try {
             Files.createSymbolicLink(metadata(directory, owner, hash), outside);
-        }
-        catch (UnsupportedOperationException | IOException unavailable)
-        {
+        } catch (UnsupportedOperationException | IOException unavailable) {
             System.out.println(
                     "SYMLINK_BRANCH_NOT_EXECUTED: metadata links unavailable; fail-closed invalid directory was exercised");
             return;
@@ -528,8 +496,7 @@ class PrivateModelStoreTest
     }
 
     @Test
-    void onlyTheUploadingOwnerCanReuseAnExactlyMatchingValidatedBundleAcrossRestarts() throws Exception
-    {
+    void onlyTheUploadingOwnerCanReuseAnExactlyMatchingValidatedBundleAcrossRestarts() throws Exception {
         Path directory = this.temporary.resolve("private-models");
         UUID owner = UUID.randomUUID();
         byte[] bytes = bundle(1, 0);
@@ -545,8 +512,7 @@ class PrivateModelStoreTest
     }
 
     @Test
-    void corruptDiskBytesAndUnexpectedModelKindsCannotBecomePublications() throws Exception
-    {
+    void corruptDiskBytesAndUnexpectedModelKindsCannotBecomePublications() throws Exception {
         Path directory = this.temporary.resolve("private-models");
         UUID owner = UUID.randomUUID();
         byte[] bytes = bundle(1, 0);
@@ -565,8 +531,7 @@ class PrivateModelStoreTest
     }
 
     @Test
-    void leastRecentlyUsedFilesRespectBothPerOwnerAndGlobalModelCounts() throws Exception
-    {
+    void leastRecentlyUsedFilesRespectBothPerOwnerAndGlobalModelCounts() throws Exception {
         Path directory = this.temporary.resolve("private-models");
         UUID owner = UUID.randomUUID(), other = UUID.randomUUID(), third = UUID.randomUUID();
         PrivateModelStore store = new PrivateModelStore(directory,
@@ -587,8 +552,7 @@ class PrivateModelStoreTest
     }
 
     @Test
-    void aCacheHitAlsoAppliesLimitsLoweredAfterRestart() throws Exception
-    {
+    void aCacheHitAlsoAppliesLimitsLoweredAfterRestart() throws Exception {
         Path directory = this.temporary.resolve("private-models");
         UUID owner = UUID.randomUUID();
         PrivateModelStore generous = new PrivateModelStore(directory,
@@ -608,8 +572,7 @@ class PrivateModelStoreTest
     }
 
     @Test
-    void byteBudgetEvictsAnOlderBundleBeforeWritingTheNewOne() throws Exception
-    {
+    void byteBudgetEvictsAnOlderBundleBeforeWritingTheNewOne() throws Exception {
         Path directory = this.temporary.resolve("private-models");
         UUID firstOwner = UUID.randomUUID(), secondOwner = UUID.randomUUID();
         PrivateModelStore store = new PrivateModelStore(directory,
@@ -624,8 +587,7 @@ class PrivateModelStoreTest
     }
 
     @Test
-    void disabledCacheDoesNotCreateOrReadItsDirectory() throws Exception
-    {
+    void disabledCacheDoesNotCreateOrReadItsDirectory() throws Exception {
         Path directory = this.temporary.resolve("private-models");
         UUID owner = UUID.randomUUID();
         byte[] bytes = bundle(1, 0);
@@ -641,8 +603,7 @@ class PrivateModelStoreTest
     }
 
     @Test
-    void invalidStorageTargetsNeverResolvePrivateBundlesOutsideTheDirectory() throws Exception
-    {
+    void invalidStorageTargetsNeverResolvePrivateBundlesOutsideTheDirectory() throws Exception {
         Path outside = this.temporary.resolve("outside");
         Files.createDirectory(outside);
         Path directory = this.temporary.resolve("private-models");
@@ -664,12 +625,9 @@ class PrivateModelStoreTest
         assertEquals(0, files(outside));
         Files.delete(occupiedTarget);
         Files.delete(directory);
-        try
-        {
+        try {
             Files.createSymbolicLink(directory, outside);
-        }
-        catch (UnsupportedOperationException | IOException unavailable)
-        {
+        } catch (UnsupportedOperationException | IOException unavailable) {
             System.out.println(
                     "SYMLINK_BRANCH_NOT_EXECUTED: platform does not permit fixture symbolic links; occupied file/directory guards were exercised");
             return;
@@ -687,44 +645,35 @@ class PrivateModelStoreTest
         assertArrayEquals(bytes, Files.readAllBytes(target));
     }
 
-    private static long files(Path directory) throws Exception
-    {
-        try (Stream<Path> stream = Files.list(directory))
-        {
+    private static long files(Path directory) throws Exception {
+        try (Stream<Path> stream = Files.list(directory)) {
             return stream.count();
         }
     }
 
-    private static Path metadata(Path directory, UUID owner, String hash)
-    {
+    private static Path metadata(Path directory, UUID owner, String hash) {
         return directory.resolve(owner + "_" + hash + ".meta.json");
     }
 
-    private static String receiptJson(UUID owner, String sourceId, String hash, String kind, int bytes)
-    {
+    private static String receiptJson(UUID owner, String sourceId, String hash, String kind, int bytes) {
         return "{\"format\":1,\"owner\":\"" + owner + "\",\"sourceId\":\"" + sourceId + "\",\"hash\":\"" + hash
                 + "\",\"kind\":\"" + kind + "\",\"bytes\":" + bytes + "}";
     }
 
-    private static byte[] bundle(int marker, int soundBytes) throws Exception
-    {
+    private static byte[] bundle(int marker, int soundBytes) throws Exception {
         Map<String, byte[]> files = new LinkedHashMap<>();
         files.put("manifest.json",
                 "{\"format\":1,\"kind\":\"ysm\",\"entry\":\"ysm.json\"}".getBytes(StandardCharsets.UTF_8));
         files.put("ysm.json", ("{\"marker\":" + marker + "}").getBytes(StandardCharsets.UTF_8));
-        if (soundBytes > 0)
-        {
+        if (soundBytes > 0) {
             byte[] sound = new byte[soundBytes];
             new Random(marker).nextBytes(sound);
-            System.arraycopy(new byte[]
-            { 'O', 'g', 'g', 'S' }, 0, sound, 0, 4);
+            System.arraycopy(new byte[] { 'O', 'g', 'g', 'S' }, 0, sound, 0, 4);
             files.put("sounds/example.ogg", sound);
         }
         ByteArrayOutputStream output = new ByteArrayOutputStream();
-        try (ZipOutputStream zip = new ZipOutputStream(output))
-        {
-            for (Map.Entry<String, byte[]> file : files.entrySet())
-            {
+        try (ZipOutputStream zip = new ZipOutputStream(output)) {
+            for (Map.Entry<String, byte[]> file : files.entrySet()) {
                 ZipEntry entry = new ZipEntry(file.getKey());
                 entry.setTime(0);
                 zip.putNextEntry(entry);

@@ -14,14 +14,12 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class ClientOptionsTest
-{
+class ClientOptionsTest {
     @TempDir
     Path directory;
 
     @Test
-    void removedServerBuiltinDoesNotSilentlyEnableDefaultAndFavoritesPersist() throws Exception
-    {
+    void removedServerBuiltinDoesNotSilentlyEnableDefaultAndFavoritesPersist() throws Exception {
         Path path = this.directory.resolve("options.json");
         Files.writeString(path,
                 "{\"localAppearance\":{\"enabled\":true,\"modelId\":\"ysm_02_jk\",\"scale\":1,\"offsetX\":0,\"offsetY\":0,\"offsetZ\":0}}");
@@ -40,8 +38,7 @@ class ClientOptionsTest
     }
 
     @Test
-    void missingAndLegacyFilesDoNotEnableIndependentAppearance() throws Exception
-    {
+    void missingAndLegacyFilesDoNotEnableIndependentAppearance() throws Exception {
         Path path = this.directory.resolve("options.json");
         assertEquals(LocalAppearanceSettings.defaults(), new ClientOptions(path).localAppearance());
         Files.writeString(path,
@@ -59,16 +56,14 @@ class ClientOptionsTest
     }
 
     @Test
-    void saveAndFreshLoadRetainAllAppearanceChoicesAndOtherOptions() throws Exception
-    {
+    void saveAndFreshLoadRetainAllAppearanceChoicesAndOtherOptions() throws Exception {
         Path path = this.directory.resolve("config").resolve("options.json");
         ClientOptions options = new ClientOptions(path);
         options.enabled = false;
         options.showSelf = false;
         options.interpolationTicks = 5;
         options.followServerTimeline = true;
-        for (String model : List.of("openysm_default", "ysm:sample", "local:sample.bbmodel", "local:我的模型.bbmodel"))
-        {
+        for (String model : List.of("openysm_default", "ysm:sample", "local:sample.bbmodel", "local:我的模型.bbmodel")) {
             LocalAppearanceSettings appearance = new LocalAppearanceSettings(true, model, 1.375f, -.75, 1.25, .5);
             options.setLocalAppearance(appearance);
             options.save();
@@ -88,8 +83,7 @@ class ClientOptionsTest
     }
 
     @Test
-    void disablingAppearancePersistsItsSelectedModelAndTransform()
-    {
+    void disablingAppearancePersistsItsSelectedModelAndTransform() {
         Path path = this.directory.resolve("options.json");
         ClientOptions options = new ClientOptions(path);
         LocalAppearanceSettings disabled = new LocalAppearanceSettings(false, "local:sample.bbmodel", .5f, 2, -1, 3);
@@ -99,8 +93,7 @@ class ClientOptionsTest
     }
 
     @Test
-    void aReloadReadsChangesMadeByAnotherOptionsInstance()
-    {
+    void aReloadReadsChangesMadeByAnotherOptionsInstance() {
         Path path = this.directory.resolve("options.json");
         ClientOptions initial = new ClientOptions(path);
         initial.enabled = false;
@@ -127,8 +120,7 @@ class ClientOptionsTest
     }
 
     @Test
-    void reloadingAfterFileDeletionOrCorruptionDisablesThePreviousAppearance() throws Exception
-    {
+    void reloadingAfterFileDeletionOrCorruptionDisablesThePreviousAppearance() throws Exception {
         Path path = this.directory.resolve("options.json");
         ClientOptions options = new ClientOptions(path);
         options.setLocalAppearance(new LocalAppearanceSettings(true, "openysm_default", 1, 0, 0, 0));
@@ -143,8 +135,7 @@ class ClientOptionsTest
     }
 
     @Test
-    void malformedOrUnsafeAppearanceDoesNotAccidentallyEnableIt() throws Exception
-    {
+    void malformedOrUnsafeAppearanceDoesNotAccidentallyEnableIt() throws Exception {
         Path path = this.directory.resolve("options.json");
         String valid = "{\"enabled\":true,\"modelId\":\"openysm_default\",\"scale\":1,\"offsetX\":0,\"offsetY\":0,\"offsetZ\":0}";
         for (String bad : List.of(valid.replace("\"scale\":1", "\"scale\":0"),
@@ -154,8 +145,7 @@ class ClientOptionsTest
                 valid.replace("openysm_default", "local:../escape.bbmodel"),
                 valid.replace("\"enabled\":true", "\"enabled\":\"true\""),
                 valid.replace("\"scale\":1", "\"scale\":\"1\""), valid.replace(",\"offsetZ\":0", ""), "null", "[]",
-                "\"invalid\""))
-        {
+                "\"invalid\"")) {
             Files.writeString(path, "{\"enabled\":false,\"localAppearance\":" + bad + "}");
             ClientOptions loaded = new ClientOptions(path);
             assertEquals(LocalAppearanceSettings.defaults(), loaded.localAppearance(), bad);
@@ -164,8 +154,7 @@ class ClientOptionsTest
     }
 
     @Test
-    void modelProfilesPreserveAuthoredVariablesSkinsAndRadiosWithoutEnablingModel()
-    {
+    void modelProfilesPreserveAuthoredVariablesSkinsAndRadiosWithoutEnablingModel() {
         Path path = this.directory.resolve("options.json");
         ClientOptions options = new ClientOptions(path);
         ClientOptions.ModelProfile profile = new ClientOptions.ModelProfile("blue", Map.of("v.player_size", 3d,
@@ -186,12 +175,9 @@ class ClientOptionsTest
     }
 
     @Test
-    void profileValidationRejectsNonNumericAndUnsafeState()
-    {
+    void profileValidationRejectsNonNumericAndUnsafeState() {
         for (Map<String, Double> variables : List.of(Map.of("query.x", 1d), Map.of("variable.x", Double.NaN),
-                Map.of("variable.x", 1_000_001d), Map.of("temp.x", 1d)))
-
-        {
+                Map.of("variable.x", 1_000_001d), Map.of("temp.x", 1d))) {
             assertThrows(IllegalArgumentException.class, () -> new ClientOptions.ModelProfile("", variables, Map.of()));
         }
 
@@ -202,13 +188,10 @@ class ClientOptionsTest
     }
 
     @Test
-    void tooManyProfilesAndTotalByteBudgetPreserveLastSavedFile() throws Exception
-    {
+    void tooManyProfilesAndTotalByteBudgetPreserveLastSavedFile() throws Exception {
         Path path = this.directory.resolve("options.json");
         ClientOptions options = new ClientOptions(path);
-        for (int i = 0; i < ClientOptions.MAX_MODEL_PROFILES; i++)
-
-        {
+        for (int i = 0; i < ClientOptions.MAX_MODEL_PROFILES; i++) {
             assertTrue(options.updateModelProfile("ysm:model" + i, ClientOptions.ModelProfile.defaults()));
         }
 
@@ -216,18 +199,15 @@ class ClientOptionsTest
         assertFalse(options.updateModelProfile("ysm:excess", ClientOptions.ModelProfile.defaults()));
         assertArrayEquals(last, Files.readAllBytes(path));
         Map<String, Double> large = new LinkedHashMap<>();
-        for (int i = 0; i < 128; i++)
-        {
+        for (int i = 0; i < 128; i++) {
             large.put("variable." + "a".repeat(105) + i, 123_456.123456d);
         }
 
         boolean rejected = false;
-        for (int i = 0; i < 32; i++)
-        {
+        for (int i = 0; i < 32; i++) {
             byte[] before = Files.readAllBytes(path);
             ClientOptions.ModelProfile old = options.modelProfile("ysm:model" + i);
-            if (!options.updateModelProfile("ysm:model" + i, new ClientOptions.ModelProfile("", large, Map.of())))
-            {
+            if (!options.updateModelProfile("ysm:model" + i, new ClientOptions.ModelProfile("", large, Map.of()))) {
                 assertEquals(old, options.modelProfile("ysm:model" + i));
                 assertArrayEquals(before, Files.readAllBytes(path));
                 rejected = true;
@@ -239,8 +219,7 @@ class ClientOptionsTest
     }
 
     @Test
-    void invalidProfileSectionFailsClosedWithoutChangingRenderOptions() throws Exception
-    {
+    void invalidProfileSectionFailsClosedWithoutChangingRenderOptions() throws Exception {
         Path path = this.directory.resolve("options.json");
         Files.writeString(path,
                 "{\"enabled\":false,\"modelProfiles\":{\"ysm:sample\":{\"textureId\":\"blue\",\"variables\":{\"query.x\":1}}}}");
@@ -250,8 +229,7 @@ class ClientOptionsTest
     }
 
     @Test
-    void ioFailureRollsBackProfileInMemory() throws Exception
-    {
+    void ioFailureRollsBackProfileInMemory() throws Exception {
         Path blocked = this.directory.resolve("folder");
         Files.createDirectory(blocked);
         ClientOptions options = new ClientOptions(blocked);
@@ -261,8 +239,7 @@ class ClientOptionsTest
     }
 
     @Test
-    void legacyOptionsGainWheelDefaultsWithoutChangingPrivateModelChoices() throws Exception
-    {
+    void legacyOptionsGainWheelDefaultsWithoutChangingPrivateModelChoices() throws Exception {
         Path path = this.directory.resolve("options.json");
         ClientOptions saved = new ClientOptions(path);
         LocalAppearanceSettings appearance = new LocalAppearanceSettings(true, "local:我的模型.bbmodel", 1.5f, 1, 2, 3);
@@ -289,8 +266,7 @@ class ClientOptionsTest
     }
 
     @Test
-    void wheelSourcesPagesAndKeepOpenRoundTripIndependentlyOfActionLock() throws Exception
-    {
+    void wheelSourcesPagesAndKeepOpenRoundTripIndependentlyOfActionLock() throws Exception {
         Path path = this.directory.resolve("options.json");
         ClientOptions options = new ClientOptions(path);
         WheelPreferences remembered = new WheelPreferences(WheelPreferences.Source.SERVER, 12, 127, true);
@@ -311,11 +287,9 @@ class ClientOptionsTest
     }
 
     @Test
-    void invalidAndFutureWheelFieldsFallBackIndividuallyWithoutErasingValidSiblings() throws Exception
-    {
+    void invalidAndFutureWheelFieldsFallBackIndividuallyWithoutErasingValidSiblings() throws Exception {
         Path path = this.directory.resolve("options.json");
-        for (String invalid : List.of("null", "[]", "{}", "true", "\"7\"", "1.5", "-1", "128", "1e300"))
-        {
+        for (String invalid : List.of("null", "[]", "{}", "true", "\"7\"", "1.5", "-1", "128", "1e300")) {
             Files.writeString(path, "{\"enabled\":false,\"wheelPreferences\":{\"source\":\"server\",\"clientPage\":"
                     + invalid + ",\"serverPage\":9,\"keepOpen\":true}}");
             ClientOptions loaded = new ClientOptions(path);
@@ -327,8 +301,7 @@ class ClientOptionsTest
                 + "\"clientPage\":3,\"serverPage\":5,\"keepOpen\":true,\"futureOption\":{\"x\":1}}}");
         assertEquals(new WheelPreferences(WheelPreferences.Source.CLIENT, 3, 5, true),
                 new ClientOptions(path).wheelPreferences());
-        for (String invalid : List.of("null", "[]", "{}", "1", "\"true\""))
-        {
+        for (String invalid : List.of("null", "[]", "{}", "1", "\"true\"")) {
             Files.writeString(path,
                     "{\"wheelPreferences\":{\"source\":\"server\",\"clientPage\":3,\"keepOpen\":" + invalid + "}}");
             assertEquals(new WheelPreferences(WheelPreferences.Source.SERVER, 3, 0, false),
@@ -337,8 +310,7 @@ class ClientOptionsTest
     }
 
     @Test
-    void malformedWheelSectionDoesNotPreventRestoringPrivateAppearanceAndProfiles() throws Exception
-    {
+    void malformedWheelSectionDoesNotPreventRestoringPrivateAppearanceAndProfiles() throws Exception {
         Path path = this.directory.resolve("options.json");
         ClientOptions saved = new ClientOptions(path);
         LocalAppearanceSettings appearance = new LocalAppearanceSettings(true, "ysm:sample", 2, .5, -.5, 1);
@@ -347,8 +319,7 @@ class ClientOptionsTest
         saved.setLocalAppearance(appearance);
         assertTrue(saved.updateModelProfile(appearance.modelId(), profile));
         JsonObject json = JsonParser.parseString(Files.readString(path)).getAsJsonObject();
-        for (String invalid : List.of("null", "[]", "\"invalid\"", "1"))
-        {
+        for (String invalid : List.of("null", "[]", "\"invalid\"", "1")) {
             json.add("wheelPreferences", JsonParser.parseString(invalid));
             Files.writeString(path, json.toString());
             ClientOptions loaded = new ClientOptions(path);
@@ -359,8 +330,7 @@ class ClientOptionsTest
     }
 
     @Test
-    void ioFailureRollsBackWheelMemoryAndLeavesTheBlockingDirectoryUntouched() throws Exception
-    {
+    void ioFailureRollsBackWheelMemoryAndLeavesTheBlockingDirectoryUntouched() throws Exception {
         Path path = this.directory.resolve("options.json");
         ClientOptions options = new ClientOptions(path);
         WheelPreferences previous = new WheelPreferences(WheelPreferences.Source.SERVER, 2, 5, true);
@@ -373,8 +343,7 @@ class ClientOptionsTest
                 previous.withSource(WheelPreferences.Source.CLIENT).withPage(WheelPreferences.Source.CLIENT, 9)));
         assertEquals(previous, options.wheelPreferences());
         assertEquals("preserve", Files.readString(sentinel));
-        try (Stream<Path> children = Files.list(this.directory))
-        {
+        try (Stream<Path> children = Files.list(this.directory)) {
             assertEquals(List.of(path), children.toList());
         }
     }

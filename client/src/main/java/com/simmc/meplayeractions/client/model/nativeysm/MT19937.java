@@ -46,8 +46,7 @@ package com.simmc.meplayeractions.client.model.nativeysm;/* Luis Bodart A0163500
  * http://www.math.sci.hiroshima-u.ac.jp/~m-mat/MT/ARTICLES/mt.pdf
  */
 
-public class MT19937
-{
+public class MT19937 {
 
     private static final int w = 64, n = 312, m = 156, r = 31;
     private static final long a = 0xB5026F5AA96619E9l;
@@ -64,8 +63,7 @@ public class MT19937
     /**
      * Constructor con una semilla aleatoria
      */
-    public MT19937()
-    {
+    public MT19937() {
         this.MT = new long[n];
         this.setSeed(System.currentTimeMillis());
     }
@@ -75,8 +73,7 @@ public class MT19937
      *
      * @param seed semilla inicial
      */
-    public MT19937(long seed)
-    {
+    public MT19937(long seed) {
         this.MT = new long[n];
         this.setSeed(seed);
     }
@@ -86,12 +83,10 @@ public class MT19937
      *
      * @param seed semilla para la creación de los números aleatorios
      */
-    private void setSeed(long seed)
-    {
+    private void setSeed(long seed) {
         this.MT[0] = seed;
         this.index = n;
-        for (int i = 1; i < n; i++)
-        {
+        for (int i = 1; i < n; i++) {
             this.MT[i] = (f * (this.MT[i - 1] ^ (this.MT[i - 1] >>> (w - 2))) + i);
         }
     }
@@ -99,14 +94,11 @@ public class MT19937
     /**
      * Genera los siguientes valores n de la serie x_i
      */
-    private void twist()
-    {
-        for (int i = 0; i < n; i++)
-        {
+    private void twist() {
+        for (int i = 0; i < n; i++) {
             long x = (this.MT[i] & upper_mask) | (this.MT[(i + 1) % n] & lower_mask);
             long xA = x >>> 1;
-            if ((x & 1L) != 0L)
-            {
+            if ((x & 1L) != 0L) {
                 xA ^= a;
             }
             this.MT[i] = this.MT[(i + m) % n] ^ xA;
@@ -117,10 +109,8 @@ public class MT19937
     /**
      * Genera un valor templado basado en MT[index] llamando a twist() cada n
      */
-    public long extract_number()
-    {
-        if (this.index >= n)
-        {
+    public long extract_number() {
+        if (this.index >= n) {
             this.twist();
         }
         long y = this.MT[this.index++];
@@ -136,8 +126,7 @@ public class MT19937
     /**
      * Genera un valor double pseudoaleatorio y uniformemente distribuido entre [0.0, 1.0)
      */
-    public double random()
-    {
+    public double random() {
         return (this.extract_number() >> 1) / (double) Long.MAX_VALUE;
     }
 
@@ -148,19 +137,15 @@ public class MT19937
      * @return Valor entero entre [0, x)
      * @throws IllegalArgumentException Si x <= 0
      */
-    public int randint(int x)
-    {
-        if (x <= 0)
-        {
+    public int randint(int x) {
+        if (x <= 0) {
             throw new IllegalArgumentException("n debe ser mayor a 0");
         }
         int bits, val;
-        do
-        {
+        do {
             bits = (int) (extract_number() >> (w - r));
             val = bits % x;
-        }
-        while (bits - val + (x - 1) < 0);
+        } while (bits - val + (x - 1) < 0);
         return val;
     }
 
@@ -171,10 +156,8 @@ public class MT19937
      * @return Valor float entre [0.0, x)
      * @throws IllegalArgumentException Si x <= 0
      */
-    public float randfloat(float x)
-    {
-        if (x <= 0.0f)
-        {
+    public float randfloat(float x) {
+        if (x <= 0.0f) {
             throw new IllegalArgumentException("n debe ser mayor a 0.0");
         }
         return (float) this.random() * x;
@@ -187,10 +170,8 @@ public class MT19937
      * @return Valor double entre [0.0, x)
      * @throws IllegalArgumentException Si x <= 0.0
      */
-    public double randdouble(double x)
-    {
-        if (x <= 0.0d)
-        {
+    public double randdouble(double x) {
+        if (x <= 0.0d) {
             throw new IllegalArgumentException("n debe ser mayor a 0.0");
         }
         return this.random() * x;
@@ -204,10 +185,8 @@ public class MT19937
      * @return Valor entero entre [min, max - 1]
      * @throws IllegalArgumentException Si min >= max
      */
-    public int randrange(int min, int max)
-    {
-        if (min >= max)
-        {
+    public int randrange(int min, int max) {
+        if (min >= max) {
             throw new IllegalArgumentException("min debe ser menor que max");
         }
         return this.randint(max - min) + min;
@@ -218,8 +197,7 @@ public class MT19937
      *
      * @return semilla inicial
      */
-    public long getSeed()
-    {
+    public long getSeed() {
         return this.MT[0];
     }
 }

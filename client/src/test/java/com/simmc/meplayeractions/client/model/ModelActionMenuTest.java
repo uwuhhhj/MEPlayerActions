@@ -12,10 +12,8 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class ModelActionMenuTest
-{
-    private YsmModelProfile profile()
-    {
+class ModelActionMenuTest {
+    private YsmModelProfile profile() {
         JsonObject manifest = JsonParser.parseString("""
                 {"spec":2,"properties":{
                   "extra_animation":{"extra0":"#config","#eyes":"眼睛","extra1":""},
@@ -30,8 +28,7 @@ class ModelActionMenuTest
     }
 
     @Test
-    void preservesAuthorOrderAndSeparatesClipKeyFromConfigLabel()
-    {
+    void preservesAuthorOrderAndSeparatesClipKeyFromConfigLabel() {
         ModelActionMenu menu = new ModelActionMenu(profile(), "zh_cn");
         assertEquals(List.of("extra0", "#eyes", "extra1"),
                 menu.entries().stream().map(ModelActionMenu.Entry::id).toList());
@@ -42,8 +39,7 @@ class ModelActionMenuTest
     }
 
     @Test
-    void categoryNavigationUsesAuthoredMapsAndRejectsCyclesWithoutChangingPath()
-    {
+    void categoryNavigationUsesAuthoredMapsAndRejectsCyclesWithoutChangingPath() {
         ModelActionMenu menu = new ModelActionMenu(profile(), "zh_cn");
         assertTrue(menu.enter(menu.entries().get(1)));
         assertEquals("eyes", menu.categoryId());
@@ -59,8 +55,7 @@ class ModelActionMenuTest
     }
 
     @Test
-    void nativePropertyPathsLocalizeAuthorGroupsFormsChoicesAndActionDescriptions()
-    {
+    void nativePropertyPathsLocalizeAuthorGroupsFormsChoicesAndActionDescriptions() {
         JsonObject manifest = JsonParser.parseString("""
                 {"spec":2,"properties":{
                   "extra_animation":{"extra0":"#cfg"},
@@ -95,8 +90,7 @@ class ModelActionMenuTest
     }
 
     @Test
-    void onlyFunctionsReachableFromAuthorFormsContributeSavedVariables()
-    {
+    void onlyFunctionsReachableFromAuthorFormsContributeSavedVariables() {
         JsonObject manifest = JsonParser.parseString("""
                 {"spec":2,"properties":{"extra_animation_buttons":[{"id":"cfg","config_forms":[{
                   "type":"radio","value":"v.mode","labels":{"调用":"fn.configure();"}

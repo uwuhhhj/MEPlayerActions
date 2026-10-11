@@ -9,20 +9,16 @@ import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class EntityAnimationControllerTest
-{
+class EntityAnimationControllerTest {
     private static final Set<String> FEATURES = Set.of("movement", "sprint", "jump", "sit", "sleep", "ride", "crawl",
             "sneak", "swim", "flight", "elytra", "swing", "mining");
 
-    private static LocalMotionPolicy policy(Set<String> enabled, String special, String interaction)
-    {
+    private static LocalMotionPolicy policy(Set<String> enabled, String special, String interaction) {
         Map<String, Layer> clips = new LinkedHashMap<>();
         for (String state : List.of("idle", "walk", "run", "jump", "fall", "sit", "sleep", "bed-sleep", "boat",
                 "minecart", "ride", "ride-pig", "ladder-move", "ladder-idle", "crawl-idle", "crawl-walk", "crouch-idle",
                 "crouch-walk", "swim-idle", "swim-prone-idle", "swim-walk", "hover", "fly", "elytra", "swing-mainhand",
-                "swing-offhand", "mining"))
-
-        {
+                "swing-offhand", "mining")) {
             clips.put(state, new Layer("posture", "custom_" + state.replace('-', '_'), 0, 1, "LOOP", 2, 2));
         }
 
@@ -31,22 +27,19 @@ class EntityAnimationControllerTest
     }
 
     private static EntityAnimationController.Sample sample(double x, double y, boolean ground, boolean prone,
-            boolean water, String vehicle, boolean local, boolean swing, int swingTick, boolean offhand, boolean mining)
-    {
+            boolean water, String vehicle, boolean local, boolean swing, int swingTick, boolean offhand,
+            boolean mining) {
         return new EntityAnimationController.Sample(x, y, 0, ground, false, prone, water, false, false, false, false,
                 vehicle, swing, swingTick, offhand, mining, local);
     }
 
-    private static EntityAnimationController.Sample normal(double x, double y, boolean ground, boolean local)
-    {
+    private static EntityAnimationController.Sample normal(double x, double y, boolean ground, boolean local) {
         return sample(x, y, ground, false, false, "", local, false, 0, false, false);
     }
 
     @Test
-    void ownAndUnmoddedRemoteMotionUseCurrentNativeSamplesDespiteOldServerPosture()
-    {
-        for (boolean own : List.of(true, false))
-        {
+    void ownAndUnmoddedRemoteMotionUseCurrentNativeSamplesDespiteOldServerPosture() {
+        for (boolean own : List.of(true, false)) {
             EntityAnimationController c = new EntityAnimationController();
             LocalMotionPolicy p = policy(FEATURES, "", "");
             List<Layer> stale = List.of(new Layer("posture", "custom_idle", 10000, 1, "LOOP", 2, 2));
@@ -61,8 +54,7 @@ class EntityAnimationControllerTest
     }
 
     @Test
-    void landCrawlNeverUsesSwimAndDisabledPostureNeverFallsThrough()
-    {
+    void landCrawlNeverUsesSwimAndDisabledPostureNeverFallsThrough() {
         EntityAnimationController c = new EntityAnimationController();
         LocalMotionPolicy p = policy(FEATURES, "", "");
         c.update(100, sample(0, 64, true, true, false, "", true, false, 0, false, false), p, List.of());
@@ -80,8 +72,7 @@ class EntityAnimationControllerTest
     }
 
     @Test
-    void gsitSleepTakesPriorityOverInvisibleVehicleAndBedIsSeparate()
-    {
+    void gsitSleepTakesPriorityOverInvisibleVehicleAndBedIsSeparate() {
         EntityAnimationController c = new EntityAnimationController();
         EntityAnimationController.Sample s = sample(0, 62.8, false, false, false, "ride", true, false, 0, false, false);
         c.update(100, s, policy(FEATURES, "sleep", ""), List.of());
@@ -95,8 +86,7 @@ class EntityAnimationControllerTest
     }
 
     @Test
-    void serverFixedCrawlIsHonoredEvenWhenNativeOwnEntityReportsStanding()
-    {
+    void serverFixedCrawlIsHonoredEvenWhenNativeOwnEntityReportsStanding() {
         LocalMotionPolicy p = policy(FEATURES, "", "");
         LocalMotionPolicy fixed = new LocalMotionPolicy(p.features(), p.clips(), 17, 6, .025, true, true, false, "",
                 "crawl", "", 0, 0, 0, 0);
@@ -110,8 +100,7 @@ class EntityAnimationControllerTest
     }
 
     @Test
-    void boatMinecartUseDistinctServerMappings()
-    {
+    void boatMinecartUseDistinctServerMappings() {
         EntityAnimationController c = new EntityAnimationController();
         LocalMotionPolicy p = policy(FEATURES, "", "");
         c.update(100, sample(0, 64, false, false, false, "boat", false, false, 0, false, false), p, List.of());
@@ -121,10 +110,8 @@ class EntityAnimationControllerTest
     }
 
     @Test
-    void nativeTakeoffStartsImmediatelyFinishesBoundedTailAndLedgesAreFalls()
-    {
-        for (boolean own : List.of(true, false))
-        {
+    void nativeTakeoffStartsImmediatelyFinishesBoundedTailAndLedgesAreFalls() {
+        for (boolean own : List.of(true, false)) {
             EntityAnimationController c = new EntityAnimationController();
             LocalMotionPolicy p = policy(FEATURES, "", "");
             c.update(100, normal(0, 64, true, own), p, List.of());
@@ -143,12 +130,10 @@ class EntityAnimationControllerTest
     }
 
     @Test
-    void dismountTeleportAndVelocityDoNotReplaceGroundedTakeoffEvidence()
-    {
+    void dismountTeleportAndVelocityDoNotReplaceGroundedTakeoffEvidence() {
         // The old A/B fixture teleported from a boat four blocks away and applied upward
         // velocity in the same server tick. This is a discontinuity, not a sampled jump.
-        for (boolean own : List.of(true, false))
-        {
+        for (boolean own : List.of(true, false)) {
             EntityAnimationController c = new EntityAnimationController();
             LocalMotionPolicy p = policy(FEATURES, "", "");
             c.update(100, sample(4.5, -60.4125, false, false, false, "boat", own, false, 0, false, false), p,
@@ -171,8 +156,7 @@ class EntityAnimationControllerTest
     }
 
     @Test
-    void teleportsDoNotBecomeJumpsOrWalkCycles()
-    {
+    void teleportsDoNotBecomeJumpsOrWalkCycles() {
         EntityAnimationController c = new EntityAnimationController();
         LocalMotionPolicy p = policy(FEATURES, "", "");
         c.update(100, normal(0, 64, true, true), p, List.of());
@@ -183,8 +167,7 @@ class EntityAnimationControllerTest
     }
 
     @Test
-    void swingBeginsLocallyAndServerEchoCannotRestartIt()
-    {
+    void swingBeginsLocallyAndServerEchoCannotRestartIt() {
         EntityAnimationController c = new EntityAnimationController();
         LocalMotionPolicy p = policy(FEATURES, "", "");
         c.update(100, normal(0, 64, true, true), p, List.of());
@@ -198,8 +181,7 @@ class EntityAnimationControllerTest
     }
 
     @Test
-    void ownMiningStopsImmediatelyDespiteServerEchoAndRawSwingDoesNotBecomeMining()
-    {
+    void ownMiningStopsImmediatelyDespiteServerEchoAndRawSwingDoesNotBecomeMining() {
         EntityAnimationController c = new EntityAnimationController();
         LocalMotionPolicy p = policy(FEATURES, "", "");
         c.update(100, sample(0, 64, true, false, false, "", true, false, 0, false, true), p, List.of());
@@ -215,8 +197,7 @@ class EntityAnimationControllerTest
     }
 
     @Test
-    void movementInterruptsManualOnceAndRepeatedServerPacketsCannotReviveIt()
-    {
+    void movementInterruptsManualOnceAndRepeatedServerPacketsCannotReviveIt() {
         EntityAnimationController c = new EntityAnimationController();
         LocalMotionPolicy p = policy(FEATURES, "", "");
         List<Layer> manual = List.of(new Layer("manual", "wave", 100, 1, "ONCE", 2, 2));
@@ -231,12 +212,10 @@ class EntityAnimationControllerTest
     }
 
     @Test
-    void privateActionLockKeepsMovingExtraWhileUnlockedMotionStillCancelsIt()
-    {
+    void privateActionLockKeepsMovingExtraWhileUnlockedMotionStillCancelsIt() {
         LocalMotionPolicy source = policy(FEATURES, "", "");
         List<Layer> manual = List.of(new Layer("manual", "dance", 100, 1, "LOOP", 2, 2));
-        for (boolean locked : List.of(false, true))
-        {
+        for (boolean locked : List.of(false, true)) {
             EntityAnimationController c = new EntityAnimationController();
             LocalMotionPolicy p = source.withActionLock(locked);
             c.update(100, normal(0, 64, true, true), p, manual);
@@ -257,8 +236,7 @@ class EntityAnimationControllerTest
     }
 
     @Test
-    void privateActionLockDoesNotOverridePostureOrDeath()
-    {
+    void privateActionLockDoesNotOverridePostureOrDeath() {
         LocalMotionPolicy p = policy(FEATURES, "", "").withActionLock(true);
         List<Layer> manual = List.of(new Layer("manual", "dance", 100, 1, "HOLD", 2, 2));
         EntityAnimationController c = new EntityAnimationController();
@@ -277,8 +255,7 @@ class EntityAnimationControllerTest
     }
 
     @Test
-    void authoritativeLayerClockRebasesOnceAcrossRepeatedPacketsAndServerTickWrap()
-    {
+    void authoritativeLayerClockRebasesOnceAcrossRepeatedPacketsAndServerTickWrap() {
         LocalLayerClock clock = new LocalLayerClock();
         Layer manual = new Layer("manual", "wave", 0x1_0000_0000L, 1, "ONCE", 2, 2);
         Layer first = clock.accept(0x1_0000_0002L, 100, List.of(manual)).getFirst();
@@ -291,8 +268,7 @@ class EntityAnimationControllerTest
     }
 
     @Test
-    void validatesRequiredMotionMetadataBeforeTakingOver()
-    {
+    void validatesRequiredMotionMetadataBeforeTakingOver() {
         assertThrows(IllegalArgumentException.class, () -> LocalMotionPolicy.read(null));
         JsonObject json = new JsonObject();
         json.add("features", new JsonArray());
@@ -316,16 +292,14 @@ class EntityAnimationControllerTest
     }
 
     @Test
-    void completeServerMappingsAreAcceptedAndDriveLadderAndPigPoses()
-    {
+    void completeServerMappingsAreAcceptedAndDriveLadderAndPigPoses() {
         LocalMotionPolicy source = policy(FEATURES, "", "");
         JsonObject json = new JsonObject();
         JsonArray features = new JsonArray(), clips = new JsonArray();
         source.features().forEach(features::add);
         json.add("features", features);
         json.add("clips", clips);
-        source.clips().forEach((state, clip) ->
-        {
+        source.clips().forEach((state, clip) -> {
             JsonObject item = new JsonObject();
             item.addProperty("state", state);
             item.addProperty("animation", clip.animation());
@@ -344,8 +318,7 @@ class EntityAnimationControllerTest
         json.addProperty("interruptMove", true);
         json.addProperty("interruptPosture", true);
         json.addProperty("flying", false);
-        for (String name : List.of("anchorX", "anchorY", "anchorZ", "anchorYaw"))
-        {
+        for (String name : List.of("anchorX", "anchorY", "anchorZ", "anchorYaw")) {
             json.addProperty(name, 0);
         }
 
@@ -367,8 +340,7 @@ class EntityAnimationControllerTest
     }
 
     private static EntityAnimationController.Sample nativeSample(EntityAnimationController.Sample base,
-            VanillaYsmAnimations.VanillaState vanilla)
-    {
+            VanillaYsmAnimations.VanillaState vanilla) {
         return new EntityAnimationController.Sample(base.x(), base.y(), base.z(), base.grounded(), base.bedSleeping(),
                 base.prone(), base.inWater(), base.flying(), base.gliding(), base.sneaking(), base.sprinting(),
                 base.vehicle(), base.swinging(), base.swingTick(), base.offhand(), base.mining(), base.localPlayer(),
@@ -377,14 +349,12 @@ class EntityAnimationControllerTest
 
     private static VanillaYsmAnimations.VanillaState nativeState(boolean dead, int hurt, boolean riptide,
             boolean swimming, VanillaYsmAnimations.ItemState main, VanillaYsmAnimations.ItemState off,
-            VanillaYsmAnimations.Hand use, int useTicks, VanillaYsmAnimations.Hand swing, int swingTicks)
-    {
+            VanillaYsmAnimations.Hand use, int useTicks, VanillaYsmAnimations.Hand swing, int swingTicks) {
         return new VanillaYsmAnimations.VanillaState(dead, hurt, riptide, false, swimming, main, off, use, useTicks,
                 swing, swingTicks, false, "", Set.of(), false, false);
     }
 
-    private static Set<String> nativeClips(LocalMotionPolicy policy, String... extras)
-    {
+    private static Set<String> nativeClips(LocalMotionPolicy policy, String... extras) {
         LinkedHashSet<String> names = new LinkedHashSet<String>();
         policy.clips().values().forEach(layer -> names.add(layer.animation()));
         names.addAll(List.of(extras));
@@ -392,8 +362,7 @@ class EntityAnimationControllerTest
     }
 
     @Test
-    void ownAndUnmoddedRemoteHandsUseTheSameNativeEquipmentAndUseClock()
-    {
+    void ownAndUnmoddedRemoteHandsUseTheSameNativeEquipmentAndUseClock() {
         VanillaYsmAnimations.ItemState sword = new VanillaYsmAnimations.ItemState("minecraft:diamond_sword", Set.of(),
                 "sword", "none", false, false, 1);
         VanillaYsmAnimations.ItemState shield = new VanillaYsmAnimations.ItemState("minecraft:shield", Set.of(),
@@ -401,8 +370,7 @@ class EntityAnimationControllerTest
         LocalMotionPolicy p = policy(FEATURES, "", "");
         Set<String> clips = nativeClips(p, "hold_mainhand:sword", "hold_offhand:shield", "use_offhand:block");
         List<Layer> own = null;
-        for (boolean local : List.of(true, false))
-        {
+        for (boolean local : List.of(true, false)) {
             EntityAnimationController c = new EntityAnimationController();
             c.update(100,
                     nativeSample(normal(0, 64, true, local), nativeState(false, 0, false, false, sword, shield,
@@ -421,12 +389,9 @@ class EntityAnimationControllerTest
             c.update(102, nativeSample(normal(0, 64, true, local), nativeState(false, 0, false, false, sword, shield,
                     VanillaYsmAnimations.Hand.OFF, 2, VanillaYsmAnimations.Hand.NONE, 0)), p, List.of(), clips);
             assertTrue(c.layers().contains(use));
-            if (local)
-            {
+            if (local) {
                 own = c.layers();
-            }
-            else
-            {
+            } else {
                 assertEquals(own, c.layers());
             }
 
@@ -434,8 +399,7 @@ class EntityAnimationControllerTest
     }
 
     @Test
-    void holdItemComponentChangeRestartsOnceAndPauseDoesNotRewriteItsClock()
-    {
+    void holdItemComponentChangeRestartsOnceAndPauseDoesNotRewriteItsClock() {
         LocalMotionPolicy p = policy(FEATURES, "", "");
         Set<String> clips = nativeClips(p, "hold_mainhand:bow", "use_mainhand:bow");
         VanillaYsmAnimations.ItemState bow = new VanillaYsmAnimations.ItemState("minecraft:bow", Set.of(), "bow", "bow",
@@ -464,8 +428,7 @@ class EntityAnimationControllerTest
     }
 
     @Test
-    void nativeSwingDoesNotInferRemoteMiningAndServerEchoCannotRestartItsClock()
-    {
+    void nativeSwingDoesNotInferRemoteMiningAndServerEchoCannotRestartItsClock() {
         LocalMotionPolicy p = policy(FEATURES, "", "");
         Set<String> clips = nativeClips(p, "swing_hand");
         VanillaYsmAnimations.ItemState empty = VanillaYsmAnimations.ItemState.EMPTY;
@@ -496,8 +459,7 @@ class EntityAnimationControllerTest
     }
 
     @Test
-    void nativeDeathHurtAndRiptidePrioritiesUseExistingClipsAndBoundedEventStarts()
-    {
+    void nativeDeathHurtAndRiptidePrioritiesUseExistingClipsAndBoundedEventStarts() {
         LocalMotionPolicy p = policy(FEATURES, "", "");
         Set<String> clips = nativeClips(p, "death", "attacked", "riptide");
         VanillaYsmAnimations.ItemState empty = VanillaYsmAnimations.ItemState.EMPTY;
@@ -530,8 +492,7 @@ class EntityAnimationControllerTest
     }
 
     @Test
-    void nativeDownwardLadderAndSwimmingFlagAreDistinctFromOnlyPronePose()
-    {
+    void nativeDownwardLadderAndSwimmingFlagAreDistinctFromOnlyPronePose() {
         LocalMotionPolicy p = policy(FEATURES, "", "");
         Set<String> clips = nativeClips(p, "ladder_down");
         EntityAnimationController c = new EntityAnimationController();
@@ -553,8 +514,7 @@ class EntityAnimationControllerTest
     }
 
     @Test
-    void nativeVehicleConditionsUseTheirOwnControllerAndDeadVehicleFallsBackToBody()
-    {
+    void nativeVehicleConditionsUseTheirOwnControllerAndDeadVehicleFallsBackToBody() {
         LocalMotionPolicy p = policy(FEATURES, "", "");
         Set<String> clips = nativeClips(p, "vehicle$minecraft:horse");
         EntityAnimationController c = new EntityAnimationController();

@@ -15,18 +15,15 @@ import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NativeYsmLibraryTest
-{
+class NativeYsmLibraryTest {
     @TempDir
     Path temporary;
 
     @Test
-    void recursiveNativePacksAndArchivesKeepRealLogicalDirectoryIds() throws Exception
-    {
+    void recursiveNativePacksAndArchivesKeepRealLogicalDirectoryIds() throws Exception {
         YsmFolderModel.Imported source = YsmFolderModel.bundledDefaultWithProfile(null);
         Path folder = this.temporary.resolve("pack/sub/default");
-        for (Map.Entry<String, byte[]> file : source.sourceFiles().entrySet())
-        {
+        for (Map.Entry<String, byte[]> file : source.sourceFiles().entrySet()) {
             Path path = folder.resolve(file.getKey());
             Files.createDirectories(path.getParent());
             Files.write(path, file.getValue());
@@ -46,10 +43,8 @@ class NativeYsmLibraryTest
     }
 
     @Test
-    void alexAndSteveUseExactOriginalCc0ResourcesAndTrustedLogicalIds() throws Exception
-    {
-        for (String id : List.of(BuiltinYsmModels.ALEX_ID, BuiltinYsmModels.STEVE_ID))
-        {
+    void alexAndSteveUseExactOriginalCc0ResourcesAndTrustedLogicalIds() throws Exception {
+        for (String id : List.of(BuiltinYsmModels.ALEX_ID, BuiltinYsmModels.STEVE_ID)) {
             YsmFolderModel.Imported imported = YsmFolderModel.bundledWithProfile(id, null);
             String expectedManifestHash = id.equals(BuiltinYsmModels.ALEX_ID)
                     ? "3e7a6270c4a2973b900f0509f199444fe78052f414c27d2f6d4f33b1176b626d"
@@ -70,8 +65,7 @@ class NativeYsmLibraryTest
     }
 
     @Test
-    void nestedNativeLanguagesSupportArraysFlatOverridesAndLocaleFallback() throws Exception
-    {
+    void nestedNativeLanguagesSupportArraysFlatOverridesAndLocaleFallback() throws Exception {
         YsmFolderModel.Imported source = YsmFolderModel.bundledDefaultWithProfile(null);
         LinkedHashMap<String, byte[]> files = new LinkedHashMap<>(source.sourceFiles());
         files.put("lang/zh_cn.json",

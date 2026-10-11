@@ -22,8 +22,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /** Owner-only saved archive actions. Resharing uses the current matching local file; no archive is downloaded. */
-final class PrivateUploadManagementScreen extends Screen
-{
+final class PrivateUploadManagementScreen extends Screen {
     private final ClientRuntime runtime;
     private final Screen parent;
     private final PrivateUploadCatalogSnapshot.Model expected;
@@ -38,8 +37,7 @@ final class PrivateUploadManagementScreen extends Screen
     private int ticks, left, top, panelWidth, controlsY;
 
     PrivateUploadManagementScreen(ClientRuntime runtime, Screen parent, PrivateUploadCatalogSnapshot.Model expected,
-            String label, Consumer<String> result, Runnable deleting)
-    {
+            String label, Consumer<String> result, Runnable deleting) {
         super(Text.literal("管理本人已上传模型"));
         this.runtime = runtime;
         this.parent = parent;
@@ -50,17 +48,14 @@ final class PrivateUploadManagementScreen extends Screen
     }
 
     @Override
-    protected void init()
-    {
+    protected void init() {
         this.open = true;
         this.panelWidth = Math.max(180, Math.min(330, super.width - 24));
         this.left = (super.width - this.panelWidth) / 2;
         this.top = Math.max(6, (super.height - 238) / 2);
-        if (this.worker == null)
-        {
+        if (this.worker == null) {
             this.worker = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(1),
-                    runnable ->
-                    {
+                    runnable -> {
                         Thread thread = new Thread(runnable, "MPA-private-reshare-check");
                         thread.setDaemon(true);
                         return thread;
@@ -77,120 +72,97 @@ final class PrivateUploadManagementScreen extends Screen
         updateButtons();
     }
 
-    private ButtonWidget button(String caption, int x, int y, int w, Runnable action)
-    {
+    private ButtonWidget button(String caption, int x, int y, int w, Runnable action) {
         return addDrawableChild(
                 ButtonWidget.builder(Text.literal(caption), ignored -> action.run()).dimensions(x, y, w, 20).build());
     }
 
-    private boolean sameSavedVersion()
-    {
+    private boolean sameSavedVersion() {
         return this.runtime.uploadedPrivateModels().stream().anyMatch(this.expected::equals);
     }
 
-    private String deletionBlock()
-    {
-        if (!this.runtime.privateUploadCatalogReady())
-        {
+    private String deletionBlock() {
+        if (!this.runtime.privateUploadCatalogReady()) {
             return "等待服务器本人存档目录\n" + this.runtime.privateUploadCatalogStatus();
         }
 
-        if (!sameSavedVersion())
-        {
+        if (!sameSavedVersion()) {
             return "服务器保存内容已变化\n返回图库，重新选择当前存档";
         }
 
-        if (this.runtime.deletingUploadedPrivateModel(this.expected.modelId()))
-        {
+        if (this.runtime.deletingUploadedPrivateModel(this.expected.modelId())) {
             return "正在等待服务器确认删除";
         }
 
-        if (this.runtime.privateModelUploadState(this.expected.modelId()).inProgress())
-        {
+        if (this.runtime.privateModelUploadState(this.expected.modelId()).inProgress()) {
             return "正在发布此模型\n等待完成后管理或删除存档";
         }
 
         return "";
     }
 
-    private String sharingBlock()
-    {
+    private String sharingBlock() {
         String directory = deletionBlock();
-        if (!directory.isEmpty())
-        {
+        if (!directory.isEmpty()) {
             return directory;
         }
 
-        if (!this.runtime.canActivateLocalAppearance())
-        {
+        if (!this.runtime.canActivateLocalAppearance()) {
             return "请先解除服务器伪装\n服务器伪装与私人分享不能同时使用";
         }
 
-        if (!this.runtime.canShareLocalModel())
-        {
+        if (!this.runtime.canShareLocalModel()) {
             return "当前无法再次分享\n" + this.runtime.privateSyncStatus();
         }
 
-        if (!this.runtime.uploadedPrivateModelIds().contains(this.expected.modelId()))
-
-        {
+        if (!this.runtime.uploadedPrivateModelIds().contains(this.expected.modelId())) {
             return "本机模型未确认与存档一致\n本机缺失或内容不同均不能再次分享\n返回图库检查文件并刷新";
         }
 
-        if (this.checkingSource)
-        {
+        if (this.checkingSource) {
             return "正在重新核对本机完整资源\n尚未重新发布";
         }
 
-        if (!this.previewReady)
-        {
+        if (!this.previewReady) {
             return this.previewError.isEmpty() ? "正在准备本机模型" : "本机模型无法准备\n" + this.previewError + "\n返回图库检查文件并刷新";
         }
 
         return "";
     }
 
-    private void preparePreview()
-    {
+    private void preparePreview() {
         if (this.previewReady || this.previewAttempted || this.loading || !this.runtime.canShareLocalModel()
                 || !this.runtime.canEditLocalAppearance()
-                || !this.runtime.uploadedPrivateModelIds().contains(this.expected.modelId()) || !sameSavedVersion())
-        {
+                || !this.runtime.uploadedPrivateModelIds().contains(this.expected.modelId()) || !sameSavedVersion()) {
             return;
         }
 
         this.loading = this.previewAttempted = true;
         long requestEpoch = this.epoch;
         this.runtime.loadLocalPreview(this.expected.modelId())
-                .whenComplete((loaded, error) -> super.client.execute(() ->
-                {
-                    if (!this.open || requestEpoch != this.epoch)
-                    {
+                .whenComplete((loaded, error) -> super.client.execute(() -> {
+                    if (!this.open || requestEpoch != this.epoch) {
                         return;
                     }
 
                     this.loading = false;
                     this.previewReady = error == null && loaded != null;
                     Throwable cause = error;
-                    while (cause instanceof CompletionException && cause.getCause() != null)
-                    {
+                    while (cause instanceof CompletionException && cause.getCause() != null) {
                         cause = cause.getCause();
                     }
 
                     boolean busy = cause instanceof RejectedExecutionException;
                     this.previewError = this.previewReady ? "" : (busy ? "本机预览任务繁忙，稍后重试" : "本机文件缺失、损坏或超出限制");
-                    if (busy)
-                    {
+                    if (busy) {
                         this.previewAttempted = false;
                     }
                     updateButtons();
                 }));
     }
 
-    private void updateButtons()
-    {
-        if (this.share == null)
-        {
+    private void updateButtons() {
+        if (this.share == null) {
             return;
         }
 
@@ -209,11 +181,9 @@ final class PrivateUploadManagementScreen extends Screen
                 this.stop.active ? "结束当前私人分享\n本人的本地外观继续显示\n服务器存档和本地文件保留\n之后点击使用模型可明确恢复分享" : "此存档当前没有正在展示的私人分享"));
     }
 
-    private void reshare()
-    {
+    private void reshare() {
         String blocked = sharingBlock();
-        if (!blocked.isEmpty())
-        {
+        if (!blocked.isEmpty()) {
             this.message = blocked;
             updateButtons();
             return;
@@ -223,85 +193,64 @@ final class PrivateUploadManagementScreen extends Screen
         updateButtons();
         long requestEpoch = this.epoch;
         CompletableFuture<Boolean> sourceCheck;
-        try
-        {
-            sourceCheck = CompletableFuture.supplyAsync(() ->
-            {
-                try
-                {
+        try {
+            sourceCheck = CompletableFuture.supplyAsync(() -> {
+                try {
                     return PrivateUploadSourceCheck.matches(this.runtime.localModelDirectory(), this.expected);
-                }
-                catch (IOException | RuntimeException failure)
-                {
+                } catch (IOException | RuntimeException failure) {
                     throw new CompletionException(failure);
                 }
             }, this.worker);
-        }
-        catch (RejectedExecutionException busy)
-        {
+        } catch (RejectedExecutionException busy) {
             this.checkingSource = false;
             this.message = "本机校验任务繁忙，请返回后重试";
             updateButtons();
             return;
         }
-        sourceCheck.whenComplete((matches, error) -> super.client.execute(() ->
-        {
-            if (!this.open || requestEpoch != this.epoch)
-            {
+        sourceCheck.whenComplete((matches, error) -> super.client.execute(() -> {
+            if (!this.open || requestEpoch != this.epoch) {
                 return;
             }
 
             this.checkingSource = false;
-            if (error != null || !Boolean.TRUE.equals(matches))
-            {
+            if (error != null || !Boolean.TRUE.equals(matches)) {
                 this.message = "无法再次分享：本机完整资源已缺失或与存档不同\n本机文件未上传，服务器存档保留";
                 updateButtons();
                 return;
             }
             // Directory version, permissions and server-disguise priority may change while source bytes are being read.
             String changed = sharingBlock();
-            if (!changed.isEmpty())
-            {
+            if (!changed.isEmpty()) {
                 this.message = changed;
                 updateButtons();
                 return;
             }
-            if (this.runtime.uploadAndShareLocalModel(this.expected.modelId()))
-            {
+            if (this.runtime.uploadAndShareLocalModel(this.expected.modelId())) {
                 this.result.accept("已请求再次分享，等待服务器确认");
                 super.client.setScreen(this.parent);
-            }
-            else
-            {
+            } else {
                 this.message = "无法再次分享\n" + this.runtime.privateSyncStatus();
                 updateButtons();
             }
         }));
     }
 
-    private void confirmDelete()
-    {
+    private void confirmDelete() {
         String blocked = deletionBlock();
-        if (!blocked.isEmpty())
-        {
+        if (!blocked.isEmpty()) {
             this.message = blocked;
             updateButtons();
             return;
         }
-        super.client.setScreen(new ConfirmScreen(confirmed ->
-        {
-            if (!confirmed)
-            {
+        super.client.setScreen(new ConfirmScreen(confirmed -> {
+            if (!confirmed) {
                 super.client.setScreen(this);
                 return;
             }
-            if (this.runtime.requestDeleteUploadedPrivateModel(this.expected))
-            {
+            if (this.runtime.requestDeleteUploadedPrivateModel(this.expected)) {
                 this.deleting.run();
                 this.result.accept("删除请求已提交，等待服务器确认");
-            }
-            else
-            {
+            } else {
                 String status = this.runtime.privateUploadDeleteStatus(this.expected.modelId());
                 this.result.accept(status.isEmpty() ? "当前无法删除：存档或权限已变化，请重新选择" : status);
             }
@@ -310,30 +259,24 @@ final class PrivateUploadManagementScreen extends Screen
                 Text.literal("删除服务器资源"), Text.literal("取消")));
     }
 
-    private void confirmStop()
-    {
+    private void confirmStop() {
         PrivateModelSyncClient.PublicationIdentity publication = this.runtime.privatePublicationIdentity();
         if (publication == null || !publication.modelId().equals(this.expected.modelId())
-                || !publication.hash().equals(this.expected.hash()))
-        {
+                || !publication.hash().equals(this.expected.hash())) {
             this.message = "此存档的私人分享已变化或结束";
             updateButtons();
             return;
         }
-        super.client.setScreen(new ConfirmScreen(confirmed ->
-        {
-            if (!confirmed)
-            {
+        super.client.setScreen(new ConfirmScreen(confirmed -> {
+            if (!confirmed) {
                 super.client.setScreen(this);
                 return;
             }
-            if (this.runtime.stopPrivatePublication(publication))
-            {
+            if (this.runtime.stopPrivatePublication(publication)) {
                 this.result.accept("已结束私人分享，本地外观与服务器存档保留");
             }
 
-            else
-            {
+            else {
                 this.result.accept("私人分享已变化或结束，请重新确认；当前分享未改动");
             }
 
@@ -343,19 +286,16 @@ final class PrivateUploadManagementScreen extends Screen
     }
 
     @Override
-    public void tick()
-    {
+    public void tick() {
         this.ticks++;
-        if (this.ticks % 10 == 0)
-        {
+        if (this.ticks % 10 == 0) {
             preparePreview();
             updateButtons();
         }
     }
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta)
-    {
+    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         context.fill(this.left, this.top, this.left + this.panelWidth, Math.min(super.height - 4, this.top + 238),
                 0xED171F2A);
         context.drawCenteredTextWithShadow(super.textRenderer, super.title, super.width / 2, this.top + 8, 0xfff3f6ff);
@@ -368,8 +308,7 @@ final class PrivateUploadManagementScreen extends Screen
         List<OrderedText> lines = super.textRenderer
                 .wrapLines(Text.literal(this.message.isEmpty() ? detail : this.message), this.panelWidth - 24);
         int lineLimit = Math.max(1, Math.min(8, (this.controlsY - this.top - 50) / 11));
-        for (int index = 0; index < Math.min(lineLimit, lines.size()); index++)
-        {
+        for (int index = 0; index < Math.min(lineLimit, lines.size()); index++) {
             context.drawTextWithShadow(super.textRenderer, lines.get(index), this.left + 12, this.top + 45 + index * 11,
                     this.message.isEmpty() ? 0xffbccce0 : (this.message.startsWith("正在") ? 0xffffd589 : 0xffff8585));
         }
@@ -378,36 +317,30 @@ final class PrivateUploadManagementScreen extends Screen
     }
 
     @Override
-    public void removed()
-    {
+    public void removed() {
         this.open = false;
         this.epoch++;
-        if (this.checkingSource)
-        {
+        if (this.checkingSource) {
             this.message = "本机核对已取消，尚未再次分享";
         }
         this.checkingSource = false;
         this.loading = false;
-        if (!this.previewReady)
-        {
+        if (!this.previewReady) {
             this.previewAttempted = false;
         }
-        if (this.worker != null)
-        {
+        if (this.worker != null) {
             this.worker.shutdownNow();
             this.worker = null;
         }
     }
 
     @Override
-    public void close()
-    {
+    public void close() {
         super.client.setScreen(this.parent);
     }
 
     @Override
-    public boolean shouldPause()
-    {
+    public boolean shouldPause() {
         return false;
     }
 }

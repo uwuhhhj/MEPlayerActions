@@ -6,11 +6,9 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class ServerModelGalleryIndexTest
-{
+class ServerModelGalleryIndexTest {
     @Test
-    void homePrioritizesMpaAndKeepsMeUnknownAndHistoricalCacheSeparate()
-    {
+    void homePrioritizesMpaAndKeepsMeUnknownAndHistoricalCacheSeparate() {
         List<ServerModelGalleryIndex.Entry> entries = List.of(entry("me_boss", "modelengine", "boss"),
                 entry("ysm", "own", ""), entry("other", "unknown", ""), cached("old"));
         assertEquals(List.of("own/", "modelengine/", "unknown/", "cache/"), ServerModelGalleryIndex.folders(entries, "")
@@ -21,8 +19,7 @@ class ServerModelGalleryIndexTest
     }
 
     @Test
-    void directRootFilesLiveInAnExplicitUnclassifiedFolder()
-    {
+    void directRootFilesLiveInAnExplicitUnclassifiedFolder() {
         ServerModelGalleryIndex.Entry root = entry("plain", "own", "");
         ServerModelGalleryIndex.Entry nested = entry("winter", "own", "clothes");
         List<ServerModelGalleryIndex.Folder> folders = ServerModelGalleryIndex.folders(List.of(root, nested), "own/");
@@ -34,8 +31,7 @@ class ServerModelGalleryIndexTest
     }
 
     @Test
-    void realFoldersNavigateOneActualLevelAndKeepRecursiveCounts()
-    {
+    void realFoldersNavigateOneActualLevelAndKeepRecursiveCounts() {
         ServerModelGalleryIndex.Entry first = entry("first", "modelengine", "boss");
         ServerModelGalleryIndex.Entry second = entry("second", "modelengine", "boss/ice");
         ServerModelGalleryIndex.Entry third = entry("third", "modelengine", "boss/ice/deeper");
@@ -52,8 +48,7 @@ class ServerModelGalleryIndexTest
     }
 
     @Test
-    void theSameRelativeFolderNeverMergesDifferentServerSourcesOrCaches()
-    {
+    void theSameRelativeFolderNeverMergesDifferentServerSourcesOrCaches() {
         ServerModelGalleryIndex.Entry own = entry("one", "own", "shared");
         ServerModelGalleryIndex.Entry me = entry("two", "modelengine", "shared");
         assertFalse(ServerModelGalleryIndex.contains("own/", me));
@@ -65,8 +60,7 @@ class ServerModelGalleryIndexTest
     }
 
     @Test
-    void authoredFoldersNamedUnclassifiedOrFoldersDoNotCollideWithVirtualGroups()
-    {
+    void authoredFoldersNamedUnclassifiedOrFoldersDoNotCollideWithVirtualGroups() {
         ServerModelGalleryIndex.Entry root = entry("root", "own", "");
         ServerModelGalleryIndex.Entry actual = entry("actual", "own", "unclassified");
         assertNotEquals(ServerModelGalleryIndex.path(root), ServerModelGalleryIndex.path(actual));
@@ -79,8 +73,7 @@ class ServerModelGalleryIndexTest
     }
 
     @Test
-    void caseDistinctAndUnicodeFoldersRemainDistinctAndClearlyDescribeSearchResults()
-    {
+    void caseDistinctAndUnicodeFoldersRemainDistinctAndClearlyDescribeSearchResults() {
         List<ServerModelGalleryIndex.Entry> entries = List.of(entry("one", "own", "Pack"), entry("two", "own", "pack"),
                 entry("three", "own", "服装/冬季"));
         assertEquals(3, ServerModelGalleryIndex.folders(entries, "own/").size());
@@ -89,8 +82,7 @@ class ServerModelGalleryIndexTest
     }
 
     @Test
-    void legacyUncategorizedIdsStaySeparateFromCurrentServerPublicationAndDoNotChangeIds()
-    {
+    void legacyUncategorizedIdsStaySeparateFromCurrentServerPublicationAndDoNotChangeIds() {
         ServerModelGalleryIndex.Entry unknown = entry("legacy", "unknown", "");
         ServerModelGalleryIndex.Entry old = cached("cache:hash");
         assertEquals("legacy", unknown.id());
@@ -100,13 +92,11 @@ class ServerModelGalleryIndexTest
         assertFalse(ServerModelGalleryIndex.contains("unknown/", old));
     }
 
-    private static ServerModelGalleryIndex.Entry entry(String id, String source, String folder)
-    {
+    private static ServerModelGalleryIndex.Entry entry(String id, String source, String folder) {
         return new ServerModelGalleryIndex.Entry(id, source, folder, false);
     }
 
-    private static ServerModelGalleryIndex.Entry cached(String id)
-    {
+    private static ServerModelGalleryIndex.Entry cached(String id) {
         return new ServerModelGalleryIndex.Entry(id, "unknown", "", true);
     }
 }

@@ -12,23 +12,18 @@ import java.nio.file.Path;
 import java.util.List;
 
 /** Opt-in offline diagnostic. No user asset is embedded, extracted, modified or sent. */
-public final class NativeYsmLocalFileProbe
-{
-    private NativeYsmLocalFileProbe()
-    {
+public final class NativeYsmLocalFileProbe {
+    private NativeYsmLocalFileProbe() {
     }
 
-    public static void main(String[] arguments) throws Exception
-    {
-        if (arguments.length != 1)
-        {
+    public static void main(String[] arguments) throws Exception {
+        if (arguments.length != 1) {
             throw new IllegalArgumentException("Pass one existing local .ysm file path");
         }
 
         Path file = Path.of(arguments[0]).toAbsolutePath().normalize();
         long size = Files.size(file);
-        if (size < 1 || size > LocalModelBudget.MAX_BYTES)
-        {
+        if (size < 1 || size > LocalModelBudget.MAX_BYTES) {
             throw new IllegalArgumentException("Local source exceeds 64 MiB");
         }
 
@@ -37,8 +32,7 @@ public final class NativeYsmLocalFileProbe
         byte[] clear = PublicYsmCodec.decode(encoded);
         System.out.println("clearBytes=" + clear.length + "; format="
                 + ByteBuffer.wrap(clear).order(ByteOrder.LITTLE_ENDIAN).getInt());
-        try (YSMBinaryDeserializer decoder = new YSMBinaryDeserializer(clear))
-        {
+        try (YSMBinaryDeserializer decoder = new YSMBinaryDeserializer(clear)) {
             RawYsmModel raw = decoder.deserializeKeepOpen();
             System.out.println("mainBones=" + raw.mainEntity.mainModel.bones.size() + "; animationFamilies="
                     + raw.mainEntity.animationFiles.size() + "; textures=" + raw.mainEntity.textures.size()
@@ -52,12 +46,9 @@ public final class NativeYsmLocalFileProbe
         System.out.println("localLoad=OK; cubes=" + loaded.model().cubeCount() + "; animations="
                 + loaded.model().animations().size() + "; components=" + loaded.profile().components().size()
                 + "; vertices=" + loaded.model().sample(0, List.of()).size());
-        try
-        {
+        try {
             System.out.println("privateBundleBytes=" + library.sourceBundle(id).length);
-        }
-        catch (java.io.IOException unavailable)
-        {
+        } catch (java.io.IOException unavailable) {
             System.out.println("privateBundle=" + unavailable.getMessage());
         }
     }

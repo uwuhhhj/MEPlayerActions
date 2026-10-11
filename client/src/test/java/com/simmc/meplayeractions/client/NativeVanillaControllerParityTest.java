@@ -10,22 +10,19 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Real YSM metadata selects Sparkle's ControllerActionResolver rules, independently of legacy BB policy. */
-class NativeVanillaControllerParityTest
-{
+class NativeVanillaControllerParityTest {
     private static final Set<String> FEATURES = Set.of("movement", "sprint", "jump", "sit", "sleep", "ride", "crawl",
             "sneak", "swim", "flight", "elytra", "swing", "mining");
     private static final List<String> NAMES = List.of("idle", "walk", "run", "jump", "fly", "elytra_fly", "ladder_up",
             "ladder_down", "ladder_stillness", "swim", "sleep");
 
-    private static Catalog catalog()
-    {
+    private static Catalog catalog() {
         Map<String, String> loops = new LinkedHashMap<>();
         NAMES.forEach(name -> loops.put(name, name.equals("jump") ? "HOLD" : "LOOP"));
         return new Catalog(NAMES, 65535, loops, new HashSet<>(NAMES));
     }
 
-    private static LocalMotionPolicy policy()
-    {
+    private static LocalMotionPolicy policy() {
         Map<String, Layer> clips = new LinkedHashMap<>();
         Map.of("idle", "idle", "walk", "walk", "run", "run", "jump", "jump", "fly", "fly", "elytra", "elytra_fly",
                 "ladder-move", "ladder_up", "ladder-idle", "ladder_stillness", "ladder-down", "ladder_down")
@@ -34,15 +31,13 @@ class NativeVanillaControllerParityTest
     }
 
     private static EntityAnimationController.Sample sample(double x, double y, boolean grounded, boolean climbing,
-            boolean fly, boolean glide, boolean sprint)
-    {
+            boolean fly, boolean glide, boolean sprint) {
         return new EntityAnimationController.Sample(x, y, 0, grounded, false, false, false, fly, glide, false, sprint,
                 "", false, 0, false, false, false, climbing, VanillaState.NONE);
     }
 
     @Test
-    void sprintingStillRequiresMeasuredMovementAndSpeedUsesSecondsNotDistancePerFrame()
-    {
+    void sprintingStillRequiresMeasuredMovementAndSpeedUsesSecondsNotDistancePerFrame() {
         EntityAnimationController c = new EntityAnimationController();
         c.update(100, sample(0, 64, true, false, false, false, true), policy(), List.of(), catalog());
         assertEquals("idle", c.state());
@@ -55,8 +50,7 @@ class NativeVanillaControllerParityTest
     }
 
     @Test
-    void nativeJumpHasNoManufacturedFallOrPostLandingTailAndRetainsAuthorsLoopType()
-    {
+    void nativeJumpHasNoManufacturedFallOrPostLandingTailAndRetainsAuthorsLoopType() {
         EntityAnimationController c = new EntityAnimationController();
         c.update(100, sample(0, 64, true, false, false, false, false), policy(), List.of(), catalog());
         c.update(101, sample(0, 63.8, false, false, false, false, false), policy(), List.of(), catalog());
@@ -68,8 +62,7 @@ class NativeVanillaControllerParityTest
     }
 
     @Test
-    void nativeLadderThresholdHasAStableCenterAndWinsOverFlying()
-    {
+    void nativeLadderThresholdHasAStableCenterAndWinsOverFlying() {
         EntityAnimationController c = new EntityAnimationController();
         c.update(100, sample(0, 64, false, true, true, false, false), policy(), List.of(), catalog());
         assertEquals("ladder-idle", c.state());
@@ -82,8 +75,7 @@ class NativeVanillaControllerParityTest
     }
 
     @Test
-    void nativeGlidingWinsOverCreativeFlyingAsInTheCanonicalQueryState()
-    {
+    void nativeGlidingWinsOverCreativeFlyingAsInTheCanonicalQueryState() {
         EntityAnimationController c = new EntityAnimationController();
         c.update(100, sample(0, 64, false, false, true, true, false), policy(), List.of(), catalog());
         assertEquals("elytra", c.state());
@@ -91,8 +83,7 @@ class NativeVanillaControllerParityTest
     }
 
     @Test
-    void localFirstFrameUsesNativeMovementFallbackWithoutASecondPositionBuffer()
-    {
+    void localFirstFrameUsesNativeMovementFallbackWithoutASecondPositionBuffer() {
         EntityAnimationController c = new EntityAnimationController();
         EntityAnimationController.Sample still = sample(0, 64, true, false, false, false, false);
         EntityAnimationController.Sample initial = new EntityAnimationController.Sample(still.x(), still.y(), still.z(),
@@ -105,8 +96,7 @@ class NativeVanillaControllerParityTest
     }
 
     @Test
-    void livingVehicleSuppressesBodyDeathAsInSourceRidePriority()
-    {
+    void livingVehicleSuppressesBodyDeathAsInSourceRidePriority() {
         EntityAnimationController c = new EntityAnimationController();
         ArrayList<String> inventory = new ArrayList<>(NAMES);
         inventory.add("vehicle$minecraft:horse");

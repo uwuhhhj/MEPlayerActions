@@ -8,8 +8,7 @@ import java.util.Objects;
 import java.util.UUID;
 
 /** A sent command is pending selection, never proof that the server applied the appearance. */
-final class ServerDisguiseRequest
-{
+final class ServerDisguiseRequest {
     static final long TIMEOUT = 10_000_000_000L;
     private String modelId = "", previousInstance = "", status = "";
     private String confirmedModelId = "", confirmedInstance = "";
@@ -20,16 +19,13 @@ final class ServerDisguiseRequest
     private long started, savedRevision, pendingSavedRevision;
     private final Map<String, Long> savedPreferences = new LinkedHashMap<>();
 
-    void sent(String id, String oldInstance, ServerDisguisePreferences preferences, long now)
-    {
+    void sent(String id, String oldInstance, ServerDisguisePreferences preferences, long now) {
         sent(UUID.randomUUID(), id, oldInstance, preferences, false, now);
     }
 
     void sent(UUID nonce, String id, String oldInstance, ServerDisguisePreferences preferences, boolean needsResult,
-            long now)
-    {
-        if (!ServerModelCatalogSnapshot.validId(id))
-        {
+            long now) {
+        if (!ServerModelCatalogSnapshot.validId(id)) {
             throw new IllegalArgumentException("Server disguise ID");
         }
 
@@ -48,24 +44,20 @@ final class ServerDisguiseRequest
         this.status = "等待服务器确认：" + id;
     }
 
-    boolean confirmed(String id, String instance)
-    {
-        if (this.modelId.isEmpty() || !this.modelId.equals(id) || instance.isEmpty())
-        {
+    boolean confirmed(String id, String instance) {
+        if (this.modelId.isEmpty() || !this.modelId.equals(id) || instance.isEmpty()) {
             return false;
         }
 
         if (this.resultRequired ? !this.resultAccepted || !instance.equals(this.resultInstance)
-                : this.previousInstance.equals(instance))
-        {
+                : this.previousInstance.equals(instance)) {
             return false;
         }
 
         this.confirmedModelId = id;
         this.confirmedInstance = instance;
         this.confirmedPreferences = this.pendingPreferences;
-        if (this.savedPreferences.getOrDefault(id, 0L) == this.pendingSavedRevision)
-        {
+        if (this.savedPreferences.getOrDefault(id, 0L) == this.pendingSavedRevision) {
             this.savedPreferences.remove(id);
         }
 
@@ -79,26 +71,21 @@ final class ServerDisguiseRequest
     }
 
     boolean result(UUID nonce, String id, boolean success, String instance, ServerDisguisePreferences actual,
-            String code)
-    {
+            String code) {
         if (!this.resultRequired || this.modelId.isEmpty() || !Objects.equals(this.requestId, nonce)
-                || !this.modelId.equals(id))
-        {
+                || !this.modelId.equals(id)) {
             return false;
         }
 
-        if (!success)
-        {
+        if (!success) {
             failed("服务器伪装失败：" + code);
             return true;
         }
-        if (instance == null || instance.isEmpty() || actual == null)
-        {
+        if (instance == null || instance.isEmpty() || actual == null) {
             throw new IllegalArgumentException("Server disguise result");
         }
 
-        if (!matchesActual(this.pendingPreferences, actual))
-        {
+        if (!matchesActual(this.pendingPreferences, actual)) {
             failed("服务器实际参数与请求不一致；请检查服务器限制");
             return true;
         }
@@ -108,8 +95,7 @@ final class ServerDisguiseRequest
         return true;
     }
 
-    private static boolean matchesActual(ServerDisguisePreferences expected, ServerDisguisePreferences actual)
-    {
+    private static boolean matchesActual(ServerDisguisePreferences expected, ServerDisguisePreferences actual) {
         return matches(expected.scale(), actual.scale()) && matches(expected.hideSelf(), actual.hideSelf())
                 && matches(expected.showSelf(), actual.showSelf())
                 && matches(expected.viewDistance(), actual.viewDistance())
@@ -117,15 +103,12 @@ final class ServerDisguiseRequest
                 && matches(expected.effect(), actual.effect());
     }
 
-    private static boolean matches(Object expected, Object actual)
-    {
+    private static boolean matches(Object expected, Object actual) {
         return expected == null || expected.equals(actual);
     }
 
-    boolean expire(long now)
-    {
-        if (this.modelId.isEmpty() || now - this.started < TIMEOUT)
-        {
+    boolean expire(long now) {
+        if (this.modelId.isEmpty() || now - this.started < TIMEOUT) {
             return false;
         }
 
@@ -133,8 +116,7 @@ final class ServerDisguiseRequest
         return true;
     }
 
-    void failed(String message)
-    {
+    void failed(String message) {
         this.modelId = this.previousInstance = "";
         this.pendingPreferences = null;
         this.requestId = null;
@@ -143,8 +125,7 @@ final class ServerDisguiseRequest
         this.status = message;
     }
 
-    void reset()
-    {
+    void reset() {
         this.modelId = this.previousInstance = this.confirmedModelId = this.confirmedInstance = "";
         this.pendingPreferences = this.confirmedPreferences = null;
         this.status = "";
@@ -155,46 +136,37 @@ final class ServerDisguiseRequest
         this.resultInstance = "";
     }
 
-    void preferencesSaved(String id)
-    {
-        if (!ServerModelCatalogSnapshot.validId(id))
-        {
+    void preferencesSaved(String id) {
+        if (!ServerModelCatalogSnapshot.validId(id)) {
             throw new IllegalArgumentException("Server disguise ID");
         }
 
         this.savedPreferences.remove(id);
         this.savedPreferences.put(id, ++this.savedRevision);
-        while (this.savedPreferences.size() > 64)
-        {
+        while (this.savedPreferences.size() > 64) {
             this.savedPreferences.remove(this.savedPreferences.keySet().iterator().next());
         }
 
     }
 
-    boolean preferencesNeedApply(String id, String instance, ServerDisguisePreferences saved)
-    {
-        if (this.savedPreferences.containsKey(id))
-        {
+    boolean preferencesNeedApply(String id, String instance, ServerDisguisePreferences saved) {
+        if (this.savedPreferences.containsKey(id)) {
             return true;
         }
 
         if (id.equals(this.confirmedModelId) && instance.equals(this.confirmedInstance)
-                && this.confirmedPreferences != null)
-
-        {
+                && this.confirmedPreferences != null) {
             return !saved.equals(this.confirmedPreferences);
         }
 
         return !saved.equals(ServerDisguisePreferences.defaults());
     }
 
-    String modelId()
-    {
+    String modelId() {
         return this.modelId;
     }
 
-    String status()
-    {
+    String status() {
         return this.status;
     }
 }

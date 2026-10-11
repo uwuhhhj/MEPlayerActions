@@ -8,16 +8,14 @@ import java.util.*;
 
 /** MIT source migration from OpenYSM 0306e1f BoneAnimationQueue, PredicateBasedController.TransformProviderRecord
  * and AnimationControllerRuntime.BoneBlendState. Adapted only to MPA's bounded degree-based channel arrays. */
-final class NativeYsmAnimationProcessor
-{
+final class NativeYsmAnimationProcessor {
     private final BbModel model;
     private final Map<YsmAnimationController.Playback, Slot> slots = new IdentityHashMap<>();
     private final Set<YsmAnimationController.Playback> seen = Collections.newSetFromMap(new IdentityHashMap<>());
     // Predicate TransformProviderRecord owns a persistent minimum-only TransitionVector3f for each controller/bone.
     private final Map<String, double[]> predicateCompletion = new HashMap<>();
 
-    static final class Contribution
-    {
+    static final class Contribution {
         final Slot slot;
         final BbModel.Pose raw;
         final boolean[][] evaluated;
@@ -25,8 +23,7 @@ final class NativeYsmAnimationProcessor
         final YsmAnimationController.Run run;
         final Molang.Context context;
 
-        Contribution(Slot slot, double weight, YsmAnimationController.Run run, Molang.Context context)
-        {
+        Contribution(Slot slot, double weight, YsmAnimationController.Run run, Molang.Context context) {
             this.slot = slot;
             this.weight = weight;
             this.run = run;
@@ -36,15 +33,13 @@ final class NativeYsmAnimationProcessor
         }
     }
 
-    private static final class Slot
-    {
+    private static final class Slot {
         final long activation;
         final BbModel.Pose origin;
         final boolean[] scaleDeclared;
         BbModel.Pose cached;
 
-        Slot(long activation, BbModel.Pose origin)
-        {
+        Slot(long activation, BbModel.Pose origin) {
             this.activation = activation;
             this.origin = origin.copy();
             this.cached = new BbModel.Pose(origin.channels.length);
@@ -52,40 +47,32 @@ final class NativeYsmAnimationProcessor
         }
     }
 
-    NativeYsmAnimationProcessor(BbModel model)
-    {
+    NativeYsmAnimationProcessor(BbModel model) {
         this.model = model;
     }
 
-    void reset()
-    {
+    void reset() {
         this.slots.clear();
         this.seen.clear();
         this.predicateCompletion.clear();
     }
 
-    void beginFrame()
-    {
+    void beginFrame() {
         this.seen.clear();
     }
 
-    void finishFrame()
-    {
+    void finishFrame() {
         this.slots.keySet().removeIf(playback -> !this.seen.contains(playback));
     }
 
-    Contribution prepare(YsmAnimationController.Run run, Molang.Context context, BbModel.Pose finalSnapshot)
-    {
+    Contribution prepare(YsmAnimationController.Run run, Molang.Context context, BbModel.Pose finalSnapshot) {
         this.seen.add(run.playback());
         Slot slot = this.slots.get(run.playback());
-        if (slot == null || slot.activation != run.activation())
-        {
+        if (slot == null || slot.activation != run.activation()) {
             slot = new Slot(run.activation(), finalSnapshot);
             this.slots.put(run.playback(), slot);
         }
-        for (int bone : this.model.nativeAnimationBones(run.animation()))
-
-        {
+        for (int bone : this.model.nativeAnimationBones(run.animation())) {
             slot.scaleDeclared[bone] = this.model.nativeChannelDeclared(run.animation(), bone, 2);
         }
 
@@ -93,10 +80,8 @@ final class NativeYsmAnimationProcessor
         return new Contribution(slot, run.weight(), run, context);
     }
 
-    private boolean hasChannel(Contribution source, int bone, int channel)
-    {
-        if (!source.run.contributes())
-        {
+    private boolean hasChannel(Contribution source, int bone, int channel) {
+        if (!source.run.contributes()) {
             return false;
         }
 
@@ -105,15 +90,12 @@ final class NativeYsmAnimationProcessor
     }
 
     private Vector3f value(Contribution source, int bone, int channel, boolean rawTransition, boolean specialScale,
-            YsmAnimationController controller)
-    {
-        if (source.run.ending())
-        {
+            YsmAnimationController controller) {
+        if (source.run.ending()) {
             return source.slot.cached.channels[bone][channel];
         }
 
-        if (!source.evaluated[bone][channel])
-        {
+        if (!source.evaluated[bone][channel]) {
             controller.withPlayback(source.run.playback(), false, source.context,
                     () -> source.raw.channels[bone][channel] = this.model.evaluateNativeChannel(source.run.animation(),
                             source.run.elapsed(), source.run.loop(), source.run.beginning(), bone, channel,
@@ -121,17 +103,14 @@ final class NativeYsmAnimationProcessor
             source.evaluated[bone][channel] = true;
         }
         Vector3f raw = source.raw.channels[bone][channel];
-        if (source.run.beginning() && rawTransition)
-        {
+        if (source.run.beginning() && rawTransition) {
             return raw;
         }
 
         Vector3f point = new Vector3f(raw);
-        if (source.run.beginning())
-        {
+        if (source.run.beginning()) {
             Vector3f origin = source.slot.origin.channels[bone][channel];
-            if (origin == null)
-            {
+            if (origin == null) {
                 origin = BbModel.defaultValue(channel);
             }
 
@@ -143,142 +122,110 @@ final class NativeYsmAnimationProcessor
     }
 
     void apply(BbModel.Pose target, List<Contribution> sources, YsmAnimationController.Frame frame,
-            YsmAnimationController controller)
-    {
-        if (sources.isEmpty())
-        {
+            YsmAnimationController controller) {
+        if (sources.isEmpty()) {
             return;
         }
 
         // Runtime rebuilds the provider list in slot order, then each slot's animation bone order.
         Set<Integer> boneOrder = new LinkedHashSet<>();
-        for (Contribution source : sources)
-        {
+        for (Contribution source : sources) {
             boneOrder.addAll(this.model.nativeAnimationBones(source.run.animation()));
         }
 
-        for (int bone : boneOrder)
-        {
-            for (int channel : new int[]
-            { 1, 0, 2 })
-            {
+        for (int bone : boneOrder) {
+            for (int channel : new int[] { 1, 0, 2 }) {
                 Contribution first = null;
-                for (Contribution source : sources)
-                {
-                    if (hasChannel(source, bone, channel))
-                    {
+                for (Contribution source : sources) {
+                    if (hasChannel(source, bone, channel)) {
                         first = source;
                         break;
                     }
                 }
 
-                if (first == null)
-                {
+                if (first == null) {
                     continue;
                 }
 
                 Vector3f value;
                 double completion = 1;
-                if (frame.builtin())
-                {
+                if (frame.builtin()) {
                     Vector3f raw = value(first, bone, channel, channel == 1, true, controller);
                     double weight = first.weight;
-                    if (first.run.beginning())
-                    {
+                    if (first.run.beginning()) {
                         float progress = channel == 2 ? 1 : (float) BbModel.clamp(first.run.progress());
                         Vector3f origin = first.slot.origin.channels[bone][channel];
-                        if (origin == null)
-                        {
+                        if (origin == null) {
                             origin = BbModel.defaultValue(channel);
                         }
 
-                        if (channel == 1)
-                        {
+                        if (channel == 1) {
                             value = rotation(this.model, bone, origin, new Vector3f(raw).mul((float) weight), progress);
                         }
 
-                        else
-                        {
+                        else {
                             value = new Vector3f(raw);
                             weight = 1 + (weight - 1) * progress;
-                            if (channel == 2)
-                            {
+                            if (channel == 2) {
                                 value = new Vector3f(1).lerp(value, (float) weight);
                             }
 
-                            else
-                            {
+                            else {
                                 value.mul((float) weight);
                             }
 
                         }
                         completion = 0;
-                    }
-                    else
-                    {
+                    } else {
                         value = channel == 2 ? new Vector3f(1).lerp(raw, (float) weight)
                                 : new Vector3f(raw).mul((float) weight);
                         completion = first.run.ending() ? progress(first, bone) : 0;
                     }
-                    double[] retained = this.predicateCompletion.computeIfAbsent(frame.name(), name ->
-                    {
+                    double[] retained = this.predicateCompletion.computeIfAbsent(frame.name(), name -> {
                         double[] initial = new double[target.channels.length];
                         Arrays.fill(initial, 1);
                         return initial;
                     });
                     retained[bone] = Math.min(retained[bone], completion);
                     completion = retained[bone];
-                }
-                else
-                {
+                } else {
                     value = BbModel.defaultValue(channel);
                     boolean transition = first.run.beginning();
                     float progress = (float) BbModel.clamp(first.run.progress());
                     Vector3f origin = first.slot.origin.channels[bone][channel];
-                    if (origin == null)
-                    {
+                    if (origin == null) {
                         origin = BbModel.defaultValue(channel);
                     }
 
-                    if (transition && Math.abs(progress) < 1e-5)
-                    {
+                    if (transition && Math.abs(progress) < 1e-5) {
                         value.set(origin);
                         completion = 0;
-                    }
-                    else
-                    {
-                        for (Contribution source : sources)
-                        {
-                            if (!hasChannel(source, bone, channel))
-                            {
+                    } else {
+                        for (Contribution source : sources) {
+                            if (!hasChannel(source, bone, channel)) {
                                 continue;
                             }
 
                             Vector3f raw = value(source, bone, channel, transition, false, controller);
                             double weight = source.weight;
-                            if (!transition)
-                            {
+                            if (!transition) {
                                 double part = source.run.ending() ? progress(source, bone) : 0;
-                                if (source.run.ending())
-                                {
+                                if (source.run.ending()) {
                                     weight *= 1 - part;
                                 }
 
                                 completion = Math.min(completion, part);
                             }
-                            if (channel == 2)
-                            {
+                            if (channel == 2) {
                                 value.mul(new Vector3f(1).lerp(raw, (float) weight));
                             }
 
-                            else
-                            {
+                            else {
                                 value.fma((float) weight, raw);
                             }
 
                         }
-                        if (transition)
-                        {
+                        if (transition) {
                             value = channel == 1 ? rotation(this.model, bone, origin, value, progress)
                                     : new Vector3f(origin).lerp(value, progress);
                             completion = 0;
@@ -286,18 +233,15 @@ final class NativeYsmAnimationProcessor
                     }
                 }
                 Vector3f below = target.channels[bone][channel];
-                if (below == null)
-                {
+                if (below == null) {
                     below = BbModel.defaultValue(channel);
                 }
 
-                if (frame.deprecated() && channel == 1)
-                {
+                if (frame.deprecated() && channel == 1) {
                     target.channels[bone][channel] = new Vector3f(below).add(value);
                 }
 
-                else
-                {
+                else {
                     target.channels[bone][channel] = completion == 0 ? value
                             : (channel == 1
                                     ? rotation(this.model, bone, value, below, (float) BbModel.clamp(completion))
@@ -310,14 +254,12 @@ final class NativeYsmAnimationProcessor
     }
 
     /** BoneAnimationQueue.overrideMode uses ConstantPoint(totalTick=0) when that bone has a scale track. */
-    private static double progress(Contribution source, int bone)
-    {
+    private static double progress(Contribution source, int bone) {
         return source.slot.scaleDeclared[bone] ? (source.run.progress() == 0 ? 0 : 1) : source.run.progress();
     }
 
     /** Exact MathUtil.nlerpEulerAngles arithmetic with the initial rotation included and source's ZYX extraction. */
-    static Vector3f rotation(BbModel model, int bone, Vector3f from, Vector3f to, float progress)
-    {
+    static Vector3f rotation(BbModel model, int bone, Vector3f from, Vector3f to, float progress) {
         Vector3f initial = model.initialBoneRotation(bone);
         Vector3f a = new Vector3f(from).add(initial).mul((float) (Math.PI / 180));
         Vector3f b = new Vector3f(to).add(initial).mul((float) (Math.PI / 180));

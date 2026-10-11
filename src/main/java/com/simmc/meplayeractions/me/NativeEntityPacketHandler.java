@@ -6,84 +6,67 @@ import java.util.*;
 import java.util.function.*;
 
 /** Only approved owner IDs bypass ME's native-entity filtering; all other packets follow ME normally. */
-final class NativeEntityPacketHandler extends ChannelOutboundHandlerAdapter
-{
+final class NativeEntityPacketHandler extends ChannelOutboundHandlerAdapter {
     volatile Set<Integer> owners = Set.of();
     private final BiPredicate<Object, Set<Integer>> belongs;
     private final Function<Object, List<Object>> bundle;
     private final BiFunction<Object, Set<Integer>, Removal> removal;
 
-    record Removal(Object approved, Object remaining)
-    {
+    record Removal(Object approved, Object remaining) {
     }
 
-    NativeEntityPacketHandler(BiPredicate<Object, Set<Integer>> belongs, Function<Object, List<Object>> bundle)
-    {
+    NativeEntityPacketHandler(BiPredicate<Object, Set<Integer>> belongs, Function<Object, List<Object>> bundle) {
         this(belongs, bundle, (packet, owners) -> null);
     }
 
     NativeEntityPacketHandler(BiPredicate<Object, Set<Integer>> belongs, Function<Object, List<Object>> bundle,
-            BiFunction<Object, Set<Integer>, Removal> removal)
-    {
+            BiFunction<Object, Set<Integer>, Removal> removal) {
         this.belongs = belongs;
         this.bundle = bundle;
         this.removal = removal;
     }
 
     @Override
-    public void write(ChannelHandlerContext context, Object packet, ChannelPromise promise) throws Exception
-    {
+    public void write(ChannelHandlerContext context, Object packet, ChannelPromise promise) throws Exception {
         Set<Integer> authorized = this.owners;
-        if (authorized.isEmpty() || packet instanceof ProtectedPacket)
-        {
+        if (authorized.isEmpty() || packet instanceof ProtectedPacket) {
             context.write(packet, promise);
             return;
         }
         List<Object> routed = route(packet, authorized);
-        if (routed == null)
-        {
+        if (routed == null) {
             context.write(packet, promise);
             return;
         }
-        for (int i = 0; i < routed.size(); i++)
-        {
+        for (int i = 0; i < routed.size(); i++) {
             context.write(routed.get(i), i == routed.size() - 1 ? promise : context.voidPromise());
         }
 
     }
 
-    private List<Object> route(Object packet, Set<Integer> authorized)
-    {
-        if (packet instanceof ProtectedPacket)
-        {
+    private List<Object> route(Object packet, Set<Integer> authorized) {
+        if (packet instanceof ProtectedPacket) {
             return null;
         }
 
         Removal split = this.removal.apply(packet, authorized);
-        if (split != null)
-        {
+        if (split != null) {
             Object approved = new ProtectedPacket(split.approved);
             return split.remaining == null ? List.of(approved) : List.of(approved, split.remaining);
         }
         List<Object> children = this.bundle.apply(packet);
-        if (children != null)
-        {
+        if (children != null) {
             List<Object> routed = null;
-            for (int i = 0; i < children.size(); i++)
-            {
+            for (int i = 0; i < children.size(); i++) {
                 Object child = children.get(i);
                 List<Object> childRoute = route(child, authorized);
-                if (childRoute != null)
-                {
-                    if (routed == null)
-                    {
+                if (childRoute != null) {
+                    if (routed == null) {
                         routed = new ArrayList<>(children.subList(0, i));
                     }
 
                     routed.addAll(childRoute);
-                }
-                else if (routed != null)
-                {
+                } else if (routed != null) {
                     routed.add(child);
                 }
 

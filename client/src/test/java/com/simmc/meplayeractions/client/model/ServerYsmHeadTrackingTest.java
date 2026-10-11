@@ -26,27 +26,24 @@ import org.junit.jupiter.params.provider.ValueSource;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Server-pushed and cached exports must use author angles without opting into private YSM rendering. */
-class ServerYsmHeadTrackingTest
-{
+class ServerYsmHeadTrackingTest {
     @TempDir
     Path cache;
     private static final List<BbModel.Layer> IDLE = List.of(new BbModel.Layer("base", "idle", 0, 1, "LOOP", 0, 0));
 
     @ParameterizedTest
-    @CsvSource(
-    { "ysm_01_jk, 0, -60, 0, 60", "ysm_02_jk, 0, -60, 0, 60", "ysm_01_jk, 0, 60, 0, -60", "ysm_02_jk, 0, 60, 0, -60",
-            "ysm_01_jk, 40, 0, -40, 0", "ysm_02_jk, -40, 0, 40, 0", "ysm_01_jk, 120, 0, -85, 0",
-            "ysm_02_jk, -120, 0, 85, 0", "ysm_01_jk, 370, 0, -10, 0", "ysm_02_jk, -370, 0, 10, 0" })
+    @CsvSource({ "ysm_01_jk, 0, -60, 0, 60", "ysm_02_jk, 0, -60, 0, 60", "ysm_01_jk, 0, 60, 0, -60",
+            "ysm_02_jk, 0, 60, 0, -60", "ysm_01_jk, 40, 0, -40, 0", "ysm_02_jk, -40, 0, 40, 0",
+            "ysm_01_jk, 120, 0, -85, 0", "ysm_02_jk, -120, 0, 85, 0", "ysm_01_jk, 370, 0, -10, 0",
+            "ysm_02_jk, -370, 0, 10, 0" })
     void serverExportsUseSourceQueriesAndKeepAutomaticHeadDirection(String id, float yaw, float pitch, double queryYaw,
-            double queryPitch) throws Exception
-    {
+            double queryPitch) throws Exception {
         byte[] source = source(id), unchanged = source.clone();
         BbModel model = BbModel.parse(source);
         assertTrue(model.usesYsmHeadQueries());
         AnimationPlayer viewed = new AnimationPlayer(model), neutral = new AnimationPlayer(model);
         double[] captured = new double[4];
-        viewed.configureFrame(context ->
-        {
+        viewed.configureFrame(context -> {
             captured[0] = context.get("ysm.head_yaw");
             captured[1] = context.get("ysm.head_pitch");
             captured[2] = context.get("query.head_x_rotation");
@@ -55,8 +52,7 @@ class ServerYsmHeadTrackingTest
         viewed.sample(0, IDLE, yaw, pitch);
         neutral.sample(0, IDLE, 0, 0);
 
-        assertArrayEquals(new double[]
-        { queryYaw, queryPitch, queryYaw, queryPitch }, captured, 1e-6);
+        assertArrayEquals(new double[] { queryYaw, queryPitch, queryYaw, queryPitch }, captured, 1e-6);
         Matrix4f expected = new Matrix4f(neutral.boneTransform("Head").orElseThrow()).rotateY(radians(queryYaw))
                 .rotateX(radians(queryPitch));
         assertDirection(expected, viewed.boneTransform("Head").orElseThrow());
@@ -65,15 +61,12 @@ class ServerYsmHeadTrackingTest
     }
 
     @ParameterizedTest
-    @CsvSource(
-    { "ysm_01_jk, -60", "ysm_02_jk, -60", "ysm_01_jk, -30", "ysm_02_jk, -30", "ysm_01_jk, 30", "ysm_02_jk, 30",
-            "ysm_01_jk, 60", "ysm_02_jk, 60" })
-    void originalHairSpringReceivesSourcePitchAndCounteractsTheHead(String id, float pitch) throws Exception
-    {
+    @CsvSource({ "ysm_01_jk, -60", "ysm_02_jk, -60", "ysm_01_jk, -30", "ysm_02_jk, -30", "ysm_01_jk, 30",
+            "ysm_02_jk, 30", "ysm_01_jk, 60", "ysm_02_jk, 60" })
+    void originalHairSpringReceivesSourcePitchAndCounteractsTheHead(String id, float pitch) throws Exception {
         BbModel model = BbModelAsset.read(source(id)).model();
         AnimationPlayer viewed = new AnimationPlayer(model), neutral = new AnimationPlayer(model);
-        for (int tick = 0; tick <= 120; tick++)
-        {
+        for (int tick = 0; tick <= 120; tick++) {
             viewed.sample(tick, IDLE, 0, pitch);
             neutral.sample(tick, IDLE, 0, 0);
         }
@@ -93,14 +86,11 @@ class ServerYsmHeadTrackingTest
     }
 
     @ParameterizedTest
-    @ValueSource(strings =
-    { "ysm_01_jk", "ysm_02_jk" })
-    void observingTwoOwnersDoesNotShareTheirHairSpringState(String id) throws Exception
-    {
+    @ValueSource(strings = { "ysm_01_jk", "ysm_02_jk" })
+    void observingTwoOwnersDoesNotShareTheirHairSpringState(String id) throws Exception {
         BbModel sharedAsset = BbModelAsset.read(source(id)).model();
         AnimationPlayer lookingUp = new AnimationPlayer(sharedAsset), lookingDown = new AnimationPlayer(sharedAsset);
-        for (int tick = 0; tick <= 120; tick++)
-        {
+        for (int tick = 0; tick <= 120; tick++) {
             lookingUp.sample(tick, IDLE, 0, -60);
             lookingDown.sample(tick, IDLE, 0, 60);
         }
@@ -113,17 +103,14 @@ class ServerYsmHeadTrackingTest
     }
 
     @ParameterizedTest
-    @ValueSource(strings =
-    { "ysm_01_jk", "ysm_02_jk" })
-    void existingCachedRawAssetUsesTheSameMigrationWithoutRedownloading(String id) throws Exception
-    {
+    @ValueSource(strings = { "ysm_01_jk", "ysm_02_jk" })
+    void existingCachedRawAssetUsesTheSameMigrationWithoutRedownloading(String id) throws Exception {
         byte[] downloaded = source(id);
         Path cached = this.cache.resolve(id + ".bbmodel");
         Files.write(cached, downloaded);
         BbModel wire = BbModel.parse(downloaded), disk = BbModel.parse(Files.readAllBytes(cached));
         AnimationPlayer first = new AnimationPlayer(wire), second = new AnimationPlayer(disk);
-        for (int tick = 0; tick <= 20; tick++)
-        {
+        for (int tick = 0; tick <= 20; tick++) {
             first.sample(tick, IDLE, 30, -45);
             second.sample(tick, IDLE, 30, -45);
         }
@@ -138,31 +125,26 @@ class ServerYsmHeadTrackingTest
     }
 
     @ParameterizedTest
-    @ValueSource(strings =
-    { "ysm_01_jk", "ysm_02_jk" })
-    void ordinaryBbmodelKeepsRawQueriesEvenWhenItsNameAndAnimationsContainYsm(String id) throws Exception
-    {
+    @ValueSource(strings = { "ysm_01_jk", "ysm_02_jk" })
+    void ordinaryBbmodelKeepsRawQueriesEvenWhenItsNameAndAnimationsContainYsm(String id) throws Exception {
         JsonObject raw = JsonParser.parseString(new String(source(id), StandardCharsets.UTF_8)).getAsJsonObject();
         raw.remove("mpa_runtime");
         BbModel model = BbModel.parse(raw.toString().getBytes(StandardCharsets.UTF_8));
         assertFalse(model.usesYsmHeadQueries());
         AnimationPlayer player = new AnimationPlayer(model);
         double[] captured = new double[4];
-        player.configureFrame(context ->
-        {
+        player.configureFrame(context -> {
             captured[0] = context.get("ysm.head_yaw");
             captured[1] = context.get("ysm.head_pitch");
             captured[2] = context.get("query.head_x_rotation");
             captured[3] = context.get("query.head_y_rotation");
         });
         player.sample(0, IDLE, 370, -60);
-        assertArrayEquals(new double[]
-        { 370, -60, 370, -60 }, captured, 1e-6);
+        assertArrayEquals(new double[] { 370, -60, 370, -60 }, captured, 1e-6);
     }
 
     @Test
-    void authorHeadExpressionsAndMatchingExpressionsOnOtherBonesArePreserved() throws Exception
-    {
+    void authorHeadExpressionsAndMatchingExpressionsOnOtherBonesArePreserved() throws Exception {
         BbModel model = expressionProbe();
         AnimationPlayer player = new AnimationPlayer(model);
         player.sample(0, IDLE, 0, 10);
@@ -172,17 +154,14 @@ class ServerYsmHeadTrackingTest
         assertDirection(new Matrix4f().rotateX(radians(10)), player.boneTransform("Accessory").orElseThrow());
     }
 
-    private static byte[] source(String id) throws Exception
-    {
-        try (InputStream resource = ServerYsmHeadTrackingTest.class.getResourceAsStream("/" + id + ".bbmodel"))
-        {
+    private static byte[] source(String id) throws Exception {
+        try (InputStream resource = ServerYsmHeadTrackingTest.class.getResourceAsStream("/" + id + ".bbmodel")) {
             assertNotNull(resource, "The test uses the actual distributed server export");
             return resource.readAllBytes();
         }
     }
 
-    private static BbModel expressionProbe() throws Exception
-    {
+    private static BbModel expressionProbe() throws Exception {
         JsonObject raw = JsonParser.parseString("""
                 {"meta":{"format_version":"4.10"},"mpa_runtime":{"source":"ysm_07_jk"},"textures":[],
                  "elements":[{"uuid":"cube","from":[0,0,0],"to":[1,1,1],
@@ -205,15 +184,12 @@ class ServerYsmHeadTrackingTest
         return BbModel.parse(raw.toString().getBytes(StandardCharsets.UTF_8));
     }
 
-    private static float radians(double degrees)
-    {
+    private static float radians(double degrees) {
         return (float) Math.toRadians(degrees);
     }
 
-    private static void assertDirection(Matrix4f expected, Matrix4f actual)
-    {
-        for (Vector3f axis : List.of(new Vector3f(0, 1, 0), new Vector3f(0, 0, 1)))
-        {
+    private static void assertDirection(Matrix4f expected, Matrix4f actual) {
+        for (Vector3f axis : List.of(new Vector3f(0, 1, 0), new Vector3f(0, 0, 1))) {
             Vector3f wanted = expected.transformDirection(new Vector3f(axis)).normalize();
             Vector3f observed = actual.transformDirection(new Vector3f(axis)).normalize();
             assertEquals(wanted.x, observed.x, 1e-4);

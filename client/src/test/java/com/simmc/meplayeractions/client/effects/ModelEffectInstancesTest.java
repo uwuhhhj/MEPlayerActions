@@ -8,56 +8,48 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Exercise the same production manager cache used by body, first-person arm and other components. */
-class ModelEffectInstancesTest
-{
+class ModelEffectInstancesTest {
     private static final UUID OWNER = new UUID(1, 2), ENTITY = OWNER;
     private static final ModelEffectInstances.Key BODY = new ModelEffectInstances.Key(OWNER, ENTITY, "body");
     private static final ModelEffectInstances.Key ARMS = new ModelEffectInstances.Key(OWNER, ENTITY,
             "component:fp_arm:arms");
 
-    private static final class Playing
-    {
+    private static final class Playing {
         final Object entity;
         final String instance, hash;
         int closes;
         boolean voice = true;
 
-        Playing(Object entity, String instance, String hash)
-        {
+        Playing(Object entity, String instance, String hash) {
             this.entity = entity;
             this.instance = instance;
             this.hash = hash;
         }
 
-        void close()
-        {
+        void close() {
             this.closes++;
             this.voice = false;
         }
     }
 
-    private static ModelEffectInstances<Playing> managers(int maximum)
-    {
+    private static ModelEffectInstances<Playing> managers(int maximum) {
         return new ModelEffectInstances<>(maximum, Playing::close);
     }
 
     private static Playing frame(ModelEffectInstances<Playing> managers, ModelEffectInstances.Key key, Object entity,
-            String instance, String hash)
-    {
+            String instance, String hash) {
         return managers.acquire(key,
                 old -> old.entity == entity && old.instance.equals(instance) && old.hash.equals(hash),
                 () -> new Playing(entity, instance, hash));
     }
 
     @Test
-    void alternatingBodyAndArmExtractionKeepsEachPlayingManagerAliveAcrossFrames()
-    {
+    void alternatingBodyAndArmExtractionKeepsEachPlayingManagerAliveAcrossFrames() {
         ModelEffectInstances<ModelEffectInstancesTest.Playing> managers = managers(256);
         Object player = new Object();
         Playing body = frame(managers, BODY, player, "appearance-1", "body-bytes");
         Playing arms = frame(managers, ARMS, player, "appearance-1", "arm-bytes");
-        for (int tick = 0; tick < 6; tick++)
-        {
+        for (int tick = 0; tick < 6; tick++) {
             assertSame(body, frame(managers, BODY, player, "appearance-1", "body-bytes"));
             assertSame(arms, frame(managers, ARMS, player, "appearance-1", "arm-bytes"));
         }
@@ -69,8 +61,7 @@ class ModelEffectInstancesTest
     }
 
     @Test
-    void sharedTemplateBytesStillHaveSeparateProcessorGlobalAudioManagers()
-    {
+    void sharedTemplateBytesStillHaveSeparateProcessorGlobalAudioManagers() {
         ModelEffectInstances<ModelEffectInstancesTest.Playing> managers = managers(256);
         Object player = new Object();
         Playing body = frame(managers, BODY, player, "appearance-1", "shared-template");
@@ -82,8 +73,7 @@ class ModelEffectInstancesTest
     }
 
     @Test
-    void bindingReplacementClosesOldProcessorThenPrunesTheRemainingOldAppearance()
-    {
+    void bindingReplacementClosesOldProcessorThenPrunesTheRemainingOldAppearance() {
         ModelEffectInstances<ModelEffectInstancesTest.Playing> managers = managers(256);
         Object player = new Object();
         Playing body = frame(managers, BODY, player, "appearance-1", "body-bytes");
@@ -99,8 +89,7 @@ class ModelEffectInstancesTest
     }
 
     @Test
-    void componentRemovalAndOwnerExitReleaseAllTheirContextsWithoutClosingOtherOwners()
-    {
+    void componentRemovalAndOwnerExitReleaseAllTheirContextsWithoutClosingOtherOwners() {
         ModelEffectInstances<ModelEffectInstancesTest.Playing> managers = managers(256);
         Object player = new Object();
         Playing body = frame(managers, BODY, player, "appearance-1", "body-bytes");
@@ -122,8 +111,7 @@ class ModelEffectInstancesTest
     }
 
     @Test
-    void entityRecreationAndCapacityLimitKeepTheExistingClosureAndBudgetBoundaries()
-    {
+    void entityRecreationAndCapacityLimitKeepTheExistingClosureAndBudgetBoundaries() {
         ModelEffectInstances<ModelEffectInstancesTest.Playing> managers = managers(2);
         Object oldPlayer = new Object(), replacementPlayer = new Object();
         Playing body = frame(managers, BODY, oldPlayer, "appearance-1", "body-bytes");
@@ -134,8 +122,7 @@ class ModelEffectInstancesTest
         AtomicInteger created = new AtomicInteger();
         ModelEffectInstances.Key third = new ModelEffectInstances.Key(OWNER, new UUID(5, 6),
                 "component:projectile:arrow");
-        assertNull(managers.acquire(third, old -> true, () ->
-        {
+        assertNull(managers.acquire(third, old -> true, () -> {
             created.incrementAndGet();
             return new Playing(new Object(), "appearance-1", "arrow");
         }));

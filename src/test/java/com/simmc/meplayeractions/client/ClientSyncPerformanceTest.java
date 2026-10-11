@@ -7,23 +7,18 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.*;
 import java.nio.charset.StandardCharsets;
 
-class ClientSyncPerformanceTest
-{
+class ClientSyncPerformanceTest {
     @Test
-    void ownerDirectoryDoesNotBuildSnapshotsAndEachOwnerIsBuiltAtMostOncePerTick()
-    {
+    void ownerDirectoryDoesNotBuildSnapshotsAndEachOwnerIsBuiltAtMostOncePerTick() {
         UUID owner = new UUID(0, 1);
         AtomicInteger directory = new AtomicInteger(), single = new AtomicInteger();
-        ClientSnapshotCache cache = new ClientSnapshotCache(() ->
-        {
+        ClientSnapshotCache cache = new ClientSnapshotCache(() -> {
             throw new AssertionError("Full directory snapshot should not be used");
         });
-        cache.configure(() ->
-        {
+        cache.configure(() -> {
             directory.incrementAndGet();
             return Set.of(owner);
-        }, id ->
-        {
+        }, id -> {
             single.incrementAndGet();
             return null;
         });
@@ -40,17 +35,14 @@ class ClientSyncPerformanceTest
     }
 
     @Test
-    void oldFullSnapshotSupplierIsReadOnceForAnyNumberOfViewersInOneTick()
-    {
+    void oldFullSnapshotSupplierIsReadOnceForAnyNumberOfViewersInOneTick() {
         AtomicInteger calls = new AtomicInteger();
         UUID unknown = UUID.randomUUID();
-        ClientSnapshotCache cache = new ClientSnapshotCache(() ->
-        {
+        ClientSnapshotCache cache = new ClientSnapshotCache(() -> {
             calls.incrementAndGet();
             return List.of();
         });
-        for (int viewer = 0; viewer < 100; viewer++)
-        {
+        for (int viewer = 0; viewer < 100; viewer++) {
             cache.owners(30);
             cache.get(unknown, 30);
             cache.all(30);
@@ -61,15 +53,12 @@ class ClientSyncPerformanceTest
     }
 
     @Test
-    void discoveryIsStaggeredAndLegacyHeartbeatAndTimelineKeepIndependentCadences()
-    {
+    void discoveryIsStaggeredAndLegacyHeartbeatAndTimelineKeepIndependentCadences() {
         Set<Long> nextDiscovery = new HashSet<>();
-        for (int id = 0; id < 40; id++)
-        {
+        for (int id = 0; id < 40; id++) {
             long previous = ClientSyncCadence.initialTick(new UUID(0, id), 100, 40);
             long next = 101;
-            while (!ClientSyncCadence.due(next, previous, 40))
-            {
+            while (!ClientSyncCadence.due(next, previous, 40)) {
                 next++;
             }
 
@@ -86,17 +75,13 @@ class ClientSyncPerformanceTest
     }
 
     @Test
-    void deferredControlRetainsSameSerializedBytesAndNeverRunsFailureCleanup()
-    {
+    void deferredControlRetainsSameSerializedBytesAndNeverRunsFailureCleanup() {
         DeferredClientPackets queue = new DeferredClientPackets();
-        byte[] bytes =
-        { 1, 2, 3 };
+        byte[] bytes = { 1, 2, 3 };
         AtomicInteger sent = new AtomicInteger(), failed = new AtomicInteger();
         assertTrue(queue.add("ack", bytes, 10, () -> true, sent::incrementAndGet, failed::incrementAndGet));
-        for (int tick = 11; tick < 20; tick++)
-        {
-            queue.drain(payload ->
-            {
+        for (int tick = 11; tick < 20; tick++) {
+            queue.drain(payload -> {
                 assertSame(bytes, payload);
                 return DeferredClientPackets.Result.DEFERRED;
             }, tick, 4);
@@ -105,8 +90,7 @@ class ClientSyncPerformanceTest
         assertEquals(1, queue.size());
         assertEquals(0, sent.get());
         assertEquals(0, failed.get());
-        queue.drain(payload ->
-        {
+        queue.drain(payload -> {
             assertSame(bytes, payload);
             return DeferredClientPackets.Result.SENT;
         }, 20, 4);
@@ -116,44 +100,36 @@ class ClientSyncPerformanceTest
     }
 
     @Test
-    void deferredControlIsBoundedAndInvalidOrExpiredIdentityExecutesCleanup()
-    {
+    void deferredControlIsBoundedAndInvalidOrExpiredIdentityExecutesCleanup() {
         DeferredClientPackets queue = new DeferredClientPackets();
         AtomicInteger failed = new AtomicInteger();
-        for (int i = 0; i < DeferredClientPackets.CAPACITY; i++)
-        {
-            assertTrue(queue.add("unbind:" + i, new byte[]
-            { 1 }, 0, () -> true, () ->
-            {
+        for (int i = 0; i < DeferredClientPackets.CAPACITY; i++) {
+            assertTrue(queue.add("unbind:" + i, new byte[] { 1 }, 0, () -> true, () -> {
             }, failed::incrementAndGet));
         }
 
-        assertFalse(queue.add("overflow", new byte[]
-        { 1 }, 0, () -> true, () ->
-        {
+        assertFalse(queue.add("overflow", new byte[] { 1 }, 0, () -> true, () -> {
         }, failed::incrementAndGet));
         assertEquals(1, failed.get());
-        queue.drain(payload ->
-        {
+        queue.drain(payload -> {
             fail("Expired control must not be sent");
             return DeferredClientPackets.Result.SENT;
         }, 100, 128);
         assertEquals(129, failed.get());
         assertEquals(0, queue.size());
-        queue.add("invalid_ack", new byte[]
-        { 1 }, 101, () -> false, () -> fail("Invalid ack sent"), failed::incrementAndGet);
+        queue.add("invalid_ack", new byte[] { 1 }, 101, () -> false, () -> fail("Invalid ack sent"),
+                failed::incrementAndGet);
         queue.drain(payload -> DeferredClientPackets.Result.SENT, 102, 4);
         assertEquals(130, failed.get());
     }
 
     @Test
-    void controlSuccessCanEnqueueSnapshotWithoutMutatingAnActiveIterator()
-    {
+    void controlSuccessCanEnqueueSnapshotWithoutMutatingAnActiveIterator() {
         DeferredClientPackets queue = new DeferredClientPackets();
         AtomicInteger sent = new AtomicInteger();
-        queue.add("hello", new byte[]
-        { 1 }, 0, () -> true, () -> queue.add("snapshot", new byte[]
-        { 2 }, 1, () -> true, sent::incrementAndGet, () -> fail()), () -> fail());
+        queue.add("hello", new byte[] { 1 }, 0, () -> true,
+                () -> queue.add("snapshot", new byte[] { 2 }, 1, () -> true, sent::incrementAndGet, () -> fail()),
+                () -> fail());
         queue.drain(payload -> DeferredClientPackets.Result.SENT, 1, 4);
         assertEquals(1, queue.size());
         assertEquals(0, sent.get());
@@ -162,29 +138,23 @@ class ClientSyncPerformanceTest
     }
 
     @Test
-    void controlByteReservationIsReclaimedOnReplacementSuccessInvalidationCancellationAndClear()
-    {
+    void controlByteReservationIsReclaimedOnReplacementSuccessInvalidationCancellationAndClear() {
         AtomicInteger reserved = new AtomicInteger(), failed = new AtomicInteger();
-        DeferredClientPackets queue = new DeferredClientPackets(bytes ->
-        {
-            if (bytes > 5 - reserved.get())
-            {
+        DeferredClientPackets queue = new DeferredClientPackets(bytes -> {
+            if (bytes > 5 - reserved.get()) {
                 return false;
             }
 
             reserved.addAndGet(bytes);
             return true;
         }, bytes -> reserved.addAndGet(-bytes));
-        assertTrue(queue.add("first", new byte[3], 0, () -> true, () ->
-        {
+        assertTrue(queue.add("first", new byte[3], 0, () -> true, () -> {
         }, failed::incrementAndGet));
-        assertFalse(queue.add("full", new byte[3], 0, () -> true, () ->
-        {
+        assertFalse(queue.add("full", new byte[3], 0, () -> true, () -> {
         }, failed::incrementAndGet));
         assertEquals(3, reserved.get());
         assertEquals(1, failed.get());
-        assertTrue(queue.add("first", new byte[4], 0, () -> true, () ->
-        {
+        assertTrue(queue.add("first", new byte[4], 0, () -> true, () -> {
         }, failed::incrementAndGet));
         assertEquals(4, reserved.get());
         queue.drain(bytes -> DeferredClientPackets.Result.DEFERRED, 1, 2);
@@ -192,48 +162,40 @@ class ClientSyncPerformanceTest
         queue.drain(bytes -> DeferredClientPackets.Result.SENT, 2, 2);
         assertEquals(0, reserved.get());
         queue.add("invalid", new byte[2], 2, () -> false, () -> fail(), failed::incrementAndGet);
-        queue.drain(bytes ->
-        {
+        queue.drain(bytes -> {
             fail();
             return DeferredClientPackets.Result.SENT;
         }, 3, 2);
         assertEquals(0, reserved.get());
-        queue.add("cancel", new byte[5], 3, () -> true, () ->
-        {
+        queue.add("cancel", new byte[5], 3, () -> true, () -> {
         }, failed::incrementAndGet);
         queue.cancel("cancel");
         queue.cancel("cancel");
         assertEquals(0, reserved.get());
-        queue.add("clear", new byte[5], 3, () -> true, () ->
-        {
+        queue.add("clear", new byte[5], 3, () -> true, () -> {
         }, failed::incrementAndGet);
         queue.clear();
         assertEquals(0, reserved.get());
     }
 
     @Test
-    void identityHeartbeatFragmentsKeepEveryBindingUnderBothSizeAndCountBudgets()
-    {
+    void identityHeartbeatFragmentsKeepEveryBindingUnderBothSizeAndCountBudgets() {
         List<RenderLeases.Binding> bindings = new ArrayList<>();
-        for (int id = 0; id < 150; id++)
-        {
+        for (int id = 0; id < 150; id++) {
             bindings.add(new RenderLeases.Binding(new UUID(0, id), new UUID(1, id), id % 2 == 0 ? "a".repeat(64) : ""));
         }
 
-        for (int maxPayload : List.of(1024, 16000))
-        {
+        for (int maxPayload : List.of(1024, 16000)) {
             Set<UUID> seen = new HashSet<>();
             List<byte[]> packets = ClientSyncService.heartbeatPackets(22, bindings, maxPayload);
-            for (byte[] bytes : packets)
-            {
+            for (byte[] bytes : packets) {
                 assertTrue(bytes.length <= maxPayload);
                 JsonObject packet = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject();
                 assertEquals("heartbeat", packet.get("type").getAsString());
                 assertEquals(22, packet.get("serverTick").getAsInt());
                 JsonArray identities = packet.getAsJsonArray("bindings");
                 assertTrue(identities.size() <= 64);
-                for (JsonElement identity : identities)
-                {
+                for (JsonElement identity : identities) {
                     assertTrue(seen.add(UUID.fromString(identity.getAsJsonObject().get("owner").getAsString())));
                 }
 

@@ -22,13 +22,10 @@ import java.nio.file.Files;
 import java.util.logging.Logger;
 
 /** Targeted cadence/authorization checks using the actual relay, without a running server. */
-class PrivateModelPerformanceTest
-{
+class PrivateModelPerformanceTest {
     @Test
-    void grantedUploadChunksSurviveOrdinaryBudgetExhaustionAndCreditWindowsStayBounded() throws Exception
-    {
-        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10))
-        {
+    void grantedUploadChunksSurviveOrdinaryBudgetExhaustionAndCreditWindowsStayBounded() throws Exception {
+        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10)) {
             JsonObject hello = packet("hello");
             JsonArray caps = new JsonArray();
             caps.add(PrivateModelSyncService.CAPABILITY);
@@ -39,11 +36,9 @@ class PrivateModelPerformanceTest
             String id = scene.owner.last("upload_accept").get("uploadId").getAsString();
             int chunk = scene.owner.last("upload_accept").get("chunkBytes").getAsInt();
             assertEquals(2, scene.owner.last("upload_credit").get("nextIndex").getAsInt());
-            while (scene.limits.allowInbound(scene.owner.id, 1, scene.now()))
-            {
+            while (scene.limits.allowInbound(scene.owner.id, 1, scene.now())) {
             }
-            for (int index = 0; index < 2; index++)
-            {
+            for (int index = 0; index < 2; index++) {
                 JsonObject part = packet("upload_chunk");
                 part.addProperty("uploadId", id);
                 part.addProperty("index", index);
@@ -62,10 +57,8 @@ class PrivateModelPerformanceTest
     }
 
     @Test
-    void congestedPrivateChunksReuseTheSameEncodedPacketAndReleaseItsReservationOnRevocation() throws Exception
-    {
-        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10))
-        {
+    void congestedPrivateChunksReuseTheSameEncodedPacketAndReleaseItsReservationOnRevocation() throws Exception {
+        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10)) {
             scene.start();
             scene.feedback("missing");
             scene.viewer.onChunk = scene::saturate;
@@ -84,28 +77,22 @@ class PrivateModelPerformanceTest
     }
 
     @Test
-    void nearestAudienceIsCachedAndRefreshesInFortyDistinctPublisherPhases()
-    {
+    void nearestAudienceIsCachedAndRefreshesInFortyDistinctPublisherPhases() {
         PrivateAudienceCache cache = new PrivateAudienceCache();
         UUID generation = new UUID(1, 1), viewer = new UUID(2, 2);
         AtomicInteger discoveries = new AtomicInteger();
-        for (int owner = 0; owner < 40; owner++)
-        {
-            assertTrue(cache.refreshIfDue(new UUID(0, owner), generation, 0, () ->
-            {
+        for (int owner = 0; owner < 40; owner++) {
+            assertTrue(cache.refreshIfDue(new UUID(0, owner), generation, 0, () -> {
                 discoveries.incrementAndGet();
                 return Set.of(viewer);
             }));
         }
 
         assertEquals(40, discoveries.get());
-        for (int tick = 1; tick <= 40; tick++)
-        {
+        for (int tick = 1; tick <= 40; tick++) {
             int before = discoveries.get();
-            for (int owner = 0; owner < 40; owner++)
-            {
-                cache.refreshIfDue(new UUID(0, owner), generation, tick, () ->
-                {
+            for (int owner = 0; owner < 40; owner++) {
+                cache.refreshIfDue(new UUID(0, owner), generation, tick, () -> {
                     discoveries.incrementAndGet();
                     return Set.of(viewer);
                 });
@@ -117,8 +104,7 @@ class PrivateModelPerformanceTest
     }
 
     @Test
-    void audienceInvalidationIsGenerationScopedAndDisconnectDoesNotRediscoverUnrelatedOwners()
-    {
+    void audienceInvalidationIsGenerationScopedAndDisconnectDoesNotRediscoverUnrelatedOwners() {
         PrivateAudienceCache cache = new PrivateAudienceCache();
         UUID owner = new UUID(0, 0), other = new UUID(0, 40), generation = new UUID(1, 1);
         UUID viewer = new UUID(2, 2), unrelated = new UUID(2, 3);
@@ -127,14 +113,12 @@ class PrivateModelPerformanceTest
         cache.removeViewer(viewer);
         assertFalse(cache.contains(owner, generation, viewer));
         assertTrue(cache.contains(other, generation, unrelated));
-        assertFalse(cache.refreshIfDue(other, generation, 20, () ->
-        {
+        assertFalse(cache.refreshIfDue(other, generation, 20, () -> {
             fail("Unrelated audience should remain cached");
             return Set.of();
         }));
         cache.invalidate(owner, generation, 20);
-        assertFalse(cache.refreshIfDue(owner, generation, 39, () ->
-        {
+        assertFalse(cache.refreshIfDue(owner, generation, 39, () -> {
             fail("Invalidated publisher keeps its refresh phase");
             return Set.of();
         }));
@@ -148,21 +132,18 @@ class PrivateModelPerformanceTest
     }
 
     @Test
-    void audienceCadenceRemainsBoundedAcrossTheUnsignedServerTickWrapAndConfigurationChanges()
-    {
+    void audienceCadenceRemainsBoundedAcrossTheUnsignedServerTickWrapAndConfigurationChanges() {
         PrivateAudienceCache cache = new PrivateAudienceCache();
         UUID owner = new UUID(0, 0), generation = new UUID(1, 1);
         cache.refreshIfDue(owner, generation, 0xfffffff0L, Set::of);
-        assertFalse(cache.refreshIfDue(owner, generation, 23, () ->
-        {
+        assertFalse(cache.refreshIfDue(owner, generation, 23, () -> {
             fail("Only 39 ticks elapsed");
             return Set.of();
         }));
         assertTrue(cache.refreshIfDue(owner, generation, 24, Set::of));
         cache.configure(100);
         assertTrue(cache.refreshIfDue(owner, generation, 25, Set::of));
-        assertFalse(cache.refreshIfDue(owner, generation, 99, () ->
-        {
+        assertFalse(cache.refreshIfDue(owner, generation, 99, () -> {
             fail("Configured phase is tick 100");
             return Set.of();
         }));
@@ -170,16 +151,13 @@ class PrivateModelPerformanceTest
     }
 
     @Test
-    void disabledMaintenanceNeverRequestsTheBackendOwnersEvenWhenDeniedClientsHaveNegotiated() throws Exception
-    {
-        try (PrivateModelPerformanceTest.Scene scene = new Scene(false, 10))
-        {
+    void disabledMaintenanceNeverRequestsTheBackendOwnersEvenWhenDeniedClientsHaveNegotiated() throws Exception {
+        try (PrivateModelPerformanceTest.Scene scene = new Scene(false, 10)) {
             scene.maintain();
             assertEquals(0, scene.snapshotReads);
             scene.hello(scene.owner);
             scene.hello(scene.viewer);
-            for (int tick = 0; tick <= 100; tick++)
-            {
+            for (int tick = 0; tick <= 100; tick++) {
                 scene.tick = tick;
                 scene.maintain();
             }
@@ -189,21 +167,17 @@ class PrivateModelPerformanceTest
     }
 
     @Test
-    void nearestSortingRunsOncePerPublisherWhileStateEventAndHeartbeatRemainImmediate() throws Exception
-    {
-        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 1))
-        {
+    void nearestSortingRunsOncePerPublisherWhileStateEventAndHeartbeatRemainImmediate() throws Exception {
+        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 1)) {
             scene.start();
-            for (int index = 2; index <= 20; index++)
-            {
+            for (int index = 2; index <= 20; index++) {
                 Person candidate = scene.person(index);
                 scene.hello(candidate);
                 scene.owner.tracked.add(candidate.player);
             }
             scene.ready();
             int iterations = scene.owner.discoveryIterations;
-            for (int tick = 1; tick < 40; tick++)
-            {
+            for (int tick = 1; tick < 40; tick++) {
                 scene.tick = tick;
                 scene.maintain();
             }
@@ -220,10 +194,8 @@ class PrivateModelPerformanceTest
             scene.maintain();
             assertEquals(iterations + 1, scene.owner.discoveryIterations);
             assertEquals(1, scene.offers(scene.viewer).size());
-            for (Person candidate : scene.people.values())
-            {
-                if (candidate != scene.owner && candidate != scene.viewer)
-                {
+            for (Person candidate : scene.people.values()) {
+                if (candidate != scene.owner && candidate != scene.viewer) {
                     assertEquals(0, candidate.count("private_offer"));
                 }
 
@@ -233,10 +205,8 @@ class PrivateModelPerformanceTest
     }
 
     @Test
-    void activeTransfersPumpBetweenValidationTicksAndRecheckPermissionBeforeEveryChunk() throws Exception
-    {
-        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10))
-        {
+    void activeTransfersPumpBetweenValidationTicksAndRecheckPermissionBeforeEveryChunk() throws Exception {
+        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10)) {
             scene.start();
             scene.feedback("missing");
             scene.tick = 1;
@@ -262,10 +232,8 @@ class PrivateModelPerformanceTest
 
     @Test
     void observationChangesRevokeBothViewerAndPublisherRelationshipsWithoutRediscoveryOrDeletingTheAsset()
-            throws Exception
-    {
-        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10))
-        {
+            throws Exception {
+        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10)) {
             scene.start();
             scene.ready();
             Person second = scene.person(3);
@@ -289,10 +257,8 @@ class PrivateModelPerformanceTest
     }
 
     @Test
-    void theWholeBundleHashIsDeferredIntoTheAsyncValidationJob() throws Exception
-    {
-        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10))
-        {
+    void theWholeBundleHashIsDeferredIntoTheAsyncValidationJob() throws Exception {
+        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10)) {
             scene.hello(scene.owner);
             scene.upload(scene.owner, "b".repeat(64));
             assertEquals(1, scene.workers.size());
@@ -308,10 +274,8 @@ class PrivateModelPerformanceTest
     }
 
     @Test
-    void cancelledAsyncValidationsKeepTheTwoJobAndGlobalExpandedMemoryReservations() throws Exception
-    {
-        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10))
-        {
+    void cancelledAsyncValidationsKeepTheTwoJobAndGlobalExpandedMemoryReservations() throws Exception {
+        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10)) {
             scene.hello(scene.owner);
             scene.hello(scene.viewer);
             scene.upload(scene.owner, scene.hash);
@@ -338,10 +302,9 @@ class PrivateModelPerformanceTest
     }
 
     @Test
-    void cacheMissAndHitRemainBoundedJobsAndOnlyTheOriginalOwnerAvoidsReupload(@TempDir Path directory) throws Exception
-    {
-        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10))
-        {
+    void cacheMissAndHitRemainBoundedJobsAndOnlyTheOriginalOwnerAvoidsReupload(@TempDir Path directory)
+            throws Exception {
+        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10)) {
             PrivateModelStore store = new PrivateModelStore(directory, PrivateModelStore.Settings.defaults());
             setField(scene.service, "store", store);
             scene.hello(scene.owner);
@@ -382,10 +345,8 @@ class PrivateModelPerformanceTest
 
     @Test
     void cancelledOrRevokedCacheProbesCannotPublishButKeepReservationsUntilTheirWorkersReturn(@TempDir Path directory)
-            throws Exception
-    {
-        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10))
-        {
+            throws Exception {
+        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10)) {
             PrivateModelStore store = new PrivateModelStore(directory, PrivateModelStore.Settings.defaults());
             store.saveValidated(scene.owner.id, scene.hash, scene.bundle);
             setField(scene.service, "store", store);
@@ -408,10 +369,8 @@ class PrivateModelPerformanceTest
     }
 
     @Test
-    void unavailableDiskCacheFallsBackToTheSameAuthorizedOrdinaryUpload(@TempDir Path directory) throws Exception
-    {
-        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10))
-        {
+    void unavailableDiskCacheFallsBackToTheSameAuthorizedOrdinaryUpload(@TempDir Path directory) throws Exception {
+        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10)) {
             Path unusable = directory.resolve("not-a-directory");
             Files.writeString(unusable, "fixture");
             setField(scene.service, "store", new PrivateModelStore(unusable, PrivateModelStore.Settings.defaults()));
@@ -427,10 +386,8 @@ class PrivateModelPerformanceTest
     }
 
     @Test
-    void privateStateRetriesOnlyTheLatestAppearanceAndDropsRevokedViewerWork() throws Exception
-    {
-        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10))
-        {
+    void privateStateRetriesOnlyTheLatestAppearanceAndDropsRevokedViewerWork() throws Exception {
+        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10)) {
             scene.start();
             scene.ready();
             int sent = scene.viewer.count("private_state");
@@ -462,10 +419,8 @@ class PrivateModelPerformanceTest
     }
 
     @Test
-    void pendingFlightUsesTheLatestServerStateWithoutReplayingThePreviousTickOrRediscoveringViewers() throws Exception
-    {
-        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10))
-        {
+    void pendingFlightUsesTheLatestServerStateWithoutReplayingThePreviousTickOrRediscoveringViewers() throws Exception {
+        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10)) {
             scene.start();
             scene.ready();
             int sent = scene.viewer.count("private_state"), discoveries = scene.owner.discoveryIterations;
@@ -488,10 +443,8 @@ class PrivateModelPerformanceTest
 
     @Test
     void cachedPublicationUsesCurrentServerFlightRatherThanPersistingMotionInModelResources(@TempDir Path directory)
-            throws Exception
-    {
-        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10))
-        {
+            throws Exception {
+        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10)) {
             PrivateModelStore store = new PrivateModelStore(directory, PrivateModelStore.Settings.defaults());
             store.saveValidated(scene.owner.id, scene.hash, scene.bundle);
             setField(scene.service, "store", store);
@@ -503,8 +456,7 @@ class PrivateModelPerformanceTest
             scene.maintain();
             JsonObject offered = scene.viewer.last("private_offer"), ready = packet("private_ready");
             // A real upload chooses a new generation; the fixed Scene generation only describes start() fixtures.
-            for (String key : List.of("owner", "generation", "hash"))
-            {
+            for (String key : List.of("owner", "generation", "hash")) {
                 ready.add(key, offered.get(key));
             }
 
@@ -527,10 +479,8 @@ class PrivateModelPerformanceTest
     }
 
     @Test
-    void readyAndCommitAcknowledgmentsRecoverFromBudgetPressureWithoutNewUploads() throws Exception
-    {
-        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10))
-        {
+    void readyAndCommitAcknowledgmentsRecoverFromBudgetPressureWithoutNewUploads() throws Exception {
+        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10)) {
             scene.start();
             scene.feedback("cached");
             scene.saturate();
@@ -542,8 +492,7 @@ class PrivateModelPerformanceTest
             assertEquals("READY", field(scene.offer(), "status").toString());
             assertEquals(1, scene.viewer.count("private_ack"));
         }
-        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10))
-        {
+        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10)) {
             scene.hello(scene.owner);
             scene.upload(scene.owner, scene.hash);
             scene.workers.removeFirst().run();
@@ -576,10 +525,8 @@ class PrivateModelPerformanceTest
     }
 
     @Test
-    void pendingCommitCannotActivateAfterAServerDisguiseTakesPriority() throws Exception
-    {
-        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10))
-        {
+    void pendingCommitCannotActivateAfterAServerDisguiseTakesPriority() throws Exception {
+        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10)) {
             scene.hello(scene.owner);
             scene.upload(scene.owner, scene.hash);
             scene.workers.removeFirst().run();
@@ -595,10 +542,8 @@ class PrivateModelPerformanceTest
     }
 
     @Test
-    void repeatedAcceptedOffersKeepTheBufferedBytesIndexAndDeadline() throws Exception
-    {
-        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10))
-        {
+    void repeatedAcceptedOffersKeepTheBufferedBytesIndexAndDeadline() throws Exception {
+        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10)) {
             scene.hello(scene.owner);
             scene.uploadOffer(scene.owner, scene.hash);
             Object upload = field(scene.session(scene.owner), "upload");
@@ -626,10 +571,8 @@ class PrivateModelPerformanceTest
     }
 
     @Test
-    void heartbeatReportsCurrentPermissionsSoGrantAndRevocationDoNotRequireReconnect() throws Exception
-    {
-        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10))
-        {
+    void heartbeatReportsCurrentPermissionsSoGrantAndRevocationDoNotRequireReconnect() throws Exception {
+        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10)) {
             scene.start();
             scene.ready();
             scene.viewer.allowed = false;
@@ -647,10 +590,8 @@ class PrivateModelPerformanceTest
     }
 
     @Test
-    void periodicFinalStateReplayRenewsThePublisherWithoutRestartingAnUnchangedAction() throws Exception
-    {
-        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10))
-        {
+    void periodicFinalStateReplayRenewsThePublisherWithoutRestartingAnUnchangedAction() throws Exception {
+        try (PrivateModelPerformanceTest.Scene scene = new Scene(true, 10)) {
             scene.start();
             scene.ready();
             JsonObject state = scene.state();
@@ -671,8 +612,7 @@ class PrivateModelPerformanceTest
         }
     }
 
-    private static final class Scene implements AutoCloseable
-    {
+    private static final class Scene implements AutoCloseable {
         final Field bukkitServer = Bukkit.class.getDeclaredField("server");
         final Object previousServer;
         final Map<UUID, Person> people = new LinkedHashMap<>();
@@ -687,41 +627,34 @@ class PrivateModelPerformanceTest
         final UUID generation = new UUID(10, 10);
         int tick, snapshotReads;
 
-        Scene(boolean enabled, int maxViewers) throws Exception
-        {
+        Scene(boolean enabled, int maxViewers) throws Exception {
             this.bundle = bundle();
             this.hash = PrivateModelBundle.hash(this.bundle);
             BukkitTask task = proxy(BukkitTask.class, (instance, method,
                     args) -> method.getName().equals("cancel") ? null : objectMethod(instance, method, args));
             BukkitScheduler scheduler = proxy(BukkitScheduler.class,
-                    (instance, method, args) -> switch (method.getName())
-                    {
-                    case "runTaskAsynchronously" ->
-                    {
+                    (instance, method, args) -> switch (method.getName()) {
+                    case "runTaskAsynchronously" -> {
                         this.workers.add((Runnable) args[1]);
                         yield task;
                     }
-                    case "runTask" ->
-                    {
+                    case "runTask" -> {
                         this.callbacks.add((Runnable) args[1]);
                         yield task;
                     }
                     default -> objectMethod(instance, method, args);
                     });
-            Server server = proxy(Server.class, (instance, method, args) -> switch (method.getName())
-            {
+            Server server = proxy(Server.class, (instance, method, args) -> switch (method.getName()) {
             case "getCurrentTick" -> this.tick;
             case "isPrimaryThread" -> true;
             case "getScheduler" -> scheduler;
-            case "getPlayer" ->
-            {
+            case "getPlayer" -> {
                 Person person = this.people.get(args[0]);
                 yield person == null ? null : person.player;
             }
             default -> objectMethod(instance, method, args);
             });
-            Plugin plugin = proxy(Plugin.class, (instance, method, args) -> switch (method.getName())
-            {
+            Plugin plugin = proxy(Plugin.class, (instance, method, args) -> switch (method.getName()) {
             case "getServer" -> server;
             case "isEnabled" -> true;
             case "getName" -> "PrivatePerformanceFixture";
@@ -731,10 +664,8 @@ class PrivateModelPerformanceTest
             this.bukkitServer.setAccessible(true);
             this.previousServer = this.bukkitServer.get(null);
             this.bukkitServer.set(null, server);
-            try
-            {
-                this.service = new PrivateModelSyncService(plugin, () ->
-                {
+            try {
+                this.service = new PrivateModelSyncService(plugin, () -> {
                     this.snapshotReads++;
                     return Set.copyOf(this.disguised);
                 }, this.limits, this::now);
@@ -743,23 +674,19 @@ class PrivateModelPerformanceTest
                 this.service.configurePerformance(PerformanceSettings.defaults());
                 setField(this.service, "running", true);
                 this.owner.tracked.add(this.viewer.player);
-            }
-            catch (Exception | Error failure)
-            {
+            } catch (Exception | Error failure) {
                 this.bukkitServer.set(null, this.previousServer);
                 throw failure;
             }
         }
 
-        Person person(double x)
-        {
+        Person person(double x) {
             Person person = new Person(new UUID(0, this.people.size()), this.world, x);
             this.people.put(person.id, person);
             return person;
         }
 
-        void start() throws Exception
-        {
+        void start() throws Exception {
             hello(this.owner);
             hello(this.viewer);
             Class<?> type = Class.forName(PrivateModelSyncService.class.getName() + "$Publication");
@@ -773,8 +700,7 @@ class PrivateModelPerformanceTest
             assertNotNull(offer());
         }
 
-        void hello(Person person)
-        {
+        void hello(Person person) {
             JsonObject hello = packet("hello");
             JsonArray caps = new JsonArray();
             caps.add(PrivateModelSyncService.CAPABILITY);
@@ -782,19 +708,16 @@ class PrivateModelPerformanceTest
             send(person, hello);
         }
 
-        void send(Person person, JsonObject value)
-        {
+        void send(Person person, JsonObject value) {
             this.service.onPluginMessageReceived(PrivateModelSyncService.CHANNEL, person.player,
                     value.toString().getBytes(StandardCharsets.UTF_8));
         }
 
-        void maintain() throws Exception
-        {
+        void maintain() throws Exception {
             invoke(this.service, "maintain");
         }
 
-        void feedback(String status) throws Exception
-        {
+        void feedback(String status) throws Exception {
             JsonObject value = packet("private_status");
             value.addProperty("offerId", field(offer(), "id").toString());
             value.addProperty("hash", this.hash);
@@ -802,21 +725,18 @@ class PrivateModelPerformanceTest
             send(this.viewer, value);
         }
 
-        void ready() throws Exception
-        {
+        void ready() throws Exception {
             feedback("cached");
             readyPacket();
         }
 
-        void readyPacket()
-        {
+        void readyPacket() {
             JsonObject ready = identity("private_ready");
             ready.addProperty("owner", this.owner.id.toString());
             send(this.viewer, ready);
         }
 
-        void heartbeat(Person person)
-        {
+        void heartbeat(Person person) {
             JsonObject heartbeat = packet("private_heartbeat");
             JsonArray identities = new JsonArray();
             JsonObject entry = identity(null);
@@ -826,8 +746,7 @@ class PrivateModelPerformanceTest
             send(person, heartbeat);
         }
 
-        JsonObject state()
-        {
+        JsonObject state() {
             JsonObject state = identity("private_state");
             state.add("appearance", new JsonObject());
             JsonObject extra = new JsonObject();
@@ -839,8 +758,7 @@ class PrivateModelPerformanceTest
             return state;
         }
 
-        JsonObject event()
-        {
+        JsonObject event() {
             JsonObject event = identity("private_event");
             JsonArray args = new JsonArray();
             args.add(1);
@@ -848,16 +766,14 @@ class PrivateModelPerformanceTest
             return event;
         }
 
-        JsonObject identity(String type)
-        {
+        JsonObject identity(String type) {
             JsonObject result = type == null ? new JsonObject() : packet(type);
             result.addProperty("generation", this.generation.toString());
             result.addProperty("hash", this.hash);
             return result;
         }
 
-        void uploadOffer(Person person, String advertisedHash)
-        {
+        void uploadOffer(Person person, String advertisedHash) {
             JsonObject value = packet("upload_offer");
             value.addProperty("generation", UUID.randomUUID().toString());
             value.addProperty("hash", advertisedHash);
@@ -867,18 +783,15 @@ class PrivateModelPerformanceTest
             send(person, value);
         }
 
-        void upload(Person person, String advertisedHash)
-        {
+        void upload(Person person, String advertisedHash) {
             uploadOffer(person, advertisedHash);
             finishAccepted(person);
         }
 
-        void finishAccepted(Person person)
-        {
+        void finishAccepted(Person person) {
             String id = person.last("upload_accept").get("uploadId").getAsString();
             int chunk = person.last("upload_accept").get("chunkBytes").getAsInt();
-            for (int start = 0, index = 0; start < this.bundle.length; start += chunk, index++)
-            {
+            for (int start = 0, index = 0; start < this.bundle.length; start += chunk, index++) {
                 JsonObject value = packet("upload_chunk");
                 value.addProperty("uploadId", id);
                 value.addProperty("index", index);
@@ -891,13 +804,11 @@ class PrivateModelPerformanceTest
             send(person, end);
         }
 
-        Object session(Person person) throws Exception
-        {
+        Object session(Person person) throws Exception {
             return ((Map<?, ?>) field(this.service, "sessions")).get(person.id);
         }
 
-        JsonObject pendingOffer(Object upload) throws Exception
-        {
+        JsonObject pendingOffer(Object upload) throws Exception {
             JsonObject offer = packet("upload_offer");
             offer.addProperty("generation", field(upload, "generation").toString());
             offer.addProperty("hash", this.hash);
@@ -907,73 +818,59 @@ class PrivateModelPerformanceTest
             return offer;
         }
 
-        void runWorker()
-        {
+        void runWorker() {
             assertFalse(this.workers.isEmpty());
-            while (!this.workers.isEmpty())
-            {
+            while (!this.workers.isEmpty()) {
                 this.workers.removeFirst().run();
-                while (!this.callbacks.isEmpty())
-                {
+                while (!this.callbacks.isEmpty()) {
                     this.callbacks.removeFirst().run();
                 }
             }
         }
 
-        long now()
-        {
+        long now() {
             return 10_000_000_000L + this.tick * 50_000_000L;
         }
 
-        void saturate()
-        {
+        void saturate() {
             UUID pressure = new UUID(99, 99);
             this.limits.canOutbound(pressure, 1, false, now(), this.tick);
-            try
-            {
+            try {
                 int remaining = ConnectionLimits.GLOBAL_BYTES_PER_TICK
                         - ((Number) field(this.limits, "globalBytes")).intValue();
-                if (remaining > 0)
-                {
+                if (remaining > 0) {
                     assertTrue(this.limits.allowOutbound(pressure, remaining, false, now(), this.tick));
                 }
 
                 assertFalse(this.limits.canOutbound(this.viewer.id, 1, false, now(), this.tick),
                         "Only the shared per-tick budget is exhausted");
-            }
-            catch (Exception invalid)
-            {
+            } catch (Exception invalid) {
                 throw new IllegalStateException(invalid);
             }
         }
 
         @SuppressWarnings("unchecked")
-        Map<UUID, Object> publications() throws Exception
-        {
+        Map<UUID, Object> publications() throws Exception {
             return (Map<UUID, Object>) field(this.service, "publications");
         }
 
         @SuppressWarnings("unchecked")
-        Map<UUID, Object> offers(Person person) throws Exception
-        {
+        Map<UUID, Object> offers(Person person) throws Exception {
             Object session = ((Map<?, ?>) field(this.service, "sessions")).get(person.id);
             return (Map<UUID, Object>) field(session, "offers");
         }
 
-        Object offer() throws Exception
-        {
+        Object offer() throws Exception {
             return offers(this.viewer).get(this.owner.id);
         }
 
         @Override
-        public void close() throws Exception
-        {
+        public void close() throws Exception {
             this.bukkitServer.set(null, this.previousServer);
         }
     }
 
-    private static final class Person
-    {
+    private static final class Person {
         final UUID id;
         final Player player;
         final Set<Player> tracked = new HashSet<>();
@@ -982,32 +879,26 @@ class PrivateModelPerformanceTest
         int discoveryIterations;
         Runnable onChunk;
 
-        Person(UUID id, World world, double x)
-        {
+        Person(UUID id, World world, double x) {
             this.id = id;
-            Set<Player> trackingView = new AbstractSet<>()
-            {
+            Set<Player> trackingView = new AbstractSet<>() {
                 @Override
-                public Iterator<Player> iterator()
-                {
+                public Iterator<Player> iterator() {
                     Person.this.discoveryIterations++;
                     return Person.this.tracked.iterator();
                 }
 
                 @Override
-                public int size()
-                {
+                public int size() {
                     return Person.this.tracked.size();
                 }
 
                 @Override
-                public boolean contains(Object value)
-                {
+                public boolean contains(Object value) {
                     return Person.this.tracked.contains(value);
                 }
             };
-            this.player = proxy(Player.class, (instance, method, args) -> switch (method.getName())
-            {
+            this.player = proxy(Player.class, (instance, method, args) -> switch (method.getName()) {
             case "getUniqueId" -> id;
             case "isOnline" -> true;
             case "getWorld" -> world;
@@ -1017,13 +908,11 @@ class PrivateModelPerformanceTest
             case "isFlying" -> this.flying;
             case "hasPermission" ->
                 this.allowed && Set.of("mact.private.upload", "mact.private.view").contains(args[0]);
-            case "sendPluginMessage" ->
-            {
+            case "sendPluginMessage" -> {
                 JsonObject value = JsonParser.parseString(new String((byte[]) args[2], StandardCharsets.UTF_8))
                         .getAsJsonObject();
                 this.messages.add(value);
-                if (value.get("type").getAsString().equals("asset_chunk") && this.onChunk != null)
-                {
+                if (value.get("type").getAsString().equals("asset_chunk") && this.onChunk != null) {
                     this.onChunk.run();
                 }
                 yield null;
@@ -1032,34 +921,28 @@ class PrivateModelPerformanceTest
             });
         }
 
-        int count(String type)
-        {
+        int count(String type) {
             return (int) this.messages.stream().filter(value -> value.get("type").getAsString().equals(type)).count();
         }
 
-        JsonObject last(String type)
-        {
+        JsonObject last(String type) {
             return this.messages.stream().filter(value -> value.get("type").getAsString().equals(type))
                     .reduce((left, right) -> right).orElseThrow();
         }
     }
 
-    private static byte[] bundle() throws Exception
-    {
+    private static byte[] bundle() throws Exception {
         byte[] sound = new byte[50 * 1024];
         new Random(17).nextBytes(sound);
-        System.arraycopy(new byte[]
-        { 'O', 'g', 'g', 'S' }, 0, sound, 0, 4);
+        System.arraycopy(new byte[] { 'O', 'g', 'g', 'S' }, 0, sound, 0, 4);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        try (ZipOutputStream zip = new ZipOutputStream(out))
-        {
+        try (ZipOutputStream zip = new ZipOutputStream(out)) {
             Map<String, byte[]> files = new LinkedHashMap<>();
             files.put("manifest.json",
                     "{\"format\":1,\"kind\":\"ysm\",\"entry\":\"ysm.json\"}".getBytes(StandardCharsets.UTF_8));
             files.put("ysm.json", "{}".getBytes(StandardCharsets.UTF_8));
             files.put("sounds/tone.ogg", sound);
-            for (Map.Entry<String, byte[]> file : files.entrySet())
-            {
+            for (Map.Entry<String, byte[]> file : files.entrySet()) {
                 ZipEntry entry = new ZipEntry(file.getKey());
                 entry.setTime(0);
                 zip.putNextEntry(entry);
@@ -1070,50 +953,40 @@ class PrivateModelPerformanceTest
         return out.toByteArray();
     }
 
-    private static JsonObject packet(String type)
-    {
+    private static JsonObject packet(String type) {
         JsonObject value = new JsonObject();
         value.addProperty("protocol", 1);
         value.addProperty("type", type);
         return value;
     }
 
-    private static Object field(Object target, String name) throws Exception
-    {
+    private static Object field(Object target, String name) throws Exception {
         Field field = target.getClass().getDeclaredField(name);
         field.setAccessible(true);
         return field.get(target);
     }
 
-    private static void setField(Object target, String name, Object value) throws Exception
-    {
+    private static void setField(Object target, String name, Object value) throws Exception {
         Field field = target.getClass().getDeclaredField(name);
         field.setAccessible(true);
         field.set(target, value);
     }
 
-    private static void invoke(Object target, String name) throws Exception
-    {
+    private static void invoke(Object target, String name) throws Exception {
         Method method = target.getClass().getDeclaredMethod(name);
         method.setAccessible(true);
-        try
-        {
+        try {
             method.invoke(target);
-        }
-        catch (InvocationTargetException failure)
-        {
-            if (failure.getCause() instanceof Exception cause)
-            {
+        } catch (InvocationTargetException failure) {
+            if (failure.getCause() instanceof Exception cause) {
                 throw cause;
             }
             throw failure;
         }
     }
 
-    private static Object objectMethod(Object instance, Method method, Object[] args)
-    {
-        return switch (method.getName())
-        {
+    private static Object objectMethod(Object instance, Method method, Object[] args) {
+        return switch (method.getName()) {
         case "equals" -> instance == args[0];
         case "hashCode" -> System.identityHashCode(instance);
         case "toString" -> "PrivatePerformanceFixture";
@@ -1121,9 +994,7 @@ class PrivateModelPerformanceTest
         };
     }
 
-    private static <T> T proxy(Class<T> type, InvocationHandler handler)
-    {
-        return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]
-        { type }, handler));
+    private static <T> T proxy(Class<T> type, InvocationHandler handler) {
+        return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[] { type }, handler));
     }
 }

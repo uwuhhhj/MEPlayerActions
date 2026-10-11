@@ -22,16 +22,14 @@ import java.util.Set;
 import static com.simmc.meplayeractions.MEPlayerActionsPlugin.message;
 
 /** A relay-only mode. No Settings, actions, ModelEngine or gameplay classes are linked here. */
-public final class PrivateOnlyBackend implements ServerBackend, Listener
-{
+public final class PrivateOnlyBackend implements ServerBackend, Listener {
     private final MEPlayerActionsPlugin plugin;
     private final String reason;
     private final PrivateModelSyncService.Policy policy;
     private final PerformanceSettings performance;
     private PrivateModelSyncService relay;
 
-    public PrivateOnlyBackend(MEPlayerActionsPlugin plugin, ConfigurationSection config, String reason)
-    {
+    public PrivateOnlyBackend(MEPlayerActionsPlugin plugin, ConfigurationSection config, String reason) {
         this.plugin = Objects.requireNonNull(plugin);
         this.reason = Objects.requireNonNull(reason);
         this.policy = PrivateModelSyncService.Policy.fromConfiguration(config);
@@ -39,8 +37,7 @@ public final class PrivateOnlyBackend implements ServerBackend, Listener
     }
 
     @Override
-    public void start()
-    {
+    public void start() {
         this.relay = new PrivateModelSyncService(this.plugin, Set::of);
         this.relay.configure(this.policy);
         this.relay.configurePerformance(this.performance);
@@ -49,14 +46,12 @@ public final class PrivateOnlyBackend implements ServerBackend, Listener
     }
 
     @Override
-    public String diagnosis()
-    {
+    public String diagnosis() {
         return "仅私人多人同步（" + this.reason + "）；" + (this.policy.enabled() ? "私人同步已开启" : "私人同步关闭");
     }
 
     @Override
-    public void status(CommandSender sender)
-    {
+    public void status(CommandSender sender) {
         message(sender, "模式：" + diagnosis());
         message(sender,
                 "开关：client-sync.enabled 与 client-sync.private-models.enabled；发布权限 mact.private.upload，观看权限 mact.private.view。");
@@ -65,21 +60,17 @@ public final class PrivateOnlyBackend implements ServerBackend, Listener
     }
 
     @Override
-    public void playerStatus(CommandSender sender, Player player)
-    {
+    public void playerStatus(CommandSender sender, Player player) {
         message(sender, "玩家：" + player.getName());
         message(sender, this.relay.status(player));
     }
 
     @Override
-    public void handleAction(Player player, String[] args)
-    {
+    public void handleAction(Player player, String[] args) {
         String[] normalized = CommandLayout.normalize(args);
         MEPlayerActionsPlugin.permission(player, MEPlayerActionsPlugin.commandPermission(normalized[0]));
-        switch (normalized[0])
-        {
-        case "help" ->
-        {
+        switch (normalized[0]) {
+        case "help" -> {
             message(player, "模式：" + diagnosis());
             message(player, "私人外观在客户端选取并显式开启多人同步；服务器同时开启两项开关并授予发布/观看权限后才能共享。");
             message(player, CommandLayout.PREFIX + " status 查看诊断；reload 重载配置。服务器伪装与动作需要 ModelEngine R4.1.1。");
@@ -90,10 +81,8 @@ public final class PrivateOnlyBackend implements ServerBackend, Listener
     }
 
     @Override
-    public List<String> tabComplete(CommandSender sender, Command command, String alias, String[] args)
-    {
-        if (args.length != 1 || !sender.hasPermission("mact.use"))
-        {
+    public List<String> tabComplete(CommandSender sender, Command command, String alias, String[] args) {
+        if (args.length != 1 || !sender.hasPermission("mact.use")) {
             return List.of();
         }
 
@@ -104,32 +93,25 @@ public final class PrivateOnlyBackend implements ServerBackend, Listener
     }
 
     @Override
-    public void forget(Player player)
-    {
-        if (this.relay != null)
-        {
+    public void forget(Player player) {
+        if (this.relay != null) {
             this.relay.forget(player);
         }
     }
 
     @EventHandler
-    public void worldChanged(PlayerChangedWorldEvent event)
-    {
-        if (this.relay != null)
-        {
+    public void worldChanged(PlayerChangedWorldEvent event) {
+        if (this.relay != null) {
             this.relay.observationChanged(event.getPlayer());
         }
 
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void teleport(PlayerTeleportEvent event)
-    {
+    public void teleport(PlayerTeleportEvent event) {
         Player player = event.getPlayer();
-        Bukkit.getScheduler().runTask(this.plugin, () ->
-        {
-            if (this.relay != null && player.isOnline())
-            {
+        Bukkit.getScheduler().runTask(this.plugin, () -> {
+            if (this.relay != null && player.isOnline()) {
                 this.relay.observationChanged(player);
             }
 
@@ -137,11 +119,9 @@ public final class PrivateOnlyBackend implements ServerBackend, Listener
     }
 
     @Override
-    public void close()
-    {
+    public void close() {
         HandlerList.unregisterAll(this);
-        if (this.relay != null)
-        {
+        if (this.relay != null) {
             this.relay.close();
             this.relay = null;
         }

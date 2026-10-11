@@ -19,14 +19,12 @@ import javax.imageio.ImageIO;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class ServerCachedModelCatalogTest
-{
+class ServerCachedModelCatalogTest {
     @TempDir
     Path temporary;
 
     @Test
-    void oldHashOnlyAssetsRemainPreviewableWithoutGuessingServerIdentity() throws Exception
-    {
+    void oldHashOnlyAssetsRemainPreviewableWithoutGuessingServerIdentity() throws Exception {
         ServerModelCache cache = new ServerModelCache(this.temporary);
         byte[] raw = model("claimed_server_id");
         String hash = AssetTransfer.hash(raw);
@@ -42,8 +40,7 @@ class ServerCachedModelCatalogTest
     }
 
     @Test
-    void authorizedIdentityPersistsAcrossRestartsButNeverBecomesCatalogAuthority() throws Exception
-    {
+    void authorizedIdentityPersistsAcrossRestartsButNeverBecomesCatalogAuthority() throws Exception {
         byte[] raw = model("asset");
         String hash = AssetTransfer.hash(raw);
         new ServerModelCache(this.temporary).writeValidated("ysm_01_jk", hash, raw);
@@ -54,8 +51,7 @@ class ServerCachedModelCatalogTest
     }
 
     @Test
-    void latestCachedVersionOwnsThePersistentIdAndOldVersionIsOnlyAnonymous() throws Exception
-    {
+    void latestCachedVersionOwnsThePersistentIdAndOldVersionIsOnlyAnonymous() throws Exception {
         ServerModelCache cache = new ServerModelCache(this.temporary);
         byte[] older = model("older"), newer = model("newer");
         cache.writeValidated("model", AssetTransfer.hash(older), older);
@@ -68,8 +64,7 @@ class ServerCachedModelCatalogTest
     }
 
     @Test
-    void identicalContentCanRetainSeveralAuthorizedModelNames() throws Exception
-    {
+    void identicalContentCanRetainSeveralAuthorizedModelNames() throws Exception {
         ServerModelCache cache = new ServerModelCache(this.temporary);
         byte[] raw = model("asset");
         String hash = AssetTransfer.hash(raw);
@@ -81,8 +76,7 @@ class ServerCachedModelCatalogTest
     }
 
     @Test
-    void fullHashAndModelParsingAreBothRequiredToExposeEntries() throws Exception
-    {
+    void fullHashAndModelParsingAreBothRequiredToExposeEntries() throws Exception {
         ServerModelCache cache = new ServerModelCache(this.temporary);
         byte[] invalid = "not a bbmodel".getBytes(StandardCharsets.UTF_8);
         cache.writeValidated("bad", AssetTransfer.hash(invalid), invalid);
@@ -95,8 +89,7 @@ class ServerCachedModelCatalogTest
     }
 
     @Test
-    void removedAssetsCannotSurviveThroughStaleIdentityMetadata() throws Exception
-    {
+    void removedAssetsCannotSurviveThroughStaleIdentityMetadata() throws Exception {
         ServerModelCache cache = new ServerModelCache(this.temporary);
         byte[] raw = model("asset");
         String hash = AssetTransfer.hash(raw);
@@ -106,15 +99,11 @@ class ServerCachedModelCatalogTest
     }
 
     @Test
-    void invalidIdentityIsRejectedBeforeWritingAnyAsset() throws Exception
-    {
+    void invalidIdentityIsRejectedBeforeWritingAnyAsset() throws Exception {
         Path directory = this.temporary.resolve("cache");
         ServerModelCache cache = new ServerModelCache(directory);
         byte[] raw = model("asset");
-        for (String id : new String[]
-        { "../outside", "cache:hash", "name extra", "MODEL", "x".repeat(65) })
-
-        {
+        for (String id : new String[] { "../outside", "cache:hash", "name extra", "MODEL", "x".repeat(65) }) {
             assertThrows(IOException.class, () -> cache.writeValidated(id, AssetTransfer.hash(raw), raw));
         }
 
@@ -122,8 +111,7 @@ class ServerCachedModelCatalogTest
     }
 
     @Test
-    void corruptUnsafeAndDeepMetadataFallBackToAnonymousValidatedAssets() throws Exception
-    {
+    void corruptUnsafeAndDeepMetadataFallBackToAnonymousValidatedAssets() throws Exception {
         ServerModelCache cache = new ServerModelCache(this.temporary);
         byte[] raw = model("asset");
         String hash = AssetTransfer.hash(raw);
@@ -131,8 +119,7 @@ class ServerCachedModelCatalogTest
         for (String text : List.of("not json",
                 "{\"version\":1,\"models\":[{\"modelId\":\"../outside\",\"hash\":\"" + hash + "\",\"cachedAt\":1}]}",
                 "{\"version\":" + "[".repeat(10_000) + "0" + "]".repeat(10_000) + ",\"models\":[]}",
-                "{\"version\":1,\"version\":1,\"models\":[]}"))
-        {
+                "{\"version\":1,\"version\":1,\"models\":[]}")) {
             Files.writeString(this.temporary.resolve("server-models.json"), text);
             List<ServerCachedModelCatalog.Model> result = ServerCachedModelCatalog.load(cache);
             assertEquals(1, result.size());
@@ -141,8 +128,7 @@ class ServerCachedModelCatalogTest
     }
 
     @Test
-    void inspectionDoesNotMakeEveryBrowsedAssetRecentlyUsed() throws Exception
-    {
+    void inspectionDoesNotMakeEveryBrowsedAssetRecentlyUsed() throws Exception {
         ServerModelCache cache = new ServerModelCache(this.temporary);
         byte[] raw = model("asset");
         String hash = AssetTransfer.hash(raw);
@@ -155,14 +141,12 @@ class ServerCachedModelCatalogTest
     }
 
     @Test
-    void modelAndIdentityInventoryRemainBounded() throws Exception
-    {
+    void modelAndIdentityInventoryRemainBounded() throws Exception {
         ServerModelCache cache = new ServerModelCache(this.temporary);
         byte[] raw = model("asset");
         String hash = AssetTransfer.hash(raw);
         cache.writeValidated(hash, raw);
-        for (int i = 0; i < ServerModelCache.MAX_FILES + 3; i++)
-        {
+        for (int i = 0; i < ServerModelCache.MAX_FILES + 3; i++) {
             cache.rememberModel("model_" + i, hash);
         }
 
@@ -171,8 +155,7 @@ class ServerCachedModelCatalogTest
     }
 
     @Test
-    void repeatedKnownIdentityDoesNotRewriteMetadataOrRescanTheGallery() throws Exception
-    {
+    void repeatedKnownIdentityDoesNotRewriteMetadataOrRescanTheGallery() throws Exception {
         ServerModelCache cache = new ServerModelCache(this.temporary);
         byte[] raw = model("asset");
         String hash = AssetTransfer.hash(raw);
@@ -186,15 +169,13 @@ class ServerCachedModelCatalogTest
     }
 
     @Test
-    void unchangedFingerprintsReuseValidationAndModifiedOrEvictedFilesInvalidateIt() throws Exception
-    {
+    void unchangedFingerprintsReuseValidationAndModifiedOrEvictedFilesInvalidateIt() throws Exception {
         ServerModelCache cache = new ServerModelCache(this.temporary);
         byte[] raw = model("asset");
         String hash = AssetTransfer.hash(raw);
         cache.writeValidated(hash, raw);
         AtomicInteger parses = new AtomicInteger();
-        ServerCachedModelCatalog catalog = new ServerCachedModelCatalog(cache, bytes ->
-        {
+        ServerCachedModelCatalog catalog = new ServerCachedModelCatalog(cache, bytes -> {
             parses.incrementAndGet();
             return true;
         });
@@ -213,15 +194,13 @@ class ServerCachedModelCatalogTest
     }
 
     @Test
-    void rejectedModelOutcomesAreMemoizedUntilTheFileStatChanges() throws Exception
-    {
+    void rejectedModelOutcomesAreMemoizedUntilTheFileStatChanges() throws Exception {
         ServerModelCache cache = new ServerModelCache(this.temporary);
         byte[] raw = model("asset");
         String hash = AssetTransfer.hash(raw);
         cache.writeValidated(hash, raw);
         AtomicInteger parses = new AtomicInteger();
-        ServerCachedModelCatalog catalog = new ServerCachedModelCatalog(cache, bytes ->
-        {
+        ServerCachedModelCatalog catalog = new ServerCachedModelCatalog(cache, bytes -> {
             parses.incrementAndGet();
             return false;
         });
@@ -231,8 +210,7 @@ class ServerCachedModelCatalogTest
     }
 
     @Test
-    void inspectionIsReadOnlyAndRespectsTheAggregateByteBudget() throws Exception
-    {
+    void inspectionIsReadOnlyAndRespectsTheAggregateByteBudget() throws Exception {
         ServerModelCache cache = new ServerModelCache(this.temporary, 100);
         byte[] first = new byte[70], second = new byte[70];
         first[0] = 1;
@@ -248,8 +226,7 @@ class ServerCachedModelCatalogTest
         assertTrue(Files.exists(this.temporary.resolve(a + ".bbmodel")));
     }
 
-    private static byte[] model(String name) throws Exception
-    {
+    private static byte[] model(String name) throws Exception {
         JsonObject json = JsonParser.parseString("""
                 {"meta":{"format_version":"5.0"},"resolution":{"width":16,"height":16},"textures":[],"animations":[],
                  "elements":[{"uuid":"cube","type":"cube","from":[0,0,0],"to":[16,16,16],"origin":[0,0,0],

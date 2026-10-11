@@ -16,11 +16,9 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NativeAuthorRuntimeTest
-{
+class NativeAuthorRuntimeTest {
     @Test
-    void capturedBoneStructFollowsTheLivePoseWhileItsScalarCaptureDoesNot() throws Exception
-    {
+    void capturedBoneStructFollowsTheLivePoseWhileItsScalarCaptureDoesNot() throws Exception {
         JsonObject raw = fixture();
         raw.add("ysm_events",
                 JsonParser.parseString("{\"player_init\":[\"v.live=ysm.bone_pos('root');v.scalar=v.live.x;\"]}"));
@@ -40,19 +38,16 @@ class NativeAuthorRuntimeTest
     }
 
     @Test
-    void configurationUsesRealFunctionsQueriesAndIsolatesReadSideEffects() throws Exception
-    {
+    void configurationUsesRealFunctionsQueriesAndIsolatesReadSideEffects() throws Exception {
         JsonObject raw = fixture();
         raw.add("ysm_functions", JsonParser.parseString("{\"pick\":\"return args[-1]+q.health;\"}"));
         raw.add("ysm_events", JsonParser
                 .parseString("{\"player_init\":[\"v.box.x=5;v.init+=1;\"],\"player_update\":[\"v.update+=1;\"]}"));
         AnimationPlayer player = player(raw);
         List<String> effects = new ArrayList<>();
-        player.configureFrame(c ->
-        {
+        player.configureFrame(c -> {
             c.query("q.health", 9d);
-            c.functions((name, args) ->
-            {
+            c.functions((name, args) -> {
                 effects.add(name);
                 return null;
             });
@@ -76,8 +71,7 @@ class NativeAuthorRuntimeTest
     }
 
     @Test
-    void connectedSyncOnlyRelaysAndServerEchoExecutesOnceWithoutForwardingAgain() throws Exception
-    {
+    void connectedSyncOnlyRelaysAndServerEchoExecutesOnceWithoutForwardingAgain() throws Exception {
         JsonObject raw = fixture();
         raw.add("ysm_events", JsonParser.parseString("{\"sync\":[\"v.received+=1;v.value=args[0];ysm.sync(999);\"]}"));
         AnimationPlayer player = player(raw);
@@ -94,16 +88,13 @@ class NativeAuthorRuntimeTest
     }
 
     @Test
-    void childOwnerCallsAuthorFunctionsWithItsEntityQueriesAndTheParentStorage() throws Exception
-    {
+    void childOwnerCallsAuthorFunctionsWithItsEntityQueriesAndTheParentStorage() throws Exception {
         JsonObject raw = fixture();
         raw.add("ysm_functions", JsonParser.parseString("{\"pick\":\"v.total+=q.health;return v.total;\"}"));
         AnimationPlayer player = player(raw);
-        player.configureFrame(c ->
-        {
+        player.configureFrame(c -> {
             c.query("q.health", 99d);
-            c.query("ysm.projectile_owner", (Molang.ContextValue) () ->
-            {
+            c.query("ysm.projectile_owner", (Molang.ContextValue) () -> {
                 Molang.Context owner = new Molang.Context();
                 owner.enableNativeYsm();
                 owner.query("q.health", 6d);
@@ -118,8 +109,7 @@ class NativeAuthorRuntimeTest
     }
 
     @Test
-    void syncBeforeTheFirstFrameIsBoundedOrderedAndDroppedWhenTheWorldIsReset() throws Exception
-    {
+    void syncBeforeTheFirstFrameIsBoundedOrderedAndDroppedWhenTheWorldIsReset() throws Exception {
         JsonObject raw = fixture();
         raw.add("ysm_events", JsonParser
                 .parseString("{\"player_init\":[\"v.order=0;\"],\"sync\":[\"v.order=v.order*10+args[0];\"]}"));
@@ -129,8 +119,7 @@ class NativeAuthorRuntimeTest
         player.sample(0, List.of());
         assertEquals(12d, player.expressionVariables().get("variable.order"));
         AnimationPlayer pending = player(raw);
-        for (int i = 0; i < 32; i++)
-        {
+        for (int i = 0; i < 32; i++) {
             assertTrue(pending.applySync(List.of(1d)));
         }
 
@@ -140,15 +129,13 @@ class NativeAuthorRuntimeTest
         assertEquals(0d, pending.expressionVariables().get("variable.order"));
     }
 
-    private static AnimationPlayer player(JsonObject raw)
-    {
+    private static AnimationPlayer player(JsonObject raw) {
         AnimationPlayer player = new AnimationPlayer(BbModel.parse(raw.toString().getBytes(StandardCharsets.UTF_8)));
         player.enableNativeYsm();
         return player;
     }
 
-    private static JsonObject fixture() throws Exception
-    {
+    private static JsonObject fixture() throws Exception {
         JsonObject raw = JsonParser
                 .parseString(
                         """

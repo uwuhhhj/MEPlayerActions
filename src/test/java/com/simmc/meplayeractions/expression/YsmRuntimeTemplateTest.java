@@ -9,10 +9,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class YsmRuntimeTemplateTest
-{
-    private static JsonObject model()
-    {
+class YsmRuntimeTemplateTest {
+    private static JsonObject model() {
         return JsonParser.parseString("""
                 {"animations":[
                   {"name":"parallel1","animators":{"init":{"name":"events","type":"effect","keyframes":[
@@ -31,12 +29,10 @@ class YsmRuntimeTemplateTest
     }
 
     @Test
-    void eachDistinctScriptAndAxisIsCompiledOnceAndInstancesReuseTheImmutableTemplate()
-    {
+    void eachDistinctScriptAndAxisIsCompiledOnceAndInstancesReuseTheImmutableTemplate() {
         JsonObject source = model();
         AtomicInteger compiles = new AtomicInteger();
-        YsmRuntime.Template template = YsmRuntime.Template.compile(source, text ->
-        {
+        YsmRuntime.Template template = YsmRuntime.Template.compile(source, text -> {
             compiles.incrementAndGet();
             return Molang.compile(text);
         });
@@ -55,8 +51,7 @@ class YsmRuntimeTemplateTest
     }
 
     @Test
-    void physicsAccumulatorVariablesEventTimesAndResetAreIndependentBetweenInstances()
-    {
+    void physicsAccumulatorVariablesEventTimesAndResetAreIndependentBetweenInstances() {
         YsmRuntime.Template template = YsmRuntime.Template.compile(model());
         YsmRuntime first = new YsmRuntime(template, 1);
         YsmRuntime second = new YsmRuntime(template, 2);

@@ -15,11 +15,9 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Fixtures pin OpenYSM 0306e1f processor, queue, predicate and audio-manager lifecycle semantics. */
-class NativeControllerMigrationTest
-{
+class NativeControllerMigrationTest {
     @Test
-    void unownedFinalChannelResetsFromLastOwnedTickOverThreeTicks()
-    {
+    void unownedFinalChannelResetsFromLastOwnedTickOverThreeTicks() {
         JsonObject raw = fixture();
         clip(raw, "owned", "position", 12, 0, 0);
         controllers(raw,
@@ -43,8 +41,7 @@ class NativeControllerMigrationTest
     }
 
     @Test
-    void newAnimationBeginsFromActualFinalBoneSnapshotIncludingLowerPriorityController()
-    {
+    void newAnimationBeginsFromActualFinalBoneSnapshotIncludingLowerPriorityController() {
         JsonObject raw = fixture();
         clip(raw, "base", "position", 16, 0, 0);
         clip(raw, "hold", "position", 32, 0, 0);
@@ -62,8 +59,7 @@ class NativeControllerMigrationTest
     }
 
     @Test
-    void predicateBeginningScaleUsesFullProgressAndAuthoredWeight()
-    {
+    void predicateBeginningScaleUsesFullProgressAndAuthoredWeight() {
         JsonObject raw = fixture();
         clip(raw, "hidden", "scale", 0, 1, 1);
         AnimationPlayer player = player(raw);
@@ -79,8 +75,7 @@ class NativeControllerMigrationTest
     }
 
     @Test
-    void nativePredicateRetainsSourceCachedCompletionUntilEndingAndThenStopsAudio()
-    {
+    void nativePredicateRetainsSourceCachedCompletionUntilEndingAndThenStopsAudio() {
         JsonObject raw = fixture();
         clip(raw, "base", "position", 16, 0, 0);
         clip(raw, "hold", "position", 32, 0, 0);
@@ -106,8 +101,7 @@ class NativeControllerMigrationTest
     }
 
     @Test
-    void authorStateScaleKeepsOrdinaryBeginningInterpolation()
-    {
+    void authorStateScaleKeepsOrdinaryBeginningInterpolation() {
         JsonObject raw = fixture();
         clip(raw, "grow", "scale", 2, 1, 1);
         controllers(raw,
@@ -120,8 +114,7 @@ class NativeControllerMigrationTest
     }
 
     @Test
-    void declaredScaleEndingAlsoRespectsPredicatePersistentCompletionMinimum()
-    {
+    void declaredScaleEndingAlsoRespectsPredicatePersistentCompletionMinimum() {
         JsonObject raw = fixture();
         clip(raw, "base", "scale", 1, 1, 1);
         clip(raw, "grow", "scale", 2, 1, 1);
@@ -138,8 +131,7 @@ class NativeControllerMigrationTest
     }
 
     @Test
-    void rotationNlerpIncludesInitialBoneRotationAndMatchesAbsoluteQuaternionPath()
-    {
+    void rotationNlerpIncludesInitialBoneRotationAndMatchesAbsoluteQuaternionPath() {
         JsonObject raw = fixture();
         Vector3f initial = new Vector3f(65, 30, 20);
         raw.getAsJsonArray("outliner").get(0).getAsJsonObject().add("rotation", JsonParser.parseString("[65,30,20]"));
@@ -159,8 +151,7 @@ class NativeControllerMigrationTest
     }
 
     @Test
-    void endingOneSlotDoesNotRestartOrDampUnrelatedRunningChannelInSameState()
-    {
+    void endingOneSlotDoesNotRestartOrDampUnrelatedRunningChannelInSameState() {
         JsonObject raw = fixture();
         clip(raw, "once", "position", 16, 0, 0);
         clip(raw, "ongoing", "rotation", 0, 0, 0);
@@ -185,8 +176,7 @@ class NativeControllerMigrationTest
     }
 
     @Test
-    void invalidNativeControllerAnimationConditionUsesSourceZeroWithoutWeakeningOrdinaryParser()
-    {
+    void invalidNativeControllerAnimationConditionUsesSourceZeroWithoutWeakeningOrdinaryParser() {
         JsonObject raw = fixture();
         clip(raw, "a", "position", 16, 0, 0);
         controllers(raw, "{\"player.post_main\":{\"states\":{\"default\":{\"animations\":[{\"a\":\"bad(\"}]}}}}");
@@ -199,10 +189,8 @@ class NativeControllerMigrationTest
     }
 
     @Test
-    void absentAndEmptyNativeControllerAnimationConditionsKeepSourceDefaultActive()
-    {
-        for (String condition : List.of("\"a\"", "{\"a\":\"\"}"))
-        {
+    void absentAndEmptyNativeControllerAnimationConditionsKeepSourceDefaultActive() {
+        for (String condition : List.of("\"a\"", "{\"a\":\"\"}")) {
             JsonObject raw = fixture();
             clip(raw, "a", "position", 16, 0, 0);
             controllers(raw, "{\"player.post_main\":{\"states\":{\"default\":{\"animations\":[" + condition + "]}}}}");
@@ -213,8 +201,7 @@ class NativeControllerMigrationTest
     }
 
     @Test
-    void nativeRawExpressionsEvaluateRotationBeforePosition()
-    {
+    void nativeRawExpressionsEvaluateRotationBeforePosition() {
         JsonObject raw = fixture();
         clip(raw, "a", "position", 0, 0, 0);
         channel(raw, "a", "position", "v.marker", "0", "0");
@@ -226,8 +213,7 @@ class NativeControllerMigrationTest
     }
 
     @Test
-    void nativeSlotExpressionsInterleaveByChannelInsteadOfSamplingWholeClips()
-    {
+    void nativeSlotExpressionsInterleaveByChannelInsteadOfSamplingWholeClips() {
         JsonObject raw = fixture();
         clip(raw, "a", "position", 0, 0, 0);
         clip(raw, "b", "position", 0, 0, 0);
@@ -242,8 +228,7 @@ class NativeControllerMigrationTest
     }
 
     @Test
-    void nativeBlendWeightIsFrozenBeforeRawChannelSideEffects()
-    {
+    void nativeBlendWeightIsFrozenBeforeRawChannelSideEffects() {
         JsonObject raw = fixture();
         clip(raw, "a", "position", 16, 0, 0);
         channel(raw, "a", "position", "v.weight=0;return 16;", "0", "0");
@@ -257,8 +242,7 @@ class NativeControllerMigrationTest
     }
 
     @Test
-    void nativeEachSlotRunsEventsAndWeightBeforeTheNextSlotCondition()
-    {
+    void nativeEachSlotRunsEventsAndWeightBeforeTheNextSlotCondition() {
         JsonObject raw = fixture();
         clip(raw, "a", "position", 16, 0, 0);
         clip(raw, "b", "position", 0, 0, 0);
@@ -273,8 +257,7 @@ class NativeControllerMigrationTest
     }
 
     @Test
-    void nativeInactiveSlotStillEvaluatesWeightBeforeActiveRawChannels()
-    {
+    void nativeInactiveSlotStillEvaluatesWeightBeforeActiveRawChannels() {
         JsonObject raw = fixture();
         clip(raw, "a", "position", 0, 0, 0);
         clip(raw, "b", "position", 0, 0, 0);
@@ -287,8 +270,7 @@ class NativeControllerMigrationTest
     }
 
     @Test
-    void nativeLaterSlotConditionReadsThePreviousInstanceAnimationContext()
-    {
+    void nativeLaterSlotConditionReadsThePreviousInstanceAnimationContext() {
         JsonObject raw = fixture();
         clip(raw, "a", "rotation", 0, 0, 0);
         clip(raw, "b", "position", 16, 0, 0);
@@ -302,8 +284,7 @@ class NativeControllerMigrationTest
     }
 
     @Test
-    void inactiveSlotStillEstablishesSourceProviderBoneOrder()
-    {
+    void inactiveSlotStillEstablishesSourceProviderBoneOrder() {
         JsonObject raw = fixture();
         raw.getAsJsonArray("outliner").add(
                 JsonParser.parseString("{\"uuid\":\"other\",\"name\":\"other\",\"origin\":[0,0,0],\"children\":[]}"));
@@ -326,8 +307,7 @@ class NativeControllerMigrationTest
     }
 
     @Test
-    void controllerAndPlaybackSoundsStopWithinTheirOwnScopesAndGlobalSurvivesStateTransition()
-    {
+    void controllerAndPlaybackSoundsStopWithinTheirOwnScopesAndGlobalSurvivesStateTransition() {
         JsonObject raw = fixture();
         clip(raw, "a", "position", 0, 0, 0);
         timeline(raw, "a", "ysm.play_sound(3,'safe:slot',4);ysm.play_sound(4,'safe:global',6);");
@@ -353,8 +333,7 @@ class NativeControllerMigrationTest
     }
 
     @Test
-    void loopStopsPreviousPlaybackManagerBeforeZeroTimelineStartsAgain()
-    {
+    void loopStopsPreviousPlaybackManagerBeforeZeroTimelineStartsAgain() {
         JsonObject raw = fixture();
         clip(raw, "a", "position", 0, 0, 0);
         raw.getAsJsonArray("animations").get(0).getAsJsonObject().addProperty("length", .5);
@@ -375,8 +354,7 @@ class NativeControllerMigrationTest
     }
 
     @Test
-    void authorResetStopsPlaybackAudioWithoutExecutingDeferredAuthorEvents()
-    {
+    void authorResetStopsPlaybackAudioWithoutExecutingDeferredAuthorEvents() {
         JsonObject raw = fixture();
         clip(raw, "a", "position", 0, 0, 0);
         timeline(raw, "a", "ysm.play_sound(1,'safe:active',4);ysm.defer('later',1);");
@@ -395,33 +373,26 @@ class NativeControllerMigrationTest
         assertFalse(player.expressionVariables().containsKey("variable.deferred"));
     }
 
-    private record Effect(String name, String scope, List<Object> args)
-    {
+    private record Effect(String name, String scope, List<Object> args) {
     }
 
-    private static List<Effect> effects(AnimationPlayer player)
-    {
+    private static List<Effect> effects(AnimationPlayer player) {
         List<Effect> calls = new ArrayList<>();
-        player.configureFrame(context -> context.functions((name, args) ->
-        {
+        player.configureFrame(context -> context.functions((name, args) -> {
             calls.add(new Effect(name, context.effectScope(), List.copyOf(args)));
             return true;
         }));
         return calls;
     }
 
-    private static String scopeFor(List<Effect> calls, String resource)
-    {
+    private static String scopeFor(List<Effect> calls, String resource) {
         return calls.stream().filter(e -> e.name.equals("ysm.play_sound") && e.args.contains(resource)).findFirst()
                 .orElseThrow().scope;
     }
 
-    private static int index(List<Effect> calls, String name, String scope)
-    {
-        for (int i = 0; i < calls.size(); i++)
-        {
-            if (calls.get(i).name.equals(name) && calls.get(i).scope.equals(scope))
-            {
+    private static int index(List<Effect> calls, String name, String scope) {
+        for (int i = 0; i < calls.size(); i++) {
+            if (calls.get(i).name.equals(name) && calls.get(i).scope.equals(scope)) {
                 return i;
             }
 
@@ -429,36 +400,30 @@ class NativeControllerMigrationTest
         return -1;
     }
 
-    private static Quaternionf quaternion(Vector3f degrees)
-    {
+    private static Quaternionf quaternion(Vector3f degrees) {
         degrees.mul((float) (Math.PI / 180));
         return new Quaternionf().rotateZYX(degrees.z, degrees.y, degrees.x);
     }
 
-    private static double translationX(AnimationPlayer player)
-    {
+    private static double translationX(AnimationPlayer player) {
         return player.boneTransform("bone").orElseThrow().m30();
     }
 
-    private static AnimationPlayer player(JsonObject raw)
-    {
+    private static AnimationPlayer player(JsonObject raw) {
         AnimationPlayer player = new AnimationPlayer(BbModel.parse(raw.toString().getBytes(StandardCharsets.UTF_8)));
         player.enableNativeYsm();
         return player;
     }
 
-    private static BbModel.Layer layer(String slot, String clip, long started, int in)
-    {
+    private static BbModel.Layer layer(String slot, String clip, long started, int in) {
         return new BbModel.Layer(slot, clip, started, 1, "LOOP", in, 4);
     }
 
-    private static void controllers(JsonObject raw, String text)
-    {
+    private static void controllers(JsonObject raw, String text) {
         raw.add("ysm_animation_controllers", JsonParser.parseString(text));
     }
 
-    private static void events(JsonObject raw, String name, String script)
-    {
+    private static void events(JsonObject raw, String name, String script) {
         JsonObject events = raw.has("ysm_events") ? raw.getAsJsonObject("ysm_events") : new JsonObject();
         JsonArray array = new JsonArray();
         array.add(script);
@@ -466,12 +431,9 @@ class NativeControllerMigrationTest
         raw.add("ysm_events", events);
     }
 
-    private static void timeline(JsonObject raw, String name, String script)
-    {
-        for (JsonElement element : raw.getAsJsonArray("animations"))
-        {
-            if (element.getAsJsonObject().get("name").getAsString().equals(name))
-            {
+    private static void timeline(JsonObject raw, String name, String script) {
+        for (JsonElement element : raw.getAsJsonArray("animations")) {
+            if (element.getAsJsonObject().get("name").getAsString().equals(name)) {
                 JsonObject point = new JsonObject();
                 point.addProperty("script", script);
                 JsonArray points = new JsonArray();
@@ -491,8 +453,7 @@ class NativeControllerMigrationTest
 
     }
 
-    private static void clip(JsonObject raw, String name, String channel, double x, double y, double z)
-    {
+    private static void clip(JsonObject raw, String name, String channel, double x, double y, double z) {
         JsonObject point = new JsonObject();
         point.addProperty("x", x);
         point.addProperty("y", y);
@@ -517,32 +478,25 @@ class NativeControllerMigrationTest
         raw.getAsJsonArray("animations").add(clip);
     }
 
-    private static void channel(JsonObject raw, String animation, String channel, String x, String y, String z)
-    {
+    private static void channel(JsonObject raw, String animation, String channel, String x, String y, String z) {
         channel(raw, animation, "bone", channel, x, y, z);
     }
 
     private static void channel(JsonObject raw, String animation, String bone, String channel, String x, String y,
-            String z)
-    {
-        for (JsonElement element : raw.getAsJsonArray("animations"))
-        {
-            if (element.getAsJsonObject().get("name").getAsString().equals(animation))
-            {
+            String z) {
+        for (JsonElement element : raw.getAsJsonArray("animations")) {
+            if (element.getAsJsonObject().get("name").getAsString().equals(animation)) {
                 JsonArray frames = element.getAsJsonObject().getAsJsonObject("animators").getAsJsonObject(bone)
                         .getAsJsonArray("keyframes");
                 JsonObject target = null;
-                for (JsonElement value : frames)
-                {
-                    if (value.getAsJsonObject().get("channel").getAsString().equals(channel))
-                    {
+                for (JsonElement value : frames) {
+                    if (value.getAsJsonObject().get("channel").getAsString().equals(channel)) {
                         target = value.getAsJsonObject();
                     }
 
                 }
 
-                if (target == null)
-                {
+                if (target == null) {
                     target = new JsonObject();
                     target.addProperty("channel", channel);
                     target.addProperty("time", 0);
@@ -560,8 +514,7 @@ class NativeControllerMigrationTest
 
     }
 
-    private static JsonObject fixture()
-    {
+    private static JsonObject fixture() {
         JsonObject raw = JsonParser
                 .parseString(
                         """
@@ -570,8 +523,7 @@ class NativeControllerMigrationTest
                                  "outliner":[{"uuid":"bone","name":"bone","origin":[0,0,0],"children":["cube"]}]}
                                 """)
                 .getAsJsonObject();
-        try
-        {
+        try {
             BufferedImage image = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
             image.setRGB(0, 0, 0xffffffff);
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
@@ -580,9 +532,7 @@ class NativeControllerMigrationTest
             texture.addProperty("source",
                     "data:image/png;base64," + Base64.getEncoder().encodeToString(bytes.toByteArray()));
             raw.getAsJsonArray("textures").add(texture);
-        }
-        catch (Exception failed)
-        {
+        } catch (Exception failed) {
             throw new AssertionError(failed);
         }
         return raw;

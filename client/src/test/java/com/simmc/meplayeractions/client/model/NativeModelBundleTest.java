@@ -13,14 +13,12 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import static org.junit.jupiter.api.Assertions.*;
 
-class NativeModelBundleTest
-{
+class NativeModelBundleTest {
     @TempDir
     Path temporary;
 
     @Test
-    void fullNativeBundleRetainsFormsSkinsComponentsAndLanguagesAcrossPrivateSync() throws Exception
-    {
+    void fullNativeBundleRetainsFormsSkinsComponentsAndLanguagesAcrossPrivateSync() throws Exception {
         YsmFolderModel.Imported source = YsmFolderModel.bundledDefaultWithProfile(null);
         byte[] bundle = NativeModelBundle.encode("ysm", "ysm.json", source.sourceFiles());
         LocalModelLibrary.Loaded decoded = NativeModelBundle.decode(bundle, "blue");
@@ -39,8 +37,7 @@ class NativeModelBundleTest
     }
 
     @Test
-    void selectingSkinDoesNotChangeOrReencodeCachedSourceBundle() throws Exception
-    {
+    void selectingSkinDoesNotChangeOrReencodeCachedSourceBundle() throws Exception {
         LocalModelLibrary library = new LocalModelLibrary(this.temporary);
         byte[] source = library.sourceBundle("openysm_default");
         LocalModelLibrary.Loaded original = library.load("openysm_default", "default");
@@ -53,40 +50,32 @@ class NativeModelBundleTest
     }
 
     @Test
-    void manifestRequiresExactVersionUniqueKeysStringTypesAndStrictUtf8() throws Exception
-    {
+    void manifestRequiresExactVersionUniqueKeysStringTypesAndStrictUtf8() throws Exception {
         for (String descriptor : java.util.List.of("{\"format\":1.5,\"kind\":\"bbmodel\",\"entry\":\"model.bbmodel\"}",
                 "{\"format\":\"1\",\"kind\":\"bbmodel\",\"entry\":\"model.bbmodel\"}",
                 "{\"format\":1,\"kind\":\"ysm\",\"kind\":\"bbmodel\",\"entry\":\"model.bbmodel\"}",
                 "{\"format\":1,\"kind\":false,\"entry\":\"model.bbmodel\"}",
-                "{\"format\":1,\"kind\":\"bbmodel\",\"entry\":\"model.bbmodel\"}{}"))
-        {
-            assertThrows(IOException.class, () -> NativeModelBundle.validate(
-                    zip(Map.of("manifest.json", descriptor.getBytes(StandardCharsets.UTF_8), "model.bbmodel", new byte[]
-                    { 1 }))), descriptor);
+                "{\"format\":1,\"kind\":\"bbmodel\",\"entry\":\"model.bbmodel\"}{}")) {
+            assertThrows(IOException.class,
+                    () -> NativeModelBundle.validate(zip(Map.of("manifest.json",
+                            descriptor.getBytes(StandardCharsets.UTF_8), "model.bbmodel", new byte[] { 1 }))),
+                    descriptor);
         }
-        assertThrows(IOException.class, () -> NativeModelBundle.validate(zip(Map.of("manifest.json", new byte[]
-        { (byte) 0xc0, (byte) 0xaf }, "model.bbmodel", new byte[]
-        { 1 }))));
+        assertThrows(IOException.class, () -> NativeModelBundle.validate(zip(
+                Map.of("manifest.json", new byte[] { (byte) 0xc0, (byte) 0xaf }, "model.bbmodel", new byte[] { 1 }))));
     }
 
     @Test
-    void pathCollisionsDirectoryPayloadOpaqueBinaryAndExpandedBombAreRejected() throws Exception
-    {
-        for (Map<String, byte[]> files : java.util.List.of(Map.of("../ysm.json", new byte[]
-        { 1 }), Map.of("YSM.json", new byte[]
-        { 1 }, "ysm.json", new byte[]
-        { 2 }), Map.of("folder/", new byte[]
-        { 1 }), Map.of("model.ysm", new byte[]
-        { 1 }), Map.of("large.json", new byte[8 * 1024 * 1024 + 1])))
-        {
+    void pathCollisionsDirectoryPayloadOpaqueBinaryAndExpandedBombAreRejected() throws Exception {
+        for (Map<String, byte[]> files : java.util.List.of(Map.of("../ysm.json", new byte[] { 1 }),
+                Map.of("YSM.json", new byte[] { 1 }, "ysm.json", new byte[] { 2 }), Map.of("folder/", new byte[] { 1 }),
+                Map.of("model.ysm", new byte[] { 1 }), Map.of("large.json", new byte[8 * 1024 * 1024 + 1]))) {
             assertThrows(IOException.class, () -> NativeModelBundle.archiveFiles(zip(files), true));
         }
     }
 
     @Test
-    void manualZipRecognizesOneNestedModelRootWithoutChangingItsReferences() throws Exception
-    {
+    void manualZipRecognizesOneNestedModelRootWithoutChangingItsReferences() throws Exception {
         YsmFolderModel.Imported source = YsmFolderModel.bundledDefaultWithProfile(null);
         Map<String, byte[]> files = new LinkedHashMap<>();
         source.sourceFiles().forEach((path, value) -> files.put("pack/model/" + path, value));
@@ -96,13 +85,10 @@ class NativeModelBundleTest
         assertTrue(decoded.sourceFiles().containsKey("ysm.json"));
     }
 
-    static byte[] zip(Map<String, byte[]> files) throws IOException
-    {
+    static byte[] zip(Map<String, byte[]> files) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-        try (ZipOutputStream zip = new ZipOutputStream(bytes))
-        {
-            for (Map.Entry<String, byte[]> file : files.entrySet())
-            {
+        try (ZipOutputStream zip = new ZipOutputStream(bytes)) {
+            for (Map.Entry<String, byte[]> file : files.entrySet()) {
                 ZipEntry entry = new ZipEntry(file.getKey());
                 entry.setTime(0);
                 zip.putNextEntry(entry);

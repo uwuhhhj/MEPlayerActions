@@ -4,17 +4,13 @@ import java.util.Objects;
 import java.util.UUID;
 
 /** Real position deltas, normalized to a server tick rather than Bukkit's retained velocity. */
-public final class PositionMotion
-{
-    public record Sample(double x, double y, double z, double yawSpeed, boolean discontinuity)
-    {
-        public double groundSpeed()
-        {
+public final class PositionMotion {
+    public record Sample(double x, double y, double z, double yawSpeed, boolean discontinuity) {
+        public double groundSpeed() {
             return Math.hypot(this.x, this.z) * 20;
         }
 
-        public double verticalSpeed()
-        {
+        public double verticalSpeed() {
             return this.y * 20;
         }
     }
@@ -25,28 +21,20 @@ public final class PositionMotion
     private long tick;
     private Sample current = RESET;
 
-    public Sample sample(UUID world, double x, double y, double z, double yaw, long tick)
-    {
+    public Sample sample(UUID world, double x, double y, double z, double yaw, long tick) {
         Objects.requireNonNull(world);
-        if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z) || !Double.isFinite(yaw))
-
-        {
+        if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z) || !Double.isFinite(yaw)) {
             throw new IllegalArgumentException("Non-finite motion sample");
         }
 
         double dx = x - this.x, dy = y - this.y, dz = z - this.z;
         if (this.world == null || !this.world.equals(world) || tick < this.tick || tick - this.tick > 100
-                || dx * dx + dy * dy + dz * dz > 16)
-        {
+                || dx * dx + dy * dy + dz * dz > 16) {
             this.current = RESET;
-        }
-        else if (tick == this.tick)
-        {
+        } else if (tick == this.tick) {
             // Repeated commands in one tick cannot erase movement or move the baseline.
             return this.current;
-        }
-        else
-        {
+        } else {
             double elapsed = tick - this.tick;
             double turn = yaw - this.yaw;
             turn -= Math.floor((turn + 180) / 360) * 360;
@@ -61,8 +49,7 @@ public final class PositionMotion
         return this.current;
     }
 
-    public void reset()
-    {
+    public void reset() {
         this.world = null;
         this.current = RESET;
     }

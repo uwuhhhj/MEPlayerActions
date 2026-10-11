@@ -11,8 +11,7 @@ import org.bukkit.configuration.file.FileConfiguration;
 import java.util.*;
 import java.util.regex.Pattern;
 
-public final class Settings
-{
+public final class Settings {
     private static final Pattern ID = Pattern.compile("[a-z0-9_-]{1,64}");
     private static final Set<String> ACTION_FIELDS = Set.of("enabled", "label", "animation", "loop", "speed",
             "permission", "max-duration-ticks");
@@ -37,17 +36,14 @@ public final class Settings
     private final Map<String, EnumMap<ActionState, List<String>>> animationMaps;
     private final EnumMap<ActionState, Playback> playback = new EnumMap<>(ActionState.class);
 
-    public record Playback(double speed, LoopMode loop, int inTicks, int outTicks)
-    {
+    public record Playback(double speed, LoopMode loop, int inTicks, int outTicks) {
     }
 
     public record CustomAction(String id, String label, String animation, LoopMode loop, double speed,
-            String permission, int maxTicks)
-    {
+            String permission, int maxTicks) {
     }
 
-    private Settings(FileConfiguration c)
-    {
+    private Settings(FileConfiguration c) {
         this.performance = PerformanceSettings.fromConfiguration(c);
         this.scale = number(c, "disguise.scale", 1, 0.05, 8);
         this.hideSelf = c.getBoolean("disguise.hide-self", true);
@@ -64,9 +60,7 @@ public final class Settings
         this.posturePriority = integer(c, "controller.posture-priority", 100, 5, 10000);
         this.interactionPriority = integer(c, "controller.interaction-priority", 150, 1, 10000);
         this.manualPriority = integer(c, "controller.manual-priority", 200, 1, 10000);
-        if (this.interactionPriority <= this.posturePriority || this.manualPriority <= this.interactionPriority + 1)
-
-        {
+        if (this.interactionPriority <= this.posturePriority || this.manualPriority <= this.interactionPriority + 1) {
             throw new IllegalArgumentException("优先级须满足 posture-priority < interaction-priority < manual-priority");
         }
 
@@ -80,8 +74,7 @@ public final class Settings
         this.movementThreshold = number(c, "controller.movement-threshold", 0.015, 0.0001, 1);
         this.syncEnabled = c.getBoolean("synchronization.enabled", true);
         this.synchronization = new EnumMap<>(SyncFeature.class);
-        for (SyncFeature f : SyncFeature.values())
-        {
+        for (SyncFeature f : SyncFeature.values()) {
             this.synchronization.put(f, c.getBoolean("synchronization." + f.key(), true));
         }
 
@@ -100,8 +93,7 @@ public final class Settings
         this.clientCooldownTicks = integer(c, "client-sync.request-cooldown-ticks", 4, 1, 1200);
         this.clientViewDistance = number(c, "client-sync.view-distance-blocks", 64, 1, 256);
         ConfigurationSection privateSection = c.getConfigurationSection("client-sync.private-models");
-        if (privateSection != null)
-        {
+        if (privateSection != null) {
             validateFields(privateSection,
                     Set.of("enabled", "max-bundle-bytes", "max-stored-bytes", "view-distance-blocks", "max-viewers",
                             "cache-enabled", "max-cache-bytes", "max-cache-models", "max-cache-models-per-player"));
@@ -133,12 +125,9 @@ public final class Settings
         defaults.putIfAbsent(ActionState.FALL, List.of("fall", "jump", "idle"));
         defaults.putIfAbsent(ActionState.SWIM_PRONE_IDLE, List.of("swim_prone_idle", "swim"));
         ConfigurationSection profile = c.getConfigurationSection("animations.models");
-        if (profile != null)
-        {
-            for (String model : profile.getKeys(false))
-            {
-                if (!profile.isConfigurationSection(model))
-                {
+        if (profile != null) {
+            for (String model : profile.getKeys(false)) {
+                if (!profile.isConfigurationSection(model)) {
                     throw new IllegalArgumentException("animations.models." + model);
                 }
 
@@ -147,40 +136,30 @@ public final class Settings
         }
 
         ConfigurationSection tuning = c.getConfigurationSection("animation-settings");
-        if (tuning != null)
-        {
-            for (String key : tuning.getKeys(false))
-            {
-                if (!ANIMATION_FIELDS.contains(key) || !tuning.isConfigurationSection(key))
-
-                {
+        if (tuning != null) {
+            for (String key : tuning.getKeys(false)) {
+                if (!ANIMATION_FIELDS.contains(key) || !tuning.isConfigurationSection(key)) {
                     throw new IllegalArgumentException("animation-settings." + key + " 必须是已知状态配置节");
                 }
 
             }
         }
 
-        for (ActionState state : ActionState.values())
-        {
+        for (ActionState state : ActionState.values()) {
             ConfigurationSection options = tuning == null ? null : tuning.getConfigurationSection(state.key());
-            LoopMode loop = switch (state)
-            {
+            LoopMode loop = switch (state) {
             case JUMP, SWING_MAINHAND, SWING_OFFHAND -> LoopMode.ONCE;
             case FALL, SIT, SLEEP, BED_SLEEP, BOAT, MINECART, RIDE, CRAWL_IDLE, CROUCH_IDLE -> LoopMode.HOLD;
             default -> LoopMode.LOOP;
             };
-            if (options == null)
-            {
+            if (options == null) {
                 this.playback.put(state, new Playback(1, loop, this.inTicks, this.outTicks));
                 continue;
             }
             validateFields(options, Set.of("speed", "loop", "transition-in-ticks", "transition-out-ticks"));
-            try
-            {
+            try {
                 loop = LoopMode.valueOf(options.getString("loop", loop.name()).toUpperCase(Locale.ROOT));
-            }
-            catch (IllegalArgumentException ex)
-            {
+            } catch (IllegalArgumentException ex) {
                 throw new IllegalArgumentException("animation-settings." + state.key() + ".loop 无效");
             }
             this.playback.put(state,
@@ -190,15 +169,11 @@ public final class Settings
         }
         Map<String, String> labels = new LinkedHashMap<>(AnimationLabels.DEFAULTS);
         ConfigurationSection labelSection = c.getConfigurationSection("menu.animation-labels");
-        if (labelSection != null)
-        {
-            for (String clip : labelSection.getKeys(false))
-            {
+        if (labelSection != null) {
+            for (String clip : labelSection.getKeys(false)) {
                 id(clip);
                 Object label = labelSection.get(clip);
-                if (!(label instanceof String text) || text.isBlank())
-
-                {
+                if (!(label instanceof String text) || text.isBlank()) {
                     throw new IllegalArgumentException("menu.animation-labels." + clip + " 必须是非空名称");
                 }
 
@@ -209,47 +184,37 @@ public final class Settings
         this.animationLabels = Collections.unmodifiableMap(labels);
         Map<String, CustomAction> actions = new LinkedHashMap<>();
         ConfigurationSection section = c.getConfigurationSection("custom-actions");
-        if (section != null)
-        {
-            for (String name : section.getKeys(false))
-            {
+        if (section != null) {
+            for (String name : section.getKeys(false)) {
                 id(name);
                 ConfigurationSection actionSection = section.getConfigurationSection(name);
-                if (actionSection == null)
-
-                {
+                if (actionSection == null) {
                     throw new IllegalArgumentException("custom-actions." + name + " 必须是动作配置节");
                 }
 
                 validateFields(actionSection, ACTION_FIELDS);
-                if (!section.getBoolean(name + ".enabled", true))
-                {
+                if (!section.getBoolean(name + ".enabled", true)) {
                     continue;
                 }
 
                 String prefix = name + ".";
                 String clip = id(section.getString(prefix + "animation", name));
                 LoopMode loop;
-                try
-                {
+                try {
                     loop = LoopMode.valueOf(section.getString(prefix + "loop", "ONCE").toUpperCase(Locale.ROOT));
-                }
-                catch (IllegalArgumentException ex)
-                {
+                } catch (IllegalArgumentException ex) {
                     throw new IllegalArgumentException("custom-actions." + name + ".loop 无效");
                 }
                 double speed = section.getDouble(prefix + "speed", 1);
                 validateSpeed(speed);
                 int maxTicks = section.getInt(prefix + "max-duration-ticks", this.maxManualTicks);
-                if (maxTicks < 1 || maxTicks > this.maxManualTicks)
-                {
+                if (maxTicks < 1 || maxTicks > this.maxManualTicks) {
                     throw new IllegalArgumentException("自定义动作持续时间超出 manual.max-duration-ticks");
                 }
 
                 String key = id(name);
                 String label = section.getString(prefix + "label", animationLabel(clip));
-                if (label.isBlank())
-                {
+                if (label.isBlank()) {
                     label = animationLabel(clip);
                 }
 
@@ -261,53 +226,41 @@ public final class Settings
         this.customActions = Collections.unmodifiableMap(actions);
     }
 
-    public static Settings load(FileConfiguration c)
-    {
+    public static Settings load(FileConfiguration c) {
         return new Settings(c);
     }
 
     /** A missing translation preserves the author's executable ID, so distinct clips remain distinguishable. */
-    public String animationLabel(String clip)
-    {
+    public String animationLabel(String clip) {
         return this.animationLabels.getOrDefault(clip, clip);
     }
 
-    public String actionLabel(String action)
-    {
+    public String actionLabel(String action) {
         return this.customActions.containsKey(action) ? this.customActions.get(action).label() : animationLabel(action);
     }
 
-    private static int configVersionFor(FileConfiguration c)
-    {
+    private static int configVersionFor(FileConfiguration c) {
         return c.contains("config-version", true) ? c.getInt("config-version") : 1;
     }
 
-    public boolean sync(SyncFeature f)
-    {
+    public boolean sync(SyncFeature f) {
         return this.synchronization.get(f);
     }
 
-    public Playback playback(ActionState state)
-    {
+    public Playback playback(ActionState state) {
         return this.playback.get(state);
     }
 
-    public void validateSpeed(double speed)
-    {
-        if (!Double.isFinite(speed) || speed < this.manualMinSpeed || speed > this.manualMaxSpeed)
-
-        {
+    public void validateSpeed(double speed) {
+        if (!Double.isFinite(speed) || speed < this.manualMinSpeed || speed > this.manualMaxSpeed) {
             throw new IllegalArgumentException("动作速度范围：" + this.manualMinSpeed + " ~ " + this.manualMaxSpeed);
         }
 
     }
 
-    public String animation(String model, ActionState state, Collection<String> existing)
-    {
-        for (String name : animationCandidates(model, state))
-        {
-            if (existing.contains(name))
-            {
+    public String animation(String model, ActionState state, Collection<String> existing) {
+        for (String name : animationCandidates(model, state)) {
+            if (existing.contains(name)) {
                 return name;
             }
 
@@ -316,27 +269,22 @@ public final class Settings
         return null;
     }
 
-    public List<String> animationCandidates(String model, ActionState state)
-    {
+    public List<String> animationCandidates(String model, ActionState state) {
         EnumMap<ActionState, List<String>> custom = this.animationMaps.get(model);
         return custom != null && custom.containsKey(state) ? custom.get(state)
                 : this.animationMaps.get("defaults").getOrDefault(state, List.of());
     }
 
-    private static EnumMap<ActionState, List<String>> parseAnimations(ConfigurationSection section)
-    {
+    private static EnumMap<ActionState, List<String>> parseAnimations(ConfigurationSection section) {
         EnumMap<ActionState, List<String>> result = new EnumMap<>(ActionState.class);
-        if (section == null)
-        {
+        if (section == null) {
             return result;
         }
 
         validateFields(section, ANIMATION_FIELDS);
-        for (ActionState state : ActionState.values())
-        {
+        for (ActionState state : ActionState.values()) {
             String key = state.key();
-            if (!section.contains(key))
-            {
+            if (!section.contains(key)) {
                 continue;
             }
 
@@ -347,53 +295,40 @@ public final class Settings
         return result;
     }
 
-    private static void validateFields(ConfigurationSection section, Set<String> allowed)
-    {
-        for (String field : section.getKeys(false))
-        {
+    private static void validateFields(ConfigurationSection section, Set<String> allowed) {
+        for (String field : section.getKeys(false)) {
             String path = section.getCurrentPath() + "." + field;
-            if (!allowed.contains(field))
-
-            {
+            if (!allowed.contains(field)) {
                 throw new IllegalArgumentException(path + " 是未知配置字段；模型和动作 ID 不支持点号（.）");
             }
 
-            if (section.isConfigurationSection(field))
-
-            {
+            if (section.isConfigurationSection(field)) {
                 throw new IllegalArgumentException(path + " 不允许嵌套配置字段；模型和动作 ID 不支持点号（.）");
             }
 
         }
     }
 
-    public static String id(String text)
-    {
-        if (text == null || !ID.matcher(text).matches())
-
-        {
+    public static String id(String text) {
+        if (text == null || !ID.matcher(text).matches()) {
             throw new IllegalArgumentException("模型和动作 ID 请使用 1–64 位小写英文、数字、_、-，不支持点号（.）");
         }
 
         return text;
     }
 
-    private static int integer(ConfigurationSection c, String key, int fallback, int min, int max)
-    {
+    private static int integer(ConfigurationSection c, String key, int fallback, int min, int max) {
         int value = c.getInt(key, fallback);
-        if (value < min || value > max)
-        {
+        if (value < min || value > max) {
             throw new IllegalArgumentException(key + " 范围：" + min + " ~ " + max);
         }
 
         return value;
     }
 
-    private static double number(ConfigurationSection c, String key, double fallback, double min, double max)
-    {
+    private static double number(ConfigurationSection c, String key, double fallback, double min, double max) {
         double value = c.getDouble(key, fallback);
-        if (!Double.isFinite(value) || value < min || value > max)
-        {
+        if (!Double.isFinite(value) || value < min || value > max) {
             throw new IllegalArgumentException(key + " 范围：" + min + " ~ " + max);
         }
 

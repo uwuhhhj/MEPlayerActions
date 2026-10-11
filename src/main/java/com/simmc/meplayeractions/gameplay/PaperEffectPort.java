@@ -8,19 +8,15 @@ import org.bukkit.potion.PotionEffectType;
 import java.util.List;
 
 /** Public Paper potion API adapter. Types are resolved before any disguise mutations. */
-public final class PaperEffectPort implements DisguiseEffects.Port
-{
+public final class PaperEffectPort implements DisguiseEffects.Port {
     private final Player player;
 
-    public PaperEffectPort(Player player)
-    {
+    public PaperEffectPort(Player player) {
         this.player = player;
     }
 
-    public static boolean supported(String id)
-    {
-        if (!id.equals("slowness"))
-        {
+    public static boolean supported(String id) {
+        if (!id.equals("slowness")) {
             return false;
         }
 
@@ -28,16 +24,13 @@ public final class PaperEffectPort implements DisguiseEffects.Port
         return type != null && !type.isInstant();
     }
 
-    public static List<String> names()
-    {
+    public static List<String> names() {
         return supported("slowness") ? List.of("slowness") : List.of();
     }
 
-    private static PotionEffectType type(String id)
-    {
+    private static PotionEffectType type(String id) {
         PotionEffectType type = Registry.MOB_EFFECT.get(NamespacedKey.minecraft(id));
-        if (type == null)
-        {
+        if (type == null) {
             throw new IllegalArgumentException("药水不存在：" + id);
         }
 
@@ -45,33 +38,28 @@ public final class PaperEffectPort implements DisguiseEffects.Port
     }
 
     @Override
-    public DisguiseEffects.State current(String id)
-    {
+    public DisguiseEffects.State current(String id) {
         return state(this.player.getPotionEffect(type(id)));
     }
 
     @Override
-    public boolean add(DisguiseEffects.State state)
-    {
+    public boolean add(DisguiseEffects.State state) {
         return this.player.addPotionEffect(potion(state));
     }
 
     @Override
-    public void remove(String id)
-    {
+    public void remove(String id) {
         this.player.removePotionEffect(type(id));
     }
 
-    private static DisguiseEffects.State state(PotionEffect effect)
-    {
+    private static DisguiseEffects.State state(PotionEffect effect) {
         return effect == null ? null
                 : new DisguiseEffects.State(effect.getType().getKey().getKey(), effect.getAmplifier(),
                         effect.getDuration(), effect.isAmbient(), effect.hasParticles(), effect.hasIcon(),
                         state(effect.getHiddenPotionEffect()));
     }
 
-    private static PotionEffect potion(DisguiseEffects.State state)
-    {
+    private static PotionEffect potion(DisguiseEffects.State state) {
         return state == null ? null
                 : new PotionEffect(type(state.id()), state.duration(), state.amplifier(), state.ambient(),
                         state.particles(), state.icon(), potion(state.hidden()));

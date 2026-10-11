@@ -11,11 +11,9 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Boundary examples from Sparkle b1230a4 MovementQuery, WeaponActionBridgeImpl and native predicates. */
-class NativeVanillaQueryParityTest
-{
+class NativeVanillaQueryParityTest {
     @Test
-    void nativeRemoteMovementNeverInventsWalkingFromResidualVelocityOrLimbAnimation()
-    {
+    void nativeRemoteMovementNeverInventsWalkingFromResidualVelocityOrLimbAnimation() {
         VanillaYsmQueries.Motion still = new VanillaYsmQueries.Motion(1, 0, 0, 0);
         Vec3d velocity = new Vec3d(.2, -.08, .3);
         Vec3d tick = new Vec3d(.1, 0, 0);
@@ -27,8 +25,7 @@ class NativeVanillaQueryParityTest
     }
 
     @Test
-    void localMovementHasTheUpstreamOrderedFallbacksAndNoGroundGravityBounce()
-    {
+    void localMovementHasTheUpstreamOrderedFallbacksAndNoGroundGravityBounce() {
         VanillaYsmQueries.Motion still = new VanillaYsmQueries.Motion(.25, 0, 0, 0);
         assertEquals(.7, VanillaYsmQueries.groundSpeed(still, new Vec3d(.2, 0, 0), new Vec3d(.3, 0, 0), .7, false));
         assertEquals(4, VanillaYsmQueries.groundSpeed(still, new Vec3d(.2, 0, 0), new Vec3d(.3, 0, 0), 0, false));
@@ -40,8 +37,7 @@ class NativeVanillaQueryParityTest
     }
 
     @Test
-    void arrowEnvironmentalPriorityMatchesTheProjectilePredicateWithoutGenericOnGroundGuessing()
-    {
+    void arrowEnvironmentalPriorityMatchesTheProjectilePredicateWithoutGenericOnGroundGuessing() {
         assertEquals("water", VanillaYsmQueries.projectileAnimationState(true, true, true));
         assertEquals("fire", VanillaYsmQueries.projectileAnimationState(false, true, true));
         assertEquals("ground", VanillaYsmQueries.projectileAnimationState(false, false, true));
@@ -49,8 +45,7 @@ class NativeVanillaQueryParityTest
     }
 
     @Test
-    void changingComponentTypeClearsEveryProjectileSpecificValueToNativeNull()
-    {
+    void changingComponentTypeClearsEveryProjectileSpecificValueToNativeNull() {
         Molang.Context context = new Molang.Context();
         context.enableNativeYsm();
         context.stringQuery("ysm.throwable_item", "minecraft:egg");
@@ -58,17 +53,14 @@ class NativeVanillaQueryParityTest
         context.query("ysm.projectile_owner", (Molang.ContextValue) () -> context);
         VanillaYsmQueries.clearProjectileQueries(context);
         for (String key : List.of("projectile_owner", "throwable_item", "hooked_in", "is_biting", "on_ground_time",
-                "in_ground", "is_spectral_arrow", "shoot_item_id"))
-
-        {
+                "in_ground", "is_spectral_arrow", "shoot_item_id")) {
             assertEquals(9, Molang.compile("ysm." + key + " ?? 9").evaluate(context), key);
         }
 
     }
 
     @Test
-    void additionalNativeWeaponTagsAndBedrockTcosUseTheReferenceDeclarations()
-    {
+    void additionalNativeWeaponTagsAndBedrockTcosUseTheReferenceDeclarations() {
         assertEquals("spear", VanillaYsmQueries.itemKind("test:dual_tag", Set.of("minecraft:swords", "ysm:tridents")));
         assertEquals("lance", VanillaYsmQueries.itemKind("test:long_weapon", Set.of("sparkle_morpher:lances")));
         assertEquals("mace", VanillaYsmQueries.itemKind("test:hammer", Set.of("ysm:mace")));
@@ -78,15 +70,13 @@ class NativeVanillaQueryParityTest
     }
 
     private static VanillaYsmWeaponQueries.Sample weapon(String kind, boolean using, boolean attack, double speed,
-            double vy, double fall, boolean riding)
-    {
+            double vy, double fall, boolean riding) {
         return new VanillaYsmWeaponQueries.Sample(kind, using, "spear", attack, false, riding, false, false, speed, vy,
                 fall, 12.25, 2.5, 20);
     }
 
     @Test
-    void tridentThrowingMeansAnActualNativeUseAndDoesNotInventAReleaseEvent()
-    {
+    void tridentThrowingMeansAnActualNativeUseAndDoesNotInventAReleaseEvent() {
         Map<String, Double> held = VanillaYsmWeaponQueries.values(weapon("spear", false, false, 0, 0, 0, false));
         assertEquals(1d, held.get("weapon_type"));
         assertEquals(1d, held.get("trident_holding"));
@@ -99,8 +89,7 @@ class NativeVanillaQueryParityTest
     }
 
     @Test
-    void lanceLungeAndJabAreExclusiveAtTheOriginalPoint35Boundary()
-    {
+    void lanceLungeAndJabAreExclusiveAtTheOriginalPoint35Boundary() {
         Map<String, Double> slow = VanillaYsmWeaponQueries.values(weapon("lance", false, true, .349, 0, 0, false));
         assertEquals(1d, slow.get("lance_jabbing"));
         assertEquals(0d, slow.get("lance_lunging"));
@@ -114,8 +103,7 @@ class NativeVanillaQueryParityTest
     }
 
     @Test
-    void maceEligibilityUsesObservedFallingAndKeepsUnobservedWindBurstFalse()
-    {
+    void maceEligibilityUsesObservedFallingAndKeepsUnobservedWindBurstFalse() {
         Map<String, Double> tooSlow = VanillaYsmWeaponQueries.values(weapon("mace", false, true, 0, -.08, 1.5, false));
         assertEquals(0d, tooSlow.get("mace_can_smash"));
         Map<String, Double> falling = VanillaYsmWeaponQueries.values(weapon("mace", false, true, 0, -.081, 1.5, false));
@@ -129,8 +117,7 @@ class NativeVanillaQueryParityTest
     }
 
     @Test
-    void armorAndPassengerSlotsMatchOrderedIdsTagsAndDefaultWithIndependentLoops()
-    {
+    void armorAndPassengerSlotsMatchOrderedIdsTagsAndDefaultWithIndependentLoops() {
         VanillaYsmAnimations.ItemState helmet = new ItemState("minecraft:iron_helmet", Set.of("minecraft:head_armor"),
                 "", "none", false, false, 1);
         VanillaYsmAnimations.VanillaState state = new VanillaState(false, 0, false, false, false, ItemState.EMPTY,
@@ -152,8 +139,7 @@ class NativeVanillaQueryParityTest
     }
 
     @Test
-    void nativeSwingCanUseTheSparkleAttackEmptyFallbackWithoutAnInventedClip()
-    {
+    void nativeSwingCanUseTheSparkleAttackEmptyFallbackWithoutAnInventedClip() {
         VanillaYsmAnimations.VanillaState state = new VanillaState(false, 0, false, false, false, ItemState.EMPTY,
                 ItemState.EMPTY, Hand.NONE, 0, Hand.MAIN, 0, false, "", Set.of(), false, false);
         assertEquals("attack_empty", VanillaYsmAnimations.select(state, new Catalog(List.of("attack_empty"))).slots()
@@ -163,8 +149,7 @@ class NativeVanillaQueryParityTest
     }
 
     @Test
-    void nativeBlockLookupAndSlotParsingUseTheMatureUnavailableBoundaries()
-    {
+    void nativeBlockLookupAndSlotParsingUseTheMatureUnavailableBoundaries() {
         assertTrue(VanillaYsmQueries.nativeRelativeRange(-5, 5, 0));
         assertFalse(VanillaYsmQueries.nativeRelativeRange(5.001, 0, 0));
         assertFalse(VanillaYsmQueries.nativeRelativeRange(0, Double.NaN, 0));
@@ -175,12 +160,10 @@ class NativeVanillaQueryParityTest
     }
 
     @Test
-    void nativeInventoryAcceptsFullConditionLibrariesWithinItsSeparateBoundedBudget()
-    {
+    void nativeInventoryAcceptsFullConditionLibrariesWithinItsSeparateBoundedBudget() {
         ArrayList<String> names = new ArrayList<String>();
         LinkedHashMap<String, String> loops = new LinkedHashMap<String, String>();
-        for (int index = 0; index < 1024; index++)
-        {
+        for (int index = 0; index < 1024; index++) {
             String name = "authored_" + index;
             names.add(name);
             loops.put(name, "ONCE");

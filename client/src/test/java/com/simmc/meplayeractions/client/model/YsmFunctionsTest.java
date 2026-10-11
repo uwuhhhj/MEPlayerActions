@@ -18,14 +18,12 @@ import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class YsmFunctionsTest
-{
+class YsmFunctionsTest {
     @TempDir
     Path temporary;
 
     @Test
-    void sourceFilenameEventsAndCallableFunctionsActuallyReachTheCorrectPlayerFamily() throws Exception
-    {
+    void sourceFilenameEventsAndCallableFunctionsActuallyReachTheCorrectPlayerFamily() throws Exception {
         Path folder = fixture();
         Path functions = Files.createDirectories(folder.resolve("functions"));
         String square = "return args[0]*args[0];";
@@ -62,8 +60,7 @@ class YsmFunctionsTest
     }
 
     @Test
-    void multipleEventFilesUseStablePathOrderAndPreserveLegacyPropertiesEvents() throws Exception
-    {
+    void multipleEventFilesUseStablePathOrderAndPreserveLegacyPropertiesEvents() throws Exception {
         Path folder = fixture();
         Path functions = Files.createDirectories(folder.resolve("functions/sub"));
         Files.writeString(functions.resolve("b@player_ctrl_main.molang"), "v.order=2;return ctrl.state_stop;");
@@ -83,8 +80,7 @@ class YsmFunctionsTest
     }
 
     @Test
-    void authoredEventFilenameAndCommentsDoNotNeedToBeACallableIdentifier() throws Exception
-    {
+    void authoredEventFilenameAndCommentsDoNotNeedToBeACallableIdentifier() throws Exception {
         Path folder = fixture();
         Path functions = Files.createDirectories(folder.resolve("functions"));
         String name = "印度格挡（格挡连招控制器）";
@@ -100,8 +96,7 @@ class YsmFunctionsTest
     }
 
     @Test
-    void duplicateStemsAndCaseFoldCallableCollisionsCannotDependOnDirectoryEnumeration() throws Exception
-    {
+    void duplicateStemsAndCaseFoldCallableCollisionsCannotDependOnDirectoryEnumeration() throws Exception {
         Path folder = fixture();
         Path nested = Files.createDirectories(folder.resolve("functions/sub"));
         Files.writeString(nested.resolve("same.molang"), "return 1;");
@@ -117,13 +112,11 @@ class YsmFunctionsTest
     }
 
     @Test
-    void malformedUtf8OversizedScriptsAndDeepExpressionsAreRejectedBeforeExecution() throws Exception
-    {
+    void malformedUtf8OversizedScriptsAndDeepExpressionsAreRejectedBeforeExecution() throws Exception {
         Path folder = fixture();
         Path functions = Files.createDirectories(folder.resolve("functions"));
         Path file = functions.resolve("probe.molang");
-        Files.write(file, new byte[]
-        { (byte) 0xc3, 0x28 });
+        Files.write(file, new byte[] { (byte) 0xc3, 0x28 });
         assertThrows(IOException.class, () -> YsmFolderModel.read(folder));
         Files.writeString(file, "//" + "x".repeat(32_767));
         assertThrows(IOException.class, () -> YsmFolderModel.read(folder));
@@ -137,12 +130,10 @@ class YsmFunctionsTest
     }
 
     @Test
-    void functionAndPerEventCountsRemainBounded() throws Exception
-    {
+    void functionAndPerEventCountsRemainBounded() throws Exception {
         Path folder = fixture();
         Path functions = Files.createDirectories(folder.resolve("functions"));
-        for (int i = 0; i < 64; i++)
-        {
+        for (int i = 0; i < 64; i++) {
             Files.writeString(functions.resolve("f" + i + ".molang"), "return 1;");
         }
 
@@ -151,13 +142,11 @@ class YsmFunctionsTest
         Files.writeString(overflow, "return 1;");
         assertThrows(IOException.class, () -> YsmFolderModel.read(folder));
         Files.delete(overflow);
-        for (int i = 0; i < 64; i++)
-        {
+        for (int i = 0; i < 64; i++) {
             Files.delete(functions.resolve("f" + i + ".molang"));
         }
 
-        for (int i = 0; i < 33; i++)
-        {
+        for (int i = 0; i < 33; i++) {
             Files.writeString(functions.resolve("f" + i + "@player_ctrl_main.molang"), "return ctrl.state_continue;");
         }
 
@@ -165,12 +154,10 @@ class YsmFunctionsTest
     }
 
     @Test
-    void functionDirectoryDepthAndCombinedInputBytesStillHaveTheExistingLimits() throws Exception
-    {
+    void functionDirectoryDepthAndCombinedInputBytesStillHaveTheExistingLimits() throws Exception {
         Path folder = fixture();
         Path nested = folder.resolve("functions");
-        for (int i = 0; i < 10; i++)
-        {
+        for (int i = 0; i < 10; i++) {
             nested = Files.createDirectories(nested.resolve("d"));
         }
 
@@ -178,16 +165,11 @@ class YsmFunctionsTest
         assertThrows(IOException.class, () -> YsmFolderModel.read(folder));
         Path other = YsmFolderFixtures.copyDefault(this.temporary.resolve("combined"));
         long fixtureBytes;
-        try (Stream<Path> files = Files.walk(other))
-        {
-            fixtureBytes = files.filter(Files::isRegularFile).mapToLong(file ->
-            {
-                try
-                {
+        try (Stream<Path> files = Files.walk(other)) {
+            fixtureBytes = files.filter(Files::isRegularFile).mapToLong(file -> {
+                try {
                     return Files.size(file);
-                }
-                catch (IOException error)
-                {
+                } catch (IOException error) {
                     throw new java.io.UncheckedIOException(error);
                 }
             }).sum();
@@ -206,22 +188,17 @@ class YsmFunctionsTest
     }
 
     @Test
-    void linkedFunctionsNeverExecuteOrReadAnExternalTargetAndCleanupPreservesIt() throws Exception
-    {
+    void linkedFunctionsNeverExecuteOrReadAnExternalTargetAndCleanupPreservesIt() throws Exception {
         Path folder = fixture(), external = Files.createDirectories(this.temporary.resolve("external-functions"));
         Path link = folder.resolve("functions");
         Path target = external.resolve("probe.molang");
         Files.writeString(target, "v.outside=1;");
-        try
-        {
+        try {
             directoryLink(link, external);
             assertThrows(IOException.class, () -> YsmFolderModel.read(folder));
             assertEquals("v.outside=1;", Files.readString(target));
-        }
-        finally
-        {
-            if (Files.exists(link, LinkOption.NOFOLLOW_LINKS))
-            {
+        } finally {
+            if (Files.exists(link, LinkOption.NOFOLLOW_LINKS)) {
                 Files.delete(link);
             }
 
@@ -230,8 +207,7 @@ class YsmFunctionsTest
     }
 
     @Test
-    void bundledModelWithNoFunctionsRetainsItsExistingHashAndHasEmptyCallableMetadata() throws Exception
-    {
+    void bundledModelWithNoFunctionsRetainsItsExistingHashAndHasEmptyCallableMetadata() throws Exception {
         YsmFolderModel.Imported builtin = YsmFolderModel.bundledDefaultWithProfile(null);
         assertTrue(builtin.profile().functions().isEmpty());
         assertTrue(builtin.profile().events().isEmpty());
@@ -241,21 +217,15 @@ class YsmFunctionsTest
         assertArrayEquals(builtin.raw(), YsmFolderModel.read(fixture()));
     }
 
-    private Path fixture() throws IOException
-    {
+    private Path fixture() throws IOException {
         return YsmFolderFixtures.copyDefault(this.temporary.resolve("model"));
     }
 
-    private static void directoryLink(Path link, Path target) throws Exception
-    {
-        try
-        {
+    private static void directoryLink(Path link, Path target) throws Exception {
+        try {
             Files.createSymbolicLink(link, target);
-        }
-        catch (IOException | UnsupportedOperationException failure)
-        {
-            if (!System.getProperty("os.name").startsWith("Windows"))
-            {
+        } catch (IOException | UnsupportedOperationException failure) {
+            if (!System.getProperty("os.name").startsWith("Windows")) {
                 throw failure;
             }
 
@@ -264,8 +234,7 @@ class YsmFunctionsTest
             Process process = new ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command)
                     .redirectErrorStream(true).start();
             boolean completed = process.waitFor(10, TimeUnit.SECONDS);
-            if (!completed)
-            {
+            if (!completed) {
                 process.destroyForcibly();
                 process.waitFor(5, TimeUnit.SECONDS);
             }

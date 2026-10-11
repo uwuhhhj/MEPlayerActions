@@ -5,51 +5,41 @@ import java.nio.file.*;
 import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
-class YsmModelTest
-{
-    private static BbModel model(String id) throws Exception
-    {
+class YsmModelTest {
+    private static BbModel model(String id) throws Exception {
         return BbModel.parse(Files.readAllBytes(Path.of("../examples/models/" + id + ".bbmodel")));
     }
 
-    private static BbModel.Layer clip(String name)
-    {
+    private static BbModel.Layer clip(String name) {
         return new BbModel.Layer("posture", name, 0, 1, "LOOP", 0, 0);
     }
 
-    private static double difference(List<BbModel.Vertex> a, List<BbModel.Vertex> b)
-    {
+    private static double difference(List<BbModel.Vertex> a, List<BbModel.Vertex> b) {
         double result = 0;
-        for (int i = 0; i < Math.min(a.size(), b.size()); i++)
-        {
+        for (int i = 0; i < Math.min(a.size(), b.size()); i++) {
             result += Math.abs(a.get(i).x() - b.get(i).x()) + Math.abs(a.get(i).y() - b.get(i).y())
                     + Math.abs(a.get(i).z() - b.get(i).z());
         }
         return result;
     }
 
-    private static void accessories(AnimationPlayer player, double expected)
-    {
+    private static void accessories(AnimationPlayer player, double expected) {
         assertEquals(expected, player.expressionVariables().getOrDefault("variable.roaming.a", 0d));
         assertEquals(expected, player.expressionVariables().getOrDefault("variable.roaming.b", 0d));
     }
 
-    private static void sameGeometry(List<BbModel.Vertex> expected, List<BbModel.Vertex> actual)
-    {
+    private static void sameGeometry(List<BbModel.Vertex> expected, List<BbModel.Vertex> actual) {
         assertEquals(expected.size(), actual.size());
         assertEquals(0, difference(expected, actual), 1e-6);
     }
 
-    private static void accessoryGeometry(String id, List<BbModel.Vertex> initial, List<BbModel.Vertex> switched)
-    {
+    private static void accessoryGeometry(String id, List<BbModel.Vertex> initial, List<BbModel.Vertex> switched) {
         // The first original has empty hat/flower bones; only the second ships their visible cubes.
-        if (id.equals("ysm_01_jk"))
-        {
+        if (id.equals("ysm_01_jk")) {
             sameGeometry(initial, switched);
         }
 
-        else
-        {
+        else {
             assertTrue(initial.size() != switched.size() || difference(initial, switched) > 1,
                     "Accessory switch changes visible geometry: " + id);
         }
@@ -57,10 +47,8 @@ class YsmModelTest
     }
 
     @Test
-    void originalsKeepTheirDimensionsAndDedicatedClips() throws Exception
-    {
-        for (String id : List.of("ysm_01_jk", "ysm_02_jk"))
-        {
+    void originalsKeepTheirDimensionsAndDedicatedClips() throws Exception {
+        for (String id : List.of("ysm_01_jk", "ysm_02_jk")) {
             BbModel m = model(id);
             assertTrue(m.ysmPhysics());
             assertTrue(m.animations().containsAll(Set.of("boat", "ride", "ride_pig", "elytra_fly", "fall", "minecart",
@@ -74,8 +62,7 @@ class YsmModelTest
     }
 
     @Test
-    void hungerAndHeldItemsAffectAuthoredGeometryAtRuntime() throws Exception
-    {
+    void hungerAndHeldItemsAffectAuthoredGeometryAtRuntime() throws Exception {
         BbModel m = model("ysm_01_jk");
         AnimationPlayer a = new AnimationPlayer(m), b = new AnimationPlayer(m);
         List<BbModel.Vertex> fed = a.sample(0, List.of(clip("idle")), 0, 0, Map.of("ysm.food_level", 20d));
@@ -89,20 +76,17 @@ class YsmModelTest
     }
 
     @Test
-    void physicsRespondsToMovementAndDecaysWithoutSharingInstances() throws Exception
-    {
+    void physicsRespondsToMovementAndDecaysWithoutSharingInstances() throws Exception {
         BbModel m = model("ysm_01_jk");
         AnimationPlayer moving = new AnimationPlayer(m), still = new AnimationPlayer(m);
-        for (int i = 0; i <= 120; i++)
-        {
+        for (int i = 0; i <= 120; i++) {
             moving.sample(i * .2, List.of(clip("idle")), 0, 0, Map.of("query.vertical_speed", 1d));
             still.sample(i * .2, List.of(clip("idle")), 0, 0, Map.of("query.vertical_speed", 0d));
         }
         double value = moving.expressionVariables().getOrDefault("variable.l1_p0", 0d);
         assertTrue(Math.abs(value) > 5, "Source spring responds to actual vertical speed");
         assertEquals(0, still.expressionVariables().getOrDefault("variable.l1_p0", 0d), 1e-8);
-        for (int i = 121; i <= 800; i++)
-        {
+        for (int i = 121; i <= 800; i++) {
             moving.sample(i * .2, List.of(clip("idle")), 0, 0, Map.of("query.vertical_speed", 0d));
         }
 
@@ -112,16 +96,14 @@ class YsmModelTest
     }
 
     @Test
-    void accessoryTimelineRunsOnceAcrossRepeatedSnapshots() throws Exception
-    {
+    void accessoryTimelineRunsOnceAcrossRepeatedSnapshots() throws Exception {
         AnimationPlayer player = new AnimationPlayer(model("ysm_02_jk"));
         BbModel.Layer toggle = new BbModel.Layer("manual", "extra0", 0, 1, "ONCE", 0, 0);
         player.sample(0, List.of(clip("idle"), toggle));
         assertEquals(0, player.expressionVariables().getOrDefault("variable.roaming.a", 0d));
         player.sample(30, List.of(clip("idle"), toggle));
         double value = player.expressionVariables().getOrDefault("variable.roaming.a", 0d);
-        for (int i = 0; i < 10; i++)
-        {
+        for (int i = 0; i < 10; i++) {
             player.sample(30, List.of(clip("idle"), toggle));
         }
 
@@ -135,10 +117,8 @@ class YsmModelTest
     }
 
     @Test
-    void lateViewerUsesServerAccessoriesWithoutRequiringTheOldAction() throws Exception
-    {
-        for (String id : List.of("ysm_01_jk", "ysm_02_jk"))
-        {
+    void lateViewerUsesServerAccessoriesWithoutRequiringTheOldAction() throws Exception {
+        for (String id : List.of("ysm_01_jk", "ysm_02_jk")) {
             BbModel m = model(id);
             BbModel.Layer toggle = new BbModel.Layer("manual", "extra0", 0, 1, "ONCE", 0, 0);
             AnimationPlayer preview = new AnimationPlayer(m);
@@ -157,10 +137,8 @@ class YsmModelTest
     }
 
     @Test
-    void historicalEventsCannotRetoggleAuthorityAndNewStateAppliesImmediately() throws Exception
-    {
-        for (String id : List.of("ysm_01_jk", "ysm_02_jk"))
-        {
+    void historicalEventsCannotRetoggleAuthorityAndNewStateAppliesImmediately() throws Exception {
+        for (String id : List.of("ysm_01_jk", "ysm_02_jk")) {
             BbModel m = model(id);
             AnimationPlayer player = new AnimationPlayer(m);
             List<BbModel.Layer> layers = List.of(clip("idle"),
@@ -173,8 +151,7 @@ class YsmModelTest
             accessories(player, 1);
             List<BbModel.Vertex> expected = new AnimationPlayer(m).sample(30, layers, 0, 0, Map.of(), on);
             sameGeometry(expected, switched);
-            for (int i = 0; i < 5; i++)
-            {
+            for (int i = 0; i < 5; i++) {
                 sameGeometry(expected, player.sample(30, layers, 0, 0, Map.of(), on));
             }
 
@@ -186,15 +163,13 @@ class YsmModelTest
     }
 
     @Test
-    void ownerAccessoryStateIsIsolatedAndDoesNotReplacePhysics() throws Exception
-    {
+    void ownerAccessoryStateIsIsolatedAndDoesNotReplacePhysics() throws Exception {
         BbModel m = model("ysm_01_jk");
         UUID movingOwner = UUID.randomUUID(), stillOwner = UUID.randomUUID();
         Map<UUID, AnimationPlayer> owners = Map.of(movingOwner, new AnimationPlayer(m), stillOwner,
                 new AnimationPlayer(m));
         AnimationPlayer moving = owners.get(movingOwner), still = owners.get(stillOwner);
-        for (int i = 0; i <= 120; i++)
-        {
+        for (int i = 0; i <= 120; i++) {
             moving.sample(i * .2, List.of(clip("idle")), 0, 0, Map.of("query.vertical_speed", 1d),
                     Map.of("a", 1d, "b", 1d));
             still.sample(i * .2, List.of(clip("idle")), 0, 0, Map.of("query.vertical_speed", 0d),
@@ -215,14 +190,11 @@ class YsmModelTest
     }
 
     @Test
-    void accessoriesAcceptOnlyTheirTwoBoundedVariables() throws Exception
-    {
+    void accessoriesAcceptOnlyTheirTwoBoundedVariables() throws Exception {
         AnimationPlayer player = new AnimationPlayer(model("ysm_01_jk"));
         for (Map<String, Double> invalid : List.of(Map.of("a", 1d), Map.of("a", 1d, "b", 1d, "variable.l1_p0", 100d),
                 Map.of("a", Double.NaN, "b", 0d), Map.of("a", 0d, "b", Double.POSITIVE_INFINITY),
-                Map.of("a", -.01, "b", 0d), Map.of("a", 0d, "b", 1.01)))
-
-        {
+                Map.of("a", -.01, "b", 0d), Map.of("a", 0d, "b", 1.01))) {
             assertThrows(IllegalArgumentException.class,
                     () -> player.sample(0, List.of(clip("idle")), 0, 0, Map.of(), invalid));
         }

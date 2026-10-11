@@ -8,8 +8,7 @@ import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
 /** Passive, bounded model-choice metadata. A catalog never reads or authorizes an asset. */
-final class ServerModelCatalog
-{
+final class ServerModelCatalog {
     static final String CAPABILITY = "server_model_catalog";
     static final int REFRESH_TICKS = 100, MAX_MODELS = 4096, MAX_MODELS_PER_CHUNK = 512;
     private static final Pattern MODEL_ID = Pattern.compile("[a-z0-9_-]{1,64}");
@@ -21,54 +20,45 @@ final class ServerModelCatalog
     private boolean initialized, truncated;
     private long lastRefresh;
 
-    ServerModelCatalog(Supplier<List<String>> source)
-    {
+    ServerModelCatalog(Supplier<List<String>> source) {
         this(source, () -> null);
     }
 
-    ServerModelCatalog(Supplier<List<String>> source, Supplier<MetadataSnapshot> metadata)
-    {
+    ServerModelCatalog(Supplier<List<String>> source, Supplier<MetadataSnapshot> metadata) {
         this.source = Objects.requireNonNull(source);
         this.metadata = Objects.requireNonNull(metadata);
     }
 
     /** Shared five-second registry refresh; a newly completed directory snapshot also updates choices. */
-    void refresh(long tick)
-    {
+    void refresh(long tick) {
         MetadataSnapshot folders = this.metadata.get();
         if (this.initialized && folders == this.lastMetadata
-                && !ClientSyncCadence.due(tick, this.lastRefresh, REFRESH_TICKS))
-        {
+                && !ClientSyncCadence.due(tick, this.lastRefresh, REFRESH_TICKS)) {
             return;
         }
 
         TreeSet<ServerModelCatalog.Entry> choices = new TreeSet<Entry>(Comparator
                 .comparingInt((Entry entry) -> entry.metadata == null ? 2 : entry.metadata.order())
                 .thenComparing(entry -> entry.metadata == null ? "" : entry.metadata.folder).thenComparing(Entry::id));
-        for (String id : this.source.get())
-        {
-            if (id == null || !MODEL_ID.matcher(id).matches())
-            {
+        for (String id : this.source.get()) {
+            if (id == null || !MODEL_ID.matcher(id).matches()) {
                 continue;
             }
 
             choices.add(new Entry(id, folders == null ? null : folders.forModel(id)));
             // Keep the deterministic first choices without retaining an unbounded registry copy.
-            if (choices.size() > MAX_MODELS + 1)
-            {
+            if (choices.size() > MAX_MODELS + 1) {
                 choices.pollLast();
             }
 
         }
         boolean nextTruncated = choices.size() > MAX_MODELS;
-        if (nextTruncated)
-        {
+        if (nextTruncated) {
             choices.pollLast();
         }
 
         List<Entry> next = List.copyOf(choices);
-        if (!next.equals(this.models) || this.truncated != nextTruncated)
-        {
+        if (!next.equals(this.models) || this.truncated != nextTruncated) {
             this.models = next;
             this.truncated = nextTruncated;
             this.permittedPlans.clear();
@@ -78,77 +68,61 @@ final class ServerModelCatalog
         this.lastMetadata = folders;
     }
 
-    Plan plan(boolean permitted, int maxPayload)
-    {
+    Plan plan(boolean permitted, int maxPayload) {
         Map<Integer, Plan> plans = permitted ? this.permittedPlans : this.deniedPlans;
         return plans.computeIfAbsent(maxPayload, limit -> Plan.create(permitted ? this.models : List.of(), permitted,
                 permitted && this.truncated, limit));
     }
 
-    String status()
-    {
+    String status() {
         return this.models.size() + " 个" + (this.truncated ? "（目录已达 4096 上限，有模型未列出）" : "");
     }
 
     /** Optional presentation facts. These fields never constitute an asset offer or download permission. */
-    record Metadata(String source, String folder, Boolean clientResource)
-    {
-        Metadata
-        {
-            if (!Set.of("own", "modelengine", "unknown").contains(source == null ? "" : source))
-            {
+    record Metadata(String source, String folder, Boolean clientResource) {
+        Metadata {
+            if (!Set.of("own", "modelengine", "unknown").contains(source == null ? "" : source)) {
                 source = "unknown";
             }
 
-            if (!validFolder(folder))
-            {
+            if (!validFolder(folder)) {
                 source = "unknown";
                 folder = "";
             }
-            if (source.equals("unknown"))
-            {
+            if (source.equals("unknown")) {
                 folder = "";
             }
 
         }
 
-        int order()
-        {
+        int order() {
             return this.source.equals("own") ? 0 : (this.source.equals("modelengine") ? 1 : 2);
         }
 
-        static boolean validFolder(String folder)
-        {
-            if (folder == null || folder.length() > 256 || folder.indexOf('\\') >= 0 || folder.indexOf(':') >= 0)
-            {
+        static boolean validFolder(String folder) {
+            if (folder == null || folder.length() > 256 || folder.indexOf('\\') >= 0 || folder.indexOf(':') >= 0) {
                 return false;
             }
 
-            if (folder.isEmpty())
-            {
+            if (folder.isEmpty()) {
                 return true;
             }
 
             String[] components = folder.split("/", -1);
-            if (components.length > 16)
-            {
+            if (components.length > 16) {
                 return false;
             }
 
-            for (String component : components)
-            {
-                if (component.isBlank() || component.equals(".") || component.equals(".."))
-                {
+            for (String component : components) {
+                if (component.isBlank() || component.equals(".") || component.equals("..")) {
                     return false;
                 }
 
-                for (int offset = 0; offset < component.length();)
-                {
+                for (int offset = 0; offset < component.length();) {
                     int codePoint = component.codePointAt(offset);
                     offset += Character.charCount(codePoint);
                     if (Character.isISOControl(codePoint) || codePoint == 0x00a7 || codePoint == 0x2028
-                            || codePoint == 0x2029)
-                    {
+                            || codePoint == 0x2029) {
                         return false;
                     }
 
@@ -158,45 +132,36 @@ final class ServerModelCatalog
         }
     }
 
-    record MetadataSnapshot(Map<String, Metadata> entries, boolean ownComplete)
-    {
-        MetadataSnapshot
-        {
+    record MetadataSnapshot(Map<String, Metadata> entries, boolean ownComplete) {
+        MetadataSnapshot {
             entries = Map.copyOf(entries);
         }
 
-        Metadata forModel(String id)
-        {
+        Metadata forModel(String id) {
             return this.entries.getOrDefault(id, new Metadata("unknown", "", this.ownComplete ? Boolean.FALSE : null));
         }
     }
 
-    private record Entry(String id, Metadata metadata)
-    {
+    private record Entry(String id, Metadata metadata) {
     }
 
     /** Serialized content is shared; only the small, monotonically increasing session revision differs. */
-    static final class Plan
-    {
+    static final class Plan {
         private final List<byte[]> prefixes;
         final boolean canDisguise, truncated;
 
-        private Plan(List<byte[]> prefixes, boolean canDisguise, boolean truncated)
-        {
+        private Plan(List<byte[]> prefixes, boolean canDisguise, boolean truncated) {
             this.prefixes = List.copyOf(prefixes);
             this.canDisguise = canDisguise;
             this.truncated = truncated;
         }
 
-        int count()
-        {
+        int count() {
             return this.prefixes.size();
         }
 
-        byte[] packet(int index, long revision)
-        {
-            if (revision <= 0)
-            {
+        byte[] packet(int index, long revision) {
+            if (revision <= 0) {
                 throw new IllegalArgumentException("Catalog revision must be positive");
             }
 
@@ -206,10 +171,8 @@ final class ServerModelCatalog
             return packet;
         }
 
-        private static Plan create(List<Entry> models, boolean permitted, boolean truncated, int maxPayload)
-        {
-            if (maxPayload < 1024 || maxPayload > 32766)
-            {
+        private static Plan create(List<Entry> models, boolean permitted, boolean truncated, int maxPayload) {
+            if (maxPayload < 1024 || maxPayload > 32766) {
                 throw new IllegalArgumentException("Invalid catalog payload budget");
             }
 
@@ -217,17 +180,14 @@ final class ServerModelCatalog
             JsonArray entries = new JsonArray();
             int overhead = prefix(new JsonArray(), MAX_MODELS - 1, MAX_MODELS, permitted, truncated).length + 20;
             int size = overhead;
-            for (Entry model : models)
-            {
+            for (Entry model : models) {
                 JsonObject entry = new JsonObject();
                 entry.addProperty("id", model.id);
                 entry.addProperty("label", model.id);
-                if (model.metadata != null)
-                {
+                if (model.metadata != null) {
                     entry.addProperty("source", model.metadata.source);
                     entry.addProperty("folder", model.metadata.folder);
-                    if (model.metadata.clientResource != null)
-                    {
+                    if (model.metadata.clientResource != null) {
                         entry.addProperty("clientResource", model.metadata.clientResource);
                     }
 
@@ -235,21 +195,18 @@ final class ServerModelCatalog
                 int bytes = entry.toString().getBytes(StandardCharsets.UTF_8).length + (entries.isEmpty() ? 0 : 1);
                 // Even a valid 256-character Unicode directory can exceed a legacy 1 KiB packet.
                 // Omit that classification instead of failing the entire catalog or truncating a path.
-                if (overhead + bytes > maxPayload && model.metadata != null)
-                {
+                if (overhead + bytes > maxPayload && model.metadata != null) {
                     entry.addProperty("source", "unknown");
                     entry.addProperty("folder", "");
                     bytes = entry.toString().getBytes(StandardCharsets.UTF_8).length + (entries.isEmpty() ? 0 : 1);
                 }
-                if (!entries.isEmpty() && (entries.size() >= MAX_MODELS_PER_CHUNK || size + bytes > maxPayload))
-                {
+                if (!entries.isEmpty() && (entries.size() >= MAX_MODELS_PER_CHUNK || size + bytes > maxPayload)) {
                     chunks.add(entries);
                     entries = new JsonArray();
                     size = overhead;
                     bytes--;
                 }
-                if (size + bytes > maxPayload)
-                {
+                if (size + bytes > maxPayload) {
                     throw new IllegalArgumentException("Catalog entry exceeds payload budget");
                 }
 
@@ -258,17 +215,14 @@ final class ServerModelCatalog
             }
             chunks.add(entries);
             ArrayList<byte[]> prefixes = new ArrayList<byte[]>(chunks.size());
-            for (int index = 0; index < chunks.size(); index++)
-
-            {
+            for (int index = 0; index < chunks.size(); index++) {
                 prefixes.add(prefix(chunks.get(index), index, chunks.size(), permitted, truncated));
             }
 
             return new Plan(prefixes, permitted, truncated);
         }
 
-        private static byte[] prefix(JsonArray entries, int index, int count, boolean permitted, boolean truncated)
-        {
+        private static byte[] prefix(JsonArray entries, int index, int count, boolean permitted, boolean truncated) {
             JsonObject message = new JsonObject();
             message.addProperty("protocol", ClientSyncService.PROTOCOL);
             message.addProperty("type", CAPABILITY);

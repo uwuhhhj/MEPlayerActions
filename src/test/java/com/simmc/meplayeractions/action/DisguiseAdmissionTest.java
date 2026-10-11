@@ -6,11 +6,9 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class DisguiseAdmissionTest
-{
+class DisguiseAdmissionTest {
     @Test
-    void cappedServerRejectsNewOwnersButAllowsReplacementWithoutLosingItsSlot()
-    {
+    void cappedServerRejectsNewOwnersButAllowsReplacementWithoutLosingItsSlot() {
         DisguiseAdmission admission = new DisguiseAdmission(2, 0);
         UUID owner = UUID.randomUUID();
         assertEquals("disguise_limit", admission.admit(owner, false, 2, 10).code());
@@ -19,8 +17,7 @@ class DisguiseAdmissionTest
     }
 
     @Test
-    void cooldownChargesFailedCreationAttemptsAndIsIsolatedPerPlayer()
-    {
+    void cooldownChargesFailedCreationAttemptsAndIsIsolatedPerPlayer() {
         DisguiseAdmission admission = new DisguiseAdmission(4, 20);
         UUID owner = UUID.randomUUID();
         assertNull(admission.admit(owner, false, 0, 100));
@@ -32,8 +29,7 @@ class DisguiseAdmissionTest
     }
 
     @Test
-    void quitAndClockResetReleaseOnlyTheRelevantCooldowns()
-    {
+    void quitAndClockResetReleaseOnlyTheRelevantCooldowns() {
         DisguiseAdmission admission = new DisguiseAdmission(4, 20);
         UUID first = UUID.randomUUID();
         UUID second = UUID.randomUUID();

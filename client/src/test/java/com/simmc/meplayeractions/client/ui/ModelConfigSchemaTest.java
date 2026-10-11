@@ -12,8 +12,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class ModelConfigSchemaTest
-{
+class ModelConfigSchemaTest {
     private static final String FORMS = """
             [{"id":"eye","name":"眼睛","config_forms":[
               {"type":"checkbox","title":"头饰","value":"v.roaming.bow"},
@@ -25,8 +24,7 @@ class ModelConfigSchemaTest
             """;
 
     @Test
-    void checkboxAndRangeReadInitializedValuesAndUseAuthoredTargets()
-    {
+    void checkboxAndRangeReadInitializedValuesAndUseAuthoredTargets() {
         List<ModelConfigSchema.Form> forms = ModelConfigSchema.parse(JsonParser.parseString(FORMS).getAsJsonArray())
                 .groups().getFirst().forms();
         assertEquals(1, forms.get(0).read(Map.of("variable.roaming.bow", 1d)));
@@ -40,8 +38,7 @@ class ModelConfigSchemaTest
     }
 
     @Test
-    void radioLabelScriptExecutesMultipleOrdinaryAssignmentsRatherThanIndexAssignment()
-    {
+    void radioLabelScriptExecutesMultipleOrdinaryAssignmentsRatherThanIndexAssignment() {
         ModelConfigSchema schema = ModelConfigSchema.parse(JsonParser.parseString(FORMS).getAsJsonArray());
         ModelConfigSchema.Form radio = schema.groups().getFirst().forms().get(2);
         assertEquals("默认", radio.choices().getFirst().label());
@@ -55,8 +52,7 @@ class ModelConfigSchemaTest
     }
 
     @Test
-    void zeroAnchoredStepAndNegativeRangesMatchAuthorControls()
-    {
+    void zeroAnchoredStepAndNegativeRangesMatchAuthorControls() {
         JsonArray config = JsonParser.parseString(
                 "[{\"id\":\"position\",\"config_forms\":[{\"type\":\"range\",\"value\":\"v.x\",\"min\":-10,\"max\":10,\"step\":3}]}]")
                 .getAsJsonArray();
@@ -67,14 +63,11 @@ class ModelConfigSchemaTest
     }
 
     @Test
-    void malformedMetadataRejectsReadonlyTargetsDuplicateIdsAndInvalidRanges()
-    {
+    void malformedMetadataRejectsReadonlyTargetsDuplicateIdsAndInvalidRanges() {
         for (String bad : List.of("[{\"id\":\"x\",\"config_forms\":[{\"type\":\"checkbox\",\"value\":\"query.x\"}]}]",
                 "[{\"id\":\"x\"},{\"id\":\"x\"}]",
                 "[{\"id\":\"x\",\"config_forms\":[{\"type\":\"range\",\"value\":\"v.x\",\"min\":0,\"max\":1000001}]}]",
-                "[{\"id\":\"x\",\"config_forms\":[{\"type\":\"radio\",\"value\":\"v.x\",\"labels\":{}}]}]"))
-
-        {
+                "[{\"id\":\"x\",\"config_forms\":[{\"type\":\"radio\",\"value\":\"v.x\",\"labels\":{}}]}]")) {
             assertThrows(IllegalArgumentException.class,
                     () -> ModelConfigSchema.parse(JsonParser.parseString(bad).getAsJsonArray()));
         }
@@ -82,8 +75,7 @@ class ModelConfigSchemaTest
     }
 
     @Test
-    void completeRadioScriptsAreDeferredToTheRuntimeAndQuotedTextIsNotPersistedAsAVariable()
-    {
+    void completeRadioScriptsAreDeferredToTheRuntimeAndQuotedTextIsNotPersistedAsAVariable() {
         String source = """
                 [{"id":"type_scope","config_forms":[{"type":"radio","value":"q.health > 0 ? v.mode : 0","labels":{
                   "完整脚本":"v.label='v.fake'; t.counter=0; loop(2, {v.count=v.count+1;}); v.mode=q.health > 0 ? 1 : 0;"
@@ -97,8 +89,7 @@ class ModelConfigSchemaTest
     }
 
     @Test
-    void invalidReadIndexFallsBackToFirstChoiceRatherThanACachedSelection()
-    {
+    void invalidReadIndexFallsBackToFirstChoiceRatherThanACachedSelection() {
         ModelConfigSchema.Form radio = ModelConfigSchema.parse(JsonParser.parseString(FORMS).getAsJsonArray()).groups()
                 .getFirst().forms().get(2);
         assertEquals(0, radio.selectedIndex(-1));
@@ -108,8 +99,7 @@ class ModelConfigSchemaTest
     }
 
     @Test
-    void reversedAuthorRangesAndNegativeStepUseTheClassicSliderSemantics()
-    {
+    void reversedAuthorRangesAndNegativeStepUseTheClassicSliderSemantics() {
         JsonArray source = JsonParser.parseString(
                 "[{\"id\":\"reverse\",\"config_forms\":[{\"type\":\"range\",\"value\":\"v.x\",\"min\":3,\"max\":-3,\"step\":-0.5}]}]")
                 .getAsJsonArray();

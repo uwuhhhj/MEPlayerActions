@@ -8,11 +8,9 @@ import java.util.UUID;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.type.Bed.Part;
 
-class VisualOffsetTest
-{
+class VisualOffsetTest {
     @Test
-    void nativeBedAnchorCanBeAppliedWhenServerPlayerCoordinatesRemainAtTheStandingOrigin()
-    {
+    void nativeBedAnchorCanBeAppliedWhenServerPlayerCoordinatesRemainAtTheStandingOrigin() {
         BedAnchor anchor = BedAnchor.of(UUID.randomUUID(), 2, -60, 2, Part.FOOT, BlockFace.EAST);
         Vector3f position = new Vector3f();
         new VisualOffset(anchor.x() - .5, anchor.y() + 60, anchor.z() - .5).apply(position, anchor.bodyYaw());
@@ -23,11 +21,8 @@ class VisualOffsetTest
     }
 
     @Test
-    void worldOffsetSurvivesAllBodyYawsWithoutScalingTheJumpHeight()
-    {
-        for (float yaw : new float[]
-        { 0, 90, 180, 270 })
-        {
+    void worldOffsetSurvivesAllBodyYawsWithoutScalingTheJumpHeight() {
+        for (float yaw : new float[] { 0, 90, 180, 270 }) {
             Vector3f position = new Vector3f();
             new VisualOffset(-0.3, 0.4, 0.2).apply(position, yaw);
             position.rotateY((float) Math.toRadians(-yaw));

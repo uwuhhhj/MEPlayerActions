@@ -45,8 +45,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Predicate;
 
 /** Bounded, owner-authorized local YSM arm/vehicle/projectile mesh extraction. */
-public final class YsmComponentRenderer
-{
+public final class YsmComponentRenderer {
     private static final Map<Key, Playback> PLAYERS = new HashMap<>();
     private static List<ComponentFrame> frame = List.of();
     private static List<FishingLine> fishingLines = List.of();
@@ -60,33 +59,27 @@ public final class YsmComponentRenderer
     private static volatile List<Draw> componentDraws = List.of(), armDraws = List.of();
     private static List<Map<String, Object>> info = List.of();
 
-    private YsmComponentRenderer()
-    {
+    private YsmComponentRenderer() {
     }
 
-    private record Key(UUID owner, String instance, UUID entity, String kind, String componentId, String hash)
-    {
+    private record Key(UUID owner, String instance, UUID entity, String kind, String componentId, String hash) {
     }
 
-    private static final class Playback
-    {
+    private static final class Playback {
         final AnimationPlayer player;
         final BbModel model;
         final Map<String, BbModel.Layer> clocks = new LinkedHashMap<>();
         final VanillaYsmAnimations.HandPlayback handPlayback = new VanillaYsmAnimations.HandPlayback();
 
-        Playback(BbModel model)
-        {
+        Playback(BbModel model) {
             this.model = model;
             this.player = new AnimationPlayer(model);
             this.player.enableQueryDiagnostics();
         }
 
-        BbModel.Layer layer(String slot, String clip, double tick)
-        {
+        BbModel.Layer layer(String slot, String clip, double tick) {
             BbModel.Layer current = this.clocks.get(slot);
-            if (current == null || !current.animation().equals(clip))
-            {
+            if (current == null || !current.animation().equals(clip)) {
                 String loop = AnimationFormatValidator.validate(this.model.animationFormatVersion(),
                         this.model.animationFromPrimaryAssembly(clip)) ? this.model.animationLoop(clip) : "LOOP";
                 current = new BbModel.Layer(slot, clip, (long) tick, 1, loop, 2, 2);
@@ -98,41 +91,33 @@ public final class YsmComponentRenderer
 
     private record ComponentFrame(UUID entity, UUID owner, String instance, String kind, String id, String hash,
             String nativeType, double x, double y, double z, float yaw, float pitch, int light,
-            List<BbModel.Vertex> vertices)
-    {
+            List<BbModel.Vertex> vertices) {
     }
 
     private record ArmFrame(UUID owner, String instance, String kind, String hash, List<BbModel.Vertex> vertices,
-            Matrix4f basis, Identifier playerSkin)
-    {
+            Matrix4f basis, Identifier playerSkin) {
     }
 
-    private record PassengerModel(float yaw, Map<String, Matrix4f> locators)
-    {
+    private record PassengerModel(float yaw, Map<String, Matrix4f> locators) {
     }
 
-    private record FishingLine(double x, double y, double z, Vec3d handOffset, float width)
-    {
+    private record FishingLine(double x, double y, double z, Vec3d handOffset, float width) {
     }
 
-    private record Draw(Map<String, Object> source, AtomicLong emitted)
-    {
-        Map<String, Object> diagnostics()
-        {
+    private record Draw(Map<String, Object> source, AtomicLong emitted) {
+        Map<String, Object> diagnostics() {
             Map<String, Object> row = new LinkedHashMap<>(this.source);
             row.put("emittedVertices", this.emitted.get());
             return Map.copyOf(row);
         }
     }
 
-    public static List<Map<String, Object>> queryDiagnostics(UUID owner)
-    {
+    public static List<Map<String, Object>> queryDiagnostics(UUID owner) {
         return PLAYERS.entrySet().stream().filter(entry -> entry.getKey().owner().equals(owner))
                 .flatMap(entry -> YsmQueryDiagnostics.describe(entry.getValue().player).stream()).toList();
     }
 
-    static void beginExtraction(ClientRuntime runtime, WorldExtractionContext context)
-    {
+    static void beginExtraction(ClientRuntime runtime, WorldExtractionContext context) {
         live = new HashSet<>();
         nextArms = new EnumMap<>(Arm.class);
         armDraws = List.of();
@@ -142,41 +127,34 @@ public final class YsmComponentRenderer
         Set<UUID> hidden = new HashSet<>();
         Map<UUID, PassengerModel> passengers = new HashMap<>();
         Vec3d camera = context.worldState().cameraRenderState.pos;
-        for (Entity entity : context.world().getEntities())
-        {
+        for (Entity entity : context.world().getEntities()) {
             NativePlayerPresentation.EntityFrame presentation = NativePlayerPresentation.entityFrame(entity.getUuid());
             // A component replaces only an entity present in this actual native world frame.
             // This shares frozen-tick interpolation and renderer offsets with the player's body.
-            if (presentation == null || presentation.invisible())
-            {
+            if (presentation == null || presentation.invisible()) {
                 continue;
             }
 
             PlayerEntity owner = owner(entity);
-            if (owner == null)
-            {
+            if (owner == null) {
                 continue;
             }
 
             ClientRuntime.RenderBinding binding = runtime.appearanceBinding(owner.getUuid());
             // showSelf controls the player's body, not a boat or arrow owned by that player.
-            if (binding == null)
-            {
+            if (binding == null) {
                 continue;
             }
 
             String kind = entity instanceof ProjectileEntity ? "projectile" : "vehicle";
             YsmModelProfile.Component component = runtime.modelProfile(owner.getUuid()).components().stream()
                     .filter(value -> value.kind().equals(kind) && matches(value, entity)).findFirst().orElse(null);
-            if (component == null)
-            {
+            if (component == null) {
                 continue;
             }
 
-            try
-            {
-                if (!ModelRenderer.prepare(component.hash(), component.model()))
-                {
+            try {
+                if (!ModelRenderer.prepare(component.hash(), component.model())) {
                     continue;
                 }
 
@@ -185,8 +163,7 @@ public final class YsmComponentRenderer
                 live.add(key);
                 Playback playback = PLAYERS.computeIfAbsent(key, ignored -> new Playback(component.model()));
                 playback.player.enableNativeYsm();
-                playback.player.configureFrame(expressions ->
-                {
+                playback.player.configureFrame(expressions -> {
                     runtime.configureComponentExpressionContext(owner.getUuid(), entity, component, expressions);
                     // query.life_time stays the component's AnimationPlayer instance clock.
                     // Spatial queries consume this same frozen native world entity frame.
@@ -200,15 +177,13 @@ public final class YsmComponentRenderer
                 queries.remove("query.life_time");
                 List<BbModel.Vertex> vertices = playback.player.sample(presentation.age(), layers, 0, 0, queries);
                 float yaw = bodyYaw(entity, presentation);
-                if (!kind.equals("projectile"))
-                {
+                if (!kind.equals("projectile")) {
                     passengers.put(entity.getUuid(), new PassengerModel(yaw, playback.player.boneTransforms()));
                 }
 
                 Vec3d pos = presentation.presentationPosition();
                 Box bounds = meshBounds(pos, vertices);
-                if (vertices.isEmpty() || !context.frustum().isVisible(bounds))
-                {
+                if (vertices.isEmpty() || !context.frustum().isVisible(bounds)) {
                     continue;
                 }
 
@@ -220,11 +195,8 @@ public final class YsmComponentRenderer
                                 ? pitch(entity, presentation)
                                 : 0,
                         light, List.copyOf(vertices)));
-                if (entity instanceof FishingBobberEntity bobber && bobber.getPlayerOwner() != null)
-                {
-                    if (presentation.state() instanceof FishingBobberEntityState state && state.pos != null)
-
-                    {
+                if (entity instanceof FishingBobberEntity bobber && bobber.getPlayerOwner() != null) {
+                    if (presentation.state() instanceof FishingBobberEntityState state && state.pos != null) {
                         lines.add(new FishingLine(pos.x - camera.x, pos.y - camera.y, pos.z - camera.z, state.pos,
                                 MinecraftClient.getInstance().getWindow().getMinimumLineWidth()));
                     }
@@ -235,9 +207,7 @@ public final class YsmComponentRenderer
                         "instance", binding.instance(), "kind", kind, "id", component.id(), "hash", component.hash(),
                         "vertices", vertices.size(), "layers", layers, "nativeType",
                         Registries.ENTITY_TYPE.getId(entity.getType()).toString()));
-            }
-            catch (RuntimeException failure)
-            {
+            } catch (RuntimeException failure) {
                 // Component failure leaves the native entity visible and cannot revoke the primary model's lease.
                 diagnostics.add(Map.of("entity", entity.getUuid().toString(), "kind", kind, "error", failure.toString(),
                         "nativeFallback", true));
@@ -251,30 +221,23 @@ public final class YsmComponentRenderer
     }
 
     /** Prefer the yaw already extracted by the native renderer, including its entity-specific tick delta. */
-    static float bodyYaw(Entity entity, NativePlayerPresentation.EntityFrame frame)
-    {
-        if (frame.state() instanceof LivingEntityRenderState living)
-        {
+    static float bodyYaw(Entity entity, NativePlayerPresentation.EntityFrame frame) {
+        if (frame.state() instanceof LivingEntityRenderState living) {
             return living.bodyYaw;
         }
 
-        if (frame.state() instanceof BoatEntityRenderState boat)
-        {
+        if (frame.state() instanceof BoatEntityRenderState boat) {
             return boat.yaw;
         }
 
-        if (frame.state() instanceof ProjectileEntityRenderState projectile)
-        {
+        if (frame.state() instanceof ProjectileEntityRenderState projectile) {
             return projectile.yaw;
         }
 
-        if (frame.state() instanceof MinecartEntityRenderState minecart)
-        {
-            if (!minecart.usesExperimentalController && minecart.futurePos != null && minecart.pastPos != null)
-            {
+        if (frame.state() instanceof MinecartEntityRenderState minecart) {
+            if (!minecart.usesExperimentalController && minecart.futurePos != null && minecart.pastPos != null) {
                 Vec3d direction = minecart.pastPos.subtract(minecart.futurePos);
-                if (direction.lengthSquared() > 0)
-                {
+                if (direction.lengthSquared() > 0) {
                     return (float) Math.toDegrees(Math.atan2(direction.z, direction.x));
                 }
 
@@ -284,15 +247,12 @@ public final class YsmComponentRenderer
         return bodyYaw(entity, frame.tickDelta());
     }
 
-    static float pitch(Entity entity, NativePlayerPresentation.EntityFrame frame)
-    {
-        if (frame.state() instanceof ProjectileEntityRenderState projectile)
-        {
+    static float pitch(Entity entity, NativePlayerPresentation.EntityFrame frame) {
+        if (frame.state() instanceof ProjectileEntityRenderState projectile) {
             return projectile.pitch;
         }
 
-        if (frame.state() instanceof LivingEntityRenderState living)
-        {
+        if (frame.state() instanceof LivingEntityRenderState living) {
             return living.pitch;
         }
 
@@ -300,19 +260,15 @@ public final class YsmComponentRenderer
     }
 
     /** CustomVehicleRenderer uses living body yaw and the original minecart rail tangent. */
-    static float bodyYaw(Entity entity, float delta)
-    {
-        if (entity instanceof LivingEntity living)
-        {
+    static float bodyYaw(Entity entity, float delta) {
+        if (entity instanceof LivingEntity living) {
             float yaw = MathHelper.lerpAngleDegrees(delta, living.lastBodyYaw, living.bodyYaw);
-            if (living.getVehicle() instanceof LivingEntity vehicle)
-            {
+            if (living.getVehicle() instanceof LivingEntity vehicle) {
                 float head = MathHelper.lerpAngleDegrees(delta, living.lastHeadYaw, living.headYaw);
                 float vehicleYaw = MathHelper.lerpAngleDegrees(delta, vehicle.lastBodyYaw, vehicle.bodyYaw);
                 float difference = MathHelper.clamp(MathHelper.wrapDegrees(head - vehicleYaw), -85, 85);
                 yaw = head - difference;
-                if (difference * difference > 2500)
-                {
+                if (difference * difference > 2500) {
                     yaw += difference * .2f;
                 }
 
@@ -321,17 +277,14 @@ public final class YsmComponentRenderer
         }
         float yaw = entity.getLerpedYaw(delta);
         if (entity instanceof AbstractMinecartEntity minecart
-                && minecart.getController() instanceof DefaultMinecartController controller)
-        {
+                && minecart.getController() instanceof DefaultMinecartController controller) {
             Vec3d position = entity.getLerpedPos(delta);
             Vec3d center = controller.snapPositionToRail(position.x, position.y, position.z);
-            if (center != null)
-            {
+            if (center != null) {
                 Vec3d front = controller.simulateMovement(position.x, position.y, position.z, .30000001192092896);
                 Vec3d back = controller.simulateMovement(position.x, position.y, position.z, -.30000001192092896);
                 Vec3d direction = (back == null ? center : back).subtract(front == null ? center : front);
-                if (direction.lengthSquared() > 0)
-                {
+                if (direction.lengthSquared() > 0) {
                     yaw = (float) Math.toDegrees(Math.atan2(direction.z, direction.x));
                 }
 
@@ -341,25 +294,21 @@ public final class YsmComponentRenderer
     }
 
     /** Source ModelPreviewRenderer.renderVehicleModel, applied before the rider's own body rotation. */
-    static Matrix4f passengerTransform(PlayerEntity rider)
-    {
-        if (rider == null || rider.getVehicle() == null)
-        {
+    static Matrix4f passengerTransform(PlayerEntity rider) {
+        if (rider == null || rider.getVehicle() == null) {
             return new Matrix4f();
         }
 
         Entity vehicle = rider.getVehicle();
         PassengerModel source = passengerModels.get(vehicle.getUuid());
         int index = vehicle.getPassengerList().indexOf(rider);
-        if (source == null || index < 0 || index >= 8)
-        {
+        if (source == null || index < 0 || index >= 8) {
             return new Matrix4f();
         }
 
         String locatorName = index == 0 ? "PassengerLocator" : "PassengerLocator" + (index + 1);
         Matrix4f locator = source.locators().get(locatorName);
-        if (locator == null || !YsmItemRenderer.usable(locator))
-        {
+        if (locator == null || !YsmItemRenderer.usable(locator)) {
             return new Matrix4f();
         }
 
@@ -371,23 +320,18 @@ public final class YsmComponentRenderer
         return passengerTransform(source.yaw(), locator, ridingOffset);
     }
 
-    static Matrix4f passengerTransform(float yaw, Matrix4f locator, double ridingOffset)
-    {
+    static Matrix4f passengerTransform(float yaw, Matrix4f locator, double ridingOffset) {
         float rotation = (float) Math.toRadians(180 - yaw);
         return new Matrix4f().rotateY(rotation).mul(locator).rotateY(-rotation).translate(0, (float) ridingOffset, 0);
     }
 
-    private static PlayerEntity owner(Entity entity)
-    {
-        if (entity instanceof ProjectileEntity projectile)
-        {
+    private static PlayerEntity owner(Entity entity) {
+        if (entity instanceof ProjectileEntity projectile) {
             return projectile.getOwner() instanceof PlayerEntity player ? player : null;
         }
 
-        for (Entity passenger : entity.getPassengerList())
-        {
-            if (passenger instanceof PlayerEntity player)
-            {
+        for (Entity passenger : entity.getPassengerList()) {
+            if (passenger instanceof PlayerEntity player) {
                 return player;
             }
 
@@ -396,11 +340,9 @@ public final class YsmComponentRenderer
         return null;
     }
 
-    static boolean matches(YsmModelProfile.Component component, Entity entity)
-    {
+    static boolean matches(YsmModelProfile.Component component, Entity entity) {
         String id = Registries.ENTITY_TYPE.getId(entity.getType()).toString();
-        return matches(component.matches(), id, tag ->
-        {
+        return matches(component.matches(), id, tag -> {
             Identifier name = Identifier.tryParse(tag);
             return name != null && entity.getType().isIn(TagKey.of(RegistryKeys.ENTITY_TYPE, name));
         }) || legacyBoatMatch(component.matches(), entity instanceof AbstractBoatEntity,
@@ -408,18 +350,14 @@ public final class YsmComponentRenderer
     }
 
     /** Only these two source descriptors need the pre-wood-species registry compatibility mapping. */
-    static boolean legacyBoatMatch(List<String> rules, boolean boat, boolean chestBoat)
-    {
+    static boolean legacyBoatMatch(List<String> rules, boolean boat, boolean chestBoat) {
         return rules.contains("#minecraft:boat") && boat && !chestBoat
                 || rules.contains("minecraft:chest_boat") && chestBoat;
     }
 
-    static boolean matches(List<String> rules, String type, Predicate<String> inTag)
-    {
-        for (String rule : rules)
-        {
-            if (rule.startsWith("#") ? inTag.test(rule.substring(1)) : rule.equals(type))
-            {
+    static boolean matches(List<String> rules, String type, Predicate<String> inTag) {
+        for (String rule : rules) {
+            if (rule.startsWith("#") ? inTag.test(rule.substring(1)) : rule.equals(type)) {
                 return true;
             }
 
@@ -428,14 +366,12 @@ public final class YsmComponentRenderer
         return false;
     }
 
-    private static List<BbModel.Layer> componentLayers(Playback playback, BbModel model, Entity entity, double tick)
-    {
+    private static List<BbModel.Layer> componentLayers(Playback playback, BbModel model, Entity entity, double tick) {
         List<BbModel.Layer> layers = new ArrayList<>();
         String environment = entity instanceof ProjectileEntity ? VanillaYsmQueries.projectileAnimationState(entity)
                 : environment(false, entity.isTouchingWater(), entity.isOnFire(), entity.isOnGround(), false);
         add(layers, playback, model, "posture", environment, tick);
-        if (!(entity instanceof ProjectileEntity))
-        {
+        if (!(entity instanceof ProjectileEntity)) {
             add(layers, playback, model, "vehicle.ride", entity.hasPassengers() ? "has_ride" : "not_ride", tick);
             add(layers, playback, model, "vehicle.move",
                     entity.getVelocity().horizontalLengthSquared() > .0025 ? "forward" : "idle", tick);
@@ -444,10 +380,8 @@ public final class YsmComponentRenderer
     }
 
     /** Native vehicles use water/ground/fly; arrow ground means its synced embedded flag, not entity.onGround. */
-    static String environment(boolean projectile, boolean water, boolean fire, boolean onGround, boolean embedded)
-    {
-        if (water)
-        {
+    static String environment(boolean projectile, boolean water, boolean fire, boolean onGround, boolean embedded) {
+        if (water) {
             return "water";
         }
 
@@ -455,21 +389,17 @@ public final class YsmComponentRenderer
     }
 
     private static void add(List<BbModel.Layer> layers, Playback playback, BbModel model, String slot, String clip,
-            double tick)
-    {
-        if (model.animations().contains(clip))
-        {
+            double tick) {
+        if (model.animations().contains(clip)) {
             layers.add(playback.layer(slot, clip, tick));
         }
 
     }
 
-    static void extractArms(ClientRuntime runtime, ClientRuntime.RenderBinding binding)
-    {
+    static void extractArms(ClientRuntime runtime, ClientRuntime.RenderBinding binding) {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player == null || !binding.owner().equals(client.player.getUuid())
-                || !client.options.getPerspective().isFirstPerson())
-        {
+                || !client.options.getPerspective().isFirstPerson()) {
             return;
         }
 
@@ -477,8 +407,7 @@ public final class YsmComponentRenderer
                 .filter(value -> value.kind().equals("fp_arm")).findFirst()
                 .orElseGet(() -> runtime.modelProfile(binding.owner()).components().stream()
                         .filter(value -> value.kind().equals("arm")).findFirst().orElse(null));
-        if (component == null || !ModelRenderer.prepare(component.hash(), component.model()))
-        {
+        if (component == null || !ModelRenderer.prepare(component.hash(), component.model())) {
             return;
         }
 
@@ -495,24 +424,20 @@ public final class YsmComponentRenderer
                 component.model().animationCatalog());
         String family = component.model().controllerFamily();
         boolean manual = layers.stream().anyMatch(layer -> layer.layer().equals("manual"));
-        for (Map.Entry<String, VanillaYsmAnimations.Selection> entry : decision.slots().entrySet())
-        {
+        for (Map.Entry<String, VanillaYsmAnimations.Selection> entry : decision.slots().entrySet()) {
             String slot = entry.getKey();
             VanillaYsmAnimations.Selection choice = entry.getValue();
             playback.handPlayback.observe(slot, choice, state);
             if (choice.directive() == VanillaYsmAnimations.Directive.STOP
-                    || manual && (slot.equals("player.swing") || slot.equals("player.use")))
-            {
+                    || manual && (slot.equals("player.swing") || slot.equals("player.use"))) {
                 playback.clocks.remove(slot);
                 playback.handPlayback.stop(slot);
                 continue;
             }
             BbModel.Layer previous = playback.clocks.get(slot);
             if (choice.directive() == VanillaYsmAnimations.Directive.PAUSE
-                    || choice.directive() == VanillaYsmAnimations.Directive.CONTINUE)
-            {
-                if (previous != null)
-                {
+                    || choice.directive() == VanillaYsmAnimations.Directive.CONTINUE) {
+                if (previous != null) {
                     layers.add(componentLayer(family, previous));
                 }
 
@@ -526,18 +451,15 @@ public final class YsmComponentRenderer
             layers.add(componentLayer(family, layer));
         }
         Map<String, Double> queries = new HashMap<>(runtime.expressionQueries(binding.owner()));
-        for (String slot : decision.slots().keySet())
-        {
+        for (String slot : decision.slots().keySet()) {
             queries.put("ysm.pause." + family + slot.substring(slot.indexOf('.')),
                     decision.pauseSlots().contains(slot) ? 1d : 0d);
         }
 
-        playback.player.configureFrame(expressions ->
-        {
+        playback.player.configureFrame(expressions -> {
             runtime.configureComponentExpressionContext(binding.owner(), client.player, component, expressions);
             expressions.query("ysm.is_first_person", 1d);
-            for (String slot : decision.slots().keySet())
-            {
+            for (String slot : decision.slots().keySet()) {
                 expressions.query("ysm.pause." + family + slot.substring(slot.indexOf('.')),
                         decision.pauseSlots().contains(slot) ? 1d : 0d);
             }
@@ -545,18 +467,15 @@ public final class YsmComponentRenderer
         });
         playback.player.sample(binding.serverTick(), layers, binding.headYaw() - binding.bodyYaw(), binding.headPitch(),
                 queries, runtime.accessoryState(binding.owner()), runtime.localParameters(binding.owner()));
-        for (Arm arm : Arm.values())
-        {
+        for (Arm arm : Arm.values()) {
             String side = arm == Arm.LEFT ? "Left" : "Right";
-            if (!component.model().hasBone(side + "Arm"))
-            {
+            if (!component.model().hasBone(side + "Arm")) {
                 continue;
             }
 
             Set<String> bones = component.model().authoredArmBones(arm == Arm.LEFT);
             List<BbModel.Vertex> vertices = playback.player.filteredVertices(bones);
-            if (vertices.isEmpty())
-            {
+            if (vertices.isEmpty()) {
                 continue;
             }
 
@@ -567,8 +486,7 @@ public final class YsmComponentRenderer
         }
     }
 
-    private static BbModel.Layer componentLayer(String family, BbModel.Layer layer)
-    {
+    private static BbModel.Layer componentLayer(String family, BbModel.Layer layer) {
         return new BbModel.Layer(family + layer.layer().substring(layer.layer().indexOf('.')), layer.animation(),
                 layer.startedAtTick(), layer.speed(), layer.loop(), layer.inTicks(), layer.outTicks());
     }
@@ -577,18 +495,14 @@ public final class YsmComponentRenderer
      * OpenYSM HandItemRenderer's native hand entry: preserve the complete authored arm coordinates.
      * This path has neither shoulder normalization nor the player's BODY/user scale.
      */
-    static Matrix4f armBasis(boolean left)
-    {
+    static Matrix4f armBasis(boolean left) {
         return new Matrix4f().translation(left ? .25f : -.25f, 1.8f, 0).scale(-1, -1, 1);
     }
 
-    static void finishExtraction()
-    {
+    static void finishExtraction() {
         arms = Map.copyOf(nextArms);
-        PLAYERS.entrySet().removeIf(entry ->
-        {
-            if (live.contains(entry.getKey()))
-            {
+        PLAYERS.entrySet().removeIf(entry -> {
+            if (live.contains(entry.getKey())) {
                 return false;
             }
 
@@ -597,62 +511,50 @@ public final class YsmComponentRenderer
         });
     }
 
-    public static boolean replaces(UUID entity)
-    {
+    public static boolean replaces(UUID entity) {
         return entity != null && replaced.contains(entity);
     }
 
-    public static boolean hasArm(Arm arm)
-    {
+    public static boolean hasArm(Arm arm) {
         return arms.containsKey(arm);
     }
 
-    public static boolean renderArm(Arm arm, MatrixStack matrices, OrderedRenderCommandQueue queue, int light)
-    {
+    public static boolean renderArm(Arm arm, MatrixStack matrices, OrderedRenderCommandQueue queue, int light) {
         ArmFrame armFrame = arms.get(arm);
-        if (armFrame == null || !ModelRenderer.has(armFrame.hash()))
-        {
+        if (armFrame == null || !ModelRenderer.has(armFrame.hash())) {
             return false;
         }
 
         matrices.push();
-        try
-        {
+        try {
             matrices.multiplyPositionMatrix(armFrame.basis());
             Draw draw = new Draw(Map.of("owner", armFrame.owner().toString(), "instance", armFrame.instance(), "kind",
                     armFrame.kind(), "side", arm.name(), "hash", armFrame.hash(), "vertices",
                     armFrame.vertices().size(), "finalTransform",
                     matrices.peek().getPositionMatrix().get(new float[16])), new AtomicLong());
             boolean submitted = ModelRenderer.submitMesh(armFrame.hash(), armFrame.vertices(), matrices, queue, light,
-                    armFrame.playerSkin(), count ->
-                    {
+                    armFrame.playerSkin(), count -> {
                         draw.emitted().addAndGet(count);
                         emittedArmVertices.addAndGet(count);
                     });
-            if (submitted)
-            {
+            if (submitted) {
                 submittedArms++;
                 List<Draw> next = new ArrayList<>(armDraws);
                 next.add(draw);
                 armDraws = List.copyOf(next);
             }
             return submitted;
-        }
-        finally
-        {
+        } finally {
             matrices.pop();
         }
     }
 
-    static void submit(WorldRenderContext context)
-    {
+    static void submit(WorldRenderContext context) {
         List<Draw> draws = new ArrayList<>();
-        for (ComponentFrame component : frame)
-        {
+        for (ComponentFrame component : frame) {
             MatrixStack matrices = context.matrices();
             matrices.push();
-            try
-            {
+            try {
                 matrices.translate(component.x(), component.y(), component.z());
                 matrices.multiplyPositionMatrix(
                         componentBasis(component.kind().equals("projectile"), component.yaw(), component.pitch()));
@@ -668,33 +570,25 @@ public final class YsmComponentRenderer
                 source.put("finalTransform", matrices.peek().getPositionMatrix().get(new float[16]));
                 Draw draw = new Draw(Map.copyOf(source), new AtomicLong());
                 if (ModelRenderer.submitMesh(component.hash(), component.vertices(), matrices, context.commandQueue(),
-                        component.light(), count ->
-                        {
+                        component.light(), count -> {
                             draw.emitted().addAndGet(count);
                             emittedComponentVertices.addAndGet(count);
-                        }))
-                {
+                        })) {
                     submittedComponents++;
                     draws.add(draw);
                 }
-            }
-            finally
-            {
+            } finally {
                 matrices.pop();
             }
         }
-        for (FishingLine line : fishingLines)
-        {
+        for (FishingLine line : fishingLines) {
             MatrixStack matrices = context.matrices();
             matrices.push();
-            try
-            {
+            try {
                 matrices.translate(line.x(), line.y(), line.z());
-                context.commandQueue().submitCustom(matrices, RenderLayers.lines(), (entry, vertices) ->
-                {
+                context.commandQueue().submitCustom(matrices, RenderLayers.lines(), (entry, vertices) -> {
                     // Minecraft 1.21.11 uses two vertices per each of its 16 line segments.
-                    for (int segment = 0; segment < 16; segment++)
-                    {
+                    for (int segment = 0; segment < 16; segment++) {
                         float start = segment / 16f, end = (segment + 1) / 16f;
                         YsmFishingLineRendererInvoker.meplayeractions$renderFishingLine((float) line.handOffset().x,
                                 (float) line.handOffset().y, (float) line.handOffset().z, vertices, entry, start, end,
@@ -704,9 +598,7 @@ public final class YsmComponentRenderer
                                 line.width());
                     }
                 });
-            }
-            finally
-            {
+            } finally {
                 matrices.pop();
             }
         }
@@ -714,18 +606,15 @@ public final class YsmComponentRenderer
     }
 
     /** Source projectile geometry faces +X; its native yaw/pitch basis differs from the vehicle's -Z front. */
-    static Matrix4f componentBasis(boolean projectile, float yaw, float pitch)
-    {
+    static Matrix4f componentBasis(boolean projectile, float yaw, float pitch) {
         return projectile
                 ? new Matrix4f().rotateY((float) Math.toRadians(yaw - 90)).rotateZ((float) Math.toRadians(pitch))
                 : new Matrix4f().rotateY((float) Math.toRadians(180 - yaw));
     }
 
-    private static Box meshBounds(Vec3d position, List<BbModel.Vertex> vertices)
-    {
+    private static Box meshBounds(Vec3d position, List<BbModel.Vertex> vertices) {
         double radius = .05;
-        for (BbModel.Vertex vertex : vertices)
-        {
+        for (BbModel.Vertex vertex : vertices) {
             radius = Math.max(radius,
                     Math.sqrt(vertex.x() * vertex.x() + vertex.y() * vertex.y() + vertex.z() * vertex.z()));
         }
@@ -734,8 +623,7 @@ public final class YsmComponentRenderer
                 position.y + radius, position.z + radius);
     }
 
-    static void clear()
-    {
+    static void clear() {
         PLAYERS.values().forEach(value -> value.player.dispose());
         PLAYERS.clear();
         frame = List.of();
@@ -748,8 +636,7 @@ public final class YsmComponentRenderer
         armDraws = List.of();
     }
 
-    public static Map<String, Object> diagnostics()
-    {
+    public static Map<String, Object> diagnostics() {
         return Map
                 .of("models", info, "activeReplacements", replaced.stream().map(UUID::toString).toList(),
                         "submittedComponents", submittedComponents, "submittedArms", submittedArms,

@@ -11,18 +11,15 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class YsmRenderAttachmentTest
-{
-    private static void assertPoint(Vector3f expected, Vector3f actual)
-    {
+class YsmRenderAttachmentTest {
+    private static void assertPoint(Vector3f expected, Vector3f actual) {
         assertEquals(expected.x, actual.x, 1e-6);
         assertEquals(expected.y, actual.y, 1e-6);
         assertEquals(expected.z, actual.z, 1e-6);
     }
 
     @Test
-    void animatedHandRotationMovesTheItemAndItsCorrectionTogether()
-    {
+    void animatedHandRotationMovesTheItemAndItsCorrectionTogether() {
         Matrix4f locator = new Matrix4f().translation(1, 2, 3).rotateY((float) (Math.PI / 2));
         Matrix4f source = new Matrix4f(locator);
         Matrix4f item = YsmItemRenderer.itemTransform(locator);
@@ -33,8 +30,7 @@ class YsmRenderAttachmentTest
     }
 
     @Test
-    void parentScaleAndMirroringRemainInTheItemAttachment()
-    {
+    void parentScaleAndMirroringRemainInTheItemAttachment() {
         Matrix4f locator = new Matrix4f().translation(0, 4, 0).scale(-2, 2, 2);
         Matrix4f item = YsmItemRenderer.itemTransform(locator);
         assertPoint(new Vector3f(0, 3.875f, -.2f), item.transformPosition(new Vector3f()));
@@ -45,8 +41,7 @@ class YsmRenderAttachmentTest
     }
 
     @Test
-    void extraAuthorLocatorsAreIndependentAndHiddenLocatorsCannotAttachItems()
-    {
+    void extraAuthorLocatorsAreIndependentAndHiddenLocatorsCannotAttachItems() {
         Map<String, Matrix4f> bones = Map.of("RightHandLocator", new Matrix4f(), "RightHand", new Matrix4f(),
                 "RightHandLocator2", new Matrix4f().translation(1, 2, 3), "RightHandLocator3", new Matrix4f().scale(0),
                 "RightHandLocator8", new Matrix4f(), "RightHandLocator9", new Matrix4f(), "LeftHandLocator2",
@@ -59,8 +54,7 @@ class YsmRenderAttachmentTest
     }
 
     @Test
-    void missingNativeHandLocatorDoesNotDrawAnotherWeaponOnTheHandBone()
-    {
+    void missingNativeHandLocatorDoesNotDrawAnotherWeaponOnTheHandBone() {
         Map<String, Matrix4f> handOnly = Map.of("RightHand", new Matrix4f().translation(2, 3, 4));
         assertTrue(YsmItemRenderer.attachmentBones(handOnly, "Right", false, true).isEmpty(),
                 "Native YSM must leave the author's missing held-item locator absent");
@@ -71,8 +65,7 @@ class YsmRenderAttachmentTest
     }
 
     @Test
-    void importedBbmodelUsesItsDirectEquipmentAnchorBeforeSameSideExtras()
-    {
+    void importedBbmodelUsesItsDirectEquipmentAnchorBeforeSameSideExtras() {
         Map<String, Matrix4f> bones = Map.of("RightHandLocator", new Matrix4f(), "RightHandLocator2", new Matrix4f(),
                 "RightHandLocator8", new Matrix4f(), "LeftHandLocator2", new Matrix4f());
         assertEquals(List.of("RightHandLocator"), YsmItemRenderer.equipmentAttachmentBones(bones, "Right"),
@@ -87,8 +80,7 @@ class YsmRenderAttachmentTest
     }
 
     @Test
-    void nativeHeadLayerUsesTheModernUpstreamEquippableSlotExclusion()
-    {
+    void nativeHeadLayerUsesTheModernUpstreamEquippableSlotExclusion() {
         assertTrue(YsmEquipmentRenderer.headItemEligible(true, null, false));
         assertFalse(YsmEquipmentRenderer.headItemEligible(true, EquipmentSlot.HEAD, false),
                 "OpenYSM treats any HEAD equippable as armor even without an equipment texture asset");
@@ -100,8 +92,7 @@ class YsmRenderAttachmentTest
     }
 
     @Test
-    void nativeHeadItemsUseTheHeadChainEvenWhenASeparateHeadLocatorExists()
-    {
+    void nativeHeadItemsUseTheHeadChainEvenWhenASeparateHeadLocatorExists() {
         assertEquals(List.of("Head"), YsmEquipmentRenderer.boneCandidates("head", true),
                 "The fixed upstream mapper and baker resolve headIds from Head, never HeadLocator");
         assertEquals(List.of("HeadLocator", "Head"), YsmEquipmentRenderer.boneCandidates("head", false));
@@ -113,8 +104,7 @@ class YsmRenderAttachmentTest
     }
 
     @Test
-    void nativeWingsRemainAtTheAuthoredElytraLocatorWithoutAnExtraDepthShift()
-    {
+    void nativeWingsRemainAtTheAuthoredElytraLocatorWithoutAnExtraDepthShift() {
         Matrix4f authored = new Matrix4f().translation(1, 2, 3).rotateY((float) (Math.PI / 2));
         Matrix4f source = new Matrix4f(authored);
         Matrix4f nativeWings = YsmEquipmentRenderer.wingTransform(authored, true);
@@ -126,8 +116,7 @@ class YsmRenderAttachmentTest
     }
 
     @Test
-    void nativeHandEntryPreservesTheFullAuthoredCoordinatesLikeOpenYsm()
-    {
+    void nativeHandEntryPreservesTheFullAuthoredCoordinatesLikeOpenYsm() {
         Vector3f shoulder = new Vector3f(.071875f, 1.8609375f, 0);
         Matrix4f right = YsmComponentRenderer.armBasis(false);
         assertPoint(new Vector3f(-.25f - shoulder.x, 1.8f - shoulder.y, 0),
@@ -139,8 +128,7 @@ class YsmRenderAttachmentTest
     }
 
     @Test
-    void registryMatchesUseExactIdsAndActualTagMembership()
-    {
+    void registryMatchesUseExactIdsAndActualTagMembership() {
         assertTrue(YsmComponentRenderer.matches(List.of("minecraft:arrow"), "minecraft:arrow", tag -> false));
         assertFalse(YsmComponentRenderer.matches(List.of("minecraft:arrow"), "other:arrow", tag -> false));
         assertTrue(YsmComponentRenderer.matches(List.of("#minecraft:boats"), "minecraft:oak_boat",
@@ -150,8 +138,7 @@ class YsmRenderAttachmentTest
     }
 
     @Test
-    void leftAndRightNativeHandEntriesUseOnlyTheUpstreamTranslationAndAxisReflection()
-    {
+    void leftAndRightNativeHandEntriesUseOnlyTheUpstreamTranslationAndAxisReflection() {
         Matrix4f right = YsmComponentRenderer.armBasis(false);
         Matrix4f left = YsmComponentRenderer.armBasis(true);
         assertPoint(new Vector3f(-.25f, 1.8f, 0), right.transformPosition(new Vector3f()));
@@ -161,8 +148,7 @@ class YsmRenderAttachmentTest
     }
 
     @Test
-    void legacyBoatRulesNeverReplaceChestOrUnrelatedEntitiesByNameSuffix()
-    {
+    void legacyBoatRulesNeverReplaceChestOrUnrelatedEntitiesByNameSuffix() {
         assertTrue(YsmComponentRenderer.legacyBoatMatch(List.of("#minecraft:boat"), true, false));
         assertFalse(YsmComponentRenderer.legacyBoatMatch(List.of("#minecraft:boat"), true, true));
         assertTrue(YsmComponentRenderer.legacyBoatMatch(List.of("minecraft:chest_boat"), true, true));
@@ -172,8 +158,7 @@ class YsmRenderAttachmentTest
     }
 
     @Test
-    void vehiclesAndProjectilesUseTheirNativeEnvironmentPredicates()
-    {
+    void vehiclesAndProjectilesUseTheirNativeEnvironmentPredicates() {
         assertEquals("fly", YsmComponentRenderer.environment(false, false, true, false, false));
         assertEquals("ground", YsmComponentRenderer.environment(false, false, true, true, false));
         assertEquals("water", YsmComponentRenderer.environment(false, true, true, true, false));
@@ -185,8 +170,7 @@ class YsmRenderAttachmentTest
     }
 
     @Test
-    void authoredProjectileAndVehicleFrontsFollowTheActualEntityOrientation()
-    {
+    void authoredProjectileAndVehicleFrontsFollowTheActualEntityOrientation() {
         assertPoint(new Vector3f(0, 0, 1),
                 YsmComponentRenderer.componentBasis(true, 0, 0).transformDirection(new Vector3f(1, 0, 0)));
         assertPoint(new Vector3f(1, 0, 0),
@@ -198,8 +182,7 @@ class YsmRenderAttachmentTest
     }
 
     @Test
-    void passengerLocatorMovesTheRiderInVehicleSpaceWithoutOverwritingItsBodyYaw()
-    {
+    void passengerLocatorMovesTheRiderInVehicleSpaceWithoutOverwritingItsBodyYaw() {
         Matrix4f locator = new Matrix4f().translation(1, 2, 3);
         Matrix4f source = new Matrix4f(locator);
         Matrix4f north = YsmComponentRenderer.passengerTransform(0, locator, -1);

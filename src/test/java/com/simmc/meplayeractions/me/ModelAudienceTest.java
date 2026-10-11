@@ -14,21 +14,17 @@ import java.util.function.Predicate;
 import static org.junit.jupiter.api.Assertions.*;
 import java.util.stream.Collectors;
 
-class ModelAudienceTest
-{
-    private static World world()
-    {
-        return (World) Proxy.newProxyInstance(World.class.getClassLoader(), new Class[]
-        { World.class }, (p, m, a) -> switch (m.getName())
-        {
-        case "equals" -> p == a[0];
-        case "hashCode" -> System.identityHashCode(p);
-        default -> null;
-        });
+class ModelAudienceTest {
+    private static World world() {
+        return (World) Proxy.newProxyInstance(World.class.getClassLoader(), new Class[] { World.class },
+                (p, m, a) -> switch (m.getName()) {
+                case "equals" -> p == a[0];
+                case "hashCode" -> System.identityHashCode(p);
+                default -> null;
+                });
     }
 
-    private static class Person
-    {
+    private static class Person {
         final UUID id;
         final Player player;
         Location location;
@@ -36,81 +32,67 @@ class ModelAudienceTest
         int locations;
         final Set<Player> tracking = new HashSet<>();
 
-        Person(World world, double x, double y, double z)
-        {
+        Person(World world, double x, double y, double z) {
             this(UUID.randomUUID(), world, x, y, z);
         }
 
-        Person(UUID id, World world, double x, double y, double z)
-        {
+        Person(UUID id, World world, double x, double y, double z) {
             this.id = id;
             this.location = new Location(world, x, y, z);
-            this.player = (Player) Proxy.newProxyInstance(Player.class.getClassLoader(), new Class[]
-            { Player.class }, (p, m, a) -> switch (m.getName())
-            {
-            case "getUniqueId" -> id;
-            case "getLocation" ->
-            {
-                this.locations++;
-                yield this.location.clone();
-            }
-            case "getWorld" -> this.location.getWorld();
-            case "getTrackedPlayers" -> Set.copyOf(this.tracking);
-            case "isOnline" -> this.online;
-            case "canSee" -> this.visible;
-            case "equals" -> p == a[0];
-            case "hashCode" -> id.hashCode();
-            case "toString" -> id.toString();
-            default -> null;
-            });
+            this.player = (Player) Proxy.newProxyInstance(Player.class.getClassLoader(), new Class[] { Player.class },
+                    (p, m, a) -> switch (m.getName()) {
+                    case "getUniqueId" -> id;
+                    case "getLocation" -> {
+                        this.locations++;
+                        yield this.location.clone();
+                    }
+                    case "getWorld" -> this.location.getWorld();
+                    case "getTrackedPlayers" -> Set.copyOf(this.tracking);
+                    case "isOnline" -> this.online;
+                    case "canSee" -> this.visible;
+                    case "equals" -> p == a[0];
+                    case "hashCode" -> id.hashCode();
+                    case "toString" -> id.toString();
+                    default -> null;
+                    });
         }
     }
 
     /** ME forced pairings bypass predicates; forced hide removes pairing. */
-    private static class Tracker implements TrackedEntity
-    {
+    private static class Tracker implements TrackedEntity {
         final Person owner;
         final Set<UUID> paired = new HashSet<>(), hidden = new HashSet<>();
         Predicate<Player> predicate = DEFAULT_PREDICATE;
         int dirty, reads;
 
-        Tracker(Person owner)
-        {
+        Tracker(Person owner) {
             this.owner = owner;
         }
 
-        public Entity getEntity()
-        {
+        public Entity getEntity() {
             return this.owner.player;
         }
 
-        public int getBaseRange()
-        {
+        public int getBaseRange() {
             return 64;
         }
 
-        public void setBaseRange(int range)
-        {
+        public void setBaseRange(int range) {
         }
 
-        public int getEffectiveRange()
-        {
+        public int getEffectiveRange() {
             return 64;
         }
 
-        public Set<UUID> getTrackedPlayer()
-        {
+        public Set<UUID> getTrackedPlayer() {
             return getTrackedPlayer(p -> true);
         }
 
-        public Set<UUID> getTrackedPlayer(Predicate<Player> extra)
-        {
+        public Set<UUID> getTrackedPlayer(Predicate<Player> extra) {
             this.reads++;
             HashSet<UUID> result = new HashSet<>(this.paired);
-            for (Player p : this.owner.tracking)
-            {
-                if (this.predicate.test(p) && extra.test(p) && !this.hidden.contains(p.getUniqueId()))
-                {
+            for (Player p : this.owner.tracking) {
+                if (this.predicate.test(p) && extra.test(p) && !this.hidden.contains(p.getUniqueId())) {
                     result.add(p.getUniqueId());
                 }
 
@@ -119,68 +101,55 @@ class ModelAudienceTest
             return result;
         }
 
-        public void sendPairingData(Player p)
-        {
+        public void sendPairingData(Player p) {
         }
 
-        public void broadcastSpawn()
-        {
+        public void broadcastSpawn() {
         }
 
-        public void broadcastRemove()
-        {
+        public void broadcastRemove() {
         }
 
-        public void addForcedPairing(UUID id)
-        {
+        public void addForcedPairing(UUID id) {
             this.paired.add(id);
             this.hidden.remove(id);
         }
 
-        public void removeForcedPairing(UUID id)
-        {
+        public void removeForcedPairing(UUID id) {
             this.paired.remove(id);
         }
 
-        public void clearForcedPairing()
-        {
+        public void clearForcedPairing() {
             this.paired.clear();
         }
 
-        public void addForcedHidden(UUID id)
-        {
+        public void addForcedHidden(UUID id) {
             this.hidden.add(id);
             this.paired.remove(id);
         }
 
-        public void removeForcedHidden(UUID id)
-        {
+        public void removeForcedHidden(UUID id) {
             this.hidden.remove(id);
         }
 
-        public void clearForcedHidden()
-        {
+        public void clearForcedHidden() {
             this.hidden.clear();
         }
 
-        public void setPlayerPredicate(Predicate<Player> p)
-        {
+        public void setPlayerPredicate(Predicate<Player> p) {
             this.predicate = p;
         }
 
-        public Predicate<Player> getPlayerPredicate()
-        {
+        public Predicate<Player> getPlayerPredicate() {
             return this.predicate;
         }
 
-        public void markViewersDirty()
-        {
+        public void markViewersDirty() {
             this.dirty++;
         }
     }
 
-    private static class Scene
-    {
+    private static class Scene {
         final World world = world();
         final Person owner;
         final Tracker tracker;
@@ -188,73 +157,62 @@ class ModelAudienceTest
         long tick;
         int lookups;
 
-        Scene()
-        {
+        Scene() {
             this(UUID.randomUUID());
         }
 
-        Scene(UUID ownerId)
-        {
+        Scene(UUID ownerId) {
             this.owner = new Person(ownerId, this.world, 0, 0, 0);
             this.tracker = new Tracker(this.owner);
         }
 
-        Person viewer(double x, double y, double z)
-        {
+        Person viewer(double x, double y, double z) {
             Person p = new Person(this.world, x, y, z);
             this.owner.tracking.add(p.player);
             this.people.put(p.id, p.player);
             return p;
         }
 
-        ModelAudience audience(boolean self, double distance, int cap)
-        {
+        ModelAudience audience(boolean self, double distance, int cap) {
             this.people.put(this.owner.id, this.owner.player);
-            return new ModelAudience(new DisguiseOptions("ysm_02_jk", 1, true, 2, self, distance, cap, List.of()), id ->
-            {
-                this.lookups++;
-                return this.people.get(id);
-            }, () -> this.tick, PerformanceSettings.defaults());
+            return new ModelAudience(new DisguiseOptions("ysm_02_jk", 1, true, 2, self, distance, cap, List.of()),
+                    id -> {
+                        this.lookups++;
+                        return this.people.get(id);
+                    }, () -> this.tick, PerformanceSettings.defaults());
         }
 
-        ModelAudience guarded(ModelAudience.Guard guard)
-        {
+        ModelAudience guarded(ModelAudience.Guard guard) {
             this.people.put(this.owner.id, this.owner.player);
-            return new ModelAudience(new DisguiseOptions("ysm_02_jk", 1, true, 2, false, 8, 10, List.of()), id ->
-            {
+            return new ModelAudience(new DisguiseOptions("ysm_02_jk", 1, true, 2, false, 8, 10, List.of()), id -> {
                 this.lookups++;
                 return this.people.get(id);
             }, () -> this.tick, PerformanceSettings.defaults(), guard);
         }
     }
 
-    private static final class Budget implements ModelAudience.Guard
-    {
+    private static final class Budget implements ModelAudience.Guard {
         boolean discovery = true;
         int maximum = 1, released;
         Set<UUID> granted = Set.of();
 
-        public boolean discover()
-        {
+        public boolean discover() {
             return this.discovery;
         }
 
-        public Set<UUID> admit(UUID owner, Collection<UUID> requested)
-        {
+        public Set<UUID> admit(UUID owner, Collection<UUID> requested) {
             this.granted = requested.stream().limit(this.maximum).collect(Collectors.toSet());
             return this.granted;
         }
 
-        public void release(UUID owner)
-        {
+        public void release(UUID owner) {
             this.released++;
             this.granted = Set.of();
         }
     }
 
     @Test
-    void strictThreeDimensionalBoundaryAndNearestCapApplyToActualTracker()
-    {
+    void strictThreeDimensionalBoundaryAndNearestCapApplyToActualTracker() {
         ModelAudienceTest.Scene s = new Scene();
         ModelAudienceTest.Person near = s.viewer(1, 0, 0);
         ModelAudienceTest.Person second = s.viewer(0, 2, 0);
@@ -271,8 +229,7 @@ class ModelAudienceTest
     }
 
     @Test
-    void movementVacanciesAndNewEntrantsUseRawNativeTracking()
-    {
+    void movementVacanciesAndNewEntrantsUseRawNativeTracking() {
         ModelAudienceTest.Scene s = new Scene();
         ModelAudienceTest.Person near = s.viewer(1, 0, 0);
         ModelAudienceTest.Person waiting = s.viewer(3, 0, 0);
@@ -294,8 +251,7 @@ class ModelAudienceTest
     }
 
     @Test
-    void selfVisibilityUsesPairingAndDoesNotOccupyOtherViewerSlots()
-    {
+    void selfVisibilityUsesPairingAndDoesNotOccupyOtherViewerSlots() {
         ModelAudienceTest.Scene s = new Scene();
         ModelAudienceTest.Person other = s.viewer(1, 0, 0);
         ModelAudience a = s.audience(true, 8, 1);
@@ -310,8 +266,7 @@ class ModelAudienceTest
     }
 
     @Test
-    void vanishWorldOfflineAndOriginalPredicateCannotConsumeTheCap()
-    {
+    void vanishWorldOfflineAndOriginalPredicateCannotConsumeTheCap() {
         ModelAudienceTest.Scene s = new Scene();
         ModelAudienceTest.Person visible = s.viewer(4, 0, 0);
         ModelAudienceTest.Person vanished = s.viewer(1, 0, 0);
@@ -334,8 +289,7 @@ class ModelAudienceTest
     }
 
     @Test
-    void existingForcedPairingsCannotBypassLimitsAndAreRestoredAfterWrapperReplacement()
-    {
+    void existingForcedPairingsCannotBypassLimitsAndAreRestoredAfterWrapperReplacement() {
         ModelAudienceTest.Scene s = new Scene();
         ModelAudienceTest.Person near = s.viewer(1, 0, 0);
         ModelAudienceTest.Person far = s.viewer(9, 0, 0);
@@ -356,8 +310,7 @@ class ModelAudienceTest
     }
 
     @Test
-    void forcedViewerReentersWhenInRangeAndLeavesAtExactBoundary()
-    {
+    void forcedViewerReentersWhenInRangeAndLeavesAtExactBoundary() {
         ModelAudienceTest.Scene s = new Scene();
         ModelAudienceTest.Person p = s.viewer(9, 0, 0);
         s.owner.tracking.remove(p.player);
@@ -378,8 +331,7 @@ class ModelAudienceTest
     }
 
     @Test
-    void equalDistancesHaveDeterministicUuidOrderAndDuplicateEntriesDoNotConsumeSlots()
-    {
+    void equalDistancesHaveDeterministicUuidOrderAndDuplicateEntriesDoNotConsumeSlots() {
         UUID owner = new UUID(0, 9), first = new UUID(0, 1), second = new UUID(0, 2);
         assertEquals(Set.of(first, second),
                 AudienceSelector.select(owner, false, 8, 2,
@@ -391,8 +343,7 @@ class ModelAudienceTest
     }
 
     @Test
-    void cleanupKeepsAReplacementPredicateOwnedByAnotherPlugin()
-    {
+    void cleanupKeepsAReplacementPredicateOwnedByAnotherPlugin() {
         ModelAudienceTest.Scene s = new Scene();
         ModelAudience a = s.audience(false, 8, 10);
         a.update(s.owner.player, s.tracker);
@@ -403,8 +354,7 @@ class ModelAudienceTest
     }
 
     @Test
-    void readyViewerKeepsItsSlotWhileOnlyMeRenderingIsSuppressedThenRestored()
-    {
+    void readyViewerKeepsItsSlotWhileOnlyMeRenderingIsSuppressedThenRestored() {
         ModelAudienceTest.Scene s = new Scene();
         ModelAudienceTest.Person near = s.viewer(1, 0, 0);
         ModelAudienceTest.Person waiting = s.viewer(2, 0, 0);
@@ -424,8 +374,7 @@ class ModelAudienceTest
     }
 
     @Test
-    void readySelfRemovesForcedPairingAndFallbackRestoresIt()
-    {
+    void readySelfRemovesForcedPairingAndFallbackRestoresIt() {
         ModelAudienceTest.Scene s = new Scene();
         ModelAudienceTest.Person other = s.viewer(1, 0, 0);
         ModelAudience a = s.audience(true, 8, 1);
@@ -442,8 +391,7 @@ class ModelAudienceTest
     }
 
     @Test
-    void forcedReadyObserverStillCountsAndIsRecoveredAcrossTrackerReplacement()
-    {
+    void forcedReadyObserverStillCountsAndIsRecoveredAcrossTrackerReplacement() {
         ModelAudienceTest.Scene s = new Scene();
         ModelAudienceTest.Person other = s.viewer(1, 0, 0);
         s.owner.tracking.remove(other.player);
@@ -464,11 +412,9 @@ class ModelAudienceTest
     }
 
     @Test
-    void stableTicksDoNoTrackingOrPlayerLookupsAndValidationOnlyLooksUpAdmittedViewers()
-    {
+    void stableTicksDoNoTrackingOrPlayerLookupsAndValidationOnlyLooksUpAdmittedViewers() {
         ModelAudienceTest.Scene s = new Scene(new UUID(0, 40));
-        for (int i = 0; i < 100; i++)
-        {
+        for (int i = 0; i < 100; i++) {
             s.viewer(1 + i * .01, 0, 0);
         }
 
@@ -476,8 +422,7 @@ class ModelAudienceTest
         a.update(s.owner.player, s.tracker);
         s.lookups = 0;
         s.tracker.reads = 0;
-        for (s.tick = 1; s.tick < 20; s.tick++)
-        {
+        for (s.tick = 1; s.tick < 20; s.tick++) {
             assertFalse(a.update(s.owner.player, s.tracker));
         }
 
@@ -492,8 +437,7 @@ class ModelAudienceTest
     }
 
     @Test
-    void admissionWaitsForHeavyRefreshButDeparturesAreRevokedAtTheLightDeadline()
-    {
+    void admissionWaitsForHeavyRefreshButDeparturesAreRevokedAtTheLightDeadline() {
         ModelAudienceTest.Scene s = new Scene(new UUID(0, 40));
         ModelAudienceTest.Person near = s.viewer(1, 0, 0);
         ModelAudience a = s.audience(false, 8, 1);
@@ -515,8 +459,7 @@ class ModelAudienceTest
     }
 
     @Test
-    void stoppedNativeTrackingIsRevokedWithinTwentyTicks()
-    {
+    void stoppedNativeTrackingIsRevokedWithinTwentyTicks() {
         ModelAudienceTest.Scene s = new Scene(new UUID(0, 40));
         ModelAudienceTest.Person viewer = s.viewer(1, 0, 0);
         ModelAudience a = s.audience(false, 8, 1);
@@ -528,8 +471,7 @@ class ModelAudienceTest
     }
 
     @Test
-    void localRendererChangesReconcileImmediatelyWithoutRediscoveringCandidates()
-    {
+    void localRendererChangesReconcileImmediatelyWithoutRediscoveringCandidates() {
         ModelAudienceTest.Scene s = new Scene(new UUID(0, 40));
         ModelAudienceTest.Person viewer = s.viewer(1, 0, 0);
         s.owner.tracking.remove(viewer.player);
@@ -550,8 +492,7 @@ class ModelAudienceTest
     }
 
     @Test
-    void wrappersAndExternallyReplacedFiltersAreCheckedOnEveryTick()
-    {
+    void wrappersAndExternallyReplacedFiltersAreCheckedOnEveryTick() {
         ModelAudienceTest.Scene s = new Scene(new UUID(0, 40));
         ModelAudience a = s.audience(false, 8, 1);
         a.update(s.owner.player, s.tracker);
@@ -563,11 +504,9 @@ class ModelAudienceTest
     }
 
     @Test
-    void fullRefreshDeadlinesSpreadOwnersAcrossEveryTickOfTheConfiguredPeriod()
-    {
+    void fullRefreshDeadlinesSpreadOwnersAcrossEveryTickOfTheConfiguredPeriod() {
         Set<Long> deadlines = new HashSet<>();
-        for (int i = 0; i < 40; i++)
-        {
+        for (int i = 0; i < 40; i++) {
             deadlines.add(ModelAudience.nextDeadline(0, new UUID(0, i), 40));
         }
 
@@ -578,13 +517,11 @@ class ModelAudienceTest
     }
 
     @Test
-    void boundedNearestSelectionMatchesSortingForLargeDuplicateAndTieHeavyInput()
-    {
+    void boundedNearestSelectionMatchesSortingForLargeDuplicateAndTieHeavyInput() {
         Random random = new Random(7);
         UUID owner = new UUID(0, 9999);
         List<AudienceSelector.Candidate> candidates = new ArrayList<>();
-        for (int i = 0; i < 2000; i++)
-        {
+        for (int i = 0; i < 2000; i++) {
             candidates.add(new AudienceSelector.Candidate(new UUID(0, random.nextInt(1200)), random.nextInt(100)));
         }
 
@@ -597,8 +534,7 @@ class ModelAudienceTest
     }
 
     @Test
-    void sharedBudgetFiltersActualMePairingsBeforeModelPublicationAndReleasesOnClose()
-    {
+    void sharedBudgetFiltersActualMePairingsBeforeModelPublicationAndReleasesOnClose() {
         ModelAudienceTest.Scene s = new Scene();
         ModelAudienceTest.Person near = s.viewer(1, 0, 0);
         ModelAudienceTest.Person far = s.viewer(2, 0, 0);
@@ -616,8 +552,7 @@ class ModelAudienceTest
     }
 
     @Test
-    void protectedDiscoveryStillRevokesOfflineOrVanishedViewersAtTheSafetyDeadline()
-    {
+    void protectedDiscoveryStillRevokesOfflineOrVanishedViewersAtTheSafetyDeadline() {
         ModelAudienceTest.Scene s = new Scene(new UUID(0, 40));
         ModelAudienceTest.Person near = s.viewer(1, 0, 0);
         ModelAudienceTest.Budget budget = new Budget();
@@ -638,8 +573,7 @@ class ModelAudienceTest
     }
 
     @Test
-    void localTakeoverRetainsItsGlobalRelationshipWhileMeDisplayIsSuppressed()
-    {
+    void localTakeoverRetainsItsGlobalRelationshipWhileMeDisplayIsSuppressed() {
         ModelAudienceTest.Scene s = new Scene(new UUID(0, 40));
         ModelAudienceTest.Person viewer = s.viewer(1, 0, 0);
         ModelAudienceTest.Budget budget = new Budget();

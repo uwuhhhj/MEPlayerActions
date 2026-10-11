@@ -6,13 +6,10 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class WheelSelectionTest
-{
+class WheelSelectionTest {
     @Test
-    void classicPolygonPositionsFollowTheUpstreamPositiveXAxisOrder()
-    {
-        for (int slot = 0; slot < 8; slot++)
-        {
+    void classicPolygonPositionsFollowTheUpstreamPositiveXAxisOrder() {
+        for (int slot = 0; slot < 8; slot++) {
             WheelSelection.Point action = WheelSelection.labelPoint(slot, 65);
             WheelSelection.Point gear = WheelSelection.labelPoint(slot, 35);
             assertEquals(slot, WheelSelection.classicSlotAt(action.x(), action.y(), 50, 100, 8));
@@ -25,15 +22,13 @@ class WheelSelectionTest
     }
 
     @Test
-    void classicPartialPageDrawsAndAcceptsOnlyItsActualEntries()
-    {
+    void classicPartialPageDrawsAndAcceptsOnlyItsActualEntries() {
         assertEquals(0, WheelSelection.visibleSlots(0, 0));
         assertEquals(3, WheelSelection.visibleSlots(0, 3));
         assertEquals(8, WheelSelection.visibleSlots(0, 10));
         assertEquals(2, WheelSelection.visibleSlots(1, 10));
         assertEquals(0, WheelSelection.visibleSlots(Integer.MAX_VALUE, 10));
-        for (int slot = 0; slot < 8; slot++)
-        {
+        for (int slot = 0; slot < 8; slot++) {
             WheelSelection.Point action = WheelSelection.labelPoint(slot, 65);
             assertEquals(slot < 2 ? slot : -1, WheelSelection.classicSlotAt(action.x(), action.y(), 50, 100, 2));
         }
@@ -41,14 +36,10 @@ class WheelSelectionTest
     }
 
     @Test
-    void classicGapsAndInnerConfigurationRegionCannotDispatchNeighborActions()
-    {
-        for (int edge = 0; edge < 8; edge++)
-        {
+    void classicGapsAndInnerConfigurationRegionCannotDispatchNeighborActions() {
+        for (int edge = 0; edge < 8; edge++) {
             double angle = edge * Math.PI / 4;
-            for (double offset : new double[]
-            { -.02, 0, .02 })
-            {
+            for (double offset : new double[] { -.02, 0, .02 }) {
                 assertEquals(-1, WheelSelection.classicSlotAt(65 * Math.cos(angle + offset),
                         65 * Math.sin(angle + offset), 50, 100, 8));
             }
@@ -61,10 +52,8 @@ class WheelSelectionTest
     }
 
     @Test
-    void classicSlicesContainFourStraightEdgesWithTheAuthoredGapAndVertexOrder()
-    {
-        for (int slot = 0; slot < 8; slot++)
-        {
+    void classicSlicesContainFourStraightEdgesWithTheAuthoredGapAndVertexOrder() {
+        for (int slot = 0; slot < 8; slot++) {
             List<WheelSelection.Point> quad = WheelSelection.polygon(slot, 25, 105);
             assertEquals(4, quad.size());
             assertEquals(105, Math.hypot(quad.get(0).x(), quad.get(0).y()), 1e-4);
@@ -80,8 +69,7 @@ class WheelSelectionTest
             assertEquals(105 * Math.cos(Math.PI / 8 - Math.PI / 90), chordRadius, 1e-4);
             assertTrue(chordRadius < 100);
             double signedArea = 0;
-            for (int i = 0; i < 4; i++)
-            {
+            for (int i = 0; i < 4; i++) {
                 WheelSelection.Point a = quad.get(i);
                 WheelSelection.Point b = quad.get((i + 1) % 4);
                 signedArea += a.x() * b.y() - a.y() * b.x();
@@ -93,15 +81,8 @@ class WheelSelectionTest
     }
 
     @Test
-    void classicWheelAndAuthorPanelFitTogetherInCompactAndWideViewports()
-    {
-        for (int[] size : new int[][]
-        {
-                { 320, 240 },
-                { 426, 240 },
-                { 640, 360 },
-                { 960, 540 } })
-        {
+    void classicWheelAndAuthorPanelFitTogetherInCompactAndWideViewports() {
+        for (int[] size : new int[][] { { 320, 240 }, { 426, 240 }, { 640, 360 }, { 960, 540 } }) {
             WheelSelection.RouletteLayout layout = WheelSelection.layout(size[0], size[1]);
             assertTrue(layout.centerX() - 115 * layout.scale() >= 10);
             assertTrue(layout.x(270) <= size[0] - 10);
@@ -109,8 +90,7 @@ class WheelSelectionTest
             assertTrue(layout.centerY() + 115 * layout.scale() <= size[1] - 10);
             assertTrue(layout.panelX() > layout.centerX() + 105 * layout.scale());
             assertTrue(layout.viewportY() >= 0 && layout.viewportY() + layout.viewportHeight() <= size[1] - 15);
-            for (int slot = 0; slot < 8; slot++)
-            {
+            for (int slot = 0; slot < 8; slot++) {
                 WheelSelection.Point point = WheelSelection.labelPoint(slot, 65 * layout.scale());
                 assertEquals(slot, WheelSelection.classicSlotAt(point.x(), point.y(), 50 * layout.scale(),
                         100 * layout.scale(), 8));
@@ -119,8 +99,7 @@ class WheelSelectionTest
     }
 
     @Test
-    void authorPanelScrollStopsAtBothEndsAndClampsAfterAGroupChange()
-    {
+    void authorPanelScrollStopsAtBothEndsAndClampsAfterAGroupChange() {
         assertEquals(0, WheelSelection.clampScroll(-20, 280, 156));
         assertEquals(124, WheelSelection.clampScroll(1000, 280, 156));
         assertEquals(80, WheelSelection.clampScroll(80, 280, 156));
@@ -128,8 +107,7 @@ class WheelSelectionTest
     }
 
     @Test
-    void cardinalAndDiagonalDirectionsFollowTheVisibleClockwiseNumbers()
-    {
+    void cardinalAndDiagonalDirectionsFollowTheVisibleClockwiseNumbers() {
         assertEquals(0, WheelSelection.slotAt(0, -60, 20, 90, 8));
         assertEquals(1, WheelSelection.slotAt(40, -40, 20, 90, 8));
         assertEquals(2, WheelSelection.slotAt(60, 0, 20, 90, 8));
@@ -141,8 +119,7 @@ class WheelSelectionTest
     }
 
     @Test
-    void centerStopAndOutsideMouseNeverSelectAnAction()
-    {
+    void centerStopAndOutsideMouseNeverSelectAnAction() {
         assertEquals(-1, WheelSelection.slotAt(0, 0, 20, 90, 8));
         assertEquals(-1, WheelSelection.slotAt(0, -19.9, 20, 90, 8));
         assertEquals(-1, WheelSelection.slotAt(0, -90, 20, 90, 8));
@@ -150,8 +127,7 @@ class WheelSelectionTest
     }
 
     @Test
-    void angleWrapAndBoundaryHaveOneUnambiguousSlot()
-    {
+    void angleWrapAndBoundaryHaveOneUnambiguousSlot() {
         double angle = Math.toRadians(-67.5);
         assertEquals(0, WheelSelection.slotAt(60 * Math.cos(angle - .0001), 60 * Math.sin(angle - .0001), 20, 90, 8));
         assertEquals(1, WheelSelection.slotAt(60 * Math.cos(angle + .0001), 60 * Math.sin(angle + .0001), 20, 90, 8));
@@ -160,8 +136,7 @@ class WheelSelectionTest
     }
 
     @Test
-    void partialAndEmptyPagesNeverReturnAStaleOrForeignAction()
-    {
+    void partialAndEmptyPagesNeverReturnAStaleOrForeignAction() {
         assertEquals(1, WheelSelection.pageCount(0, 8));
         assertEquals(2, WheelSelection.pageCount(9, 8));
         assertEquals(8, WheelSelection.actionIndex(1, 0, 9, 8));
@@ -172,15 +147,11 @@ class WheelSelectionTest
     }
 
     @Test
-    void cachedRingPixelsUseTheSameHitTestingAsTheMouse()
-    {
+    void cachedRingPixelsUseTheSameHitTestingAsTheMouse() {
         List<WheelSelection.Run> runs = WheelSelection.ring(20, 80, 8);
         assertFalse(runs.isEmpty());
-        for (WheelSelection.Run run : runs)
-        {
-            for (int x = run.x1(); x < run.x2(); x++)
-
-            {
+        for (WheelSelection.Run run : runs) {
+            for (int x = run.x1(); x < run.x2(); x++) {
                 assertEquals(run.slot(), WheelSelection.slotAt(x + .5, run.y() + .5, 20, 80, 8));
             }
 
@@ -189,8 +160,7 @@ class WheelSelectionTest
     }
 
     @Test
-    void savedPageIsClampedToChangedActualActionsIncludingAnEmptyServerList()
-    {
+    void savedPageIsClampedToChangedActualActionsIncludingAnEmptyServerList() {
         assertEquals(2, WheelSelection.clampPage(2, 24, 8));
         assertEquals(1, WheelSelection.clampPage(2, 9, 8));
         assertEquals(0, WheelSelection.clampPage(2, 8, 8));
@@ -199,29 +169,19 @@ class WheelSelectionTest
     }
 
     @Test
-    void compactWheelStaysClearOfTitleSettingsAndOnlyReservesPagingWhenNeeded()
-    {
-        for (int[] viewport : new int[][]
-        {
-                { 320, 240 },
-                { 426, 240 },
-                { 640, 360 },
-                { 960, 540 } })
-        {
+    void compactWheelStaysClearOfTitleSettingsAndOnlyReservesPagingWhenNeeded() {
+        for (int[] viewport : new int[][] { { 320, 240 }, { 426, 240 }, { 640, 360 }, { 960, 540 } }) {
             int width = viewport[0], height = viewport[1];
             WheelSelection.Layout single = WheelSelection.layout(width, height, false);
             WheelSelection.Layout paged = WheelSelection.layout(width, height, true);
-            for (WheelSelection.Layout layout : new WheelSelection.Layout[]
-            { single, paged })
-            {
+            for (WheelSelection.Layout layout : new WheelSelection.Layout[] { single, paged }) {
                 assertEquals(width / 2, layout.centerX());
                 assertTrue(layout.centerX() - layout.outer() >= 12);
                 assertTrue(layout.centerX() + layout.outer() <= width - 12);
                 assertTrue(layout.centerY() - layout.outer() >= 34);
                 assertTrue(layout.centerY() + layout.outer() <= height - 34);
                 assertTrue(layout.inner() > 0 && layout.inner() < layout.outer());
-                for (int slot = 0; slot < 8; slot++)
-                {
+                for (int slot = 0; slot < 8; slot++) {
                     double angle = -Math.PI / 2 + slot * Math.PI / 4, radius = (layout.inner() + layout.outer()) / 2d;
                     assertEquals(slot, WheelSelection.slotAt(Math.cos(angle) * radius, Math.sin(angle) * radius,
                             layout.inner(), layout.outer(), 8));

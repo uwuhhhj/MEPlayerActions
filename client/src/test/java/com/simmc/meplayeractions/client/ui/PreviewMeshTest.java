@@ -14,16 +14,11 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class PreviewMeshTest
-{
+class PreviewMeshTest {
     @Test
-    void offOriginTallModelFitsAndCentersInBothLargePreviewAndSmallCard()
-    {
+    void offOriginTallModelFitsAndCentersInBothLargePreviewAndSmallCard() {
         List<BbModel.Vertex> model = face(10, 30, -4, 2, 8, 0, -1);
-        for (int[] viewport : List.of(new int[]
-        { 20, 40, 240, 300 }, new int[]
-        { 400, 10, 48, 60 }))
-        {
+        for (int[] viewport : List.of(new int[] { 20, 40, 240, 300 }, new int[] { 400, 10, 48, 60 })) {
             List<PreviewMesh.Quad> mesh = PreviewMesh.project(model, viewport[0], viewport[1], viewport[2], viewport[3],
                     0, 0);
             assertEquals(1, mesh.size());
@@ -44,8 +39,7 @@ class PreviewMeshTest
     }
 
     @Test
-    void cameraRotationReversesDepthOrderWithoutLosingFacesOrTextureReferences()
-    {
+    void cameraRotationReversesDepthOrderWithoutLosingFacesOrTextureReferences() {
         List<BbModel.Vertex> model = new ArrayList<>();
         model.addAll(face(0, 0, -2, 1, 1, 3, -1));
         model.addAll(face(0, 0, 2, 1, 1, 7, 1));
@@ -60,8 +54,7 @@ class PreviewMeshTest
     }
 
     @Test
-    void dragYawAndPitchChangeProjectionAndNormalsControlSoftLighting()
-    {
+    void dragYawAndPitchChangeProjectionAndNormalsControlSoftLighting() {
         List<BbModel.Vertex> model = face(0, 0, -2, 2, 4, 0, -1);
         PreviewMesh.Quad front = PreviewMesh.project(model, 0, 0, 200, 200, 0, 0).getFirst();
         PreviewMesh.Quad turned = PreviewMesh.project(model, 0, 0, 200, 200, 50, -25).getFirst();
@@ -73,20 +66,17 @@ class PreviewMeshTest
     }
 
     @Test
-    void faceUvsStayAttachedToTheirCornersAfterRotationAndSorting()
-    {
+    void faceUvsStayAttachedToTheirCornersAfterRotationAndSorting() {
         List<BbModel.Vertex> model = face(0, 0, -1, 1, 1, 9, -1);
         List<PreviewMesh.Point> points = PreviewMesh.project(model, 0, 0, 80, 90, 125, 30).getFirst().points();
-        for (int i = 0; i < 4; i++)
-        {
+        for (int i = 0; i < 4; i++) {
             assertEquals(model.get(i).u(), points.get(i).u());
             assertEquals(model.get(i).v(), points.get(i).v());
         }
     }
 
     @Test
-    void badGeometryOrCameraProducesNoSubmission()
-    {
+    void badGeometryOrCameraProducesNoSubmission() {
         List<BbModel.Vertex> good = face(0, 0, 0, 1, 1, 0, -1);
         assertTrue(PreviewMesh.project(good, 0, 0, 0, 10, 0, 0).isEmpty());
         assertTrue(PreviewMesh.project(good, 0, 0, 10, 10, Float.NaN, 0).isEmpty());
@@ -99,8 +89,7 @@ class PreviewMeshTest
     }
 
     @Test
-    void uiEntranceFadesAndScalesWithoutChangingUvsDepthOrTheFinalAuthoredView()
-    {
+    void uiEntranceFadesAndScalesWithoutChangingUvsDepthOrTheFinalAuthoredView() {
         List<PreviewMesh.Quad> mesh = PreviewMesh.project(face(0, 0, -1, 2, 4, 0, -1), 10, 20, 100, 120, 0, 0);
         PreviewMesh.Quad start = PreviewMesh.entrance(mesh, 10, 20, 100, 120, 0).getFirst();
         PreviewMesh.Quad half = PreviewMesh.entrance(mesh, 10, 20, 100, 120, .5).getFirst();
@@ -108,8 +97,7 @@ class PreviewMeshTest
         assertEquals(128, half.color() >>> 24);
         assertEquals(mesh.getFirst().depth(), half.depth());
         assertEquals(mesh.getFirst().texture(), half.texture());
-        for (int i = 0; i < 4; i++)
-        {
+        for (int i = 0; i < 4; i++) {
             assertEquals(mesh.getFirst().points().get(i).u(), half.points().get(i).u());
             assertEquals(mesh.getFirst().points().get(i).v(), half.points().get(i).v());
             assertEquals(60 + (mesh.getFirst().points().get(i).x() - 60) * .95, half.points().get(i).x(), .0001);
@@ -119,8 +107,7 @@ class PreviewMeshTest
     }
 
     @Test
-    void sourceNoLightingPreservesTextureColorsAndFixedCameraIgnoresUserRotation()
-    {
+    void sourceNoLightingPreservesTextureColorsAndFixedCameraIgnoresUserRotation() {
         List<BbModel.Vertex> vertices = face(0, 0, -2, 2, 4, 0, 1);
         PreviewMesh.Settings flags = PreviewMesh.settings(JsonParser
                 .parseString("{\"gui_no_lighting\":true,\"disable_preview_rotation\":true}").getAsJsonObject());
@@ -138,14 +125,12 @@ class PreviewMeshTest
     }
 
     @Test
-    void authorBackgroundModelAndForegroundShareOneOrderedBatchAndBoundedViewport()
-    {
+    void authorBackgroundModelAndForegroundShareOneOrderedBatchAndBoundedViewport() {
         List<PreviewMesh.Quad> mesh = PreviewMesh.project(face(0, 0, -2, 2, 4, 3, -1), 10, 20, 100, 120, 0, 0);
         List<PreviewMesh.Quad> composed = PreviewMesh.compose(mesh, 10, 20, 100, 120, true, true);
         assertEquals(List.of(-1, 3, -2), composed.stream().map(PreviewMesh.Quad::texture).toList());
         assertSame(mesh.getFirst(), composed.get(1), "Decorations do not change model geometry, colors or UVs");
-        for (PreviewMesh.Quad decoration : List.of(composed.getFirst(), composed.getLast()))
-        {
+        for (PreviewMesh.Quad decoration : List.of(composed.getFirst(), composed.getLast())) {
             assertEquals(0xffffffff, decoration.color());
             assertEquals(
                     List.of(new PreviewMesh.Point(10, 20, 0, 0), new PreviewMesh.Point(10, 140, 0, 1),
@@ -157,11 +142,9 @@ class PreviewMeshTest
     }
 
     @Test
-    void actualBuiltinAuthorFlagsAndImagesAreUsedWithoutInventedDefaults() throws Exception
-    {
+    void actualBuiltinAuthorFlagsAndImagesAreUsedWithoutInventedDefaults() throws Exception {
         try (InputStream input = YsmFolderModel.class
-                .getResourceAsStream("/assets/meplayeractions/builtin/openysm_default/ysm.json"))
-        {
+                .getResourceAsStream("/assets/meplayeractions/builtin/openysm_default/ysm.json")) {
             assertNotNull(input);
             JsonObject properties = JsonParser.parseString(new String(input.readAllBytes(), StandardCharsets.UTF_8))
                     .getAsJsonObject().getAsJsonObject("properties");
@@ -184,8 +167,7 @@ class PreviewMeshTest
     }
 
     private static List<BbModel.Vertex> face(float x, float y, float z, float width, float height, int texture,
-            float normalZ)
-    {
+            float normalZ) {
         return List.of(new BbModel.Vertex(x + width, y + height, z, 0, 0, 0, 0, normalZ, texture),
                 new BbModel.Vertex(x + width, y, z, 0, 1, 0, 0, normalZ, texture),
                 new BbModel.Vertex(x, y, z, 1, 1, 0, 0, normalZ, texture),

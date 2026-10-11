@@ -15,37 +15,29 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 /** Screen-owned inspection of already received private bundles. Never downloads, writes or authorizes display. */
-final class PrivateSharedCacheLibrary implements AutoCloseable
-{
+final class PrivateSharedCacheLibrary implements AutoCloseable {
     static final int MAX_ENTRIES = 40;
 
-    record Entry(String hash, int bytes, long cachedAt)
-    {
+    record Entry(String hash, int bytes, long cachedAt) {
     }
 
     private final ServerModelCache cache;
     private final ThreadPoolExecutor worker = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
-            new ArrayBlockingQueue<>(12), runnable ->
-            {
+            new ArrayBlockingQueue<>(12), runnable -> {
                 Thread thread = new Thread(runnable, "MPA-private-cache-preview");
                 thread.setDaemon(true);
                 return thread;
             }, new ThreadPoolExecutor.AbortPolicy());
 
-    PrivateSharedCacheLibrary(Path directory)
-    {
+    PrivateSharedCacheLibrary(Path directory) {
         this.cache = new ServerModelCache(directory);
     }
 
-    CompletableFuture<List<Entry>> scan()
-    {
-        return CompletableFuture.supplyAsync(() ->
-        {
+    CompletableFuture<List<Entry>> scan() {
+        return CompletableFuture.supplyAsync(() -> {
             LinkedHashMap<String, PrivateSharedCacheLibrary.Entry> entries = new LinkedHashMap<String, Entry>();
-            for (ServerModelCache.GalleryEntry candidate : this.cache.galleryEntries())
-            {
-                if (entries.size() >= MAX_ENTRIES)
-                {
+            for (ServerModelCache.GalleryEntry candidate : this.cache.galleryEntries()) {
+                if (entries.size() >= MAX_ENTRIES) {
                     break;
                 }
 
@@ -56,25 +48,19 @@ final class PrivateSharedCacheLibrary implements AutoCloseable
         }, this.worker);
     }
 
-    CompletableFuture<LocalModelLibrary.Loaded> preview(String hash, String texture)
-    {
-        return CompletableFuture.supplyAsync(() ->
-        {
-            try
-            {
+    CompletableFuture<LocalModelLibrary.Loaded> preview(String hash, String texture) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
                 byte[] bytes = this.cache.inspectValidated(hash).orElseThrow(() -> new IOException("本机缓存缺失或校验失败"));
                 return NativeModelBundle.decode(bytes, texture);
-            }
-            catch (IOException | RuntimeException failure)
-            {
+            } catch (IOException | RuntimeException failure) {
                 throw new CompletionException(failure);
             }
         }, this.worker);
     }
 
     @Override
-    public void close()
-    {
+    public void close() {
         this.worker.shutdownNow();
     }
 }

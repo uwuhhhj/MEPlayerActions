@@ -13,10 +13,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import static org.junit.jupiter.api.Assertions.*;
 
-class ServerTemplatePreparationTest
-{
-    private static byte[] model(String expression)
-    {
+class ServerTemplatePreparationTest {
+    private static byte[] model(String expression) {
         return ("{\"mpa_runtime\":true,\"animations\":[{\"name\":\"idle\",\"animators\":{"
                 + "\"00000000-0000-0000-0000-000000000001\":{\"name\":\"body\",\"type\":\"bone\",\"keyframes\":["
                 + "{\"channel\":\"scale\",\"time\":0,\"interpolation\":\"linear\",\"data_points\":[{\"x\":\""
@@ -24,18 +22,14 @@ class ServerTemplatePreparationTest
     }
 
     @Test
-    void lookupDoesNoSourceIoAndRepeatedPendingRequestsQueueOneImmutablePreparation()
-    {
+    void lookupDoesNoSourceIoAndRepeatedPendingRequestsQueueOneImmutablePreparation() {
         AtomicInteger reads = new AtomicInteger();
         ArrayDeque<Runnable> work = new ArrayDeque<>();
-        try (ServerTemplatePreparation cache = new ServerTemplatePreparation(name ->
-        {
+        try (ServerTemplatePreparation cache = new ServerTemplatePreparation(name -> {
             reads.incrementAndGet();
             return new ByteArrayInputStream(model("variable.scale"));
-        }, work::add, ModelComplexityLimits.defaults(), 4, 1_000_000, System::nanoTime))
-        {
-            for (int i = 0; i < 20; i++)
-            {
+        }, work::add, ModelComplexityLimits.defaults(), 4, 1_000_000, System::nanoTime)) {
+            for (int i = 0; i < 20; i++) {
                 ResourceRejectedException blocked = assertThrows(ResourceRejectedException.class,
                         () -> cache.ensure("player"));
                 assertEquals("asset_preparing", blocked.error().code());
@@ -55,41 +49,29 @@ class ServerTemplatePreparationTest
     }
 
     @Test
-    void bothShippedNativeSourcesProduceCompleteImmutableClipsAndPrecompiledAxes()
-    {
+    void bothShippedNativeSourcesProduceCompleteImmutableClipsAndPrecompiledAxes() {
         ArrayDeque<Runnable> work = new ArrayDeque<>();
         AtomicInteger reads = new AtomicInteger();
-        try (ServerTemplatePreparation cache = new ServerTemplatePreparation(name ->
-        {
+        try (ServerTemplatePreparation cache = new ServerTemplatePreparation(name -> {
             reads.incrementAndGet();
             return Files.newInputStream(Path.of("examples").resolve(name));
-        }, work::add, ModelComplexityLimits.defaults(), 2, 20L * 1024 * 1024, System::nanoTime))
-        {
-            for (String id : List.of("ysm_01_jk", "ysm_02_jk"))
-            {
+        }, work::add, ModelComplexityLimits.defaults(), 2, 20L * 1024 * 1024, System::nanoTime)) {
+            for (String id : List.of("ysm_01_jk", "ysm_02_jk")) {
                 assertThrows(ResourceRejectedException.class, () -> cache.ensure(id));
                 work.remove().run();
                 YsmModelTemplates.Model prepared = cache.ensure(id).orElseThrow();
                 assertFalse(prepared.clips().isEmpty());
                 int formulas = 0, frames = 0;
-                for (YsmModelTemplates.Clip clip : prepared.clips())
-                {
-                    for (YsmModelTemplates.Bone bone : clip.bones())
-                    {
-                        for (YsmModelTemplates.Frame frame : bone.frames())
-                        {
+                for (YsmModelTemplates.Clip clip : prepared.clips()) {
+                    for (YsmModelTemplates.Bone bone : clip.bones()) {
+                        for (YsmModelTemplates.Frame frame : bone.frames()) {
                             frames++;
-                            for (YsmModelTemplates.Point point : List.of(frame.pre(), frame.post()))
-                            {
-                                for (String axis : List.of("x", "y", "z"))
-                                {
+                            for (YsmModelTemplates.Point point : List.of(frame.pre(), frame.post())) {
+                                for (String axis : List.of("x", "y", "z")) {
                                     String text = point.axis(axis);
-                                    try
-                                    {
+                                    try {
                                         Double.parseDouble(text);
-                                    }
-                                    catch (NumberFormatException expression)
-                                    {
+                                    } catch (NumberFormatException expression) {
                                         assertNotNull(prepared.runtime().expression(text));
                                         formulas++;
                                     }
@@ -112,13 +94,11 @@ class ServerTemplatePreparationTest
     }
 
     @Test
-    void activeNativeDataStaysChargedWhileUnneededEmptyEntriesCanBeEvicted()
-    {
+    void activeNativeDataStaysChargedWhileUnneededEmptyEntriesCanBeEvicted() {
         ArrayDeque<Runnable> work = new ArrayDeque<>();
         try (ServerTemplatePreparation cache = new ServerTemplatePreparation(
                 name -> name.contains("player") ? new ByteArrayInputStream(model("1")) : null, work::add,
-                ModelComplexityLimits.defaults(), 2, 1_000_000, System::nanoTime))
-        {
+                ModelComplexityLimits.defaults(), 2, 1_000_000, System::nanoTime)) {
             assertThrows(ResourceRejectedException.class, () -> cache.ensure("player"));
             work.remove().run();
             YsmModelTemplates.Model nativeModel = cache.ensure("player").orElseThrow();
@@ -137,23 +117,18 @@ class ServerTemplatePreparationTest
     }
 
     @Test
-    void permanentInvalidOrOversizedNativeSourcesDoNotRetryCompilation()
-    {
-        for (String expression : List.of("unbalanced(", "variable.scale"))
-        {
+    void permanentInvalidOrOversizedNativeSourcesDoNotRetryCompilation() {
+        for (String expression : List.of("unbalanced(", "variable.scale")) {
             AtomicInteger reads = new AtomicInteger();
             ArrayDeque<Runnable> work = new ArrayDeque<>();
             long budget = expression.equals("unbalanced(") ? 1_000_000 : 1;
-            try (ServerTemplatePreparation cache = new ServerTemplatePreparation(name ->
-            {
+            try (ServerTemplatePreparation cache = new ServerTemplatePreparation(name -> {
                 reads.incrementAndGet();
                 return new ByteArrayInputStream(model(expression));
-            }, work::add, ModelComplexityLimits.defaults(), 2, budget, System::nanoTime))
-            {
+            }, work::add, ModelComplexityLimits.defaults(), 2, budget, System::nanoTime)) {
                 assertThrows(ResourceRejectedException.class, () -> cache.ensure("player"));
                 work.remove().run();
-                for (int i = 0; i < 5; i++)
-                {
+                for (int i = 0; i < 5; i++) {
                     ResourceRejectedException failure = assertThrows(ResourceRejectedException.class,
                             () -> cache.ensure("player"));
                     assertFalse(failure.error().retryable());
@@ -167,16 +142,13 @@ class ServerTemplatePreparationTest
     }
 
     @Test
-    void busyBackoffAndShutdownCannotPublishLateWork()
-    {
+    void busyBackoffAndShutdownCannotPublishLateWork() {
         AtomicLong clock = new AtomicLong();
         AtomicInteger submits = new AtomicInteger();
         ArrayDeque<Runnable> work = new ArrayDeque<>();
         ServerTemplatePreparation cache = new ServerTemplatePreparation(name -> new ByteArrayInputStream(model("1")),
-                task ->
-                {
-                    if (submits.getAndIncrement() == 0)
-                    {
+                task -> {
+                    if (submits.getAndIncrement() == 0) {
                         throw new RejectedExecutionException();
                     }
                     work.add(task);

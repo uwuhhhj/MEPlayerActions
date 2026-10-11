@@ -8,28 +8,24 @@ import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class VanillaYsmAnimationsTest
-{
-    private static ItemState item(String id, String kind, String action, boolean charged, long revision, String... tags)
-    {
+class VanillaYsmAnimationsTest {
+    private static ItemState item(String id, String kind, String action, boolean charged, long revision,
+            String... tags) {
         return new ItemState(id, Set.of(tags), kind, action, false, charged, revision);
     }
 
     private static VanillaState state(ItemState main, ItemState off, Hand using, int useTicks, Hand swinging,
-            int swingTicks, boolean fishing)
-    {
+            int swingTicks, boolean fishing) {
         return new VanillaState(false, 0, false, false, false, main, off, using, useTicks, swinging, swingTicks,
                 fishing, "", Set.of(), false, false);
     }
 
-    private static Selection pick(VanillaState state, String slot, String... clips)
-    {
+    private static Selection pick(VanillaState state, String slot, String... clips) {
         return VanillaYsmAnimations.select(state, new Catalog(List.of(clips))).slots().get(slot);
     }
 
     @Test
-    void bothHandsCanHoldDifferentItemsIndependently()
-    {
+    void bothHandsCanHoldDifferentItemsIndependently() {
         VanillaYsmAnimations.VanillaState state = state(item("minecraft:diamond_sword", "sword", "none", false, 1),
                 item("minecraft:shield", "shield", "block", false, 2), Hand.NONE, 0, Hand.NONE, 0, false);
         VanillaYsmAnimations.Decision selected = VanillaYsmAnimations.select(state,
@@ -39,14 +35,12 @@ class VanillaYsmAnimationsTest
     }
 
     @Test
-    void conditionPrecedenceIsItemIdThenAuthoredTagThenClassThenUseAction()
-    {
+    void conditionPrecedenceIsItemIdThenAuthoredTagThenClassThenUseAction() {
         VanillaYsmAnimations.VanillaState state = state(
                 item("minecraft:iron_axe", "axe", "block", false, 0, "minecraft:tools", "minecraft:axes"),
                 ItemState.EMPTY, Hand.NONE, 0, Hand.NONE, 0, false);
-        String[] clips =
-        { "hold_mainhand:axe", "hold_mainhand:block", "hold_mainhand#minecraft:tools", "hold_mainhand#minecraft:axes",
-                "hold_mainhand$minecraft:iron_axe" };
+        String[] clips = { "hold_mainhand:axe", "hold_mainhand:block", "hold_mainhand#minecraft:tools",
+                "hold_mainhand#minecraft:axes", "hold_mainhand$minecraft:iron_axe" };
         assertEquals("hold_mainhand$minecraft:iron_axe", pick(state, "player.hold_mainhand", clips).animation());
         assertEquals("hold_mainhand#minecraft:tools",
                 pick(state, "player.hold_mainhand", Arrays.copyOf(clips, 4)).animation());
@@ -55,12 +49,10 @@ class VanillaYsmAnimationsTest
     }
 
     @Test
-    void chargedCrossbowSpecialWinsOverConfiguredIdForBothHands()
-    {
+    void chargedCrossbowSpecialWinsOverConfiguredIdForBothHands() {
         VanillaYsmAnimations.ItemState crossbow = item("minecraft:crossbow", "crossbow", "crossbow", true, 1);
         VanillaYsmAnimations.VanillaState state = state(crossbow, crossbow, Hand.NONE, 0, Hand.NONE, 0, false);
-        for (String hand : List.of("mainhand", "offhand"))
-        {
+        for (String hand : List.of("mainhand", "offhand")) {
             assertEquals("hold_" + hand + ":charged_crossbow", pick(state, "player.hold_" + hand,
                     "hold_" + hand + "$minecraft:crossbow", "hold_" + hand + ":charged_crossbow").animation());
             assertEquals(Directive.STOP,
@@ -69,8 +61,7 @@ class VanillaYsmAnimationsTest
     }
 
     @Test
-    void mainhandFishingSpecialAndEmptyHandRulesUseOnlyExistingClips()
-    {
+    void mainhandFishingSpecialAndEmptyHandRulesUseOnlyExistingClips() {
         VanillaYsmAnimations.VanillaState fishing = state(
                 item("minecraft:fishing_rod", "fishing_rod", "none", false, 0), ItemState.EMPTY, Hand.NONE, 0,
                 Hand.NONE, 0, true);
@@ -82,15 +73,12 @@ class VanillaYsmAnimationsTest
     }
 
     @Test
-    void useActionsCoverVanillaBowCrossbowTridentShieldFoodAndDrinksInEitherHand()
-    {
+    void useActionsCoverVanillaBowCrossbowTridentShieldFoodAndDrinksInEitherHand() {
         for (Map.Entry<String, String> entry : Map.of("bow", "bow", "crossbow", "crossbow", "spear", "spear", "shield",
-                "block", "food", "eat", "potion", "drink").entrySet())
-        {
+                "block", "food", "eat", "potion", "drink").entrySet()) {
             VanillaYsmAnimations.ItemState held = item("minecraft:test_item", entry.getKey(), entry.getValue(), false,
                     1);
-            for (Hand hand : List.of(Hand.MAIN, Hand.OFF))
-            {
+            for (Hand hand : List.of(Hand.MAIN, Hand.OFF)) {
                 VanillaYsmAnimations.VanillaState state = state(held, held, hand, 7, Hand.NONE, 0, false);
                 String prefix = hand == Hand.MAIN ? "use_mainhand" : "use_offhand";
                 VanillaYsmAnimations.Selection selected = pick(state, "player.use", prefix + ":" + entry.getValue(),
@@ -104,8 +92,7 @@ class VanillaYsmAnimationsTest
     }
 
     @Test
-    void newVanillaSpearChargeCanUseLanceClassBeforeTheNativeSpearUseAction()
-    {
+    void newVanillaSpearChargeCanUseLanceClassBeforeTheNativeSpearUseAction() {
         VanillaYsmAnimations.ItemState spear = item("minecraft:iron_spear", "lance", "spear", false, 1);
         VanillaYsmAnimations.VanillaState state = state(spear, ItemState.EMPTY, Hand.MAIN, 5, Hand.NONE, 0, false);
         assertEquals("use_mainhand:lance",
@@ -114,8 +101,7 @@ class VanillaYsmAnimationsTest
     }
 
     @Test
-    void missingUseConditionFallsBackToGenericButMissingGenericStops()
-    {
+    void missingUseConditionFallsBackToGenericButMissingGenericStops() {
         VanillaYsmAnimations.VanillaState state = state(item("minecraft:apple", "food", "eat", false, 1),
                 ItemState.EMPTY, Hand.MAIN, 2, Hand.NONE, 0, false);
         assertEquals("use_mainhand", pick(state, "player.use", "use_mainhand", "use_offhand:eat").animation());
@@ -123,8 +109,7 @@ class VanillaYsmAnimationsTest
     }
 
     @Test
-    void swingingOneHandPausesOnlyItsHoldAndUsesItsOwnConditionalClip()
-    {
+    void swingingOneHandPausesOnlyItsHoldAndUsesItsOwnConditionalClip() {
         VanillaYsmAnimations.VanillaState state = state(item("minecraft:diamond_sword", "sword", "none", false, 1),
                 item("minecraft:diamond_axe", "axe", "none", false, 1), Hand.NONE, 0, Hand.OFF, 0, false);
         VanillaYsmAnimations.Decision selected = VanillaYsmAnimations.select(state,
@@ -136,16 +121,14 @@ class VanillaYsmAnimationsTest
     }
 
     @Test
-    void normalizedNativeSwingStartStillPlaysTheActiveHandAtTickZero()
-    {
+    void normalizedNativeSwingStartStillPlaysTheActiveHandAtTickZero() {
         VanillaYsmAnimations.ItemState sword = item("minecraft:diamond_sword", "sword", "none", false, 1);
         VanillaYsmAnimations.ItemState shield = item("minecraft:shield", "shield", "block", false, 2);
         VanillaYsmAnimations.Catalog catalog = new Catalog(
                 List.of("hold_mainhand:sword", "hold_offhand:shield", "swing:sword", "swing_offhand:shield"));
         // LivingEntity.swingHand marks an active native swing with -1 before its first tick.
         // Runtime normalizes elapsed time, while the independent active-hand signal must survive.
-        for (Hand hand : List.of(Hand.MAIN, Hand.OFF))
-        {
+        for (Hand hand : List.of(Hand.MAIN, Hand.OFF)) {
             VanillaYsmAnimations.VanillaState start = state(sword, shield, Hand.NONE, 0, hand, Math.max(0, -1), false);
             VanillaYsmAnimations.Decision decision = VanillaYsmAnimations.select(start, catalog);
             VanillaYsmAnimations.Selection swing = decision.slots().get("player.swing");
@@ -166,8 +149,7 @@ class VanillaYsmAnimationsTest
     }
 
     @Test
-    void swingFallbackIsHandSpecificAndSleepStopsSwingAndUse()
-    {
+    void swingFallbackIsHandSpecificAndSleepStopsSwingAndUse() {
         VanillaYsmAnimations.VanillaState active = state(ItemState.EMPTY, ItemState.EMPTY, Hand.OFF, 3, Hand.MAIN, 0,
                 false);
         VanillaYsmAnimations.Catalog catalog = new Catalog(
@@ -182,8 +164,7 @@ class VanillaYsmAnimationsTest
     }
 
     @Test
-    void nativeSwingEndKeepsItsOnceClipWhileUseEndsImmediately()
-    {
+    void nativeSwingEndKeepsItsOnceClipWhileUseEndsImmediately() {
         VanillaYsmAnimations.Catalog catalog = new Catalog(List.of("swing_hand", "use_mainhand"));
         VanillaYsmAnimations.Decision selected = VanillaYsmAnimations.select(VanillaState.NONE, catalog);
         assertEquals(Directive.CONTINUE, selected.slots().get("player.swing").directive());
@@ -191,8 +172,7 @@ class VanillaYsmAnimationsTest
     }
 
     @Test
-    void vehicleIdPrecedesAuthoredEntityTagsAndDeadVehiclesNeverMatch()
-    {
+    void vehicleIdPrecedesAuthoredEntityTagsAndDeadVehiclesNeverMatch() {
         VanillaYsmAnimations.VanillaState state = new VanillaState(false, 0, false, false, false, ItemState.EMPTY,
                 ItemState.EMPTY, Hand.NONE, 0, Hand.NONE, 0, false, "minecraft:horse", Set.of("minecraft:horses"), true,
                 true);
@@ -206,8 +186,7 @@ class VanillaYsmAnimationsTest
     }
 
     @Test
-    void itemRevisionChangesEventIdentityWhileEquivalentNativeSnapshotsRemainStable()
-    {
+    void itemRevisionChangesEventIdentityWhileEquivalentNativeSnapshotsRemainStable() {
         VanillaYsmAnimations.VanillaState first = state(item("minecraft:bow", "bow", "bow", false, 12), ItemState.EMPTY,
                 Hand.NONE, 0, Hand.NONE, 0, false);
         VanillaYsmAnimations.VanillaState second = state(item("minecraft:bow", "bow", "bow", false, 13),
@@ -219,8 +198,7 @@ class VanillaYsmAnimationsTest
     }
 
     @Test
-    void snapshotBoundsRejectMalformedRegistryIdsAndUnboundedMetadata()
-    {
+    void snapshotBoundsRejectMalformedRegistryIdsAndUnboundedMetadata() {
         assertThrows(IllegalArgumentException.class, () -> item("../outside", "bow", "bow", false, 0));
         assertThrows(IllegalArgumentException.class, () -> item("minecraft:bow", "BOW", "bow", false, 0));
         assertThrows(IllegalArgumentException.class,

@@ -9,17 +9,14 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
-class NativeRenderPhasesTest
-{
+class NativeRenderPhasesTest {
     @AfterEach
-    void clearFrame()
-    {
+    void clearFrame() {
         NativeRenderPhases.beginFrame();
     }
 
     @Test
-    void authoredLayerOrderSurvivesNativeCommandCategoryBatching()
-    {
+    void authoredLayerOrderSurvivesNativeCommandCategoryBatching() {
         OrderedRenderCommandQueueImpl queue = new OrderedRenderCommandQueueImpl();
         OrderedRenderCommandQueue layers = NativeRenderPhases.attachments(queue, true);
         OrderedRenderCommandQueue body = NativeRenderPhases.geometry(queue, true);
@@ -35,13 +32,11 @@ class NativeRenderPhasesTest
     }
 
     @Test
-    void nativePhaseFlushesAreBoundedAndDoNotFlushUnrelatedQueues()
-    {
+    void nativePhaseFlushesAreBoundedAndDoNotFlushUnrelatedQueues() {
         OrderedRenderCommandQueueImpl queue = new OrderedRenderCommandQueueImpl();
         RenderCommandQueue nativeQueue = queue.getBatchingQueue(0);
         assertFalse(NativeRenderPhases.requiresFlush(nativeQueue));
-        for (int player = 0; player < 1000; player++)
-        {
+        for (int player = 0; player < 1000; player++) {
             assertTrue(NativeRenderPhases
                     .requiresFlush(NativeRenderPhases.geometry(queue, player % 2 == 0).getBatchingQueue(0)));
             assertTrue(NativeRenderPhases
@@ -56,8 +51,7 @@ class NativeRenderPhasesTest
     }
 
     @Test
-    void nativeEquipmentTextureGlintAndTrimBatchesStayInsideTheAuthoredPhase()
-    {
+    void nativeEquipmentTextureGlintAndTrimBatchesStayInsideTheAuthoredPhase() {
         OrderedRenderCommandQueueImpl queue = new OrderedRenderCommandQueueImpl();
         OrderedRenderCommandQueue layers = NativeRenderPhases.attachments(queue, true);
         OrderedRenderCommandQueue body = NativeRenderPhases.geometry(queue, true);

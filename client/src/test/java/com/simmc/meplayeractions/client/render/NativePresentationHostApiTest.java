@@ -17,41 +17,32 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Read the actual named Minecraft classfiles: verify host semantics required by the adapters. */
-class NativePresentationHostApiTest
-{
-    private record HostClass(Map<String, List<String>> methods, Map<String, String> fields)
-    {
+class NativePresentationHostApiTest {
+    private record HostClass(Map<String, List<String>> methods, Map<String, String> fields) {
     }
 
-    private static HostClass host(String name) throws IOException
-    {
+    private static HostClass host(String name) throws IOException {
         Map<String, List<String>> methods = new LinkedHashMap<>();
         Map<String, String> fields = new LinkedHashMap<>();
-        try (InputStream stream = NativePresentationHostApiTest.class.getResourceAsStream("/" + name + ".class"))
-        {
+        try (InputStream stream = NativePresentationHostApiTest.class.getResourceAsStream("/" + name + ".class")) {
             assertNotNull(stream, "Actual named Minecraft dependency classfile must be available: " + name);
-            new ClassReader(stream).accept(new ClassVisitor(Opcodes.ASM9)
-            {
+            new ClassReader(stream).accept(new ClassVisitor(Opcodes.ASM9) {
                 @Override
                 public FieldVisitor visitField(int access, String field, String descriptor, String signature,
-                        Object value)
-                {
+                        Object value) {
                     fields.put(field, descriptor);
                     return null;
                 }
 
                 @Override
                 public MethodVisitor visitMethod(int access, String method, String descriptor, String signature,
-                        String[] exceptions)
-                {
+                        String[] exceptions) {
                     List<String> calls = new ArrayList<>();
                     methods.put(method + descriptor, calls);
-                    return new MethodVisitor(Opcodes.ASM9)
-                    {
+                    return new MethodVisitor(Opcodes.ASM9) {
                         @Override
                         public void visitMethodInsn(int opcode, String owner, String called, String desc,
-                                boolean isInterface)
-                        {
+                                boolean isInterface) {
                             calls.add(owner + "." + called + desc);
                         }
                     };
@@ -62,8 +53,7 @@ class NativePresentationHostApiTest
     }
 
     @Test
-    void nativeLivingGeometryGatesLeaveTheInheritedLabelAndDispatcherEffectsPath() throws IOException
-    {
+    void nativeLivingGeometryGatesLeaveTheInheritedLabelAndDispatcherEffectsPath() throws IOException {
         HostClass living = host("net/minecraft/client/render/entity/LivingEntityRenderer");
         assertTrue(living.methods().containsKey(
                 "getRenderLayer(Lnet/minecraft/client/render/entity/state/LivingEntityRenderState;ZZZ)Lnet/minecraft/client/render/RenderLayer;"));
@@ -102,8 +92,7 @@ class NativePresentationHostApiTest
     }
 
     @Test
-    void orderedGroupsFinishEveryNativeDrawingCategoryBeforeTheTargetedFlush() throws IOException
-    {
+    void orderedGroupsFinishEveryNativeDrawingCategoryBeforeTheTargetedFlush() throws IOException {
         HostClass dispatcher = host("net/minecraft/client/render/command/RenderDispatcher");
         assertEquals("Lnet/minecraft/client/render/VertexConsumerProvider$Immediate;",
                 dispatcher.fields().get("vertexConsumers"));
@@ -134,23 +123,19 @@ class NativePresentationHostApiTest
     }
 
     @Test
-    void importedPoseSamplingUsesTheActualNativePlayerStateAndVanillaPartAngles() throws IOException
-    {
+    void importedPoseSamplingUsesTheActualNativePlayerStateAndVanillaPartAngles() throws IOException {
         HostClass playerModel = host("net/minecraft/client/render/entity/model/PlayerEntityModel");
         assertTrue(
                 playerModel.methods()
                         .containsKey("setAngles(Lnet/minecraft/client/render/entity/state/PlayerEntityRenderState;)V"),
                 "The source VanillaHumanoidPoseSampler bridge must consume the actual host player state");
         HostClass humanoidModel = host("net/minecraft/client/render/entity/model/BipedEntityModel");
-        for (String part : List.of("head", "body", "leftArm", "rightArm", "leftLeg", "rightLeg"))
-
-        {
+        for (String part : List.of("head", "body", "leftArm", "rightArm", "leftLeg", "rightLeg")) {
             assertEquals("Lnet/minecraft/client/model/ModelPart;", humanoidModel.fields().get(part));
         }
 
         HostClass part = host("net/minecraft/client/model/ModelPart");
-        for (String angle : List.of("pitch", "yaw", "roll"))
-        {
+        for (String angle : List.of("pitch", "yaw", "roll")) {
             assertEquals("F", part.fields().get(angle));
         }
 
@@ -167,12 +152,9 @@ class NativePresentationHostApiTest
                 "Mojmap isInWater reads the same vanilla water-contact state through Yarn isTouchingWater");
     }
 
-    private static int index(List<String> calls, String suffix)
-    {
-        for (int index = 0; index < calls.size(); index++)
-        {
-            if (calls.get(index).contains("/" + suffix))
-            {
+    private static int index(List<String> calls, String suffix) {
+        for (int index = 0; index < calls.size(); index++) {
+            if (calls.get(index).contains("/" + suffix)) {
                 return index;
             }
 

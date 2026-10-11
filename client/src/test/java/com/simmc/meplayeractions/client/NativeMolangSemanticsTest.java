@@ -11,23 +11,19 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Golden semantic cases from Sparkle-Morpher b1230a4 ExpressionEvaluatorImpl/ValueConversions. */
-class NativeMolangSemanticsTest
-{
-    private static Molang.Context nativeContext()
-    {
+class NativeMolangSemanticsTest {
+    private static Molang.Context nativeContext() {
         Molang.Context c = new Molang.Context(4);
         c.enableNativeYsm();
         return c;
     }
 
-    private static Object eval(String expression, Molang.Context c)
-    {
+    private static Object eval(String expression, Molang.Context c) {
         return Molang.compileNativeYsm(expression).evaluateValue(c);
     }
 
     @Test
-    void nullableValuesCoalesceAfterFunctionsPropertiesAndIndexing()
-    {
+    void nullableValuesCoalesceAfterFunctionsPropertiesAndIndexing() {
         Molang.Context c = nativeContext();
         c.functions((name, args) -> null);
         c.query("args", new Molang.SequenceValue(Arrays.asList(null, 5d)));
@@ -41,8 +37,7 @@ class NativeMolangSemanticsTest
     }
 
     @Test
-    void valueConversionsMatchTheMatureNativeRuntimeWhileLegacyIsUnchanged()
-    {
+    void valueConversionsMatchTheMatureNativeRuntimeWhileLegacyIsUnchanged() {
         Molang.Context c = nativeContext();
         c.query("q.health", (Object) null);
         assertEquals(1d, eval("'' ? 1 : 2", c));
@@ -59,8 +54,7 @@ class NativeMolangSemanticsTest
     }
 
     @Test
-    void nativeIndicesTruncateAndClampNegativeToZero()
-    {
+    void nativeIndicesTruncateAndClampNegativeToZero() {
         Molang.Context c = nativeContext();
         c.query("args", new Molang.SequenceValue(List.of(3d, 4d)));
         assertEquals(3d, eval("args[-5]", c));
@@ -72,8 +66,7 @@ class NativeMolangSemanticsTest
     }
 
     @Test
-    void regularStructAssignmentCopiesButReadOnlyLiveBindingsStayLive()
-    {
+    void regularStructAssignmentCopiesButReadOnlyLiveBindingsStayLive() {
         Molang.Context c = nativeContext();
         eval("v.a.x=2;v.a.custom=3;v.b=v.a;v.a.x=5;", c);
         assertEquals(2d, eval("v.b.x", c));
@@ -81,21 +74,16 @@ class NativeMolangSemanticsTest
         assertEquals(3d, eval("v.b.custom", c));
         assertTrue(c.has("v.b.custom"));
         assertFalse(c.has("v.b.unknown"));
-        double[] x =
-        { 8 };
-        Molang.StructValue live = new Molang.StructValue()
-        {
-            public Object getProperty(String name)
-            {
+        double[] x = { 8 };
+        Molang.StructValue live = new Molang.StructValue() {
+            public Object getProperty(String name) {
                 return name.equals("x") ? x[0] : null;
             }
 
-            public void putProperty(String name, Object value)
-            {
+            public void putProperty(String name, Object value) {
             }
 
-            public Molang.StructValue copy()
-            {
+            public Molang.StructValue copy() {
                 return this;
             }
         };
@@ -111,8 +99,7 @@ class NativeMolangSemanticsTest
     }
 
     @Test
-    void nestedStructInsertionIsIgnoredAndUnknownPropertiesRemainNullable()
-    {
+    void nestedStructInsertionIsIgnoredAndUnknownPropertiesRemainNullable() {
         Molang.Context c = nativeContext();
         eval("v.a.x=3;v.b.x=4;v.a.child=v.b;", c);
         assertNull(eval("v.a.child", c));
@@ -126,8 +113,7 @@ class NativeMolangSemanticsTest
     }
 
     @Test
-    void arrowReadsAnExplicitBoundedChildContextAndNullOwnerStaysNull()
-    {
+    void arrowReadsAnExplicitBoundedChildContextAndNullOwnerStaysNull() {
         Molang.Context c = nativeContext();
         Molang.Context owner = nativeContext();
         owner.query("q.health", 6d);
@@ -141,8 +127,7 @@ class NativeMolangSemanticsTest
     }
 
     @Test
-    void childEntityQueriesShareParentAuthorTemporaryAndControllerStorage()
-    {
+    void childEntityQueriesShareParentAuthorTemporaryAndControllerStorage() {
         Molang.Context c = nativeContext();
         Molang.Context child = nativeContext();
         child.query("q.health", 6d);
@@ -166,8 +151,7 @@ class NativeMolangSemanticsTest
     }
 
     @Test
-    void nullCoalescingUsesTheUpstreamPrecedenceBelowConditional()
-    {
+    void nullCoalescingUsesTheUpstreamPrecedenceBelowConditional() {
         Molang.Context c = nativeContext();
         c.query("q.health", (Object) null);
         assertEquals(3d, eval("q.health ?? 0 ? 2 : 3", c));
@@ -177,8 +161,7 @@ class NativeMolangSemanticsTest
     }
 
     @Test
-    void authorMathAliasesAndIntegerRangesMatchFixedSource()
-    {
+    void authorMathAliasesAndIntegerRangesMatchFixedSource() {
         Molang.Context c = nativeContext();
         assertEquals(1d, eval("math.hermite_blend(.5)", c));
         assertEquals(-4d, eval("math.hermite(1.1)", c));
@@ -188,8 +171,7 @@ class NativeMolangSemanticsTest
         assertEquals(-90d, eval("math.lerprotate(0,-180,.5)", c));
         assertEquals(180d, eval("math.lerprotate(170,-170,.5)", c));
         assertEquals(0d, eval("math.randomi(7,7)", c));
-        for (int i = 0; i < 100; i++)
-        {
+        for (int i = 0; i < 100; i++) {
             double value = (Double) eval("math.random_integer(4,2)", c);
             assertTrue(value >= 2 && value < 4);
             assertEquals(6d, eval("math.die_roll_integer(3,2,3)", c));
@@ -201,8 +183,7 @@ class NativeMolangSemanticsTest
     }
 
     @Test
-    void thisUsesTheCurrentAxisValueAndDiagnosticsKeepTypedFallbacks()
-    {
+    void thisUsesTheCurrentAxisValueAndDiagnosticsKeepTypedFallbacks() {
         Molang.Context c = nativeContext();
         c.currentValue(8);
         c.enableDiagnostics();
@@ -215,8 +196,7 @@ class NativeMolangSemanticsTest
     }
 
     @Test
-    void childContextsCannotRestartTheOuterEvaluationBudget()
-    {
+    void childContextsCannotRestartTheOuterEvaluationBudget() {
         Molang.Context c = nativeContext();
         Molang.Context child = nativeContext();
         c.query("ysm.projectile_owner", (Molang.ContextValue) () -> child);
@@ -225,14 +205,11 @@ class NativeMolangSemanticsTest
     }
 
     @Test
-    void unregisteredNativeFunctionsDegradeTheWholeFormulaWithoutExecutingAnyPart()
-    {
+    void unregisteredNativeFunctionsDegradeTheWholeFormulaWithoutExecutingAnyPart() {
         Molang.Context c = nativeContext();
         c.enableDiagnostics();
-        int[] calls =
-        { 0 };
-        c.functions((name, args) ->
-        {
+        int[] calls = { 0 };
+        c.functions((name, args) -> {
             calls[0]++;
             return 7d;
         });

@@ -16,24 +16,20 @@ import java.util.logging.Logger;
 import java.util.stream.IntStream;
 import static org.junit.jupiter.api.Assertions.*;
 
-class ServerModelCatalogTest
-{
+class ServerModelCatalogTest {
     @TempDir
     Path temporary;
 
     @Test
-    void registryReadsAreSharedForFiveSecondsAndUnchangedContentsKeepTheSamePlan()
-    {
+    void registryReadsAreSharedForFiveSecondsAndUnchangedContentsKeepTheSamePlan() {
         AtomicInteger reads = new AtomicInteger();
-        ServerModelCatalog catalog = new ServerModelCatalog(() ->
-        {
+        ServerModelCatalog catalog = new ServerModelCatalog(() -> {
             reads.incrementAndGet();
             return List.of("ysm_02_jk", "ysm_01_jk");
         });
         catalog.refresh(100);
         ServerModelCatalog.Plan first = catalog.plan(true, 1024);
-        for (int viewer = 0; viewer < 1000; viewer++)
-        {
+        for (int viewer = 0; viewer < 1000; viewer++) {
             catalog.refresh(199);
         }
 
@@ -45,8 +41,7 @@ class ServerModelCatalogTest
     }
 
     @Test
-    void choicesCannotInjectCommandsOrCarryAssetLocationsAndDeniedCatalogIsEmpty()
-    {
+    void choicesCannotInjectCommandsOrCarryAssetLocationsAndDeniedCatalogIsEmpty() {
         ServerModelCatalog catalog = new ServerModelCatalog(() -> Arrays.asList("valid", "valid", null, "../hidden",
                 "other/model", "valid;op", "space id", "valid\nop", "UPPER", "a".repeat(65), "valid-two_2"));
         catalog.refresh(100);
@@ -61,19 +56,16 @@ class ServerModelCatalogTest
     }
 
     @Test
-    void longIdsFragmentWithinTheSmallestPayloadAndOverLimitCatalogReportsTruncation()
-    {
+    void longIdsFragmentWithinTheSmallestPayloadAndOverLimitCatalogReportsTruncation() {
         List<String> names = IntStream.range(0, 4100).mapToObj(id -> "m" + "x".repeat(59) + String.format("%04d", id))
                 .toList();
         ServerModelCatalog catalog = new ServerModelCatalog(() -> names);
         catalog.refresh(100);
-        for (int budget : List.of(1024, 16000))
-        {
+        for (int budget : List.of(1024, 16000)) {
             ServerModelCatalog.Plan plan = catalog.plan(true, budget);
             assertTrue(plan.count() > 1);
             LinkedHashSet<String> seen = new LinkedHashSet<String>();
-            for (int index = 0; index < plan.count(); index++)
-            {
+            for (int index = 0; index < plan.count(); index++) {
                 byte[] bytes = plan.packet(index, Long.MAX_VALUE);
                 assertTrue(bytes.length <= budget);
                 JsonObject packet = decode(bytes);
@@ -81,8 +73,7 @@ class ServerModelCatalogTest
                 assertEquals(plan.count(), packet.get("count").getAsInt());
                 assertEquals(Long.MAX_VALUE, packet.get("revision").getAsLong());
                 assertTrue(packet.get("truncated").getAsBoolean());
-                for (JsonElement entry : packet.getAsJsonArray("models"))
-                {
+                for (JsonElement entry : packet.getAsJsonArray("models")) {
                     assertTrue(seen.add(entry.getAsJsonObject().get("id").getAsString()));
                 }
 
@@ -94,18 +85,15 @@ class ServerModelCatalogTest
     }
 
     @Test
-    void shortIdsAtTheMaximumPayloadRespectThe512EntryDecoderLimitAndReassembleCompletely()
-    {
+    void shortIdsAtTheMaximumPayloadRespectThe512EntryDecoderLimitAndReassembleCompletely() {
         List<String> names = IntStream.range(0, 1700).mapToObj(id -> "m" + id).toList();
         ServerModelCatalog catalog = new ServerModelCatalog(() -> names);
         catalog.refresh(100);
-        for (int budget : List.of(1024, 16000, 32766))
-        {
+        for (int budget : List.of(1024, 16000, 32766)) {
             ServerModelCatalog.Plan plan = catalog.plan(true, budget);
             ArrayList<String> reassembled = new ArrayList<String>();
             int largestChunk = 0;
-            for (int index = 0; index < plan.count(); index++)
-            {
+            for (int index = 0; index < plan.count(); index++) {
                 byte[] bytes = plan.packet(index, Long.MAX_VALUE);
                 assertTrue(bytes.length <= budget);
                 JsonObject packet = decode(bytes);
@@ -115,15 +103,13 @@ class ServerModelCatalogTest
                 assertTrue(chunk.size() <= 512);
                 assertFalse(chunk.isEmpty());
                 largestChunk = Math.max(largestChunk, chunk.size());
-                for (JsonElement entry : chunk)
-                {
+                for (JsonElement entry : chunk) {
                     reassembled.add(entry.getAsJsonObject().get("id").getAsString());
                 }
 
             }
             assertEquals(new ArrayList<>(new TreeSet<>(names)), reassembled);
-            if (budget == 32766)
-            {
+            if (budget == 32766) {
                 assertEquals(512, largestChunk);
             }
 
@@ -131,10 +117,8 @@ class ServerModelCatalogTest
     }
 
     @Test
-    void onlyNegotiatedSessionsReceiveChoicesAndBrowsingCannotAuthorizeAnAssetDownload() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void onlyNegotiatedSessionsReceiveChoicesAndBrowsingCannotAuthorizeAnAssetDownload() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             Person legacy = scene.person(true);
             scene.hello(legacy, false);
             assertEquals(0, scene.reads);
@@ -157,30 +141,25 @@ class ServerModelCatalogTest
     }
 
     @Test
-    void stableCatalogDoesNotRepeatAndPermissionChangesSendANewerExplicitClear() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void stableCatalogDoesNotRepeatAndPermissionChangesSendANewerExplicitClear() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             Person viewer = scene.person(true);
             scene.hello(viewer, true);
             viewer.messages.clear();
-            for (int i = 0; i < 99; i++)
-            {
+            for (int i = 0; i < 99; i++) {
                 scene.advance();
             }
 
             assertEquals(0, viewer.count(ServerModelCatalog.CAPABILITY));
             assertEquals(1, scene.reads);
-            for (int i = 0; i < 40; i++)
-            {
+            for (int i = 0; i < 40; i++) {
                 scene.advance();
             }
 
             assertEquals(2, scene.reads);
             assertEquals(0, viewer.count(ServerModelCatalog.CAPABILITY));
             viewer.permitted = false;
-            for (int i = 0; i < 40; i++)
-            {
+            for (int i = 0; i < 40; i++) {
                 scene.advance();
             }
 
@@ -189,8 +168,7 @@ class ServerModelCatalogTest
             assertFalse(denied.get("canDisguise").getAsBoolean());
             assertTrue(denied.getAsJsonArray("models").isEmpty());
             viewer.permitted = true;
-            for (int i = 0; i < 40; i++)
-            {
+            for (int i = 0; i < 40; i++) {
                 scene.advance();
             }
 
@@ -200,10 +178,8 @@ class ServerModelCatalogTest
     }
 
     @Test
-    void discoveryPublishesChangedRegistryAndCancelsPartiallySentChoicesOnPermissionRevocation() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void discoveryPublishesChangedRegistryAndCancelsPartiallySentChoicesOnPermissionRevocation() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             scene.service.configure(true, 1024, 4, 64);
             scene.choices = IntStream.range(0, 100).mapToObj(id -> "model_" + id).toList();
             Person viewer = scene.person(true);
@@ -220,8 +196,7 @@ class ServerModelCatalogTest
             assertTrue(clear.getAsJsonArray("models").isEmpty());
             viewer.permitted = true;
             scene.choices = List.of("replacement");
-            for (int i = 0; i < 140; i++)
-            {
+            for (int i = 0; i < 140; i++) {
                 scene.advance();
             }
 
@@ -232,10 +207,8 @@ class ServerModelCatalogTest
     }
 
     @Test
-    void budgetDeferralRetainsTheSameCatalogBytesWithoutFillingTheCriticalQueue() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void budgetDeferralRetainsTheSameCatalogBytesWithoutFillingTheCriticalQueue() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             scene.service.configure(true, 1024, 4, 64);
             scene.choices = IntStream.range(0, 100).mapToObj(id -> "model_" + id).toList();
             Person viewer = scene.person(true);
@@ -260,10 +233,8 @@ class ServerModelCatalogTest
     }
 
     @Test
-    void deferredHelloMustPrecedeTheCatalogAndItsCallbackCannotSendTwoChunksInOneTick() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void deferredHelloMustPrecedeTheCatalogAndItsCallbackCannotSendTwoChunksInOneTick() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             scene.service.configure(true, 1024, 4, 64);
             scene.choices = IntStream.range(0, 100).mapToObj(id -> "model_" + id).toList();
             Person viewer = scene.person(true);
@@ -285,14 +256,10 @@ class ServerModelCatalogTest
         }
     }
 
-    private static List<String> ids(ServerModelCatalog.Plan plan)
-    {
+    private static List<String> ids(ServerModelCatalog.Plan plan) {
         ArrayList<String> ids = new ArrayList<String>();
-        for (int index = 0; index < plan.count(); index++)
-
-        {
-            for (JsonElement entry : decode(plan.packet(index, 1)).getAsJsonArray("models"))
-            {
+        for (int index = 0; index < plan.count(); index++) {
+            for (JsonElement entry : decode(plan.packet(index, 1)).getAsJsonArray("models")) {
                 ids.add(entry.getAsJsonObject().get("id").getAsString());
             }
 
@@ -301,13 +268,11 @@ class ServerModelCatalogTest
         return ids;
     }
 
-    private static JsonObject decode(byte[] bytes)
-    {
+    private static JsonObject decode(byte[] bytes) {
         return JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject();
     }
 
-    private static final class Scene implements AutoCloseable
-    {
+    private static final class Scene implements AutoCloseable {
         final Field serverField;
         final Object originalServer;
         final Map<UUID, Person> people = new HashMap<>();
@@ -316,21 +281,17 @@ class ServerModelCatalogTest
         List<String> choices = List.of("ysm_01_jk", "ysm_02_jk");
         int tick = 100, reads, nextId = 1;
 
-        Scene(Path temporary) throws Exception
-        {
-            Server server = proxy(Server.class, (instance, method, args) -> switch (method.getName())
-            {
+        Scene(Path temporary) throws Exception {
+            Server server = proxy(Server.class, (instance, method, args) -> switch (method.getName()) {
             case "getCurrentTick" -> this.tick;
             case "isPrimaryThread" -> true;
-            case "getPlayer" ->
-            {
+            case "getPlayer" -> {
                 Person person = this.people.get(args[0]);
                 yield person == null ? null : person.player;
             }
             default -> objectMethod(instance, method, args);
             });
-            Plugin plugin = proxy(Plugin.class, (instance, method, args) -> switch (method.getName())
-            {
+            Plugin plugin = proxy(Plugin.class, (instance, method, args) -> switch (method.getName()) {
             case "getServer" -> server;
             case "isEnabled" -> true;
             case "getName" -> "CatalogFixture";
@@ -341,58 +302,46 @@ class ServerModelCatalogTest
             this.serverField.setAccessible(true);
             this.originalServer = this.serverField.get(null);
             this.serverField.set(null, server);
-            try
-            {
-                ModelAssets assets = new ModelAssets(temporary, null, name ->
-                {
+            try {
+                ModelAssets assets = new ModelAssets(temporary, null, name -> {
                     throw new AssertionError("Catalog must not read model resources");
-                }, task ->
-                {
+                }, task -> {
                     this.assetPreparations.incrementAndGet();
                     throw new AssertionError("Catalog must not prepare assets");
-                }, ignored ->
-                {
+                }, ignored -> {
                 });
-                this.service = new ClientSyncService(plugin, List::of, ignored ->
-                {
+                this.service = new ClientSyncService(plugin, List::of, ignored -> {
                 }, assets);
-                this.service.modelCatalog(() ->
-                {
+                this.service.modelCatalog(() -> {
                     this.reads++;
                     return this.choices;
                 });
                 setField(this.service, "running", true);
-            }
-            catch (Exception | Error failure)
-            {
+            } catch (Exception | Error failure) {
                 this.serverField.set(null, this.originalServer);
                 throw failure;
             }
         }
 
-        Person person(boolean permitted)
-        {
+        Person person(boolean permitted) {
             Person person = new Person(new UUID(0, this.nextId++), permitted);
             this.people.put(person.id, person);
             return person;
         }
 
-        void hello(Person viewer, boolean catalog)
-        {
+        void hello(Person viewer, boolean catalog) {
             JsonObject fields = new JsonObject();
             JsonArray capabilities = new JsonArray();
             capabilities.add("local_render");
             capabilities.add("incremental_state");
-            if (catalog)
-            {
+            if (catalog) {
                 capabilities.add(ServerModelCatalog.CAPABILITY);
             }
             fields.add("capabilities", capabilities);
             send(viewer, "hello", fields);
         }
 
-        void send(Person viewer, String type, JsonObject fields)
-        {
+        void send(Person viewer, String type, JsonObject fields) {
             JsonObject packet = new JsonObject();
             packet.addProperty("protocol", 3);
             packet.addProperty("type", type);
@@ -401,26 +350,22 @@ class ServerModelCatalogTest
                     packet.toString().getBytes(StandardCharsets.UTF_8));
         }
 
-        void maintain() throws Exception
-        {
+        void maintain() throws Exception {
             Method method = ClientSyncService.class.getDeclaredMethod("maintainSessions");
             method.setAccessible(true);
             method.invoke(this.service);
         }
 
-        void advance() throws Exception
-        {
+        void advance() throws Exception {
             this.tick++;
             maintain();
         }
 
-        Object session(Person viewer) throws Exception
-        {
+        Object session(Person viewer) throws Exception {
             return ((Map<?, ?>) field(this.service, "sessions")).get(viewer.id);
         }
 
-        void fillBudget() throws Exception
-        {
+        void fillBudget() throws Exception {
             ConnectionLimits limits = (ConnectionLimits) field(this.service, "limits");
             assertTrue(limits.allowOutbound(new UUID(3, 99),
                     ConnectionLimits.GLOBAL_BYTES_PER_TICK - (int) field(limits, "globalBytes"), false,
@@ -428,30 +373,25 @@ class ServerModelCatalogTest
         }
 
         @Override
-        public void close() throws Exception
-        {
+        public void close() throws Exception {
             this.serverField.set(null, this.originalServer);
         }
     }
 
-    private static final class Person
-    {
+    private static final class Person {
         final UUID id;
         final Player player;
         final List<JsonObject> messages = new ArrayList<>();
         boolean permitted;
 
-        Person(UUID id, boolean permitted)
-        {
+        Person(UUID id, boolean permitted) {
             this.id = id;
             this.permitted = permitted;
-            this.player = proxy(Player.class, (instance, method, args) -> switch (method.getName())
-            {
+            this.player = proxy(Player.class, (instance, method, args) -> switch (method.getName()) {
             case "getUniqueId" -> id;
             case "isOnline" -> true;
             case "hasPermission" -> this.permitted;
-            case "sendPluginMessage" ->
-            {
+            case "sendPluginMessage" -> {
                 this.messages.add(decode((byte[]) args[2]));
                 yield null;
             }
@@ -459,29 +399,23 @@ class ServerModelCatalogTest
             });
         }
 
-        int count(String type)
-        {
+        int count(String type) {
             return (int) this.messages.stream().filter(value -> value.get("type").getAsString().equals(type)).count();
         }
 
-        JsonObject last(String type)
-        {
+        JsonObject last(String type) {
             return this.messages.stream().filter(value -> value.get("type").getAsString().equals(type))
                     .reduce((first, second) -> second).orElseThrow();
         }
     }
 
     @SuppressWarnings("unchecked")
-    private static <T> T proxy(Class<T> type, InvocationHandler handler)
-    {
-        return (T) Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]
-        { type }, handler);
+    private static <T> T proxy(Class<T> type, InvocationHandler handler) {
+        return (T) Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[] { type }, handler);
     }
 
-    private static Object objectMethod(Object instance, Method method, Object[] args)
-    {
-        return switch (method.getName())
-        {
+    private static Object objectMethod(Object instance, Method method, Object[] args) {
+        return switch (method.getName()) {
         case "equals" -> instance == args[0];
         case "hashCode" -> System.identityHashCode(instance);
         case "toString" -> "fixture";
@@ -490,15 +424,13 @@ class ServerModelCatalogTest
         };
     }
 
-    private static Object field(Object object, String name) throws Exception
-    {
+    private static Object field(Object object, String name) throws Exception {
         Field field = object.getClass().getDeclaredField(name);
         field.setAccessible(true);
         return field.get(object);
     }
 
-    private static void setField(Object object, String name, Object value) throws Exception
-    {
+    private static void setField(Object object, String name, Object value) throws Exception {
         Field field = object.getClass().getDeclaredField(name);
         field.setAccessible(true);
         field.set(object, value);

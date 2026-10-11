@@ -13,11 +13,9 @@ import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class IncrementalStateProtocolTest
-{
+class IncrementalStateProtocolTest {
     @Test
-    void disguiseResultsRequireBothPeersAndCannotLeakAcrossFallbackOrReconnect()
-    {
+    void disguiseResultsRequireBothPeersAndCannotLeakAcrossFallbackOrReconnect() {
         IncrementalStateProtocol session = new IncrementalStateProtocol();
         session.acknowledge(List.of(IncrementalStateProtocol.DISGUISE_RESULTS));
         assertFalse(session.disguiseResults());
@@ -43,8 +41,7 @@ class IncrementalStateProtocolTest
     private static final UUID OTHER = UUID.fromString("ea8ab104-10c7-4a8e-bb82-9aeeef29a602");
 
     @Test
-    void serverDirectoryRequiresBothPeersCapabilityAndCannotSurviveAResetOrLegacyFallback()
-    {
+    void serverDirectoryRequiresBothPeersCapabilityAndCannotSurviveAResetOrLegacyFallback() {
         IncrementalStateProtocol session = new IncrementalStateProtocol();
         session.acknowledge(List.of(ServerModelCatalogSnapshot.CAPABILITY));
         assertFalse(session.serverCatalog());
@@ -65,8 +62,7 @@ class IncrementalStateProtocolTest
     }
 
     @Test
-    void bothPeersMustAdvertiseTheIncrementalCapabilityBeforeOmissionsHaveMeaning()
-    {
+    void bothPeersMustAdvertiseTheIncrementalCapabilityBeforeOmissionsHaveMeaning() {
         IncrementalStateProtocol session = new IncrementalStateProtocol();
         session.acknowledge(List.of(IncrementalStateProtocol.INCREMENTAL));
         assertFalse(session.incremental(), "An unsolicited ACK cannot enable a capability never offered");
@@ -81,8 +77,7 @@ class IncrementalStateProtocolTest
     }
 
     @Test
-    void serverTimelineIsOfferedOnlyWhenRequestedAndMustAlsoBeAcknowledged()
-    {
+    void serverTimelineIsOfferedOnlyWhenRequestedAndMustAlsoBeAcknowledged() {
         IncrementalStateProtocol session = new IncrementalStateProtocol();
         assertFalse(IncrementalStateProtocol.helloCapabilities(false).contains(IncrementalStateProtocol.TIMELINE));
         assertTrue(IncrementalStateProtocol.helloCapabilities(true).contains(IncrementalStateProtocol.TIMELINE));
@@ -104,10 +99,8 @@ class IncrementalStateProtocolTest
     }
 
     @Test
-    void legacyCapabilityRejectionRetriesTheOldHelloOnceWithoutLosingTheTimelinePreference()
-    {
-        for (String code : List.of("invalid_payload", "unsupported_capability"))
-        {
+    void legacyCapabilityRejectionRetriesTheOldHelloOnceWithoutLosingTheTimelinePreference() {
+        for (String code : List.of("invalid_payload", "unsupported_capability")) {
             IncrementalStateProtocol session = new IncrementalStateProtocol();
             session.helloSent(session.nextHelloCapabilities(true), true);
             assertTrue(session.fallbackForError(code));
@@ -127,8 +120,7 @@ class IncrementalStateProtocolTest
     }
 
     @Test
-    void omittedCatalogueRetainsActionsWhileAnExplicitEmptyOrChangedCatalogueReplacesThem()
-    {
+    void omittedCatalogueRetainsActionsWhileAnExplicitEmptyOrChangedCatalogueReplacesThem() {
         IncrementalStateProtocol session = negotiated();
         JsonObject initial = state("{\"animations\":[{\"id\":\"wave\",\"label\":\"招手\"}]}");
         List<IncrementalStateProtocol.Animation> first = session.animations(initial,
@@ -145,8 +137,7 @@ class IncrementalStateProtocolTest
     }
 
     @Test
-    void oldServersKeepTheLegacyMissingCatalogueAndClockOnlyHeartbeatBehaviour()
-    {
+    void oldServersKeepTheLegacyMissingCatalogueAndClockOnlyHeartbeatBehaviour() {
         IncrementalStateProtocol session = new IncrementalStateProtocol();
         session.helloSent(IncrementalStateProtocol.helloCapabilities(false));
         session.acknowledge(List.of("local_render", "server_push_models"));
@@ -161,8 +152,7 @@ class IncrementalStateProtocolTest
     }
 
     @Test
-    void fragmentedHeartbeatRenewsOnlyItsListedCurrentBindings()
-    {
+    void fragmentedHeartbeatRenewsOnlyItsListedCurrentBindings() {
         IncrementalStateProtocol session = negotiated();
         IncrementalStateProtocolTest.Lease first = new Lease(OWNER, INSTANCE, HASH, 10);
         IncrementalStateProtocolTest.Lease second = new Lease(OTHER, NEXT_INSTANCE, NEXT_HASH, 20);
@@ -180,16 +170,13 @@ class IncrementalStateProtocolTest
     }
 
     @Test
-    void previousInstancesAndHashesCannotRenewAReplacementOrRecreateAnUnboundModel()
-    {
+    void previousInstancesAndHashesCannotRenewAReplacementOrRecreateAnUnboundModel() {
         IncrementalStateProtocol session = negotiated();
         IncrementalStateProtocolTest.Lease replacement = new Lease(OWNER, NEXT_INSTANCE, NEXT_HASH, 10);
         Map<UUID, Lease> current = new LinkedHashMap<>();
         current.put(OWNER, replacement);
         for (JsonObject previous : List.of(identity(OWNER, INSTANCE, HASH), identity(OWNER, NEXT_INSTANCE, HASH),
-                identity(OWNER, INSTANCE, NEXT_HASH)))
-
-        {
+                identity(OWNER, INSTANCE, NEXT_HASH))) {
             assertTrue(renew(session, heartbeat(previous), current, 100),
                     "Each instance/hash mismatch requires authoritative state without renewing or replacing the binding");
         }
@@ -204,8 +191,7 @@ class IncrementalStateProtocolTest
     }
 
     @Test
-    void anExpiredRemoteBindingRequestsAFullSnapshotWhileKnownBindingsKeepTheirOwnLeases()
-    {
+    void anExpiredRemoteBindingRequestsAFullSnapshotWhileKnownBindingsKeepTheirOwnLeases() {
         IncrementalStateProtocol session = negotiated();
         IncrementalStateProtocolTest.Lease own = new Lease(OWNER, INSTANCE, HASH, 10);
         IncrementalStateProtocolTest.Lease remote = new Lease(OTHER, NEXT_INSTANCE, NEXT_HASH, 20);
@@ -221,8 +207,7 @@ class IncrementalStateProtocolTest
     }
 
     @Test
-    void missingAssetBindingsCanRenewOnlyTheSameEmptyHashIdentity()
-    {
+    void missingAssetBindingsCanRenewOnlyTheSameEmptyHashIdentity() {
         IncrementalStateProtocol session = negotiated();
         IncrementalStateProtocolTest.Lease pending = new Lease(OWNER, INSTANCE, "", 10);
         assertTrue(renew(session, heartbeat(identity(OWNER, INSTANCE, HASH)), Map.of(OWNER, pending), 100));
@@ -232,13 +217,11 @@ class IncrementalStateProtocolTest
     }
 
     @Test
-    void heartbeatSizeAndMalformedEntriesAreValidatedBeforeAnyLeaseChanges()
-    {
+    void heartbeatSizeAndMalformedEntriesAreValidatedBeforeAnyLeaseChanges() {
         IncrementalStateProtocol session = negotiated();
         IncrementalStateProtocolTest.Lease binding = new Lease(OWNER, INSTANCE, HASH, 10);
         JsonObject maximum = heartbeat();
-        for (int i = 0; i < 64; i++)
-        {
+        for (int i = 0; i < 64; i++) {
             maximum.getAsJsonArray("bindings").add(identity(OWNER, INSTANCE, HASH));
         }
 
@@ -256,16 +239,13 @@ class IncrementalStateProtocolTest
     }
 
     @Test
-    void malformedCataloguesCannotMasqueradeAsOmissionsOrClearTheCurrentWheel()
-    {
+    void malformedCataloguesCannotMasqueradeAsOmissionsOrClearTheCurrentWheel() {
         IncrementalStateProtocol session = negotiated();
         List<IncrementalStateProtocol.Animation> previous = List
                 .of(new IncrementalStateProtocol.Animation("wave", "Wave"));
         for (String invalid : List.of("{\"animations\":{}}", "{\"animations\":[0]}",
                 "{\"animations\":[{\"id\":\"../ wave\",\"label\":\"Wave\"}]}",
-                "{\"animations\":[{\"id\":\"wave\",\"label\":true}]}"))
-
-        {
+                "{\"animations\":[{\"id\":\"wave\",\"label\":true}]}")) {
             assertThrows(IllegalArgumentException.class,
                     () -> session.animations(state(invalid), previous, Function.identity()));
         }
@@ -273,8 +253,7 @@ class IncrementalStateProtocolTest
         assertEquals(List.of(new IncrementalStateProtocol.Animation("wave", "Wave")), previous);
     }
 
-    private static IncrementalStateProtocol negotiated()
-    {
+    private static IncrementalStateProtocol negotiated() {
         IncrementalStateProtocol result = new IncrementalStateProtocol();
         List<String> capabilities = IncrementalStateProtocol.helloCapabilities(false);
         result.helloSent(capabilities);
@@ -282,13 +261,11 @@ class IncrementalStateProtocolTest
         return result;
     }
 
-    private static JsonObject state(String json)
-    {
+    private static JsonObject state(String json) {
         return JsonParser.parseString(json).getAsJsonObject();
     }
 
-    private static JsonObject identity(UUID owner, String instance, String hash)
-    {
+    private static JsonObject identity(UUID owner, String instance, String hash) {
         JsonObject result = new JsonObject();
         result.addProperty("owner", owner.toString());
         result.addProperty("instance", instance);
@@ -296,13 +273,11 @@ class IncrementalStateProtocolTest
         return result;
     }
 
-    private static JsonObject heartbeat(JsonObject... identities)
-    {
+    private static JsonObject heartbeat(JsonObject... identities) {
         JsonObject result = WireJson.envelope("heartbeat");
         result.addProperty("serverTick", 50);
         JsonArray bindings = new JsonArray();
-        for (JsonObject identity : identities)
-        {
+        for (JsonObject identity : identities) {
             bindings.add(identity);
         }
 
@@ -311,19 +286,16 @@ class IncrementalStateProtocolTest
     }
 
     private static boolean renew(IncrementalStateProtocol session, JsonObject packet, Map<UUID, Lease> current,
-            long now)
-    {
+            long now) {
         return session.renewBindings(packet, current, lease -> lease.identity,
                 (lease, received) -> lease.lastPacket = received, now);
     }
 
-    private static final class Lease
-    {
+    private static final class Lease {
         final IncrementalStateProtocol.Identity identity;
         long lastPacket;
 
-        Lease(UUID owner, String instance, String hash, long lastPacket)
-        {
+        Lease(UUID owner, String instance, String hash, long lastPacket) {
             this.identity = new IncrementalStateProtocol.Identity(owner, instance, hash);
             this.lastPacket = lastPacket;
         }

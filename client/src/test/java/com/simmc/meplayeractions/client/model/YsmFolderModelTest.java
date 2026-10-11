@@ -18,15 +18,13 @@ import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class YsmFolderModelTest
-{
+class YsmFolderModelTest {
     @TempDir
     Path temporary;
     private static final String RESOURCE = "/assets/meplayeractions/builtin/openysm_default/";
 
     @Test
-    void cc0DefaultRetainsGeometryRealActionTracksAndSecondOrderDynamics() throws Exception
-    {
+    void cc0DefaultRetainsGeometryRealActionTracksAndSecondOrderDynamics() throws Exception {
         byte[] converted = YsmFolderModel.bundledDefault();
         BbModel model = BbModel.parse(converted);
         assertEquals(172, model.cubeCount());
@@ -39,8 +37,7 @@ class YsmFolderModelTest
         assertNotEquals(model.sample(7, List.of(layer("idle"))), model.sample(7, List.of(layer("walk"))),
                 "Imported movement must use authored tracks");
         AnimationPlayer left = new AnimationPlayer(model), right = new AnimationPlayer(model);
-        for (int tick = 0; tick < 80; tick++)
-        {
+        for (int tick = 0; tick < 80; tick++) {
             List<BbModel.Vertex> vertices = left.sample(tick, List.of(layer("walk")), 30, -15,
                     Map.of("query.ground_speed", 5d, "query.vertical_speed", 1d));
             right.sample(tick, List.of(layer("walk")), -30, 15,
@@ -59,8 +56,7 @@ class YsmFolderModelTest
                 "The native per-instance resolver receives authored spring calls");
         assertFalse(new String(converted, StandardCharsets.UTF_8).contains("variable.ysm_import_s"));
         assertTrue(model.animations().containsAll(List.of("use_mainhand:bow", "use_offhand:shield", "swing:sword")));
-        try (InputStream manifest = YsmFolderModel.class.getResourceAsStream(RESOURCE + "ysm.json"))
-        {
+        try (InputStream manifest = YsmFolderModel.class.getResourceAsStream(RESOURCE + "ysm.json")) {
             assertNotNull(manifest);
             assertEquals("CC 0",
                     JsonParser.parseString(new String(manifest.readAllBytes(), StandardCharsets.UTF_8))
@@ -71,15 +67,13 @@ class YsmFolderModelTest
     }
 
     @Test
-    void localFolderConvertsToTheSameCanonicalPlayerModel() throws Exception
-    {
+    void localFolderConvertsToTheSameCanonicalPlayerModel() throws Exception {
         Path folder = copyDefault();
         assertArrayEquals(YsmFolderModel.bundledDefault(), YsmFolderModel.read(folder));
     }
 
     @Test
-    void previewMetadataTravelsBesideTheUnchangedModelBytesAndHash() throws Exception
-    {
+    void previewMetadataTravelsBesideTheUnchangedModelBytesAndHash() throws Exception {
         Path folder = copyDefault();
         YsmFolderModel.Imported imported = YsmFolderModel.readWithPreview(folder);
         assertEquals("gui", imported.previewAnimation());
@@ -99,13 +93,11 @@ class YsmFolderModelTest
     }
 
     @Test
-    void resourceReferencesCannotReadOutsideTheSelectedFolder() throws Exception
-    {
+    void resourceReferencesCannotReadOutsideTheSelectedFolder() throws Exception {
         Path folder = copyDefault();
         JsonObject manifest = read(folder.resolve("ysm.json"));
         for (String reference : List.of("../outside.json", "models/../../outside.json", "/outside.json",
-                "C:/outside.json", "models\\main.json", "https://example.invalid/main.json"))
-        {
+                "C:/outside.json", "models\\main.json", "https://example.invalid/main.json")) {
             manifest.getAsJsonObject("files").getAsJsonObject("player").getAsJsonObject("model").addProperty("main",
                     reference);
             Files.writeString(folder.resolve("ysm.json"), manifest.toString());
@@ -114,8 +106,7 @@ class YsmFolderModelTest
     }
 
     @Test
-    void mainTextureMustBePngAndDecodedWithinExistingRendererLimits() throws Exception
-    {
+    void mainTextureMustBePngAndDecodedWithinExistingRendererLimits() throws Exception {
         Path folder = copyDefault();
         Files.writeString(folder.resolve("textures/default.png"), "not a png");
         assertThrows(IOException.class, () -> YsmFolderModel.read(folder));
@@ -124,8 +115,7 @@ class YsmFolderModelTest
     }
 
     @Test
-    void jsonDepthAndCyclicBoneHierarchyAreRejectedBeforeRendererConstruction() throws Exception
-    {
+    void jsonDepthAndCyclicBoneHierarchyAreRejectedBeforeRendererConstruction() throws Exception {
         Path folder = copyDefault();
         Path manifestPath = folder.resolve("ysm.json");
         String manifest = Files.readString(manifestPath);
@@ -143,18 +133,14 @@ class YsmFolderModelTest
     }
 
     @Test
-    void referencePathsRejectLinksWhenTheFileSystemCanCreateThem() throws Exception
-    {
+    void referencePathsRejectLinksWhenTheFileSystemCanCreateThem() throws Exception {
         Path folder = copyDefault(), outside = this.temporary.resolve("outside-main.json");
         Files.copy(folder.resolve("models/main.json"), outside);
         Path target = folder.resolve("models/main.json"), backup = folder.resolve("models/original.json");
         Files.move(target, backup);
-        try
-        {
+        try {
             Files.createSymbolicLink(target, outside);
-        }
-        catch (IOException | UnsupportedOperationException error)
-        {
+        } catch (IOException | UnsupportedOperationException error) {
             Files.move(backup, target);
             assertArrayEquals(YsmFolderModel.bundledDefault(), YsmFolderModel.read(folder));
             return;
@@ -163,8 +149,7 @@ class YsmFolderModelTest
     }
 
     @Test
-    void specAndSupportedPlayerAssetFieldsAreRequired() throws Exception
-    {
+    void specAndSupportedPlayerAssetFieldsAreRequired() throws Exception {
         Path folder = copyDefault();
         JsonObject manifest = read(folder.resolve("ysm.json"));
         manifest.addProperty("spec", 999);
@@ -177,10 +162,8 @@ class YsmFolderModelTest
     }
 
     @Test
-    void officialTimelineArraysAndExplicitDurationsRemainUnexpanded() throws Exception
-    {
-        for (String id : List.of(BuiltinYsmModels.TAISHO_MAID_ID, BuiltinYsmModels.NEW_YEAR_ID))
-        {
+    void officialTimelineArraysAndExplicitDurationsRemainUnexpanded() throws Exception {
+        for (String id : List.of(BuiltinYsmModels.TAISHO_MAID_ID, BuiltinYsmModels.NEW_YEAR_ID)) {
             YsmFolderModel.Imported imported = YsmFolderModel.bundledWithProfile(id, null);
             JsonArray clips = JsonParser.parseString(new String(imported.raw(), StandardCharsets.UTF_8))
                     .getAsJsonObject().getAsJsonArray("animations");
@@ -194,21 +177,17 @@ class YsmFolderModelTest
             assertEquals(50, timeline.get(1).getAsJsonObject().getAsJsonArray("data_points").size());
             BuiltinYsmModels.Model builtin = BuiltinYsmModels.find(id).orElseThrow();
             try (InputStream source = YsmFolderModel.class
-                    .getResourceAsStream(builtin.resourceRoot() + "animations/main.animation.json"))
-            {
+                    .getResourceAsStream(builtin.resourceRoot() + "animations/main.animation.json")) {
                 assertNotNull(source);
                 JsonObject original = JsonParser.parseString(new String(source.readAllBytes(), StandardCharsets.UTF_8))
                         .getAsJsonObject().getAsJsonObject("animations").getAsJsonObject("parallel4")
                         .getAsJsonObject("timeline");
-                for (int event = 0; event < timeline.size(); event++)
-                {
+                for (int event = 0; event < timeline.size(); event++) {
                     JsonObject frame = timeline.get(event).getAsJsonObject();
                     JsonArray expected = original.getAsJsonArray(event == 0 ? "0.0" : "0.0101");
                     JsonArray actual = frame.getAsJsonArray("data_points");
                     assertEquals(event == 0 ? 0 : .0101, frame.get("time").getAsDouble());
-                    for (int program = 0; program < actual.size(); program++)
-
-                    {
+                    for (int program = 0; program < actual.size(); program++) {
                         assertEquals(expected.get(program).getAsString(),
                                 actual.get(program).getAsJsonObject().get("script").getAsString());
                     }
@@ -229,8 +208,7 @@ class YsmFolderModelTest
     }
 
     @Test
-    void sixtyFourTimelineProgramsKeepOrderAndIndependentReturns() throws Exception
-    {
+    void sixtyFourTimelineProgramsKeepOrderAndIndependentReturns() throws Exception {
         Path folder = copyDefault(), path = folder.resolve("animations/extra.animation.json");
         JsonObject manifest = read(folder.resolve("ysm.json"));
         manifest.getAsJsonObject("properties").addProperty("merge_multiline_expr", false);
@@ -238,8 +216,7 @@ class YsmFolderModelTest
         JsonObject source = read(path), probe = new JsonObject(), timeline = new JsonObject();
         JsonArray programs = new JsonArray();
         programs.add("v.order=0;return 5;");
-        for (int i = 1; i < 64; i++)
-        {
+        for (int i = 1; i < 64; i++) {
             programs.add("v.order=v.order+1;");
         }
 
@@ -264,13 +241,11 @@ class YsmFolderModelTest
     }
 
     @Test
-    void folderRejectsTimelineAndDurationBeyondObservedBoundedCompatibility() throws Exception
-    {
+    void folderRejectsTimelineAndDurationBeyondObservedBoundedCompatibility() throws Exception {
         Path folder = copyDefault(), path = folder.resolve("animations/extra.animation.json");
         JsonObject source = read(path), probe = new JsonObject(), timeline = new JsonObject();
         JsonArray programs = new JsonArray();
-        for (int i = 0; i <= BbModel.MAX_NATIVE_TIMELINE_PROGRAMS; i++)
-        {
+        for (int i = 0; i <= BbModel.MAX_NATIVE_TIMELINE_PROGRAMS; i++) {
             programs.add("1;");
         }
 
@@ -282,8 +257,7 @@ class YsmFolderModelTest
         assertThrows(IOException.class, () -> YsmFolderModel.read(folder),
                 "Input count is checked before a merged array becomes one program");
         programs = new JsonArray();
-        for (int i = 0; i < 5; i++)
-        {
+        for (int i = 0; i < 5; i++) {
             programs.add("/*" + "酒".repeat(2200) + "*/1;");
         }
 
@@ -292,8 +266,7 @@ class YsmFolderModelTest
         assertThrows(IOException.class, () -> YsmFolderModel.read(folder),
                 "UTF-8 aggregate bytes exceed 32 KiB despite individually short valid programs");
         probe.remove("timeline");
-        for (double length : List.of(-1d, 10_001d, Double.NaN, Double.POSITIVE_INFINITY))
-        {
+        for (double length : List.of(-1d, 10_001d, Double.NaN, Double.POSITIVE_INFINITY)) {
             probe.addProperty("animation_length", length);
             Files.writeString(path, source.toString());
             assertThrows(IOException.class, () -> YsmFolderModel.read(folder),
@@ -309,14 +282,12 @@ class YsmFolderModelTest
     }
 
     @Test
-    void officialFoxcarKeepsItsOriginalSignedCubeAndEveryAuthoredFace() throws Exception
-    {
+    void officialFoxcarKeepsItsOriginalSignedCubeAndEveryAuthoredFace() throws Exception {
         YsmFolderModel.Imported imported = YsmFolderModel.bundledWithProfile(BuiltinYsmModels.TAISHO_MAID_ID, null);
         JsonObject original;
         try (InputStream resource = YsmFolderModel.class
                 .getResourceAsStream(BuiltinYsmModels.find(BuiltinYsmModels.TAISHO_MAID_ID).orElseThrow().resourceRoot()
-                        + "models/foxcar.json"))
-        {
+                        + "models/foxcar.json")) {
             assertNotNull(resource);
             original = JsonParser.parseString(new String(resource.readAllBytes(), StandardCharsets.UTF_8))
                     .getAsJsonObject();
@@ -324,18 +295,14 @@ class YsmFolderModelTest
         int cubeIndex = 0, signedIndex = -1;
         JsonObject signedSource = null;
         for (JsonElement boneValue : original.getAsJsonArray("minecraft:geometry").get(0).getAsJsonObject()
-                .getAsJsonArray("bones"))
-        {
+                .getAsJsonArray("bones")) {
             JsonObject bone = boneValue.getAsJsonObject();
-            if (!bone.has("cubes"))
-            {
+            if (!bone.has("cubes")) {
                 continue;
             }
 
-            for (JsonElement cube : bone.getAsJsonArray("cubes"))
-            {
-                if (bone.get("name").getAsString().equals("eyes2") && signedSource == null)
-                {
+            for (JsonElement cube : bone.getAsJsonArray("cubes")) {
+                if (bone.get("name").getAsString().equals("eyes2") && signedSource == null) {
                     signedIndex = cubeIndex;
                     signedSource = cube.getAsJsonObject();
                 }
@@ -345,8 +312,7 @@ class YsmFolderModelTest
         assertEquals(551, cubeIndex);
         assertNotNull(signedSource);
         assertEquals(-.252, signedSource.getAsJsonArray("size").get(2).getAsDouble());
-        for (String id : List.of("minecraft:horse", "minecraft:mule"))
-        {
+        for (String id : List.of("minecraft:horse", "minecraft:mule")) {
             YsmModelProfile.Component component = imported.profile().components().stream()
                     .filter(candidate -> candidate.id().equals(id)).findFirst().orElseThrow();
             assertEquals(551, component.model().cubeCount(), "Every authored vehicle cube is retained");
@@ -355,11 +321,8 @@ class YsmFolderModelTest
             assertEquals(65535, raw.get("ysm_format_version").getAsInt());
             JsonObject cube = raw.getAsJsonArray("elements").get(signedIndex).getAsJsonObject();
             assertTrue(cube.get("ysm_signed_cube").getAsBoolean());
-            double[] expectedFrom =
-            { 7.60139, 23.806, 16.8984 }, expectedTo =
-            { 12.38939, 26.194, 16.6464 };
-            for (int axis = 0; axis < 3; axis++)
-            {
+            double[] expectedFrom = { 7.60139, 23.806, 16.8984 }, expectedTo = { 12.38939, 26.194, 16.6464 };
+            for (int axis = 0; axis < 3; axis++) {
                 assertEquals(expectedFrom[axis], cube.getAsJsonArray("from").get(axis).getAsDouble(), 1e-8);
                 assertEquals(expectedTo[axis], cube.getAsJsonArray("to").get(axis).getAsDouble(), 1e-8);
             }
@@ -377,12 +340,9 @@ class YsmFolderModelTest
         }
     }
 
-    private static JsonObject clip(JsonArray clips, String name)
-    {
-        for (JsonElement clip : clips)
-        {
-            if (clip.getAsJsonObject().get("name").getAsString().equals(name))
-            {
+    private static JsonObject clip(JsonArray clips, String name) {
+        for (JsonElement clip : clips) {
+            if (clip.getAsJsonObject().get("name").getAsString().equals(name)) {
                 return clip.getAsJsonObject();
             }
 
@@ -391,18 +351,15 @@ class YsmFolderModelTest
         throw new AssertionError("Missing clip: " + name);
     }
 
-    private Path copyDefault() throws Exception
-    {
+    private Path copyDefault() throws Exception {
         return YsmFolderFixtures.copyDefault(this.temporary.resolve("model"));
     }
 
-    private static JsonObject read(Path path) throws Exception
-    {
+    private static JsonObject read(Path path) throws Exception {
         return JsonParser.parseString(Files.readString(path)).getAsJsonObject();
     }
 
-    private static BbModel.Layer layer(String name)
-    {
+    private static BbModel.Layer layer(String name) {
         return new BbModel.Layer("locomotion", name, 0, 1, "LOOP", 0, 0);
     }
 }

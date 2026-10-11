@@ -13,14 +13,12 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.*;
 import java.nio.charset.StandardCharsets;
 
-class ExplicitModelFilesTest
-{
+class ExplicitModelFilesTest {
     @TempDir
     Path temporary;
 
     @Test
-    void filenameOnlyCatalogPreservesRootAndNestedFoldersWithoutOpeningModelBodies() throws Exception
-    {
+    void filenameOnlyCatalogPreservesRootAndNestedFoldersWithoutOpeningModelBodies() throws Exception {
         Path root = Files.createDirectories(this.temporary.resolve("models"));
         Files.writeString(root.resolve("uncategorized.bbmodel"), "not JSON");
         Path folder = Files.createDirectories(root.resolve("动画/第二组"));
@@ -37,8 +35,7 @@ class ExplicitModelFilesTest
     }
 
     @Test
-    void exactRootSelectionWinsWhileDuplicateNestedMatchesRemainAmbiguous() throws Exception
-    {
+    void exactRootSelectionWinsWhileDuplicateNestedMatchesRemainAmbiguous() throws Exception {
         Path root = Files.createDirectories(this.temporary.resolve("models"));
         Files.writeString(Files.createDirectories(root.resolve("a")).resolve("demo.bbmodel"), "a");
         Files.writeString(Files.createDirectories(root.resolve("b")).resolve("demo.bbmodel"), "b");
@@ -51,8 +48,7 @@ class ExplicitModelFilesTest
     }
 
     @Test
-    void entryBudgetExhaustionCannotPublishPartialSelectionOrMissing() throws Exception
-    {
+    void entryBudgetExhaustionCannotPublishPartialSelectionOrMissing() throws Exception {
         Path root = Files.createDirectories(this.temporary.resolve("models"));
         Files.writeString(root.resolve("first.bbmodel"), "a");
         Files.writeString(root.resolve("second.bbmodel"), "b");
@@ -64,8 +60,7 @@ class ExplicitModelFilesTest
     }
 
     @Test
-    void fileBudgetRejectsCompleteCatalogInsteadOfChoosingTruncatedMatch() throws Exception
-    {
+    void fileBudgetRejectsCompleteCatalogInsteadOfChoosingTruncatedMatch() throws Exception {
         Path root = Files.createDirectories(this.temporary.resolve("models"));
         Files.writeString(root.resolve("first.bbmodel"), "a");
         Files.writeString(root.resolve("second.bbmodel"), "b");
@@ -76,8 +71,7 @@ class ExplicitModelFilesTest
     }
 
     @Test
-    void depthBudgetCannotSilentlyHideDeeperDuplicateFiles() throws Exception
-    {
+    void depthBudgetCannotSilentlyHideDeeperDuplicateFiles() throws Exception {
         Path root = Files.createDirectories(this.temporary.resolve("models"));
         Files.writeString(root.resolve("demo.bbmodel"), "a");
         Files.writeString(Files.createDirectories(root.resolve("one/two")).resolve("demo.bbmodel"), "b");
@@ -88,12 +82,10 @@ class ExplicitModelFilesTest
     }
 
     @Test
-    void directRootLookupDoesNotTraverseUnrelatedOverDepthDirectory() throws Exception
-    {
+    void directRootLookupDoesNotTraverseUnrelatedOverDepthDirectory() throws Exception {
         Path root = Files.createDirectories(this.temporary.resolve("models"));
         Path deep = root;
-        for (int i = 0; i < ExplicitModelFiles.MAX_DEPTH + 1; i++)
-        {
+        for (int i = 0; i < ExplicitModelFiles.MAX_DEPTH + 1; i++) {
             deep = Files.createDirectory(deep.resolve("d"));
         }
 
@@ -103,8 +95,7 @@ class ExplicitModelFilesTest
     }
 
     @Test
-    void retainedClassificationPathsHaveABoundedLength() throws Exception
-    {
+    void retainedClassificationPathsHaveABoundedLength() throws Exception {
         Path root = Files.createDirectories(this.temporary.resolve("models"));
         Path longFolder = Files.createDirectories(root.resolve("a".repeat(128)).resolve("b".repeat(128)));
         Files.writeString(longFolder.resolve("demo.bbmodel"), "asset");
@@ -115,22 +106,18 @@ class ExplicitModelFilesTest
     }
 
     @Test
-    void missingDirectoryIsReadOnlyAndInvalidIdsCannotReachOtherPaths() throws Exception
-    {
+    void missingDirectoryIsReadOnlyAndInvalidIdsCannotReachOtherPaths() throws Exception {
         Path root = this.temporary.resolve("absent");
         assertEquals("missing", ExplicitModelFiles.select(root, "demo").state());
         assertFalse(Files.exists(root));
-        for (String id : new String[]
-        { null, "../outside", "Demo", "", "x".repeat(65) })
-        {
+        for (String id : new String[] { null, "../outside", "Demo", "", "x".repeat(65) }) {
             assertEquals("invalid", ExplicitModelFiles.select(root, id).state());
             assertEquals("invalid", ExplicitModelFiles.scan(root).select(id).state());
         }
     }
 
     @Test
-    void selectedPathMustRemainInsideTheExplicitDirectory() throws Exception
-    {
+    void selectedPathMustRemainInsideTheExplicitDirectory() throws Exception {
         Path root = Files.createDirectories(this.temporary.resolve("models"));
         Path inside = Files.writeString(root.resolve("demo.bbmodel"), "asset");
         Path outside = Files.writeString(this.temporary.resolve("outside.bbmodel"), "asset");
@@ -142,8 +129,7 @@ class ExplicitModelFilesTest
     }
 
     @Test
-    void symbolicFilesAndFoldersCannotAuthorizeExternalAssets() throws Exception
-    {
+    void symbolicFilesAndFoldersCannotAuthorizeExternalAssets() throws Exception {
         Path root = Files.createDirectories(this.temporary.resolve("models"));
         Path outside = Files.createDirectories(this.temporary.resolve("outside"));
         Path external = Files.writeString(outside.resolve("demo.bbmodel"), "asset");
@@ -151,16 +137,12 @@ class ExplicitModelFilesTest
         Path linkedFolder = root.resolve("linked-folder");
         Path linkedRoot = this.temporary.resolve("linked-root");
         boolean fileSymlink = true;
-        try
-        {
-            try
-            {
+        try {
+            try {
                 Files.createSymbolicLink(linkedFile, external);
                 Files.createSymbolicLink(linkedFolder, outside);
                 Files.createSymbolicLink(linkedRoot, outside);
-            }
-            catch (IOException | UnsupportedOperationException | SecurityException unavailable)
-            {
+            } catch (IOException | UnsupportedOperationException | SecurityException unavailable) {
                 // Windows commonly denies file symlinks but allows real directory junctions.
                 assertTrue(System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("windows"),
                         "This host must support a real symlink or Windows junction: " + unavailable);
@@ -175,17 +157,14 @@ class ExplicitModelFilesTest
                     "The test link must actually expose its target");
             assertEquals("missing", ExplicitModelFiles.select(root, "demo").state());
             assertTrue(ExplicitModelFiles.scan(root).entries().isEmpty());
-            if (fileSymlink)
-            {
+            if (fileSymlink) {
                 assertThrows(IOException.class, () -> ExplicitModelFiles.validateSelected(root, linkedFile));
             }
 
             assertThrows(IOException.class,
                     () -> ExplicitModelFiles.validateSelected(root, linkedFolder.resolve("demo.bbmodel")));
             assertEquals("invalid", ExplicitModelFiles.scan(linkedRoot).state());
-        }
-        finally
-        {
+        } finally {
             // Delete only the link itself. Neither JUnit cleanup nor this test traverses its target.
             deleteLink(linkedFile);
             deleteLink(linkedFolder);
@@ -194,8 +173,7 @@ class ExplicitModelFilesTest
         assertEquals("asset", Files.readString(external), "Link cleanup must preserve the target file");
     }
 
-    private void createJunction(Path link, Path target) throws Exception
-    {
+    private void createJunction(Path link, Path target) throws Exception {
         Path boundary = this.temporary.toAbsolutePath().normalize();
         Path junction = link.toAbsolutePath().normalize();
         Path destination = target.toAbsolutePath().normalize();
@@ -206,8 +184,7 @@ class ExplicitModelFilesTest
                 + "' | Out-Null";
         Process process = new ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
                 .redirectErrorStream(true).start();
-        if (!process.waitFor(20, TimeUnit.SECONDS))
-        {
+        if (!process.waitFor(20, TimeUnit.SECONDS)) {
             process.destroyForcibly();
             fail("Timed out creating the required Windows junction");
         }
@@ -216,8 +193,7 @@ class ExplicitModelFilesTest
         assertTrue(Files.exists(junction), "PowerShell did not create the required junction");
     }
 
-    private void deleteLink(Path link) throws IOException
-    {
+    private void deleteLink(Path link) throws IOException {
         Path boundary = this.temporary.toAbsolutePath().normalize();
         Path candidate = link.toAbsolutePath().normalize();
         assertTrue(candidate.startsWith(boundary) && !candidate.equals(boundary));

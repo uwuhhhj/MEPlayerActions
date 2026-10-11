@@ -19,16 +19,13 @@ import java.util.logging.Logger;
 import static org.junit.jupiter.api.Assertions.*;
 import java.util.function.Consumer;
 
-class ClientSyncLifecyclePerformanceTest
-{
+class ClientSyncLifecyclePerformanceTest {
     @TempDir
     Path temporary;
 
     @Test
-    void actualInvisibilityChangesReachOwnerAndViewerWithoutRestartingTheDisguise() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void actualInvisibilityChangesReachOwnerAndViewerWithoutRestartingTheDisguise() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             Person owner = scene.person(true), viewer = scene.person(false);
             owner.localRenderable = true;
             Files.writeString(this.temporary.resolve("fixture.bbmodel"),
@@ -37,16 +34,14 @@ class ClientSyncLifecyclePerformanceTest
             assertTrue(scene.assets.get("fixture").isPresent());
             scene.hello(owner, true, false);
             scene.hello(viewer, true, false);
-            for (Person recipient : List.of(owner, viewer))
-            {
+            for (Person recipient : List.of(owner, viewer)) {
                 assertFalse(recipient.last("state").get("sourceInvisible").getAsBoolean());
                 recipient.messages.clear();
             }
             owner.invisible = true;
             scene.tick += 20;
             scene.maintain();
-            for (Person recipient : List.of(owner, viewer))
-            {
+            for (Person recipient : List.of(owner, viewer)) {
                 JsonObject state = recipient.last("state");
                 assertTrue(state.get("sourceInvisible").getAsBoolean());
                 assertEquals(owner.instance.toString(), state.get("instance").getAsString());
@@ -61,8 +56,7 @@ class ClientSyncLifecyclePerformanceTest
             owner.invisible = false;
             scene.tick += 20;
             scene.maintain();
-            for (Person recipient : List.of(owner, viewer))
-            {
+            for (Person recipient : List.of(owner, viewer)) {
                 assertFalse(recipient.last("state").get("sourceInvisible").getAsBoolean());
                 assertEquals(0, recipient.count("unbind"));
             }
@@ -70,18 +64,15 @@ class ClientSyncLifecyclePerformanceTest
     }
 
     @Test
-    void preparationCompletionPublishesResourceSourceWithoutCreatingATakeoverLease() throws Exception
-    {
+    void preparationCompletionPublishesResourceSourceWithoutCreatingATakeoverLease() throws Exception {
         ArrayDeque<Runnable> work = new ArrayDeque<Runnable>();
-        try (Scene scene = new Scene(this.temporary, work::add))
-        {
+        try (Scene scene = new Scene(this.temporary, work::add)) {
             Person owner = scene.person(true), viewer = scene.person(false);
             owner.localRenderable = true;
             Files.writeString(this.temporary.resolve("fixture.bbmodel"),
                     "{\"elements\":[],\"outliner\":[],\"textures\":[],\"animations\":[]}");
             AtomicInteger renderCalls = new AtomicInteger();
-            scene.service.rendering((watcher, id, instance, enabled) ->
-            {
+            scene.service.rendering((watcher, id, instance, enabled) -> {
                 renderCalls.incrementAndGet();
                 return true;
             });
@@ -112,15 +103,12 @@ class ClientSyncLifecyclePerformanceTest
     }
 
     @Test
-    void missingResourcesKeepServerOwnershipAndActionsWithoutClaimingLocalTakeover() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void missingResourcesKeepServerOwnershipAndActionsWithoutClaimingLocalTakeover() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             Person owner = scene.person(true), viewer = scene.person(false);
             owner.localRenderable = true;
             AtomicInteger renderCalls = new AtomicInteger();
-            scene.service.rendering((watcher, id, instance, enabled) ->
-            {
+            scene.service.rendering((watcher, id, instance, enabled) -> {
                 renderCalls.incrementAndGet();
                 return true;
             });
@@ -151,10 +139,8 @@ class ClientSyncLifecyclePerformanceTest
     }
 
     @Test
-    void invalidOwnResourceReportsItsActualSourceWithoutClaimingAMissingFileOrTakeover() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void invalidOwnResourceReportsItsActualSourceWithoutClaimingAMissingFileOrTakeover() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             Person owner = scene.person(true), viewer = scene.person(false);
             owner.localRenderable = true;
             Files.writeString(this.temporary.resolve("fixture.bbmodel"), "{}");
@@ -173,17 +159,14 @@ class ClientSyncLifecyclePerformanceTest
     }
 
     @Test
-    void hiddenSelfStillReceivesOwnershipStateAndResultsWithoutObtainingARenderLease() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void hiddenSelfStillReceivesOwnershipStateAndResultsWithoutObtainingARenderLease() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             Person owner = scene.person(true), other = scene.person(false);
             owner.showSelf = false;
             scene.local(owner);
             scene.service.audience((viewer, id) -> false);
             AtomicInteger renderCalls = new AtomicInteger();
-            scene.service.rendering((viewer, id, instance, enabled) ->
-            {
+            scene.service.rendering((viewer, id, instance, enabled) -> {
                 renderCalls.incrementAndGet();
                 return true;
             });
@@ -212,10 +195,8 @@ class ClientSyncLifecyclePerformanceTest
     }
 
     @Test
-    void disguiseResultsConfirmActualSevenOptionsAndTheUnchangedIdempotentInstance() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void disguiseResultsConfirmActualSevenOptionsAndTheUnchangedIdempotentInstance() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             Person owner = scene.person(true), other = scene.person(false);
             scene.hello(owner, true, false, true);
             scene.hello(other, true, false, true);
@@ -255,10 +236,8 @@ class ClientSyncLifecyclePerformanceTest
     }
 
     @Test
-    void disguiseFailureKeepsItsNonceAndDoesNotInventSuccessOrAppliedOptions() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void disguiseFailureKeepsItsNonceAndDoesNotInventSuccessOrAppliedOptions() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             Person owner = scene.person(true);
             scene.hello(owner, true, false, true);
             UUID nonce = UUID.randomUUID();
@@ -281,10 +260,8 @@ class ClientSyncLifecyclePerformanceTest
     }
 
     @Test
-    void protectionFailureIncludesStableStageRetryDelayAndOriginalRequestIdentity() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void protectionFailureIncludesStableStageRetryDelayAndOriginalRequestIdentity() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             Person owner = scene.person(true);
             scene.hello(owner, true, false, true);
             UUID nonce = UUID.randomUUID();
@@ -304,10 +281,8 @@ class ClientSyncLifecyclePerformanceTest
     }
 
     @Test
-    void snapshotEndWaitsForDeferredStateAndReleasesEveryQueuedByte() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void snapshotEndWaitsForDeferredStateAndReleasesEveryQueuedByte() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             Person owner = scene.person(true);
             scene.hello(owner, true, false);
             owner.messages.clear();
@@ -328,15 +303,12 @@ class ClientSyncLifecyclePerformanceTest
             assertEquals(1, owner.count("snapshot_end"));
             assertEquals(0, limits.metric("queuedBytes"));
             int stateIndex = -1, endIndex = -1;
-            for (int i = 0; i < owner.messages.size(); i++)
-            {
+            for (int i = 0; i < owner.messages.size(); i++) {
                 String type = owner.messages.get(i).get("type").getAsString();
-                if (type.equals("state"))
-                {
+                if (type.equals("state")) {
                     stateIndex = i;
                 }
-                if (type.equals("snapshot_end"))
-                {
+                if (type.equals("snapshot_end")) {
                     endIndex = i;
                 }
 
@@ -346,10 +318,8 @@ class ClientSyncLifecyclePerformanceTest
     }
 
     @Test
-    void repeatedNonceReplaysOriginalResultAndCannotReapplyEffectsOrDifferentArguments() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void repeatedNonceReplaysOriginalResultAndCannotReapplyEffectsOrDifferentArguments() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             Person owner = scene.person(true);
             scene.hello(owner, true, false, true);
             UUID nonce = UUID.randomUUID();
@@ -377,10 +347,8 @@ class ClientSyncLifecyclePerformanceTest
     }
 
     @Test
-    void busyDisguiseResultUsesDeferredBudgetAndAnEndedConnectionCannotPublishIt() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void busyDisguiseResultUsesDeferredBudgetAndAnEndedConnectionCannotPublishIt() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             Person owner = scene.person(true);
             scene.hello(owner, true, false, true);
             owner.messages.clear();
@@ -413,10 +381,8 @@ class ClientSyncLifecyclePerformanceTest
     }
 
     @Test
-    void optionalDisguiseResultsRequireTheAcknowledgedCapabilityAndRemainBounded() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void optionalDisguiseResultsRequireTheAcknowledgedCapabilityAndRemainBounded() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             Person plain = scene.person(true);
             scene.hello(plain, true, false);
             assertNull(scene.service.beginDisguiseRequest(plain.player, UUID.randomUUID(), "fixture", "plain", 100));
@@ -430,8 +396,7 @@ class ClientSyncLifecyclePerformanceTest
             setField(session, "helloAcknowledged", false);
             assertNull(scene.service.beginDisguiseRequest(owner.player, UUID.randomUUID(), "fixture", "unacked", 100));
             setField(session, "helloAcknowledged", true);
-            for (int i = 0; i < 40; i++)
-            {
+            for (int i = 0; i < 40; i++) {
                 scene.tick += 4;
                 ClientSyncService.DisguiseRequest request = scene.service.beginDisguiseRequest(owner.player,
                         UUID.randomUUID(), "fixture", "request" + i, 100);
@@ -443,10 +408,8 @@ class ClientSyncLifecyclePerformanceTest
     }
 
     @Test
-    void nonceCommandBudgetDenialNeverExecutesAndStillReportsCorrelatedFailure() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void nonceCommandBudgetDenialNeverExecutesAndStillReportsCorrelatedFailure() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             Person owner = scene.person(true);
             scene.hello(owner, true, false, true);
             ClientSyncService.DisguiseRequest first = scene.service.beginDisguiseRequest(owner.player,
@@ -463,10 +426,8 @@ class ClientSyncLifecyclePerformanceTest
     }
 
     @Test
-    void incrementalHelloIsImmediateAndUnchangedModelsOnlyReceiveIdentityHeartbeats() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void incrementalHelloIsImmediateAndUnchangedModelsOnlyReceiveIdentityHeartbeats() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             Person owner = scene.person(true), first = scene.person(false), second = scene.person(false);
             scene.hello(first, true, false);
             scene.hello(second, true, false);
@@ -477,8 +438,7 @@ class ClientSyncLifecyclePerformanceTest
                     .anyMatch(value -> value.getAsString().equals("incremental_state")));
             first.messages.clear();
             second.messages.clear();
-            for (int i = 0; i < 81; i++)
-            {
+            for (int i = 0; i < 81; i++) {
                 owner.x += .1;
                 scene.tick++;
                 scene.maintain();
@@ -486,10 +446,8 @@ class ClientSyncLifecyclePerformanceTest
             assertEquals(0, first.count("state"));
             assertEquals(0, second.count("state"));
             assertTrue(first.count("heartbeat") >= 4);
-            for (JsonObject packet : first.messages)
-            {
-                if (packet.get("type").getAsString().equals("heartbeat"))
-                {
+            for (JsonObject packet : first.messages) {
+                if (packet.get("type").getAsString().equals("heartbeat")) {
                     JsonObject binding = packet.getAsJsonArray("bindings").get(0).getAsJsonObject();
                     assertEquals(owner.id.toString(), binding.get("owner").getAsString());
                     assertEquals(owner.instance.toString(), binding.get("instance").getAsString());
@@ -501,16 +459,13 @@ class ClientSyncLifecyclePerformanceTest
     }
 
     @Test
-    void legacyClientReceivesFullStateEveryTwentyTicksAndNoIdentityExtension() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void legacyClientReceivesFullStateEveryTwentyTicksAndNoIdentityExtension() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             scene.person(true);
             Person viewer = scene.person(false);
             scene.hello(viewer, false, false);
             viewer.messages.clear();
-            for (int i = 0; i < 19; i++)
-            {
+            for (int i = 0; i < 19; i++) {
                 scene.tick++;
                 scene.maintain();
             }
@@ -519,10 +474,8 @@ class ClientSyncLifecyclePerformanceTest
             scene.maintain();
             assertEquals(1, viewer.count("state"));
             assertTrue(viewer.last("state").has("animations"));
-            for (JsonObject packet : viewer.messages)
-            {
-                if (packet.get("type").getAsString().equals("heartbeat"))
-                {
+            for (JsonObject packet : viewer.messages) {
+                if (packet.get("type").getAsString().equals("heartbeat")) {
                     assertFalse(packet.has("bindings"));
                 }
 
@@ -532,15 +485,12 @@ class ClientSyncLifecyclePerformanceTest
     }
 
     @Test
-    void timelineNegotiationKeepsTwoTickMotionAndChangedMenusOnlyAppearOnce() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void timelineNegotiationKeepsTwoTickMotionAndChangedMenusOnlyAppearOnce() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             Person owner = scene.person(true), viewer = scene.person(false);
             scene.hello(viewer, true, true);
             viewer.messages.clear();
-            for (int i = 0; i < 10; i++)
-            {
+            for (int i = 0; i < 10; i++) {
                 scene.tick++;
                 owner.x++;
                 scene.maintain();
@@ -560,10 +510,8 @@ class ClientSyncLifecyclePerformanceTest
     }
 
     @Test
-    void broadcastUsesExistingSubscribersAndNewObserversWaitForDiscovery() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void broadcastUsesExistingSubscribersAndNewObserversWaitForDiscovery() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             Person owner = scene.person(true), viewer = scene.person(false);
             scene.hello(viewer, true, false);
             Person added = scene.person(true);
@@ -582,10 +530,8 @@ class ClientSyncLifecyclePerformanceTest
     }
 
     @Test
-    void budgetDeferralKeepsBindingAndQueuesUnbindUntilNextTick() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void budgetDeferralKeepsBindingAndQueuesUnbindUntilNextTick() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             Person owner = scene.person(true), viewer = scene.person(false);
             scene.hello(viewer, true, false);
             viewer.messages.clear();
@@ -615,10 +561,8 @@ class ClientSyncLifecyclePerformanceTest
     }
 
     @Test
-    void heartbeatNeverRenewsInvisibleOrReplacedBindingsBetweenValidationTicks() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void heartbeatNeverRenewsInvisibleOrReplacedBindingsBetweenValidationTicks() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             Person owner = scene.person(true), viewer = scene.person(false);
             scene.local(owner);
             scene.hello(viewer, true, false);
@@ -650,10 +594,8 @@ class ClientSyncLifecyclePerformanceTest
     }
 
     @Test
-    void queuedUnbindCannotDeleteSuccessfulSameInstanceRebindBeforeQueueDrain() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void queuedUnbindCannotDeleteSuccessfulSameInstanceRebindBeforeQueueDrain() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             Person owner = scene.person(true), viewer = scene.person(false);
             scene.hello(viewer, true, false);
             viewer.messages.clear();
@@ -674,20 +616,16 @@ class ClientSyncLifecyclePerformanceTest
     }
 
     @Test
-    void newReadyReservesAckBudgetBeforeHidingMeAndExistingLeaseSurvivesBusyRetry() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void newReadyReservesAckBudgetBeforeHidingMeAndExistingLeaseSurvivesBusyRetry() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             Person owner = scene.person(true), viewer = scene.person(false);
             scene.local(owner);
             scene.hello(viewer, true, false);
             AtomicBoolean hidden = new AtomicBoolean();
             AtomicInteger enables = new AtomicInteger();
-            scene.service.rendering((watcher, id, instance, enabled) ->
-            {
+            scene.service.rendering((watcher, id, instance, enabled) -> {
                 hidden.set(enabled);
-                if (enabled)
-                {
+                if (enabled) {
                     enables.incrementAndGet();
                 }
                 return true;
@@ -729,10 +667,8 @@ class ClientSyncLifecyclePerformanceTest
     }
 
     @Test
-    void requestedSnapshotRecreatesUnchangedClientBindingWithItsCompleteActionMenu() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void requestedSnapshotRecreatesUnchangedClientBindingWithItsCompleteActionMenu() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             Person owner = scene.person(true), viewer = scene.person(false);
             scene.hello(viewer, true, false);
             viewer.messages.clear();
@@ -751,10 +687,8 @@ class ClientSyncLifecyclePerformanceTest
     }
 
     @Test
-    void deferredCompleteSnapshotKeepsItsMenuWhenLaterDeltaReplacesTheBody() throws Exception
-    {
-        try (Scene scene = new Scene(this.temporary))
-        {
+    void deferredCompleteSnapshotKeepsItsMenuWhenLaterDeltaReplacesTheBody() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
             Person owner = scene.person(true), viewer = scene.person(false);
             scene.hello(viewer, true, false);
             viewer.messages.clear();
@@ -780,8 +714,7 @@ class ClientSyncLifecyclePerformanceTest
         }
     }
 
-    private static final class Scene implements AutoCloseable
-    {
+    private static final class Scene implements AutoCloseable {
         final Field serverField;
         final Object originalServer;
         final Map<UUID, Person> people = new LinkedHashMap<>();
@@ -793,29 +726,24 @@ class ClientSyncLifecyclePerformanceTest
         final Path modelFolder;
         int tick = 100, nextId = 1, singleReads;
 
-        Scene(Path temporary) throws Exception
-        {
+        Scene(Path temporary) throws Exception {
             this(temporary, Runnable::run);
         }
 
-        Scene(Path temporary, Consumer<Runnable> preparation) throws Exception
-        {
+        Scene(Path temporary, Consumer<Runnable> preparation) throws Exception {
             this.modelFolder = temporary;
             this.world = proxy(World.class, (instance, method, args) -> method.getName().equals("getUID") ? this.worldId
                     : objectMethod(instance, method, args));
-            Server server = proxy(Server.class, (instance, method, args) -> switch (method.getName())
-            {
+            Server server = proxy(Server.class, (instance, method, args) -> switch (method.getName()) {
             case "getCurrentTick" -> this.tick;
             case "isPrimaryThread" -> true;
-            case "getPlayer" ->
-            {
+            case "getPlayer" -> {
                 Person person = this.people.get(args[0]);
                 yield person == null ? null : person.player;
             }
             default -> objectMethod(instance, method, args);
             });
-            Plugin plugin = proxy(Plugin.class, (instance, method, args) -> switch (method.getName())
-            {
+            Plugin plugin = proxy(Plugin.class, (instance, method, args) -> switch (method.getName()) {
             case "getServer" -> server;
             case "isEnabled" -> true;
             case "getName" -> "SyncPerformanceFixture";
@@ -826,47 +754,36 @@ class ClientSyncLifecyclePerformanceTest
             this.serverField.setAccessible(true);
             this.originalServer = this.serverField.get(null);
             this.serverField.set(null, server);
-            try
-            {
-                this.assets = new ModelAssets(temporary, null, name -> null, preparation, ignored ->
-                {
+            try {
+                this.assets = new ModelAssets(temporary, null, name -> null, preparation, ignored -> {
                 });
-                this.service = new ClientSyncService(plugin, () ->
-                {
+                this.service = new ClientSyncService(plugin, () -> {
                     throw new AssertionError("Full snapshot supplier invoked");
-                }, ignored ->
-                {
+                }, ignored -> {
                 }, this.assets);
-                this.service.snapshotSources(() -> Set.copyOf(this.owners.keySet()), id ->
-                {
+                this.service.snapshotSources(() -> Set.copyOf(this.owners.keySet()), id -> {
                     this.singleReads++;
                     return snapshot(id);
                 });
                 setField(this.service, "running", true);
-            }
-            catch (Exception | Error failure)
-            {
+            } catch (Exception | Error failure) {
                 this.serverField.set(null, this.originalServer);
                 throw failure;
             }
         }
 
-        Person person(boolean disguised)
-        {
+        Person person(boolean disguised) {
             Person person = new Person(new UUID(0, this.nextId++), this.world);
             this.people.put(person.id, person);
-            if (disguised)
-            {
+            if (disguised) {
                 this.owners.put(person.id, person);
             }
             return person;
         }
 
-        ClientSyncService.StateSnapshot snapshot(UUID id)
-        {
+        ClientSyncService.StateSnapshot snapshot(UUID id) {
             Person owner = this.owners.get(id);
-            if (owner == null)
-            {
+            if (owner == null) {
                 return null;
             }
 
@@ -877,30 +794,25 @@ class ClientSyncLifecyclePerformanceTest
                     owner.localRenderable, motion);
         }
 
-        void hello(Person person, boolean incremental, boolean timeline)
-        {
+        void hello(Person person, boolean incremental, boolean timeline) {
             hello(person, incremental, timeline, false);
         }
 
-        void hello(Person person, boolean incremental, boolean timeline, boolean disguiseResults)
-        {
+        void hello(Person person, boolean incremental, boolean timeline, boolean disguiseResults) {
             JsonObject packet = new JsonObject();
             packet.addProperty("protocol", 3);
             packet.addProperty("type", "hello");
             JsonArray capabilities = new JsonArray();
             capabilities.add("local_render");
             capabilities.add("resource_pack_models");
-            if (incremental)
-            {
+            if (incremental) {
                 capabilities.add("incremental_state");
             }
-            if (timeline)
-            {
+            if (timeline) {
                 capabilities.add("server_timeline");
             }
 
-            if (disguiseResults)
-            {
+            if (disguiseResults) {
                 capabilities.add(ClientSyncService.DISGUISE_RESULTS);
             }
             packet.add("capabilities", capabilities);
@@ -908,15 +820,13 @@ class ClientSyncLifecyclePerformanceTest
                     packet.toString().getBytes(StandardCharsets.UTF_8));
         }
 
-        void maintain() throws Exception
-        {
+        void maintain() throws Exception {
             Method method = ClientSyncService.class.getDeclaredMethod("maintainSessions");
             method.setAccessible(true);
             method.invoke(this.service);
         }
 
-        void local(Person owner) throws Exception
-        {
+        void local(Person owner) throws Exception {
             Files.writeString(this.modelFolder.resolve("fixture.bbmodel"),
                     "{\"model_identifier\":\"fixture\",\"elements\":[],\"outliner\":[],\"textures\":[],\"animations\":[]}");
             this.assets.get("fixture");
@@ -924,15 +834,13 @@ class ClientSyncLifecyclePerformanceTest
             owner.localRenderable = true;
         }
 
-        void fillBudget(ConnectionLimits limits, UUID filler) throws Exception
-        {
+        void fillBudget(ConnectionLimits limits, UUID filler) throws Exception {
             assertTrue(limits.allowOutbound(filler,
                     ConnectionLimits.GLOBAL_BYTES_PER_TICK - (int) field(limits, "globalBytes"), false,
                     System.nanoTime(), this.tick));
         }
 
-        void ready(Person viewer, Person owner)
-        {
+        void ready(Person viewer, Person owner) {
             JsonObject binding = new JsonObject();
             binding.addProperty("owner", owner.id.toString());
             binding.addProperty("instance", owner.instance.toString());
@@ -940,13 +848,11 @@ class ClientSyncLifecyclePerformanceTest
             send(viewer, "render_ready", binding);
         }
 
-        void send(Person viewer, String type, JsonObject fields)
-        {
+        void send(Person viewer, String type, JsonObject fields) {
             JsonObject packet = new JsonObject();
             packet.addProperty("protocol", 3);
             packet.addProperty("type", type);
-            if (fields != null)
-            {
+            if (fields != null) {
                 fields.entrySet().forEach(entry -> packet.add(entry.getKey(), entry.getValue()));
             }
 
@@ -955,14 +861,12 @@ class ClientSyncLifecyclePerformanceTest
         }
 
         @Override
-        public void close() throws Exception
-        {
+        public void close() throws Exception {
             this.serverField.set(null, this.originalServer);
         }
     }
 
-    private static final class Person
-    {
+    private static final class Person {
         final UUID id;
         UUID instance = UUID.randomUUID();
         final Player player;
@@ -973,19 +877,16 @@ class ClientSyncLifecyclePerformanceTest
         boolean localRenderable, showSelf = true, invisible;
         List<ClientSyncService.AnimationInfo> animations = List.of(new ClientSyncService.AnimationInfo("idle", "Idle"));
 
-        Person(UUID id, World world)
-        {
+        Person(UUID id, World world) {
             this.id = id;
-            this.player = proxy(Player.class, (instance, method, args) -> switch (method.getName())
-            {
+            this.player = proxy(Player.class, (instance, method, args) -> switch (method.getName()) {
             case "getUniqueId" -> id;
             case "isOnline", "canSee" -> true;
             case "getWorld" -> world;
             case "getLocation" -> new Location(world, this.x, 64, 0);
             case "getFoodLevel" -> 20;
             case "isInvisible" -> this.invisible;
-            case "sendPluginMessage" ->
-            {
+            case "sendPluginMessage" -> {
                 this.lastBytes = ((byte[]) args[2]).length;
                 this.messages.add(
                         JsonParser.parseString(new String((byte[]) args[2], StandardCharsets.UTF_8)).getAsJsonObject());
@@ -995,29 +896,23 @@ class ClientSyncLifecyclePerformanceTest
             });
         }
 
-        int count(String type)
-        {
+        int count(String type) {
             return (int) this.messages.stream().filter(value -> value.get("type").getAsString().equals(type)).count();
         }
 
-        JsonObject last(String type)
-        {
+        JsonObject last(String type) {
             return this.messages.stream().filter(value -> value.get("type").getAsString().equals(type))
                     .reduce((first, second) -> second).orElseThrow();
         }
     }
 
     @SuppressWarnings("unchecked")
-    private static <T> T proxy(Class<T> type, InvocationHandler handler)
-    {
-        return (T) Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]
-        { type }, handler);
+    private static <T> T proxy(Class<T> type, InvocationHandler handler) {
+        return (T) Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[] { type }, handler);
     }
 
-    private static Object objectMethod(Object instance, Method method, Object[] args)
-    {
-        return switch (method.getName())
-        {
+    private static Object objectMethod(Object instance, Method method, Object[] args) {
+        return switch (method.getName()) {
         case "equals" -> instance == args[0];
         case "hashCode" -> System.identityHashCode(instance);
         case "toString" -> "fixture";
@@ -1029,15 +924,13 @@ class ClientSyncLifecyclePerformanceTest
         };
     }
 
-    private static Object field(Object object, String name) throws Exception
-    {
+    private static Object field(Object object, String name) throws Exception {
         Field field = object.getClass().getDeclaredField(name);
         field.setAccessible(true);
         return field.get(object);
     }
 
-    private static void setField(Object object, String name, Object value) throws Exception
-    {
+    private static void setField(Object object, String name, Object value) throws Exception {
         Field field = object.getClass().getDeclaredField(name);
         field.setAccessible(true);
         field.set(object, value);

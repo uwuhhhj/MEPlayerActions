@@ -10,24 +10,20 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-class ConnectionLimitsTest
-{
+class ConnectionLimitsTest {
     private static final UUID VIEWER = new UUID(0, 1);
     private static final long SECOND = 1_000_000_000L;
 
-    private static ResourceSettings.Network smallPolicy()
-    {
+    private static ResourceSettings.Network smallPolicy() {
         return new ResourceSettings.Network(16384, 32768, 16384, 16384, 16384, 16, 4, 16384, 16384, 16384, 2, 1, 2, 100,
                 40, 200, 100, 16384);
     }
 
     @Test
-    void configuredGlobalUploadAndPacketLimitsApplyAcrossDifferentPlayersAndSurviveSessionCleanup()
-    {
+    void configuredGlobalUploadAndPacketLimitsApplyAcrossDifferentPlayersAndSurviveSessionCleanup() {
         ConnectionLimits limits = new ConnectionLimits();
         limits.configure(smallPolicy());
-        for (int i = 0; i < 16; i++)
-        {
+        for (int i = 0; i < 16; i++) {
             assertTrue(limits.allowInbound(new UUID(1, i), 1024, 0));
         }
 
@@ -41,8 +37,7 @@ class ConnectionLimitsTest
     }
 
     @Test
-    void creditedWirePacketRemainsUsableAfterOrdinaryGlobalBudgetExhaustionAndCannotBeReplayed()
-    {
+    void creditedWirePacketRemainsUsableAfterOrdinaryGlobalBudgetExhaustionAndCannotBeReplayed() {
         ConnectionLimits limits = new ConnectionLimits();
         limits.configure(smallPolicy());
         assertTrue(limits.grantUploadCredit(VIEWER, 14000, 0));
@@ -58,13 +53,11 @@ class ConnectionLimitsTest
     }
 
     @Test
-    void decodeAdmissionCannotBeBypassedByOutstandingUploadCreditOrMalformedFrames()
-    {
+    void decodeAdmissionCannotBeBypassedByOutstandingUploadCreditOrMalformedFrames() {
         ConnectionLimits limits = new ConnectionLimits();
         limits.configure(smallPolicy());
         assertTrue(limits.grantUploadCredit(VIEWER, 1024, 0));
-        for (int i = 0; i < 4; i++)
-        {
+        for (int i = 0; i < 4; i++) {
             assertTrue(limits.allowInboundDecode(VIEWER, 1024, 0));
         }
 
@@ -75,8 +68,7 @@ class ConnectionLimitsTest
     }
 
     @Test
-    void waitingSlotsAndRetainedOutgoingBytesAreSharedAndReleasedExactlyOnce()
-    {
+    void waitingSlotsAndRetainedOutgoingBytesAreSharedAndReleasedExactlyOnce() {
         ConnectionLimits limits = new ConnectionLimits();
         limits.configure(smallPolicy());
         UUID other = new UUID(2, 2);
@@ -100,8 +92,7 @@ class ConnectionLimitsTest
     }
 
     @Test
-    void UnwritableTransportDefersAssetsButPreservesControlAndDoesNotConsumeBudget()
-    {
+    void UnwritableTransportDefersAssetsButPreservesControlAndDoesNotConsumeBudget() {
         ConnectionLimits limits = new ConnectionLimits();
         limits.configure(smallPolicy());
         limits.writability(ignored -> false);
@@ -114,8 +105,7 @@ class ConnectionLimitsTest
     }
 
     @Test
-    void protectedAssetFactorPausesOnlyResourcePacketsAndHalfFactorReducesPerTickBudget()
-    {
+    void protectedAssetFactorPausesOnlyResourcePacketsAndHalfFactorReducesPerTickBudget() {
         ConnectionLimits limits = new ConnectionLimits();
         limits.configure(smallPolicy());
         limits.assetFactor(() -> 0);
@@ -127,20 +117,17 @@ class ConnectionLimitsTest
     }
 
     @Test
-    void foreignThreadDispatchHasBoundedBytesAndReleasesReservationsAfterFailure()
-    {
+    void foreignThreadDispatchHasBoundedBytesAndReleasesReservationsAfterFailure() {
         ConnectionLimits limits = new ConnectionLimits();
         limits.configure(smallPolicy());
-        for (int i = 0; i < 16; i++)
-        {
+        for (int i = 0; i < 16; i++) {
             assertTrue(limits.reserveInboundDispatch(16384));
         }
 
         assertFalse(limits.reserveInboundDispatch(1));
         limits.releaseInboundDispatch(16384);
         assertTrue(limits.reserveInboundDispatch(16384));
-        for (int i = 0; i < 16; i++)
-        {
+        for (int i = 0; i < 16; i++) {
             limits.releaseInboundDispatch(16384);
         }
 
@@ -149,23 +136,19 @@ class ConnectionLimitsTest
     }
 
     @Test
-    void assetPacketsCannotConsumeReservedPerPlayerOrGlobalControlPacketCapacity()
-    {
+    void assetPacketsCannotConsumeReservedPerPlayerOrGlobalControlPacketCapacity() {
         ConnectionLimits limits = new ConnectionLimits();
         limits.configure(smallPolicy());
-        for (int player = 0; player < 4; player++)
-        {
+        for (int player = 0; player < 4; player++) {
             UUID viewer = new UUID(9, player);
-            for (int packet = 0; packet < 3; packet++)
-            {
+            for (int packet = 0; packet < 3; packet++) {
                 assertTrue(limits.allowOutbound(viewer, 1, true, 0, 0));
             }
 
             assertFalse(limits.allowOutbound(viewer, 1, true, 0, 0));
         }
         assertFalse(limits.allowOutbound(new UUID(9, 99), 1, true, 0, 0));
-        for (int player = 0; player < 4; player++)
-        {
+        for (int player = 0; player < 4; player++) {
             assertTrue(limits.allowOutbound(new UUID(9, player), 1, false, 0, 0));
         }
 
@@ -175,8 +158,7 @@ class ConnectionLimitsTest
     }
 
     @Test
-    void pushOffersArePacedAndRehelloCannotResetThreeFailureAttempts()
-    {
+    void pushOffersArePacedAndRehelloCannotResetThreeFailureAttempts() {
         ConnectionLimits limits = new ConnectionLimits();
         Set<UUID> instances = Set.of(new UUID(0, 20));
         assertTrue(limits.canPushOffer(VIEWER, "hash", instances, 0));
@@ -184,9 +166,7 @@ class ConnectionLimitsTest
         assertFalse(limits.canPushOffer(VIEWER, "other", instances, 9));
         assertTrue(limits.canPushOffer(VIEWER, "other", instances, 10));
         assertFalse(limits.canPushOffer(VIEWER, "hash", instances, 99));
-        for (int tick : new int[]
-        { 100, 200 })
-        {
+        for (int tick : new int[] { 100, 200 }) {
             limits.releaseTransfers(VIEWER);
             assertTrue(limits.canPushOffer(VIEWER, "hash", instances, tick));
             limits.pushOfferSent(VIEWER, "hash", instances, tick);
@@ -200,8 +180,7 @@ class ConnectionLimitsTest
     }
 
     @Test
-    void cancellingExactlyOnePausedOfferPreservesPriorFailuresAndEveryCooldown()
-    {
+    void cancellingExactlyOnePausedOfferPreservesPriorFailuresAndEveryCooldown() {
         ConnectionLimits limits = new ConnectionLimits();
         Set<UUID> instances = Set.of(new UUID(0, 20));
         limits.pushOfferSent(VIEWER, "hash", instances, 0);
@@ -224,8 +203,7 @@ class ConnectionLimitsTest
     }
 
     @Test
-    void pausedOfferRefundCannotChargeBackAnotherInstanceSetOrALaterSameHashOffer()
-    {
+    void pausedOfferRefundCannotChargeBackAnotherInstanceSetOrALaterSameHashOffer() {
         ConnectionLimits limits = new ConnectionLimits();
         UUID original = new UUID(0, 20), other = new UUID(0, 21);
         Set<UUID> one = Set.of(original);
@@ -244,8 +222,7 @@ class ConnectionLimitsTest
     }
 
     @Test
-    void switchingExistingSameHashAliasesDoesNotManufactureNewRetryGenerations()
-    {
+    void switchingExistingSameHashAliasesDoesNotManufactureNewRetryGenerations() {
         ConnectionLimits limits = new ConnectionLimits();
         UUID first = new UUID(0, 20), second = new UUID(0, 21);
         Set<UUID> both = Set.of(first, second);
@@ -259,8 +236,7 @@ class ConnectionLimitsTest
     }
 
     @Test
-    void offerCooldownHandlesTickWrapAndOnlyActualDisconnectClearsFailures()
-    {
+    void offerCooldownHandlesTickWrapAndOnlyActualDisconnectClearsFailures() {
         ConnectionLimits limits = new ConnectionLimits();
         Set<UUID> instances = Set.of(new UUID(0, 20));
         limits.pushOfferSent(VIEWER, "hash", instances, 0xfffffff0L);
@@ -275,14 +251,12 @@ class ConnectionLimitsTest
     }
 
     @Test
-    void endingOrReplacingSessionReleasesWorkButRetainsEveryConnectionLimit()
-    {
+    void endingOrReplacingSessionReleasesWorkButRetainsEveryConnectionLimit() {
         ConnectionLimits limits = new ConnectionLimits();
         assertTrue(limits.allowHello(VIEWER, 0));
         assertTrue(limits.allowAsset(VIEWER, "a", 100));
         assertTrue(limits.allowRequest(VIEWER, "request", "play", 100, 1200));
-        for (int i = 0; i < ConnectionLimits.INBOUND_PACKETS_PER_SECOND; i++)
-        {
+        for (int i = 0; i < ConnectionLimits.INBOUND_PACKETS_PER_SECOND; i++) {
             assertTrue(limits.allowInbound(VIEWER, 100, 0));
         }
 
@@ -308,8 +282,7 @@ class ConnectionLimitsTest
     }
 
     @Test
-    void inboundByteBudgetIsIndependentOfPacketCountAndOtherConnections()
-    {
+    void inboundByteBudgetIsIndependentOfPacketCountAndOtherConnections() {
         ConnectionLimits limits = new ConnectionLimits();
         assertTrue(limits.allowInbound(VIEWER, ConnectionLimits.INBOUND_BYTES_PER_SECOND - 10, 0));
         assertFalse(limits.allowInbound(VIEWER, 11, 0));
@@ -320,11 +293,9 @@ class ConnectionLimitsTest
     }
 
     @Test
-    void globalAndClientTransferSlotsAreReclaimedOnCancelCompletionAndDisconnect()
-    {
+    void globalAndClientTransferSlotsAreReclaimedOnCancelCompletionAndDisconnect() {
         ConnectionLimits limits = new ConnectionLimits();
-        for (int i = 1; i <= ConnectionLimits.GLOBAL_TRANSFERS / 2; i++)
-        {
+        for (int i = 1; i <= ConnectionLimits.GLOBAL_TRANSFERS / 2; i++) {
             UUID viewer = new UUID(0, i);
             assertTrue(limits.reserveTransfer(viewer));
             assertTrue(limits.reserveTransfer(viewer));
@@ -346,8 +317,7 @@ class ConnectionLimitsTest
     }
 
     @Test
-    void rejectedGlobalBudgetDoesNotConsumeClientBytesAndAssetBudgetLeavesControlHeadroom()
-    {
+    void rejectedGlobalBudgetDoesNotConsumeClientBytesAndAssetBudgetLeavesControlHeadroom() {
         ConnectionLimits limits = new ConnectionLimits();
         UUID other = new UUID(0, 2);
         assertTrue(limits.allowOutbound(VIEWER, ConnectionLimits.GLOBAL_ASSET_BYTES_PER_TICK, true, 0, 1));
@@ -362,13 +332,10 @@ class ConnectionLimitsTest
     }
 
     @Test
-    void totalOutboundBudgetIncludesControlPacketsAndResetsOnlyAtWindowBoundary()
-    {
+    void totalOutboundBudgetIncludesControlPacketsAndResetsOnlyAtWindowBoundary() {
         ConnectionLimits limits = new ConnectionLimits();
         int ticks = ConnectionLimits.OUTBOUND_BYTES_PER_SECOND / ConnectionLimits.GLOBAL_BYTES_PER_TICK;
-        for (int tick = 0; tick < ticks; tick++)
-
-        {
+        for (int tick = 0; tick < ticks; tick++) {
             assertTrue(limits.allowOutbound(VIEWER, ConnectionLimits.GLOBAL_BYTES_PER_TICK, false, 0, tick));
         }
 
@@ -379,8 +346,7 @@ class ConnectionLimitsTest
     }
 
     @Test
-    void assetCooldownSurvivesTickWrapAndKeepsOtherHashesIndependent()
-    {
+    void assetCooldownSurvivesTickWrapAndKeepsOtherHashesIndependent() {
         ConnectionLimits limits = new ConnectionLimits();
         assertTrue(limits.allowAsset(VIEWER, "a", 0xffff_fff0L));
         assertTrue(limits.allowAsset(VIEWER, "b", 0xffff_fff0L));
@@ -392,8 +358,7 @@ class ConnectionLimitsTest
     }
 
     @Test
-    void actualDisconnectResetsClientBudgetsButCannotResetGlobalBudget()
-    {
+    void actualDisconnectResetsClientBudgetsButCannotResetGlobalBudget() {
         ConnectionLimits limits = new ConnectionLimits();
         assertTrue(limits.allowHello(VIEWER, 0));
         assertTrue(limits.allowAsset(VIEWER, "a", 0));
@@ -408,14 +373,12 @@ class ConnectionLimitsTest
     }
 
     @Test
-    void offlinePruningDoesNotResetOnlineConnectionsAndReclaimsOnlyDepartedSlots()
-    {
+    void offlinePruningDoesNotResetOnlineConnectionsAndReclaimsOnlyDepartedSlots() {
         ConnectionLimits limits = new ConnectionLimits();
         UUID offline = new UUID(0, 2);
         assertTrue(limits.allowHello(VIEWER, 0));
         assertTrue(limits.allowHello(offline, 0));
-        for (int i = 1; i <= ConnectionLimits.GLOBAL_TRANSFERS / 2; i++)
-        {
+        for (int i = 1; i <= ConnectionLimits.GLOBAL_TRANSFERS / 2; i++) {
             assertTrue(limits.reserveTransfer(new UUID(0, i)));
             assertTrue(limits.reserveTransfer(new UUID(0, i)));
         }
@@ -428,8 +391,7 @@ class ConnectionLimitsTest
     }
 
     @Test
-    void monotonicClockWrapDoesNotBypassOrPermanentlyBlockWindow()
-    {
+    void monotonicClockWrapDoesNotBypassOrPermanentlyBlockWindow() {
         ConnectionLimits limits = new ConnectionLimits();
         long beforeWrap = Long.MAX_VALUE - SECOND / 2;
         assertTrue(limits.allowHello(VIEWER, beforeWrap));

@@ -36,71 +36,58 @@ import org.joml.Matrix4f;
 import java.util.*;
 
 /** Native armor textures, trims, glint, wings and head items submitted at sampled YSM bones. */
-public final class YsmEquipmentRenderer
-{
+public final class YsmEquipmentRenderer {
     private static EntityRendererFactory.Context rendererContext;
     private static long submittedEquipment;
 
-    private YsmEquipmentRenderer()
-    {
+    private YsmEquipmentRenderer() {
     }
 
-    public static void rendererContext(EntityRendererFactory.Context context)
-    {
+    public static void rendererContext(EntityRendererFactory.Context context) {
         rendererContext = context;
         YsmBodyTransform.rendererContext(context);
     }
 
     public record Attachment(Matrix4f transform, String slot, String bone, Model<?> model, EntityRenderState state,
             ItemStack stack, RegistryKey<EquipmentAsset> asset, EquipmentModel.LayerType layer, Identifier texture,
-            ItemRenderState item)
-    {
+            ItemRenderState item) {
     }
 
-    public static List<Attachment> extract(PlayerEntity entity, AnimationPlayer animation)
-    {
-        if (entity == null || rendererContext == null)
-        {
+    public static List<Attachment> extract(PlayerEntity entity, AnimationPlayer animation) {
+        if (entity == null || rendererContext == null) {
             return List.of();
         }
 
         // Read the same immutable-in-use host frame as the body. Re-extracting here would give
         // wings and shoulder companions a different interpolation/frozen-tick state.
         NativePlayerPresentation.Snapshot frame = NativePlayerPresentation.frame(entity);
-        if (frame == null)
-        {
+        if (frame == null) {
             return List.of();
         }
 
         PlayerEntityRenderState state = frame.renderState();
         List<Attachment> result = new ArrayList<>();
         for (EquipmentSlot slot : List.of(EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS,
-                EquipmentSlot.FEET))
-        {
+                EquipmentSlot.FEET)) {
             ItemStack stack = entity.getEquippedStack(slot).copy();
-            if (stack.isEmpty())
-            {
+            if (stack.isEmpty()) {
                 continue;
             }
 
             EquippableComponent equippable = stack.get(DataComponentTypes.EQUIPPABLE);
             if (slot == EquipmentSlot.HEAD
                     && headItemEligible(animation.nativeYsm(), equippable == null ? null : equippable.slot(),
-                            equippable != null && equippable.assetId().isPresent()))
-            {
+                            equippable != null && equippable.assetId().isPresent())) {
                 headItem(result, entity, animation, stack);
                 continue;
             }
-            if (equippable == null || equippable.slot() != slot || equippable.assetId().isEmpty())
-            {
+            if (equippable == null || equippable.slot() != slot || equippable.assetId().isEmpty()) {
                 continue;
             }
 
-            if (slot == EquipmentSlot.CHEST && stack.contains(DataComponentTypes.GLIDER))
-            {
+            if (slot == EquipmentSlot.CHEST && stack.contains(DataComponentTypes.GLIDER)) {
                 Optional<Matrix4f> locator = animation.boneTransform("ElytraLocator");
-                if (locator.isPresent() && YsmItemRenderer.usable(locator.get()))
-                {
+                if (locator.isPresent() && YsmItemRenderer.usable(locator.get())) {
                     ElytraEntityModel wings = new ElytraEntityModel(rendererContext.getPart(EntityModelLayers.ELYTRA));
                     Identifier texture = state.skinTextures.elytra() != null ? state.skinTextures.elytra().texturePath()
                             : (state.skinTextures.cape() != null && state.capeVisible
@@ -112,42 +99,35 @@ public final class YsmEquipmentRenderer
                 }
                 continue;
             }
-            List<String> pieces = switch (slot)
-            {
+            List<String> pieces = switch (slot) {
             case HEAD -> List.of("head");
             case CHEST -> List.of("body", "right_arm", "left_arm");
             case LEGS -> List.of("body", "right_leg", "left_leg");
             case FEET -> List.of("right_leg", "left_leg");
             default -> List.of();
             };
-            for (String piece : pieces)
-            {
+            for (String piece : pieces) {
                 String bone = firstBone(animation, boneCandidates(piece, animation.nativeYsm()));
-                if (bone.isEmpty())
-                {
+                if (bone.isEmpty()) {
                     continue;
                 }
 
                 Matrix4f transform = animation.boneTransform(bone).orElseThrow();
-                if (!YsmItemRenderer.usable(transform))
-                {
+                if (!YsmItemRenderer.usable(transform)) {
                     continue;
                 }
 
                 ModelPart root = rendererContext.getPart(EntityModelLayers.PLAYER_EQUIPMENT.getModelData(slot));
-                if (!root.hasChild(piece))
-                {
+                if (!root.hasChild(piece)) {
                     continue;
                 }
 
                 ModelPart part = root.getChild(piece);
                 part.setOrigin(0, 0, 0);
                 part.setAngles(0, 0, 0);
-                Model<EntityRenderState> model = new Model<>(part, RenderLayers::entityCutoutNoCull)
-                {
+                Model<EntityRenderState> model = new Model<>(part, RenderLayers::entityCutoutNoCull) {
                     @Override
-                    public void setAngles(EntityRenderState ignored)
-                    {
+                    public void setAngles(EntityRenderState ignored) {
                         /* Final pose comes from the YSM attachment matrix. */ }
                 };
                 result.add(new Attachment(new Matrix4f(transform).scale(-1, -1, 1), slot.name(), bone, model, state,
@@ -158,14 +138,11 @@ public final class YsmEquipmentRenderer
             }
         }
         if (state.capeVisible && state.skinTextures.cape() != null
-                && !state.equippedChestStack.contains(DataComponentTypes.GLIDER))
-        {
+                && !state.equippedChestStack.contains(DataComponentTypes.GLIDER)) {
             String bone = firstBone(animation, List.of("CapeLocator", "BodyLocator", "UpBody", "Body"));
-            if (!bone.isEmpty())
-            {
+            if (!bone.isEmpty()) {
                 Matrix4f matrix = animation.boneTransform(bone).orElseThrow();
-                if (YsmItemRenderer.usable(matrix))
-                {
+                if (YsmItemRenderer.usable(matrix)) {
                     result.add(new Attachment(new Matrix4f(matrix).scale(-1, -1, 1), "CAPE", bone,
                             new PlayerCapeModel(rendererContext.getPart(EntityModelLayers.PLAYER_CAPE)), state,
                             ItemStack.EMPTY, null, null, state.skinTextures.cape().texturePath(), null));
@@ -180,13 +157,11 @@ public final class YsmEquipmentRenderer
 
     /** OpenYSM CustomPlayerParrotLayer: native shoulder pose follows only the authored shoulder locator. */
     private static void shoulderParrot(List<Attachment> result, AnimationPlayer animation,
-            PlayerEntityRenderState player, boolean left)
-    {
+            PlayerEntityRenderState player, boolean left) {
         ParrotEntity.Variant variant = left ? player.leftShoulderParrotVariant : player.rightShoulderParrotVariant;
         String bone = left ? "LeftShoulderLocator" : "RightShoulderLocator";
         Matrix4f locator = animation.boneTransform(bone).orElse(null);
-        if (variant == null || locator == null || !YsmItemRenderer.usable(locator))
-        {
+        if (variant == null || locator == null || !YsmItemRenderer.usable(locator)) {
             return;
         }
 
@@ -205,10 +180,8 @@ public final class YsmEquipmentRenderer
                 null, ParrotEntityRenderer.getTexture(variant), null));
     }
 
-    static List<String> boneCandidates(String piece, boolean nativeYsm)
-    {
-        return switch (piece)
-        {
+    static List<String> boneCandidates(String piece, boolean nativeYsm) {
+        return switch (piece) {
         // YSMClientMapper's headIds selects Head; it never selects HeadLocator first.
         case "head" -> nativeYsm ? List.of("Head") : List.of("HeadLocator", "Head");
         case "body" -> List.of("BodyLocator", "UpBody", "Body", "UpperBody");
@@ -220,12 +193,9 @@ public final class YsmEquipmentRenderer
         };
     }
 
-    private static String firstBone(AnimationPlayer player, List<String> candidates)
-    {
-        for (String name : candidates)
-        {
-            if (player.boneTransform(name).isPresent())
-            {
+    private static String firstBone(AnimationPlayer player, List<String> candidates) {
+        for (String name : candidates) {
+            if (player.boneTransform(name).isPresent()) {
                 return name;
             }
 
@@ -235,25 +205,21 @@ public final class YsmEquipmentRenderer
     }
 
     private static void headItem(List<Attachment> result, PlayerEntity entity, AnimationPlayer animation,
-            ItemStack stack)
-    {
+            ItemStack stack) {
         String bone = firstBone(animation, boneCandidates("head", animation.nativeYsm()));
-        if (bone.isEmpty())
-        {
+        if (bone.isEmpty()) {
             return;
         }
 
         Matrix4f transform = animation.boneTransform(bone).orElseThrow();
-        if (!YsmItemRenderer.usable(transform))
-        {
+        if (!YsmItemRenderer.usable(transform)) {
             return;
         }
 
         ItemRenderState item = new ItemRenderState();
         MinecraftClient.getInstance().getItemModelManager().updateForLivingEntity(item, stack, ItemDisplayContext.HEAD,
                 entity);
-        if (!item.isEmpty())
-        {
+        if (!item.isEmpty()) {
             result.add(new Attachment(headItemTransform(transform), "HEAD_ITEM", bone, null, null, stack, null, null,
                     null, item));
         }
@@ -261,74 +227,59 @@ public final class YsmEquipmentRenderer
     }
 
     /** OpenYSM 1.21.11 CustomPlayerArmorLayer.isArmorItem checks the equipped slot, not the asset ID. */
-    static boolean headItemEligible(boolean nativeYsm, EquipmentSlot equippableSlot, boolean hasEquipmentAsset)
-    {
+    static boolean headItemEligible(boolean nativeYsm, EquipmentSlot equippableSlot, boolean hasEquipmentAsset) {
         return nativeYsm ? equippableSlot != EquipmentSlot.HEAD : equippableSlot == null || !hasEquipmentAsset;
     }
 
     /** CustomPlayerArmorLayer's native Head item basis, after the complete authored chain. */
-    static Matrix4f headItemTransform(Matrix4f locator)
-    {
+    static Matrix4f headItemTransform(Matrix4f locator) {
         return new Matrix4f(locator).scale(.625f).translate(0, .25f, 0);
     }
 
     /** CustomPlayerElytraLayer rotates the model 180 degrees around Z, without a guessed Z offset. */
-    static Matrix4f wingTransform(Matrix4f locator, boolean nativeYsm)
-    {
+    static Matrix4f wingTransform(Matrix4f locator, boolean nativeYsm) {
         return nativeYsm ? new Matrix4f(locator).rotateZ((float) Math.PI)
                 : new Matrix4f(locator).scale(-1, -1, 1).translate(0, 0, .125f);
     }
 
-    @SuppressWarnings(
-    { "unchecked", "rawtypes" })
+    @SuppressWarnings({ "unchecked", "rawtypes" })
     public static void submit(List<Attachment> attachments, MatrixStack matrices, OrderedRenderCommandQueue queue,
-            int light)
-    {
-        if (rendererContext == null)
-        {
+            int light) {
+        if (rendererContext == null) {
             return;
         }
 
         EquipmentRenderer equipment = rendererContext.getEquipmentRenderer();
-        for (Attachment attachment : attachments)
-        {
+        for (Attachment attachment : attachments) {
             matrices.push();
-            try
-            {
+            try {
                 matrices.multiplyPositionMatrix(attachment.transform());
-                if (attachment.item() != null)
-                {
+                if (attachment.item() != null) {
                     attachment.item().render(matrices, queue, light, OverlayTexture.DEFAULT_UV, 0);
                 }
 
-                else if (attachment.asset() != null)
-                {
+                else if (attachment.asset() != null) {
                     equipment.render(attachment.layer(), attachment.asset(), (Model) attachment.model(),
                             attachment.state(), attachment.stack(), matrices, queue, light, attachment.texture(), 0, 0);
                 }
 
-                else
-                {
+                else {
                     queue.submitModel((Model) attachment.model(), attachment.state(), matrices,
                             RenderLayers.entitySolid(attachment.texture()), light, OverlayTexture.DEFAULT_UV, 0, null);
                 }
 
                 submittedEquipment++;
-            }
-            finally
-            {
+            } finally {
                 matrices.pop();
             }
         }
     }
 
-    public static long submittedEquipment()
-    {
+    public static long submittedEquipment() {
         return submittedEquipment;
     }
 
-    public static List<Map<String, Object>> diagnostics(List<Attachment> attachments)
-    {
+    public static List<Map<String, Object>> diagnostics(List<Attachment> attachments) {
         return attachments
                 .stream().map(
                         value -> Map.<String, Object>of("slot", value.slot(), "bone", value.bone(), "item",

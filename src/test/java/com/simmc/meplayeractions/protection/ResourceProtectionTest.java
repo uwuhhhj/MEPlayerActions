@@ -9,24 +9,20 @@ import java.util.concurrent.atomic.*;
 import java.util.function.BooleanSupplier;
 import static org.junit.jupiter.api.Assertions.*;
 
-class ResourceProtectionTest
-{
+class ResourceProtectionTest {
     private static final long MIB = 1048576;
     @TempDir
     Path temporary;
 
     @Test
-    void workerAndCompletionQueuesAreBoundedAndCallbacksRequireMainDrain() throws Exception
-    {
+    void workerAndCompletionQueuesAreBoundedAndCallbacksRequireMainDrain() throws Exception {
         AtomicLong clock = new AtomicLong();
         ResourceSettings settings = withTasks(1, 1, 2, 4 * MIB, 4 * MIB, 2);
-        try (ResourceProtection runtime = new ResourceProtection(settings, clock::get))
-        {
+        try (ResourceProtection runtime = new ResourceProtection(settings, clock::get)) {
             CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
             AtomicInteger callback = new AtomicInteger();
             List<ResourceError> failures = new ArrayList<>();
-            assertTrue(runtime.submit(null, MIB, "asset_prepare", () ->
-            {
+            assertTrue(runtime.submit(null, MIB, "asset_prepare", () -> {
                 entered.countDown();
                 release.await();
                 return 1;
@@ -46,78 +42,61 @@ class ResourceProtectionTest
     }
 
     @Test
-    void completedButUndrainedResultsContinueToReserveCallbackSpace() throws Exception
-    {
+    void completedButUndrainedResultsContinueToReserveCallbackSpace() throws Exception {
         try (ResourceProtection runtime = new ResourceProtection(withTasks(1, 2, 2, 4 * MIB, 4 * MIB, 1),
-                System::nanoTime))
-        {
+                System::nanoTime)) {
             List<ResourceError> failures = new ArrayList<>();
-            assertTrue(runtime.submit(null, MIB, "asset_prepare", () -> 1, v ->
-            {
+            assertTrue(runtime.submit(null, MIB, "asset_prepare", () -> 1, v -> {
             }, failures::add));
             await(() -> runtime.snapshot().get("tasks.pendingCompletions") == 1);
             assertEquals(0, runtime.snapshot().get("tasks.reservedBytes"));
             assertEquals(MIB, runtime.snapshot().get("tasks.completionReservedBytes"));
-            assertFalse(runtime.submit(null, MIB, "asset_prepare", () -> 2, v ->
-            {
+            assertFalse(runtime.submit(null, MIB, "asset_prepare", () -> 2, v -> {
             }, failures::add));
             assertEquals("asset_queue_full", failures.getFirst().code());
             runtime.drainCompletions();
-            assertTrue(runtime.submit(null, MIB, "asset_prepare", () -> 2, v ->
-            {
+            assertTrue(runtime.submit(null, MIB, "asset_prepare", () -> 2, v -> {
             }, failures::add));
         }
     }
 
     @Test
-    void perOwnerAdmissionCannotUseOtherPlayersReservedCapacity() throws Exception
-    {
+    void perOwnerAdmissionCannotUseOtherPlayersReservedCapacity() throws Exception {
         UUID owner = UUID.randomUUID(), other = UUID.randomUUID();
         CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
-        try (ResourceProtection runtime = new ResourceProtection(withTasks(1, 3, 1, 4 * MIB, MIB, 4), System::nanoTime))
-        {
+        try (ResourceProtection runtime = new ResourceProtection(withTasks(1, 3, 1, 4 * MIB, MIB, 4),
+                System::nanoTime)) {
             List<ResourceError> failures = new ArrayList<>();
-            assertTrue(runtime.submit(owner, MIB, "upload_validate", () ->
-            {
+            assertTrue(runtime.submit(owner, MIB, "upload_validate", () -> {
                 entered.countDown();
                 release.await();
                 return 1;
-            }, v ->
-            {
+            }, v -> {
             }, failures::add));
             assertTrue(entered.await(5, TimeUnit.SECONDS));
-            assertFalse(runtime.submit(owner, 1, "upload_validate", () -> 1, v ->
-            {
+            assertFalse(runtime.submit(owner, 1, "upload_validate", () -> 1, v -> {
             }, failures::add));
             assertEquals("player_task_limit", failures.getFirst().code());
-            assertTrue(runtime.submit(other, MIB, "upload_validate", () -> 1, v ->
-            {
+            assertTrue(runtime.submit(other, MIB, "upload_validate", () -> 1, v -> {
             }, failures::add));
             release.countDown();
         }
     }
 
     @Test
-    void timeoutDoesNotReleaseRunningMemoryUntilAnInterruptIgnoringWorkerActuallyExits() throws Exception
-    {
+    void timeoutDoesNotReleaseRunningMemoryUntilAnInterruptIgnoringWorkerActuallyExits() throws Exception {
         AtomicLong clock = new AtomicLong();
         AtomicBoolean finish = new AtomicBoolean();
         CountDownLatch entered = new CountDownLatch(1);
-        try (ResourceProtection runtime = new ResourceProtection(withTasks(1, 2, 2, MIB, MIB, 3), clock::get))
-        {
+        try (ResourceProtection runtime = new ResourceProtection(withTasks(1, 2, 2, MIB, MIB, 3), clock::get)) {
             List<ResourceError> failures = new ArrayList<>();
             AtomicInteger successful = new AtomicInteger();
-            assertTrue(runtime.submit(null, MIB, "upload_validate", () ->
-            {
+            assertTrue(runtime.submit(null, MIB, "upload_validate", () -> {
                 entered.countDown();
-                while (!finish.get())
-                {
-                    try
-                    {
+                while (!finish.get()) {
+                    try {
                         Thread.sleep(5);
-                    }
-                    catch (InterruptedException ignored)
-                    {
+                    } catch (InterruptedException ignored) {
                     }
                 }
                 return 1;
@@ -127,53 +106,41 @@ class ResourceProtectionTest
             runtime.tick();
             assertEquals("validation_timeout", failures.getFirst().code());
             assertEquals(MIB, runtime.snapshot().get("tasks.reservedBytes"));
-            assertFalse(runtime.submit(null, MIB, "upload_validate", () -> 1, v ->
-            {
+            assertFalse(runtime.submit(null, MIB, "upload_validate", () -> 1, v -> {
             }, failures::add));
             assertEquals("memory_limit", failures.getLast().code());
             finish.set(true);
             await(() -> runtime.snapshot().get("tasks.reservedBytes") == 0);
             runtime.drainCompletions();
             assertEquals(0, successful.get());
-        }
-        finally
-        {
+        } finally {
             finish.set(true);
         }
     }
 
     @Test
-    void queuedOwnerCancellationReleasesItsBytesAndAllowsAFutureSession() throws Exception
-    {
+    void queuedOwnerCancellationReleasesItsBytesAndAllowsAFutureSession() throws Exception {
         UUID running = UUID.randomUUID(), queued = UUID.randomUUID();
         CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
         AtomicInteger executed = new AtomicInteger();
         try (ResourceProtection runtime = new ResourceProtection(withTasks(1, 3, 2, 4 * MIB, 2 * MIB, 4),
-                System::nanoTime))
-        {
-            assertTrue(runtime.submit(running, MIB, "asset_prepare", () ->
-            {
+                System::nanoTime)) {
+            assertTrue(runtime.submit(running, MIB, "asset_prepare", () -> {
                 entered.countDown();
                 release.await();
                 return 1;
-            }, v ->
-            {
-            }, v ->
-            {
+            }, v -> {
+            }, v -> {
             }));
             assertTrue(entered.await(5, TimeUnit.SECONDS));
-            assertTrue(runtime.submit(queued, MIB, "asset_prepare", () -> executed.incrementAndGet(), v ->
-            {
-            }, v ->
-            {
+            assertTrue(runtime.submit(queued, MIB, "asset_prepare", () -> executed.incrementAndGet(), v -> {
+            }, v -> {
             }));
             runtime.cancelOwner(queued);
             assertEquals(MIB, runtime.snapshot().get("tasks.reservedBytes"));
             runtime.drainCompletions();
-            assertTrue(runtime.submit(queued, MIB, "asset_prepare", () -> executed.incrementAndGet(), v ->
-            {
-            }, v ->
-            {
+            assertTrue(runtime.submit(queued, MIB, "asset_prepare", () -> executed.incrementAndGet(), v -> {
+            }, v -> {
             }));
             release.countDown();
             await(() -> runtime.snapshot().get("tasks.reservedBytes") == 0);
@@ -182,13 +149,10 @@ class ResourceProtectionTest
     }
 
     @Test
-    void validationFailureIsStructuredAndDoesNotExposePaths() throws Exception
-    {
+    void validationFailureIsStructuredAndDoesNotExposePaths() throws Exception {
         List<ResourceError> errors = new ArrayList<>();
-        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), System::nanoTime))
-        {
-            assertTrue(runtime.submit(null, 1, "upload_validate", () ->
-            {
+        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), System::nanoTime)) {
+            assertTrue(runtime.submit(null, 1, "upload_validate", () -> {
                 throw new IllegalArgumentException("C:/private/password");
             }, v -> fail(), errors::add));
             await(() -> runtime.snapshot().get("tasks.pendingCompletions") == 1);
@@ -199,17 +163,14 @@ class ResourceProtectionTest
     }
 
     @Test
-    void ownerInvalidationReplacesStaleResultsWithCancellationBookkeepingAndAllowsReplacementWork() throws Exception
-    {
+    void ownerInvalidationReplacesStaleResultsWithCancellationBookkeepingAndAllowsReplacementWork() throws Exception {
         UUID owner = UUID.randomUUID();
         AtomicInteger successes = new AtomicInteger();
         List<ResourceError> failures = new ArrayList<>();
-        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), System::nanoTime))
-        {
+        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), System::nanoTime)) {
             assertTrue(runtime.submit(owner, 1, "upload_validate", () -> 1, v -> successes.incrementAndGet(),
                     failures::add));
-            assertTrue(runtime.submit(owner, 1, "upload_validate", () ->
-            {
+            assertTrue(runtime.submit(owner, 1, "upload_validate", () -> {
                 throw new IllegalArgumentException();
             }, v -> successes.incrementAndGet(), failures::add));
             await(() -> runtime.snapshot().get("tasks.pendingCompletions") == 2);
@@ -229,15 +190,12 @@ class ResourceProtectionTest
     }
 
     @Test
-    void finishedDeleteLikeWorkReleasesServiceBookkeepingAfterOwnerDisconnect() throws Exception
-    {
+    void finishedDeleteLikeWorkReleasesServiceBookkeepingAfterOwnerDisconnect() throws Exception {
         UUID owner = UUID.randomUUID();
         Set<UUID> deleting = new HashSet<>(Set.of(owner));
         AtomicInteger committed = new AtomicInteger();
-        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), System::nanoTime))
-        {
-            assertTrue(runtime.submit(owner, 1, "cleanup", () -> true, value ->
-            {
+        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), System::nanoTime)) {
+            assertTrue(runtime.submit(owner, 1, "cleanup", () -> true, value -> {
                 committed.incrementAndGet();
                 deleting.remove(owner);
             }, error -> deleting.remove(owner)));
@@ -251,11 +209,9 @@ class ResourceProtectionTest
     }
 
     @Test
-    void overloadEscalatesImmediatelyAndRecoversOneStatePerHealthyInterval()
-    {
+    void overloadEscalatesImmediatelyAndRecoversOneStatePerHealthyInterval() {
         AtomicLong clock = new AtomicLong();
-        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), clock::get))
-        {
+        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), clock::get)) {
             runtime.sample(9, 170, 0);
             assertEquals(ResourceProtection.State.EMERGENCY, runtime.state());
             assertFalse(runtime.acceptingNewWork());
@@ -273,56 +229,43 @@ class ResourceProtectionTest
     }
 
     @Test
-    void unhealthySamplesResetTheRecoveryWindowAndCleanupCanStillRun() throws Exception
-    {
+    void unhealthySamplesResetTheRecoveryWindowAndCleanupCanStillRun() throws Exception {
         AtomicLong clock = new AtomicLong();
         List<ResourceError> failures = new ArrayList<>();
-        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), clock::get))
-        {
+        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), clock::get)) {
             runtime.sample(12, 100, 0);
             runtime.sample(20, 10, 0);
             runtime.sample(17, 60, 29_000_000_000L);
             runtime.sample(20, 10, 30_000_000_000L);
             runtime.sample(20, 10, 59_000_000_000L);
             assertEquals(ResourceProtection.State.PROTECTED, runtime.state());
-            assertFalse(runtime.submit(null, 1, "asset_prepare", () -> 1, v ->
-            {
+            assertFalse(runtime.submit(null, 1, "asset_prepare", () -> 1, v -> {
             }, failures::add));
             assertEquals("tps_protection", failures.getFirst().code());
-            assertTrue(runtime.submit(null, 1, "catalog_delete", () -> 1, v ->
-            {
+            assertTrue(runtime.submit(null, 1, "catalog_delete", () -> 1, v -> {
             }, failures::add));
         }
     }
 
     @Test
-    void emergencyDropsQueuedCosmeticWorkButRetainsQueuedCleanup() throws Exception
-    {
+    void emergencyDropsQueuedCosmeticWorkButRetainsQueuedCleanup() throws Exception {
         AtomicLong clock = new AtomicLong();
         AtomicInteger costly = new AtomicInteger(), cleanup = new AtomicInteger();
         CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
-        try (ResourceProtection runtime = new ResourceProtection(withTasks(1, 4, 4, 4 * MIB, 4 * MIB, 5), clock::get))
-        {
-            runtime.submit(null, 1, "asset_prepare", () ->
-            {
+        try (ResourceProtection runtime = new ResourceProtection(withTasks(1, 4, 4, 4 * MIB, 4 * MIB, 5), clock::get)) {
+            runtime.submit(null, 1, "asset_prepare", () -> {
                 entered.countDown();
                 release.await();
                 return 1;
-            }, v ->
-            {
-            }, v ->
-            {
+            }, v -> {
+            }, v -> {
             });
             assertTrue(entered.await(5, TimeUnit.SECONDS));
-            runtime.submit(null, 1, "asset_prepare", costly::incrementAndGet, v ->
-            {
-            }, v ->
-            {
+            runtime.submit(null, 1, "asset_prepare", costly::incrementAndGet, v -> {
+            }, v -> {
             });
-            runtime.submit(null, 1, "cleanup", cleanup::incrementAndGet, v ->
-            {
-            }, v ->
-            {
+            runtime.submit(null, 1, "cleanup", cleanup::incrementAndGet, v -> {
+            }, v -> {
             });
             runtime.sample(9, 170, 0);
             release.countDown();
@@ -334,13 +277,10 @@ class ResourceProtectionTest
     }
 
     @Test
-    void workerStructuredRefusalRetainsItsCodeAndRetryPolicy() throws Exception
-    {
+    void workerStructuredRefusalRetainsItsCodeAndRetryPolicy() throws Exception {
         List<ResourceError> errors = new ArrayList<>();
-        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), System::nanoTime))
-        {
-            runtime.submit(null, 1, "validation", () ->
-            {
+        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), System::nanoTime)) {
+            runtime.submit(null, 1, "validation", () -> {
                 throw new ResourceRejectedException(new ResourceError("model_complexity", "validation", false, 0));
             }, v -> fail(), errors::add);
             await(() -> runtime.snapshot().get("tasks.pendingCompletions") == 1);
@@ -351,13 +291,10 @@ class ResourceProtectionTest
     }
 
     @Test
-    void mainCommitFailureReportsOnceAndReleasesPendingMemory() throws Exception
-    {
+    void mainCommitFailureReportsOnceAndReleasesPendingMemory() throws Exception {
         List<ResourceError> errors = new ArrayList<>();
-        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), System::nanoTime))
-        {
-            runtime.submit(null, MIB, "validation", () -> 1, v ->
-            {
+        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), System::nanoTime)) {
+            runtime.submit(null, MIB, "validation", () -> 1, v -> {
                 throw new IllegalStateException("private filepath");
             }, errors::add);
             await(() -> runtime.snapshot().get("tasks.pendingCompletions") == 1);
@@ -369,11 +306,9 @@ class ResourceProtectionTest
     }
 
     @Test
-    void mainThreadTimeAndOperationBudgetsDeferNonessentialWork()
-    {
+    void mainThreadTimeAndOperationBudgetsDeferNonessentialWork() {
         AtomicLong clock = new AtomicLong();
-        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), clock::get))
-        {
+        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), clock::get)) {
             assertTrue(runtime.tryMainWork(64));
             assertFalse(runtime.tryWork());
             runtime.tick();
@@ -386,18 +321,15 @@ class ResourceProtectionTest
     }
 
     @Test
-    void measuredPluginPressureProtectsServerEvenWhenTpsRemainsHealthy()
-    {
-        try (ResourceProtection protectedRuntime = new ResourceProtection(ResourceSettings.defaults(), () -> 0))
-        {
+    void measuredPluginPressureProtectsServerEvenWhenTpsRemainsHealthy() {
+        try (ResourceProtection protectedRuntime = new ResourceProtection(ResourceSettings.defaults(), () -> 0)) {
             protectedRuntime.recordWork(45_000_000);
             protectedRuntime.tick();
             protectedRuntime.sample(20, 30, 0);
             assertEquals(ResourceProtection.State.PROTECTED, protectedRuntime.state());
             assertFalse(protectedRuntime.acceptingNewWork());
         }
-        try (ResourceProtection emergencyRuntime = new ResourceProtection(ResourceSettings.defaults(), () -> 0))
-        {
+        try (ResourceProtection emergencyRuntime = new ResourceProtection(ResourceSettings.defaults(), () -> 0)) {
             emergencyRuntime.recordWork(90_000_000);
             emergencyRuntime.tick();
             emergencyRuntime.sample(20, 30, 0);
@@ -406,16 +338,14 @@ class ResourceProtectionTest
     }
 
     @Test
-    void relationshipLimitsAreSharedAndRetainExistingAdmissionsFirst()
-    {
+    void relationshipLimitsAreSharedAndRetainExistingAdmissionsFirst() {
         ResourceSettings d = ResourceSettings.defaults();
         ResourceSettings.Models models = new ResourceSettings.Models(10, 10, 2, 1, 20, 20, 0, MIB, 10);
         UUID first = UUID.randomUUID(), second = UUID.randomUUID(), third = UUID.randomUUID(), a = UUID.randomUUID(),
                 b = UUID.randomUUID();
         try (ResourceProtection runtime = new ResourceProtection(
                 new ResourceSettings(d.tasks(), d.network(), d.protection(), models, d.disk(), d.complexity()),
-                System::nanoTime))
-        {
+                System::nanoTime)) {
             assertEquals(Set.of(first, second), runtime.reserveRelationships("server", a, List.of(first, second)));
             assertTrue(runtime.reserveRelationships("private", b, List.of(first, third)).isEmpty());
             assertEquals(Set.of(second, third), runtime.reserveRelationships("server", a, List.of(third, second)));
@@ -426,11 +356,9 @@ class ResourceProtectionTest
     }
 
     @Test
-    void protectedRelationshipRefreshReleasesRevokedViewersWithoutAddingNewOnes()
-    {
+    void protectedRelationshipRefreshReleasesRevokedViewersWithoutAddingNewOnes() {
         UUID owner = UUID.randomUUID(), a = UUID.randomUUID(), b = UUID.randomUUID(), c = UUID.randomUUID();
-        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), System::nanoTime))
-        {
+        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), System::nanoTime)) {
             runtime.reserveRelationships("server", owner, List.of(a, b));
             runtime.sample(12, 100, System.nanoTime());
             assertEquals(Set.of(b), runtime.reserveRelationships("server", owner, List.of(b, c)));
@@ -439,12 +367,10 @@ class ResourceProtectionTest
     }
 
     @Test
-    void newDisguiseRateAndPerPlayerCooldownAreSharedWithoutPermanentOwnerBlocking()
-    {
+    void newDisguiseRateAndPerPlayerCooldownAreSharedWithoutPermanentOwnerBlocking() {
         AtomicLong clock = new AtomicLong();
         UUID owner = UUID.randomUUID();
-        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), clock::get))
-        {
+        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), clock::get)) {
             assertNull(runtime.tryDisguise(owner));
             assertEquals("disguise_cooldown", runtime.tryDisguise(owner).code());
             runtime.cancelOwner(owner);
@@ -455,22 +381,19 @@ class ResourceProtectionTest
     }
 
     @Test
-    void diskReservationAndCachedStatusUseCountersInsteadOfScanningFiles()
-    {
+    void diskReservationAndCachedStatusUseCountersInsteadOfScanningFiles() {
         ResourceSettings d = ResourceSettings.defaults();
         ResourceSettings.Disk disk = new ResourceSettings.Disk(MIB, 0);
         try (ResourceProtection runtime = new ResourceProtection(
                 new ResourceSettings(d.tasks(), d.network(), d.protection(), d.models(), disk, d.complexity()),
-                System::nanoTime))
-        {
+                System::nanoTime)) {
             UUID owner = UUID.randomUUID();
             assertNull(runtime.reserveTemporary(owner, MIB, this.temporary));
             assertEquals("disk_budget", runtime.reserveTemporary(owner, 1, this.temporary).code());
             runtime.releaseTemporary(owner, MIB);
             assertEquals(0, runtime.snapshot().get("disk.temporaryBytes"));
             runtime.gauge("network.activeTransfers", () -> 4);
-            runtime.gauge("network.failedGauge", () ->
-            {
+            runtime.gauge("network.failedGauge", () -> {
                 throw new IllegalStateException();
             });
             assertEquals(4, runtime.snapshot().get("network.activeTransfers"));
@@ -481,14 +404,12 @@ class ResourceProtectionTest
     }
 
     @Test
-    void immutableWireAndParsedCachesShareOneGlobalMemoryBudget()
-    {
+    void immutableWireAndParsedCachesShareOneGlobalMemoryBudget() {
         ResourceSettings d = ResourceSettings.defaults();
         ResourceSettings.Models models = new ResourceSettings.Models(10, 10, 10, 10, 20, 20, 0, MIB, 10);
         try (ResourceProtection runtime = new ResourceProtection(
                 new ResourceSettings(d.tasks(), d.network(), d.protection(), models, d.disk(), d.complexity()),
-                System::nanoTime))
-        {
+                System::nanoTime)) {
             Object wire = new Object(), parsed = new Object();
             assertTrue(runtime.reserveCache("wire", wire, 3 * MIB / 4));
             assertFalse(runtime.reserveCache("parsed", parsed, MIB / 2));
@@ -501,10 +422,8 @@ class ResourceProtectionTest
     }
 
     @Test
-    void duplicateImmutableRetainsNeverDoubleChargeAndDifferentNamespacesRemainSeparate()
-    {
-        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), System::nanoTime))
-        {
+    void duplicateImmutableRetainsNeverDoubleChargeAndDifferentNamespacesRemainSeparate() {
+        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), System::nanoTime)) {
             String identity = "same-hash";
             assertTrue(runtime.reserveCache("wire", identity, 100));
             assertTrue(runtime.reserveCache("wire", identity, 100));
@@ -518,8 +437,7 @@ class ResourceProtectionTest
     }
 
     @Test
-    void immutableCacheEntriesStayChargedAcrossRuntimeCloseUntilTheirOwnersReleaseThem()
-    {
+    void immutableCacheEntriesStayChargedAcrossRuntimeCloseUntilTheirOwnersReleaseThem() {
         ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), System::nanoTime);
         Object identity = new Object();
         assertTrue(runtime.reserveCache("parsed", identity, 100));
@@ -531,14 +449,12 @@ class ResourceProtectionTest
     }
 
     @Test
-    void immutableCacheEntryCapIsSharedEvenWhenThereIsFreeByteBudget()
-    {
+    void immutableCacheEntryCapIsSharedEvenWhenThereIsFreeByteBudget() {
         ResourceSettings d = ResourceSettings.defaults();
         ResourceSettings.Models models = new ResourceSettings.Models(10, 10, 10, 10, 20, 20, 0, MIB, 1);
         try (ResourceProtection runtime = new ResourceProtection(
                 new ResourceSettings(d.tasks(), d.network(), d.protection(), models, d.disk(), d.complexity()),
-                System::nanoTime))
-        {
+                System::nanoTime)) {
             assertTrue(runtime.reserveCache("wire", "first", 100));
             assertFalse(runtime.reserveCache("parsed", "second", 100));
             runtime.releaseCache("wire", "first");
@@ -548,25 +464,18 @@ class ResourceProtectionTest
     }
 
     @Test
-    void closeDiscardsLateCompletionAndRejectsSubsequentSubmission() throws Exception
-    {
+    void closeDiscardsLateCompletionAndRejectsSubsequentSubmission() throws Exception {
         AtomicBoolean finish = new AtomicBoolean();
         CountDownLatch entered = new CountDownLatch(1);
         AtomicInteger callbacks = new AtomicInteger();
         ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), System::nanoTime);
-        try
-        {
-            runtime.submit(null, MIB, "asset_prepare", () ->
-            {
+        try {
+            runtime.submit(null, MIB, "asset_prepare", () -> {
                 entered.countDown();
-                while (!finish.get())
-                {
-                    try
-                    {
+                while (!finish.get()) {
+                    try {
                         Thread.sleep(5);
-                    }
-                    catch (InterruptedException ignored)
-                    {
+                    } catch (InterruptedException ignored) {
                     }
                 }
                 return 1;
@@ -579,32 +488,26 @@ class ResourceProtectionTest
             runtime.drainCompletions();
             assertEquals(0, callbacks.get());
             List<ResourceError> errors = new ArrayList<>();
-            assertFalse(runtime.submit(null, 1, "cleanup", () -> 1, v ->
-            {
+            assertFalse(runtime.submit(null, 1, "cleanup", () -> 1, v -> {
             }, errors::add));
             assertEquals("server_stopped", errors.getFirst().code());
-        }
-        finally
-        {
+        } finally {
             finish.set(true);
             runtime.close();
         }
     }
 
     private static ResourceSettings withTasks(int threads, int queue, int ownerJobs, long bytes, long ownerBytes,
-            int completions)
-    {
+            int completions) {
         ResourceSettings d = ResourceSettings.defaults();
         return new ResourceSettings(new ResourceSettings.Tasks(threads, queue, ownerJobs, bytes, ownerBytes,
                 completions, 4 * MIB, 8, 20, 20, 40), d.network(), d.protection(), d.models(), d.disk(),
                 d.complexity());
     }
 
-    private static void await(BooleanSupplier ready) throws InterruptedException
-    {
+    private static void await(BooleanSupplier ready) throws InterruptedException {
         long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        while (!ready.getAsBoolean() && System.nanoTime() < until)
-        {
+        while (!ready.getAsBoolean() && System.nanoTime() < until) {
             Thread.sleep(1);
         }
         assertTrue(ready.getAsBoolean(), "Worker did not reach expected bounded state");

@@ -28,14 +28,12 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class ServerModelCacheTest
-{
+class ServerModelCacheTest {
     @TempDir
     Path temporary;
 
     @Test
-    void verifiedBytesPersistAndTheSameHashIsReusableAcrossConnections() throws Exception
-    {
+    void verifiedBytesPersistAndTheSameHashIsReusableAcrossConnections() throws Exception {
         Path directory = this.temporary.resolve("服务器 缓存");
         byte[] raw = bytes("complete server model");
         String hash = AssetTransfer.hash(raw);
@@ -50,14 +48,11 @@ class ServerModelCacheTest
     }
 
     @Test
-    void missingAndInvalidKeysDoNotCreateDirectoriesOrUseSuppliedPaths() throws Exception
-    {
+    void missingAndInvalidKeysDoNotCreateDirectoriesOrUseSuppliedPaths() throws Exception {
         Path directory = this.temporary.resolve("cache");
         ServerModelCache cache = new ServerModelCache(directory);
         assertTrue(cache.readValidated(AssetTransfer.hash(bytes("missing"))).isEmpty());
-        for (String hash : new String[]
-        { null, "", "../outside", "..\\outside", "0".repeat(63), "A".repeat(64) })
-        {
+        for (String hash : new String[] { null, "", "../outside", "..\\outside", "0".repeat(63), "A".repeat(64) }) {
             assertTrue(cache.readValidated(hash).isEmpty());
             assertThrows(IOException.class, () -> cache.writeValidated(hash, bytes("model")));
         }
@@ -65,8 +60,7 @@ class ServerModelCacheTest
     }
 
     @Test
-    void rejectsEmptyOversizedAndMismatchedWritesBeforeTouchingStorage() throws Exception
-    {
+    void rejectsEmptyOversizedAndMismatchedWritesBeforeTouchingStorage() throws Exception {
         Path directory = this.temporary.resolve("cache");
         ServerModelCache cache = new ServerModelCache(directory);
         byte[] oversized = new byte[ServerModelCache.MAX_RAW + 1];
@@ -78,8 +72,7 @@ class ServerModelCacheTest
     }
 
     @Test
-    void acceptsTheExactRawByteLimit() throws Exception
-    {
+    void acceptsTheExactRawByteLimit() throws Exception {
         byte[] raw = new byte[ServerModelCache.MAX_RAW];
         Arrays.fill(raw, (byte) 7);
         String hash = AssetTransfer.hash(raw);
@@ -89,8 +82,7 @@ class ServerModelCacheTest
     }
 
     @Test
-    void aHashFilenameIsNotProofAndCorruptionOnlyDeletesTheOwnedEntry() throws Exception
-    {
+    void aHashFilenameIsNotProofAndCorruptionOnlyDeletesTheOwnedEntry() throws Exception {
         Path directory = Files.createDirectory(this.temporary.resolve("cache"));
         String hash = AssetTransfer.hash(bytes("expected"));
         Path file = directory.resolve(hash + ".bbmodel");
@@ -108,13 +100,11 @@ class ServerModelCacheTest
     }
 
     @Test
-    void oversizedFilesAreBoundedMissesAndDoNotReachTheCaller() throws Exception
-    {
+    void oversizedFilesAreBoundedMissesAndDoNotReachTheCaller() throws Exception {
         Path directory = Files.createDirectory(this.temporary.resolve("cache"));
         String hash = AssetTransfer.hash(bytes("expected"));
         Path file = directory.resolve(hash + ".bbmodel");
-        try (RandomAccessFile sparse = new RandomAccessFile(file.toFile(), "rw"))
-        {
+        try (RandomAccessFile sparse = new RandomAccessFile(file.toFile(), "rw")) {
             sparse.setLength(ServerModelCache.MAX_RAW + 1L);
         }
         assertTrue(new ServerModelCache(directory).readValidated(hash).isEmpty());
@@ -122,8 +112,7 @@ class ServerModelCacheTest
     }
 
     @Test
-    void emptyCachedFilesAreRemovedAsMisses() throws Exception
-    {
+    void emptyCachedFilesAreRemovedAsMisses() throws Exception {
         Path directory = Files.createDirectory(this.temporary.resolve("cache"));
         String hash = AssetTransfer.hash(bytes("expected"));
         Path file = Files.createFile(directory.resolve(hash + ".bbmodel"));
@@ -132,13 +121,11 @@ class ServerModelCacheTest
     }
 
     @Test
-    void readAccessKeepsAnOlderAssetWhileBudgetEvictsTheLeastRecentlyUsed() throws Exception
-    {
+    void readAccessKeepsAnOlderAssetWhileBudgetEvictsTheLeastRecentlyUsed() throws Exception {
         Path directory = this.temporary.resolve("cache");
         ServerModelCache cache = new ServerModelCache(directory, 6 * 1024);
         byte[] a = payload(1, 2048), b = payload(2, 2048), c = payload(3, 2048), d = payload(4, 2048);
-        for (byte[] raw : List.of(a, b, c))
-        {
+        for (byte[] raw : List.of(a, b, c)) {
             cache.writeValidated(AssetTransfer.hash(raw), raw);
         }
 
@@ -148,8 +135,7 @@ class ServerModelCacheTest
         assertArrayEquals(a, cache.readValidated(AssetTransfer.hash(a)).orElseThrow());
         cache.writeValidated(AssetTransfer.hash(d), d);
         assertTrue(cache.readValidated(AssetTransfer.hash(b)).isEmpty());
-        for (byte[] kept : List.of(a, c, d))
-        {
+        for (byte[] kept : List.of(a, c, d)) {
             assertArrayEquals(kept, cache.readValidated(AssetTransfer.hash(kept)).orElseThrow());
         }
 
@@ -158,8 +144,7 @@ class ServerModelCacheTest
     }
 
     @Test
-    void pruningOnlyManagesOrdinaryHashNamedFiles() throws Exception
-    {
+    void pruningOnlyManagesOrdinaryHashNamedFiles() throws Exception {
         Path directory = Files.createDirectory(this.temporary.resolve("cache"));
         byte[] older = payload(1, 2048), newer = payload(2, 2048), incoming = payload(3, 2048);
         Files.write(entry(directory, older), older);
@@ -182,12 +167,10 @@ class ServerModelCacheTest
     }
 
     @Test
-    void aSmallOldFileEnumeratedLastIsEvictedBeforeNewLargerFiles() throws Exception
-    {
+    void aSmallOldFileEnumeratedLastIsEvictedBeforeNewLargerFiles() throws Exception {
         Path directory = Files.createDirectory(this.temporary.resolve("cache"));
         byte[] newest = payload(1, 3072), middle = payload(2, 3072), oldest = payload(3, 1024);
-        for (byte[] raw : List.of(newest, middle, oldest))
-        {
+        for (byte[] raw : List.of(newest, middle, oldest)) {
             Files.write(entry(directory, raw), raw);
         }
 
@@ -196,17 +179,14 @@ class ServerModelCacheTest
         timestamp(directory, oldest, 1000);
         List<Path> encounterOrder = List.of(entry(directory, newest), entry(directory, middle),
                 entry(directory, oldest));
-        ServerModelCache cache = new ServerModelCache(directory, 4096, ignored -> new DirectoryStream<>()
-        {
+        ServerModelCache cache = new ServerModelCache(directory, 4096, ignored -> new DirectoryStream<>() {
             @Override
-            public Iterator<Path> iterator()
-            {
+            public Iterator<Path> iterator() {
                 return encounterOrder.iterator();
             }
 
             @Override
-            public void close()
-            {
+            public void close() {
             }
         });
         assertArrayEquals(newest, cache.readValidated(AssetTransfer.hash(newest)).orElseThrow());
@@ -217,11 +197,9 @@ class ServerModelCacheTest
     }
 
     @Test
-    void entryCountIsBoundedEvenWhenManyTinyFilesFitTheByteBudget() throws Exception
-    {
+    void entryCountIsBoundedEvenWhenManyTinyFilesFitTheByteBudget() throws Exception {
         Path directory = Files.createDirectory(this.temporary.resolve("cache"));
-        for (int i = 0; i <= ServerModelCache.MAX_FILES; i++)
-        {
+        for (int i = 0; i <= ServerModelCache.MAX_FILES; i++) {
             byte[] raw = bytes("tiny asset " + i);
             Files.write(entry(directory, raw), raw);
             timestamp(directory, raw, i + 1000);
@@ -234,8 +212,7 @@ class ServerModelCacheTest
     }
 
     @Test
-    void rejectsFilesAndDirectoriesInPlaceOfOrdinaryCacheEntriesOrAncestors() throws Exception
-    {
+    void rejectsFilesAndDirectoriesInPlaceOfOrdinaryCacheEntriesOrAncestors() throws Exception {
         byte[] raw = bytes("model");
         String hash = AssetTransfer.hash(raw);
         Path directory = Files.createDirectory(this.temporary.resolve("cache"));
@@ -253,8 +230,7 @@ class ServerModelCacheTest
     }
 
     @Test
-    void refusesSymbolicEntryWithoutReadingDeletingOrOverwritingItsTarget() throws Exception
-    {
+    void refusesSymbolicEntryWithoutReadingDeletingOrOverwritingItsTarget() throws Exception {
         Path directory = Files.createDirectory(this.temporary.resolve("cache"));
         byte[] raw = bytes("outside model");
         String hash = AssetTransfer.hash(raw);
@@ -262,8 +238,7 @@ class ServerModelCacheTest
         Path outside = Files.write(outsideDirectory.resolve("outside.bbmodel"), raw);
         Path link = directory.resolve(hash + ".bbmodel");
         link(link, outside, outsideDirectory);
-        try
-        {
+        try {
             ServerModelCache cache = new ServerModelCache(directory);
             assertTrue(cache.readValidated(hash).isEmpty());
             assertThrows(IOException.class, () -> cache.writeValidated(hash, raw));
@@ -273,35 +248,28 @@ class ServerModelCacheTest
             cache.writeValidated(AssetTransfer.hash(another), another);
             assertReparseLink(link);
             assertArrayEquals(raw, Files.readAllBytes(outside));
-        }
-        finally
-        {
+        } finally {
             Files.delete(link);
         } // Delete the link itself, never recursively walk its target.
         assertArrayEquals(raw, Files.readAllBytes(outside));
     }
 
     @Test
-    void refusesSymbolicCacheDirectoryAndLinkedAncestorsBeforeCreatingChildren() throws Exception
-    {
+    void refusesSymbolicCacheDirectoryAndLinkedAncestorsBeforeCreatingChildren() throws Exception {
         Path outside = Files.createDirectory(this.temporary.resolve("outside"));
         Path linked = this.temporary.resolve("linked");
         link(linked, outside, outside);
         byte[] raw = bytes("model");
         String hash = AssetTransfer.hash(raw);
-        try
-        {
-            for (Path directory : List.of(linked, linked.resolve("new-cache")))
-            {
+        try {
+            for (Path directory : List.of(linked, linked.resolve("new-cache"))) {
                 ServerModelCache cache = new ServerModelCache(directory);
                 assertTrue(cache.readValidated(hash).isEmpty());
                 assertThrows(IOException.class, () -> cache.writeValidated(hash, raw));
             }
             assertEquals(List.of(), names(outside));
             assertReparseLink(linked);
-        }
-        finally
-        {
+        } finally {
             Files.delete(linked);
         }
         assertTrue(Files.isDirectory(outside));
@@ -310,30 +278,22 @@ class ServerModelCacheTest
 
     @Test
     @Timeout(30)
-    void independentReadersOnlyReceiveCompleteBytesDuringAtomicReplacementAttempts() throws Exception
-    {
+    void independentReadersOnlyReceiveCompleteBytesDuringAtomicReplacementAttempts() throws Exception {
         Path directory = this.temporary.resolve("cache");
         byte[] raw = payload(9, 64 * 1024);
         String hash = AssetTransfer.hash(raw);
         new ServerModelCache(directory).writeValidated(hash, raw);
         AtomicInteger hits = new AtomicInteger();
         ExecutorService workers = Executors.newFixedThreadPool(3);
-        try
-        {
+        try {
             List<Callable<Void>> tasks = new ArrayList<>();
-            tasks.add(() ->
-            {
+            tasks.add(() -> {
                 ServerModelCache writer = new ServerModelCache(directory);
-                for (int i = 0; i < 20; i++)
-                {
-                    try
-                    {
+                for (int i = 0; i < 20; i++) {
+                    try {
                         writer.writeValidated(hash, raw);
-                    }
-                    catch (AccessDeniedException openWindowsHandle)
-                    {
-                        if (!System.getProperty("os.name").startsWith("Windows"))
-                        {
+                    } catch (AccessDeniedException openWindowsHandle) {
+                        if (!System.getProperty("os.name").startsWith("Windows")) {
                             throw openWindowsHandle;
                         }
 
@@ -343,15 +303,11 @@ class ServerModelCacheTest
                 }
                 return null;
             });
-            for (int reader = 0; reader < 2; reader++)
-            {
-                tasks.add(() ->
-                {
+            for (int reader = 0; reader < 2; reader++) {
+                tasks.add(() -> {
                     ServerModelCache cache = new ServerModelCache(directory);
-                    for (int i = 0; i < 50; i++)
-                    {
-                        cache.readValidated(hash).ifPresent(bytes ->
-                        {
+                    for (int i = 0; i < 50; i++) {
+                        cache.readValidated(hash).ifPresent(bytes -> {
                             assertArrayEquals(raw, bytes);
                             hits.incrementAndGet();
                         });
@@ -361,14 +317,11 @@ class ServerModelCacheTest
                 });
             }
 
-            for (Future<Void> result : workers.invokeAll(tasks))
-            {
+            for (Future<Void> result : workers.invokeAll(tasks)) {
                 result.get();
             }
 
-        }
-        finally
-        {
+        } finally {
             workers.shutdownNow();
         }
         assertTrue(hits.get() > 0);
@@ -378,30 +331,22 @@ class ServerModelCacheTest
 
     @Test
     @Timeout(15)
-    void interruptedWritesLeaveNoPublishedHalfModelOrTemporaryFile() throws Exception
-    {
+    void interruptedWritesLeaveNoPublishedHalfModelOrTemporaryFile() throws Exception {
         Path directory = this.temporary.resolve("cache");
         byte[] raw = payload(5, 64 * 1024);
         String hash = AssetTransfer.hash(raw);
         ServerModelCache cache = new ServerModelCache(directory);
         ExecutorService worker = Executors.newSingleThreadExecutor();
-        try
-        {
-            worker.submit(() ->
-            {
+        try {
+            worker.submit(() -> {
                 Thread.currentThread().interrupt();
-                try
-                {
+                try {
                     assertThrows(IOException.class, () -> cache.writeValidated(hash, raw));
-                }
-                finally
-                {
+                } finally {
                     Thread.interrupted();
                 }
             }).get();
-        }
-        finally
-        {
+        } finally {
             worker.shutdownNow();
         }
         assertEquals(List.of(), names(directory));
@@ -410,17 +355,14 @@ class ServerModelCacheTest
     }
 
     @Test
-    void aTargetReplacedWithADirectoryDuringWriteIsPreservedAndTheTemporaryIsRemoved() throws Exception
-    {
+    void aTargetReplacedWithADirectoryDuringWriteIsPreservedAndTheTemporaryIsRemoved() throws Exception {
         Path directory = this.temporary.resolve("cache");
         byte[] raw = bytes("complete model");
         String hash = AssetTransfer.hash(raw);
         Path target = directory.resolve(hash + ".bbmodel");
         AtomicInteger passes = new AtomicInteger();
-        ServerModelCache cache = new ServerModelCache(directory, 4096, path ->
-        {
-            if (passes.getAndIncrement() == 0)
-            {
+        ServerModelCache cache = new ServerModelCache(directory, 4096, path -> {
+            if (passes.getAndIncrement() == 0) {
                 Files.createDirectory(target);
             }
 
@@ -431,46 +373,36 @@ class ServerModelCacheTest
         assertEquals(List.of(hash + ".bbmodel"), names(directory));
     }
 
-    private static byte[] bytes(String text)
-    {
+    private static byte[] bytes(String text) {
         return text.getBytes(StandardCharsets.UTF_8);
     }
 
-    private static byte[] payload(int value, int length)
-    {
+    private static byte[] payload(int value, int length) {
         byte[] raw = new byte[length];
         Arrays.fill(raw, (byte) value);
         return raw;
     }
 
-    private static Path entry(Path directory, byte[] raw)
-    {
+    private static Path entry(Path directory, byte[] raw) {
         return directory.resolve(AssetTransfer.hash(raw) + ".bbmodel");
     }
 
-    private static void timestamp(Path directory, byte[] raw, long time) throws IOException
-    {
+    private static void timestamp(Path directory, byte[] raw, long time) throws IOException {
         Files.setLastModifiedTime(entry(directory, raw), FileTime.fromMillis(time));
     }
 
-    private static List<String> names(Path directory) throws IOException
-    {
-        try (Stream<Path> entries = Files.list(directory))
-        {
+    private static List<String> names(Path directory) throws IOException {
+        try (Stream<Path> entries = Files.list(directory)) {
             return entries.map(path -> path.getFileName().toString()).sorted().toList();
         }
     }
 
-    private static long ownedBytes(Path directory) throws IOException
-    {
+    private static long ownedBytes(Path directory) throws IOException {
         long total = 0;
-        try (DirectoryStream<Path> entries = Files.newDirectoryStream(directory, "*.bbmodel"))
-        {
-            for (Path entry : entries)
-            {
+        try (DirectoryStream<Path> entries = Files.newDirectoryStream(directory, "*.bbmodel")) {
+            for (Path entry : entries) {
                 if (entry.getFileName().toString().matches("[0-9a-f]{64}\\.bbmodel")
-                        && Files.isRegularFile(entry, LinkOption.NOFOLLOW_LINKS))
-                {
+                        && Files.isRegularFile(entry, LinkOption.NOFOLLOW_LINKS)) {
                     total += Files.size(entry);
                 }
 
@@ -480,21 +412,15 @@ class ServerModelCacheTest
         return total;
     }
 
-    private static void assertReparseLink(Path link) throws IOException
-    {
+    private static void assertReparseLink(Path link) throws IOException {
         assertTrue(Files.isSymbolicLink(link) || !link.toRealPath().equals(link.toRealPath(LinkOption.NOFOLLOW_LINKS)));
     }
 
-    private static void link(Path link, Path target, Path junctionTarget) throws Exception
-    {
-        try
-        {
+    private static void link(Path link, Path target, Path junctionTarget) throws Exception {
+        try {
             Files.createSymbolicLink(link, target);
-        }
-        catch (IOException | UnsupportedOperationException | SecurityException unavailable)
-        {
-            if (!System.getProperty("os.name").startsWith("Windows"))
-            {
+        } catch (IOException | UnsupportedOperationException | SecurityException unavailable) {
+            if (!System.getProperty("os.name").startsWith("Windows")) {
                 throw unavailable;
             }
 
@@ -503,21 +429,18 @@ class ServerModelCacheTest
                     + " -ErrorAction Stop | Out-Null";
             Process process = new ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command)
                     .redirectErrorStream(true).start();
-            if (!process.waitFor(10, TimeUnit.SECONDS))
-            {
+            if (!process.waitFor(10, TimeUnit.SECONDS)) {
                 process.destroyForcibly();
                 throw new IOException("Junction creation timed out");
             }
-            try (InputStream output = process.getInputStream())
-            {
+            try (InputStream output = process.getInputStream()) {
                 assertEquals(0, process.exitValue(), new String(output.readNBytes(2048), StandardCharsets.UTF_8));
             }
             assertReparseLink(link);
         }
     }
 
-    private static String quote(Path path)
-    {
+    private static String quote(Path path) {
         return "'" + path.toAbsolutePath().toString().replace("'", "''") + "'";
     }
 }

@@ -17,14 +17,12 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class LocalModelLibraryTest
-{
+class LocalModelLibraryTest {
     @TempDir
     Path temporary;
 
     @Test
-    void modelPickerIncludesBundledAndSafeFilesAndLoadsTheSelectedFile() throws Exception
-    {
+    void modelPickerIncludesBundledAndSafeFilesAndLoadsTheSelectedFile() throws Exception {
         Path directory = this.temporary.resolve("models");
         LocalModelLibrary library = new LocalModelLibrary(directory);
         assertEquals(BuiltinYsmModels.ids(), library.models().stream().map(LocalModelLibrary.Entry::id).toList());
@@ -43,23 +41,20 @@ class LocalModelLibraryTest
     }
 
     @Test
-    void selectionCannotReadAnExternalPathOrADirectoryAsAModel() throws Exception
-    {
+    void selectionCannotReadAnExternalPathOrADirectoryAsAModel() throws Exception {
         Path directory = Files.createDirectory(this.temporary.resolve("models"));
         Files.writeString(this.temporary.resolve("outside.bbmodel"), "outside the model library");
         Files.createDirectory(directory.resolve("folder.bbmodel"));
         LocalModelLibrary library = new LocalModelLibrary(directory);
         for (String id : List.of("local:../outside.bbmodel", "local:..\\outside.bbmodel",
                 "local:" + this.temporary.resolve("outside.bbmodel"), "local:missing.bbmodel", "local:folder.bbmodel",
-                "unknown", "ysm_01_jk", "ysm_02_jk", "ysm:../outside", "ysm:folder.bbmodel"))
-        {
+                "unknown", "ysm_01_jk", "ysm_02_jk", "ysm:../outside", "ysm:folder.bbmodel")) {
             assertThrows(IOException.class, () -> library.load(id), id);
         }
     }
 
     @Test
-    void pickerSupportsSafeYsmFoldersAndTheirRealPlayerAnimations() throws Exception
-    {
+    void pickerSupportsSafeYsmFoldersAndTheirRealPlayerAnimations() throws Exception {
         Path directory = Files.createDirectory(this.temporary.resolve("models"));
         Path folder = directory.resolve("我的 YSM 模型");
         YsmFolderFixtures.copyDefault(folder);
@@ -74,8 +69,7 @@ class LocalModelLibraryTest
     }
 
     @Test
-    void alternateDefaultSkinChangesPngWithoutChangingThePlayerGeometryOrAnimations() throws Exception
-    {
+    void alternateDefaultSkinChangesPngWithoutChangingThePlayerGeometryOrAnimations() throws Exception {
         LocalModelLibrary library = new LocalModelLibrary(Files.createDirectory(this.temporary.resolve("models")));
         LocalModelLibrary.Loaded original = library.load("openysm_default");
         LocalModelLibrary.Loaded blue = library.load("openysm_default", true);
@@ -88,8 +82,7 @@ class LocalModelLibraryTest
     }
 
     @Test
-    void arbitraryYsmSkinIsSelectedByItsOwnProfileRatherThanTheLegacyDefaultToggle() throws Exception
-    {
+    void arbitraryYsmSkinIsSelectedByItsOwnProfileRatherThanTheLegacyDefaultToggle() throws Exception {
         Path directory = Files.createDirectory(this.temporary.resolve("models"));
         YsmFolderFixtures.copyDefault(directory.resolve("author"));
         LocalModelLibrary library = new LocalModelLibrary(directory);

@@ -15,14 +15,12 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class YsmModelProfileTest
-{
+class YsmModelProfileTest {
     @TempDir
     Path temporary;
 
     @Test
-    void defaultProfileRetainsAuthorActionsFormsLanguagesSkinsAndVanillaComponents() throws Exception
-    {
+    void defaultProfileRetainsAuthorActionsFormsLanguagesSkinsAndVanillaComponents() throws Exception {
         YsmFolderModel.Imported imported = YsmFolderModel.bundledDefaultWithProfile(null);
         YsmModelProfile profile = imported.profile();
         assertTrue(profile.isYsm());
@@ -55,8 +53,7 @@ class YsmModelProfileTest
     }
 
     @Test
-    void skinObjectMaterialsAndPublicViewsAreImmutableAndSelectedPngChangesOnlyTheSkin() throws Exception
-    {
+    void skinObjectMaterialsAndPublicViewsAreImmutableAndSelectedPngChangesOnlyTheSkin() throws Exception {
         Path folder = fixture();
         JsonObject manifest = read(folder.resolve("ysm.json"));
         JsonArray textures = manifest.getAsJsonObject("files").getAsJsonObject("player").getAsJsonArray("texture");
@@ -92,8 +89,7 @@ class YsmModelProfileTest
     }
 
     @Test
-    void orderedOrdinaryVariableFormsAndClassificationRemainAuthorMetadata() throws Exception
-    {
+    void orderedOrdinaryVariableFormsAndClassificationRemainAuthorMetadata() throws Exception {
         Path folder = fixture();
         JsonObject manifest = read(folder.resolve("ysm.json"));
         JsonObject properties = manifest.getAsJsonObject("properties");
@@ -117,8 +113,7 @@ class YsmModelProfileTest
     }
 
     @Test
-    void sourceControllersReachBothPrivatePlayerAndFirstPersonRawWithoutLosingScripts() throws Exception
-    {
+    void sourceControllersReachBothPrivatePlayerAndFirstPersonRawWithoutLosingScripts() throws Exception {
         Path folder = fixture();
         JsonObject definitions = JsonParser
                 .parseString(
@@ -153,8 +148,7 @@ class YsmModelProfileTest
     }
 
     @Test
-    void sourceLoopWeightsAndChronologicalTimelineScriptsArePreservedIncludingQuotedPunctuation() throws Exception
-    {
+    void sourceLoopWeightsAndChronologicalTimelineScriptsArePreservedIncludingQuotedPunctuation() throws Exception {
         Path folder = fixture();
         JsonObject manifest = read(folder.resolve("ysm.json"));
         manifest.getAsJsonObject("properties").addProperty("merge_multiline_expr", false);
@@ -189,8 +183,7 @@ class YsmModelProfileTest
     }
 
     @Test
-    void soundParticleAndControllerEventsRetainActualSourcePayloads() throws Exception
-    {
+    void soundParticleAndControllerEventsRetainActualSourcePayloads() throws Exception {
         Path folder = fixture();
         JsonObject manifest = read(folder.resolve("ysm.json"));
         JsonObject events = JsonParser.parseString("{\"player_ctrl_main\":\"v.event_seen=1;\"}").getAsJsonObject();
@@ -222,8 +215,7 @@ class YsmModelProfileTest
     }
 
     @Test
-    void localSoundPathIsBoundedAndOnlyProvidesDefensiveAuthorStemLookups() throws Exception
-    {
+    void localSoundPathIsBoundedAndOnlyProvidesDefensiveAuthorStemLookups() throws Exception {
         Path folder = fixture();
         Files.createDirectories(folder.resolve("audio/nested"));
         byte[] sound = "OggS bounded fixture payload".getBytes(StandardCharsets.UTF_8);
@@ -248,27 +240,21 @@ class YsmModelProfileTest
     }
 
     @Test
-    void duplicateSoundStemsCountsAndBytesCannotEscapeTheCombinedImportBudget() throws Exception
-    {
+    void duplicateSoundStemsCountsAndBytesCannotEscapeTheCombinedImportBudget() throws Exception {
         Path folder = fixture();
         Path sounds = Files.createDirectories(folder.resolve("sounds/sub"));
-        Files.write(sounds.resolve("song.ogg"), new byte[]
-        { 1 });
-        Files.write(folder.resolve("sounds/song.ogg"), new byte[]
-        { 2 });
+        Files.write(sounds.resolve("song.ogg"), new byte[] { 1 });
+        Files.write(folder.resolve("sounds/song.ogg"), new byte[] { 2 });
         assertThrows(IOException.class, () -> YsmFolderModel.read(folder),
                 "Duplicate source sound stems are ambiguous");
         Files.delete(sounds.resolve("song.ogg"));
         Files.delete(folder.resolve("sounds/song.ogg"));
-        for (int i = 0; i < 33; i++)
-        {
-            Files.write(sounds.resolve("sound" + i + ".ogg"), new byte[]
-            { 1 });
+        for (int i = 0; i < 33; i++) {
+            Files.write(sounds.resolve("sound" + i + ".ogg"), new byte[] { 1 });
         }
 
         assertThrows(IOException.class, () -> YsmFolderModel.read(folder));
-        for (int i = 0; i < 33; i++)
-        {
+        for (int i = 0; i < 33; i++) {
             Files.delete(sounds.resolve("sound" + i + ".ogg"));
         }
 
@@ -278,8 +264,7 @@ class YsmModelProfileTest
     }
 
     @Test
-    void componentObjectMatchAndTextureMetadataUseOnlyValidatedLocalAssets() throws Exception
-    {
+    void componentObjectMatchAndTextureMetadataUseOnlyValidatedLocalAssets() throws Exception {
         Path folder = fixture();
         JsonObject manifest = read(folder.resolve("ysm.json"));
         manifest.getAsJsonObject("files").add("projectiles", JsonParser.parseString("""
@@ -301,8 +286,7 @@ class YsmModelProfileTest
     }
 
     @Test
-    void controllerPathsCountsAndDuplicateNamesCannotBypassLocalImportLimits() throws Exception
-    {
+    void controllerPathsCountsAndDuplicateNamesCannotBypassLocalImportLimits() throws Exception {
         Path folder = fixture();
         JsonObject manifest = read(folder.resolve("ysm.json"));
         JsonObject player = manifest.getAsJsonObject("files").getAsJsonObject("player");
@@ -310,8 +294,7 @@ class YsmModelProfileTest
         write(folder.resolve("ysm.json"), manifest);
         assertThrows(IOException.class, () -> YsmFolderModel.read(folder));
         JsonObject definitions = new JsonObject();
-        for (int i = 0; i < 65; i++)
-        {
+        for (int i = 0; i < 65; i++) {
             definitions.add("controller.player." + i, JsonParser.parseString("{\"states\":{\"default\":{}}}"));
         }
 
@@ -331,8 +314,7 @@ class YsmModelProfileTest
     }
 
     @Test
-    void everyReferencedSkinIsValidatedAndCombinedInputStillHasTheEightMiBBudget() throws Exception
-    {
+    void everyReferencedSkinIsValidatedAndCombinedInputStillHasTheEightMiBBudget() throws Exception {
         Path folder = fixture();
         Files.writeString(folder.resolve("textures/blue.png"), "bad unused skin");
         assertThrows(IOException.class, () -> YsmFolderModel.read(folder));
@@ -344,13 +326,11 @@ class YsmModelProfileTest
     }
 
     @Test
-    void perModelClipLimitAndFormLimitRemainBoundedAcrossExpandedFamilies() throws Exception
-    {
+    void perModelClipLimitAndFormLimitRemainBoundedAcrossExpandedFamilies() throws Exception {
         Path folder = fixture();
         JsonObject extra = read(folder.resolve("animations/extra.animation.json"));
         int existingClips = BbModel.parse(YsmFolderModel.read(folder)).animations().size();
-        for (int i = existingClips; i < 1024; i++)
-        {
+        for (int i = existingClips; i < 1024; i++) {
             extra.getAsJsonObject("animations").add("bounded_extra" + i, new JsonObject());
         }
 
@@ -370,8 +350,7 @@ class YsmModelProfileTest
         YsmFolderFixtures.copyDefault(folder);
         JsonObject manifest = read(folder.resolve("ysm.json"));
         JsonArray forms = new JsonArray();
-        for (int i = 0; i < 129; i++)
-        {
+        for (int i = 0; i < 129; i++) {
             forms.add(JsonParser.parseString("{\"type\":\"checkbox\",\"value\":\"v.a\"}"));
         }
 
@@ -382,8 +361,7 @@ class YsmModelProfileTest
     }
 
     @Test
-    void allSkinPngPixelsShareTheExistingSixteenMillionPixelBudget() throws Exception
-    {
+    void allSkinPngPixelsShareTheExistingSixteenMillionPixelBudget() throws Exception {
         Path folder = fixture();
         java.awt.image.BufferedImage oversizedTotal = new java.awt.image.BufferedImage(4096, 4096,
                 java.awt.image.BufferedImage.TYPE_INT_ARGB);
@@ -394,21 +372,16 @@ class YsmModelProfileTest
     }
 
     @Test
-    void linkedModelAncestorCannotReadOutsideTheOrdinaryFolderAndCleanupPreservesItsTarget() throws Exception
-    {
+    void linkedModelAncestorCannotReadOutsideTheOrdinaryFolderAndCleanupPreservesItsTarget() throws Exception {
         Path folder = fixture(), link = folder.resolve("models"), target = folder.resolve("original-models");
         Files.move(link, target);
-        try
-        {
+        try {
             createDirectoryLink(link, target);
             assertThrows(IOException.class, () -> YsmFolderModel.read(folder));
             assertTrue(Files.isRegularFile(target.resolve("main.json")));
-        }
-        finally
-        {
+        } finally {
             // Remove the directory entry itself; never recurse into a symlink/junction target.
-            if (Files.exists(link, java.nio.file.LinkOption.NOFOLLOW_LINKS))
-            {
+            if (Files.exists(link, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
                 Files.delete(link);
             }
 
@@ -418,23 +391,16 @@ class YsmModelProfileTest
     }
 
     @Test
-    void linkedSoundDirectoryCannotReadExternalResourcesAndCleanupPreservesItsTarget() throws Exception
-    {
+    void linkedSoundDirectoryCannotReadExternalResourcesAndCleanupPreservesItsTarget() throws Exception {
         Path folder = fixture(), target = Files.createDirectories(this.temporary.resolve("external-audio"));
         Path link = folder.resolve("sounds");
-        Files.write(target.resolve("song.ogg"), new byte[]
-        { 1, 2, 3 });
-        try
-        {
+        Files.write(target.resolve("song.ogg"), new byte[] { 1, 2, 3 });
+        try {
             createDirectoryLink(link, target);
             assertThrows(IOException.class, () -> YsmFolderModel.read(folder));
-            assertArrayEquals(new byte[]
-            { 1, 2, 3 }, Files.readAllBytes(target.resolve("song.ogg")));
-        }
-        finally
-        {
-            if (Files.exists(link, java.nio.file.LinkOption.NOFOLLOW_LINKS))
-            {
+            assertArrayEquals(new byte[] { 1, 2, 3 }, Files.readAllBytes(target.resolve("song.ogg")));
+        } finally {
+            if (Files.exists(link, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
                 Files.delete(link);
             }
 
@@ -442,16 +408,11 @@ class YsmModelProfileTest
         assertTrue(Files.isRegularFile(target.resolve("song.ogg")));
     }
 
-    private static void createDirectoryLink(Path link, Path target) throws Exception
-    {
-        try
-        {
+    private static void createDirectoryLink(Path link, Path target) throws Exception {
+        try {
             Files.createSymbolicLink(link, target);
-        }
-        catch (IOException | UnsupportedOperationException failure)
-        {
-            if (!System.getProperty("os.name").startsWith("Windows"))
-            {
+        } catch (IOException | UnsupportedOperationException failure) {
+            if (!System.getProperty("os.name").startsWith("Windows")) {
                 throw failure;
             }
 
@@ -460,8 +421,7 @@ class YsmModelProfileTest
             Process process = new ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command)
                     .redirectErrorStream(true).start();
             boolean completed = process.waitFor(10, TimeUnit.SECONDS);
-            if (!completed)
-            {
+            if (!completed) {
                 process.destroyForcibly();
                 process.waitFor(5, TimeUnit.SECONDS);
             }
@@ -471,27 +431,21 @@ class YsmModelProfileTest
         }
     }
 
-    private Path fixture() throws IOException
-    {
+    private Path fixture() throws IOException {
         return YsmFolderFixtures.copyDefault(this.temporary.resolve("model"));
     }
 
-    private static JsonObject read(Path file) throws IOException
-    {
+    private static JsonObject read(Path file) throws IOException {
         return JsonParser.parseString(Files.readString(file)).getAsJsonObject();
     }
 
-    private static void write(Path file, JsonObject json) throws IOException
-    {
+    private static void write(Path file, JsonObject json) throws IOException {
         Files.writeString(file, json.toString());
     }
 
-    private static JsonObject findClip(JsonArray clips, String name)
-    {
-        for (JsonElement clip : clips)
-        {
-            if (clip.getAsJsonObject().get("name").getAsString().equals(name))
-            {
+    private static JsonObject findClip(JsonArray clips, String name) {
+        for (JsonElement clip : clips) {
+            if (clip.getAsJsonObject().get("name").getAsString().equals(name)) {
                 return clip.getAsJsonObject();
             }
 

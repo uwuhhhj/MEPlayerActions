@@ -3,10 +3,8 @@ package com.simmc.meplayeractions.client.model;
 import com.simmc.meplayeractions.client.model.nativeysm.RawYsmModel;
 
 /** Blockbench editor rest transforms at the host boundary of the fixed Sparkle BBModel converter. */
-final class NativeBbModelBasis
-{
-    private NativeBbModelBasis()
-    {
+final class NativeBbModelBasis {
+    private NativeBbModelBasis() {
     }
 
     /**
@@ -17,21 +15,17 @@ final class NativeBbModelBasis
      * Blockbench 5 keeps those rest angles; its pre-5 compatibility migration changes animation channels only:
      * https://github.com/JannisX11/blockbench/blob/v5.0.0/js/io/formats/bbmodel.js#L67-L93
      */
-    static void restoreEditorRotations(RawYsmModel raw)
-    {
+    static void restoreEditorRotations(RawYsmModel raw) {
         restore(raw.mainEntity.mainModel);
         restore(raw.mainEntity.armModel);
     }
 
-    private static void restore(RawYsmModel.RawGeometry geometry)
-    {
-        if (geometry == null)
-        {
+    private static void restore(RawYsmModel.RawGeometry geometry) {
+        if (geometry == null) {
             return;
         }
 
-        for (RawYsmModel.RawBone bone : geometry.bones)
-        {
+        for (RawYsmModel.RawBone bone : geometry.bones) {
             bone.rotation[0] = -bone.rotation[0];
             bone.rotation[1] = -bone.rotation[1];
         }

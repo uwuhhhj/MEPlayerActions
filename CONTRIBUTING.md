@@ -2,7 +2,7 @@
 
 本项目包含 Paper 服务端与独立 Fabric 客户端。先看 [架构](ARCHITECTURE.md) 定位模块；线格式和授权语义以 [协议](docs/CLIENT_PROTOCOL.md) 为准，用户部署见 [README](README.md)。
 
-Java 代码规范见 [AGENTS.md](AGENTS.md)。IDE 可导入 [Eclipse / IntelliJ Eclipse 插件格式配置](tools/java-formatter.xml)，统一使用四空格缩进、独占一行的大括号和方法间空行。格式化之外还须检查显式类型、实例字段限定、控制语句大括号、嵌套三元括号以及反射缓存要求。
+Java 代码规范见 [AGENTS.md](AGENTS.md)。IDE 可导入 [Eclipse / IntelliJ Eclipse 插件格式配置](tools/java-formatter.xml)，统一使用四空格缩进，左大括号与声明或控制条件同行、块内逻辑从下一行开始，方法之间保留空行。格式化之外还须检查显式类型、实例字段限定、控制语句大括号、嵌套三元括号以及反射缓存要求。
 
 资源处理遵守“主线程快检／快照 → 有界后台工作 → 主线程复核提交”。新增后台作业使用共享资源运行时，不直接向 Bukkit 全局异步池提交无界资源任务；拒绝策略不能在调用线程执行重工作。取消后的运行任务仍保留字节预留，直到工作线程实际退出。Bukkit／ModelEngine 实体操作留在安全线程，解绑、撤权、ACK 和退出清理不得被负载保护关闭。运行限制与诊断见 [服务器资源保护](docs/SERVER_RESOURCE_PROTECTION.md)。
 

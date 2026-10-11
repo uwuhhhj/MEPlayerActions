@@ -13,16 +13,13 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(EntityRenderManager.class)
-public abstract class EntityRenderManagerMixin
-{
+public abstract class EntityRenderManagerMixin {
     @Inject(method = "render(Lnet/minecraft/client/render/entity/state/EntityRenderState;Lnet/minecraft/client/render/state/CameraRenderState;DDDLnet/minecraft/client/util/math/MatrixStack;Lnet/minecraft/client/render/command/OrderedRenderCommandQueue;)V", at = @At("HEAD"), cancellable = true)
     private void meplayeractions$hideReplacedComponent(EntityRenderState state, CameraRenderState camera, double x,
-            double y, double z, MatrixStack matrices, OrderedRenderCommandQueue queue, CallbackInfo ci)
-    {
+            double y, double z, MatrixStack matrices, OrderedRenderCommandQueue queue, CallbackInfo ci) {
         // Keep the native player dispatcher: it owns fire, shadows and renderer offsets.
         // Hidden player geometry/features are suppressed inside LivingEntityRenderer instead.
-        if (YsmComponentRenderer.replaces(((ComponentRenderState) state).meplayeractions$entityUuid()))
-        {
+        if (YsmComponentRenderer.replaces(((ComponentRenderState) state).meplayeractions$entityUuid())) {
             ci.cancel();
         }
 

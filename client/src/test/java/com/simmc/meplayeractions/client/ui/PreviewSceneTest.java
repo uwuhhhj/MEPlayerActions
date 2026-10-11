@@ -22,11 +22,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class PreviewSceneTest
-{
+class PreviewSceneTest {
     @Test
-    void asynchronouslyLoadedCardStartsAtZeroWithOnlyItsAuthoredCap() throws Exception
-    {
+    void asynchronouslyLoadedCardStartsAtZeroWithOnlyItsAuthoredCap() throws Exception {
         YsmFolderModel.Imported imported = YsmFolderModel.bundledDefaultWithPreview(false);
         BbModel model = BbModel.parse(imported.raw());
         assertEquals("gui", imported.previewAnimation());
@@ -39,8 +37,7 @@ class PreviewSceneTest
         assertEquals(List.of("gui"), first.animations());
         assertEquals(List.of("player.cap"), first.slots());
         AnimationPlayer authored = new AnimationPlayer(model);
-        authored.configureFrame(environment ->
-        {
+        authored.configureFrame(environment -> {
             environment.query("ysm.rendering_in_inventory", 1d);
             environment.query("ysm.rendering_in_paperdoll", 0d);
             environment.query("ysm.is_first_person", 0d);
@@ -55,8 +52,7 @@ class PreviewSceneTest
     }
 
     @Test
-    void repeatedCardDrawsReuseTheirClockWithoutRepeatingTheEntranceOrBlink() throws Exception
-    {
+    void repeatedCardDrawsReuseTheirClockWithoutRepeatingTheEntranceOrBlink() throws Exception {
         BbModel model = BbModel.parse(YsmFolderModel.bundledDefault());
         PreviewScene scene = new PreviewScene(model, "gui");
         PreviewScene.Sample first = scene.sample(50, Map.of());
@@ -77,8 +73,7 @@ class PreviewSceneTest
     }
 
     @Test
-    void originalWhiteEyeLayersOpenCloseAndReopenOnTheSourceBlinkClock() throws Exception
-    {
+    void originalWhiteEyeLayersOpenCloseAndReopenOnTheSourceBlinkClock() throws Exception {
         PreviewScene scene = new PreviewScene(BbModel.parse(YsmFolderModel.bundledDefault()), "gui");
         assertEquals(2, whiteEyeFaces(scene.sample(0, Map.of()).vertices()));
         // Source pre_parallel1 has an exact zero Y-scale key at 0.0833 seconds.
@@ -88,8 +83,7 @@ class PreviewSceneTest
     }
 
     @Test
-    void guiParameterEditReusesTheClockAndAnObsoleteCardPreviewStaysStopped() throws Exception
-    {
+    void guiParameterEditReusesTheClockAndAnObsoleteCardPreviewStaysStopped() throws Exception {
         BbModel model = BbModel.parse(YsmFolderModel.bundledDefault());
         PreviewScene scene = new PreviewScene(model, "gui");
         PreviewScene.Sample withBow = scene.sample(100, Map.of("variable.roaming.red_bow_headdress", 1d));
@@ -103,8 +97,7 @@ class PreviewSceneTest
     }
 
     @Test
-    void authoredPreviewConditionTransformsRealVerticesWithoutChangingTheWorldBranch() throws Exception
-    {
+    void authoredPreviewConditionTransformsRealVerticesWithoutChangingTheWorldBranch() throws Exception {
         // A minimal YSM-family model deliberately gives the GUI and the real entity different geometry.
         JsonObject raw = JsonParser
                 .parseString(
@@ -123,8 +116,7 @@ class PreviewSceneTest
                                 """)
                 .getAsJsonObject();
         try (InputStream texture = YsmFolderModel.class
-                .getResourceAsStream("/assets/meplayeractions/builtin/openysm_default/textures/default.png"))
-        {
+                .getResourceAsStream("/assets/meplayeractions/builtin/openysm_default/textures/default.png")) {
             assertNotNull(texture);
             JsonObject entry = new JsonObject();
             entry.addProperty("source",
@@ -150,8 +142,7 @@ class PreviewSceneTest
     }
 
     @Test
-    void ownerUsesActualVanillaHandsAndMovementWithoutTheCardGui() throws Exception
-    {
+    void ownerUsesActualVanillaHandsAndMovementWithoutTheCardGui() throws Exception {
         BbModel model = BbModel.parse(YsmFolderModel.bundledDefault());
         VanillaYsmAnimations.ItemState sword = new VanillaYsmAnimations.ItemState("minecraft:diamond_sword",
                 Set.of("minecraft:swords"), "sword", "none", false, false, 1);
@@ -163,8 +154,7 @@ class PreviewSceneTest
         PreviewScene owner = new PreviewScene(model, "gui", ModelPreview.Context.OWNER);
         AtomicInteger bindings = new AtomicInteger();
         PreviewScene.NativeInputs firstInput = new PreviewScene.NativeInputs(nativeSample(0, vanilla),
-                Map.of("ysm.has_mainhand", 1d, "ysm.has_offhand", 1d), context ->
-                {
+                Map.of("ysm.has_mainhand", 1d, "ysm.has_offhand", 1d), context -> {
                     bindings.incrementAndGet();
                     context.stringQuery("ysm.entity_type", "player");
                     context.query("ysm.has_mainhand", 1d);
@@ -198,10 +188,8 @@ class PreviewSceneTest
     }
 
     @Test
-    void cardKeepsMainStoppedAndExplicitCapWithAuthoredLoopAndFalseExtraFlag() throws Exception
-    {
-        for (String loop : List.of("ONCE", "HOLD", "LOOP"))
-        {
+    void cardKeepsMainStoppedAndExplicitCapWithAuthoredLoopAndFalseExtraFlag() throws Exception {
+        for (String loop : List.of("ONCE", "HOLD", "LOOP")) {
             JsonObject events = JsonParser.parseString("{\"player_ctrl_gui_focus\":[\"return 3;\"]}").getAsJsonObject();
             BbModel model = tinyModel("gui_focus", "ctrl.playing_extra_animation ? 64 : 16", loop, 65535, events);
             PreviewScene card = new PreviewScene(model, "gui_focus", ModelPreview.Context.CARD);
@@ -222,8 +210,7 @@ class PreviewSceneTest
     }
 
     @Test
-    void ownerAndCardClocksAuthorVariablesAndResetsStayIndependent() throws Exception
-    {
+    void ownerAndCardClocksAuthorVariablesAndResetsStayIndependent() throws Exception {
         JsonObject events = JsonParser.parseString("""
                 {"player_init":["v.updates=0;"],"player_update":["v.updates+=1;"]}
                 """).getAsJsonObject();
@@ -257,8 +244,7 @@ class PreviewSceneTest
                 "LOOP", 65535, null);
         PreviewScene nativeOwner = new PreviewScene(held, "gui", ModelPreview.Context.OWNER);
         PreviewScene.NativeInputs heldInputs = new PreviewScene.NativeInputs(
-                nativeSample(0, VanillaYsmAnimations.VanillaState.NONE), Map.of(), context ->
-                {
+                nativeSample(0, VanillaYsmAnimations.VanillaState.NONE), Map.of(), context -> {
                     context.query("ysm.has_mainhand", 1d);
                     context.query("ysm.has_offhand", 1d);
                     context.stringQuery("ysm.entity_type", "player");
@@ -269,10 +255,8 @@ class PreviewSceneTest
     }
 
     @Test
-    void builtinsUseOnlyTheirDeclaredCardPreviewWithoutSyntheticHoverOrFocus() throws Exception
-    {
-        for (String id : BuiltinYsmModels.ids())
-        {
+    void builtinsUseOnlyTheirDeclaredCardPreviewWithoutSyntheticHoverOrFocus() throws Exception {
+        for (String id : BuiltinYsmModels.ids()) {
             YsmFolderModel.Imported imported = YsmFolderModel.bundledWithProfile(id, null);
             BbModel model = BbModel.parse(imported.raw());
             JsonObject sourceManifest = JsonParser
@@ -287,8 +271,7 @@ class PreviewSceneTest
                     .sample(800, Map.of());
             assertEquals(authored.isEmpty() ? List.of() : List.of(authored), card.animations(), id);
             assertEquals(authored.isEmpty() ? List.of() : List.of("player.cap"), card.slots(), id);
-            if (!authored.isEmpty())
-            {
+            if (!authored.isEmpty()) {
                 assertEquals(model.animationLoop(authored), card.layers().getFirst().loop(), id);
             }
 
@@ -297,12 +280,10 @@ class PreviewSceneTest
     }
 
     @Test
-    void galleryBindsItsExplicitDummyWithoutAcceptingOwnerBindingsOrSharingItBackToOwner() throws Exception
-    {
+    void galleryBindsItsExplicitDummyWithoutAcceptingOwnerBindingsOrSharingItBackToOwner() throws Exception {
         BbModel model = tinyModel("gui", "ysm.entity_type == 'player' ? 32 : 0", "LOOP", 65535, null);
         AtomicInteger dummyBindings = new AtomicInteger();
-        PreviewScene.NativeInputs dummy = PreviewScene.NativeInputs.card(context ->
-        {
+        PreviewScene.NativeInputs dummy = PreviewScene.NativeInputs.card(context -> {
             dummyBindings.incrementAndGet();
             context.stringQuery("ysm.entity_type", "player");
         });
@@ -316,14 +297,12 @@ class PreviewSceneTest
     }
 
     @Test
-    void selectedPreviewRetainsItsAuthorsGuiAndParametersWithoutTheCurrentOwnersHands() throws Exception
-    {
+    void selectedPreviewRetainsItsAuthorsGuiAndParametersWithoutTheCurrentOwnersHands() throws Exception {
         BbModel model = tinyModel("gui", "ysm.has_mainhand ? 160 : v.roaming.preview_position * 16", "HOLD", 65535,
                 null);
         AtomicInteger ownerBindings = new AtomicInteger();
         PreviewScene.NativeInputs owner = new PreviewScene.NativeInputs(
-                nativeSample(0, VanillaYsmAnimations.VanillaState.NONE), Map.of("ysm.has_mainhand", 1d), context ->
-                {
+                nativeSample(0, VanillaYsmAnimations.VanillaState.NONE), Map.of("ysm.has_mainhand", 1d), context -> {
                     ownerBindings.incrementAndGet();
                     context.query("ysm.has_mainhand", 1d);
                 });
@@ -339,8 +318,7 @@ class PreviewSceneTest
     }
 
     @Test
-    void restartingTheLargeSelectionDoesNotRestartItsCardOrLiveOwnerClock() throws Exception
-    {
+    void restartingTheLargeSelectionDoesNotRestartItsCardOrLiveOwnerClock() throws Exception {
         JsonObject events = JsonParser.parseString("""
                 {"player_init":["v.updates=0;"],"player_update":["v.updates+=1;"]}
                 """).getAsJsonObject();
@@ -353,8 +331,7 @@ class PreviewSceneTest
         selected.sample(100, Map.of());
         selected.sample(105, Map.of());
         PreviewScene.NativeInputs ownerInput = new PreviewScene.NativeInputs(
-                nativeSample(0, VanillaYsmAnimations.VanillaState.NONE), Map.of(), ignored ->
-                {
+                nativeSample(0, VanillaYsmAnimations.VanillaState.NONE), Map.of(), ignored -> {
                 });
         owner.sample(100, Map.of(), ownerInput);
         PreviewScene.Sample ownerBefore = owner.sample(108, Map.of(), ownerInput);
@@ -371,20 +348,17 @@ class PreviewSceneTest
         assertEquals(1, ownerBefore.startCount());
     }
 
-    private static EntityAnimationController.Sample nativeSample(double x, VanillaYsmAnimations.VanillaState vanilla)
-    {
+    private static EntityAnimationController.Sample nativeSample(double x, VanillaYsmAnimations.VanillaState vanilla) {
         return new EntityAnimationController.Sample(x, 64, 0, true, false, false, false, false, false, false, false, "",
                 false, 0, false, false, true, false, vanilla);
     }
 
-    private static double minimumX(List<BbModel.Vertex> vertices)
-    {
+    private static double minimumX(List<BbModel.Vertex> vertices) {
         return vertices.stream().mapToDouble(BbModel.Vertex::x).min().orElseThrow();
     }
 
     private static BbModel tinyModel(String preview, String expression, String loop, int format, JsonObject events)
-            throws Exception
-    {
+            throws Exception {
         JsonObject raw = JsonParser.parseString("""
                 {"meta":{"format_version":"5.0"},"ysm_controller_family":"player","textures":[],
                  "elements":[{"uuid":"cube","from":[0,0,0],"to":[16,16,16],
@@ -392,21 +366,18 @@ class PreviewSceneTest
                  "outliner":[{"uuid":"body","name":"body","origin":[0,0,0],"children":["cube"]}],"animations":[]}
                 """).getAsJsonObject();
         raw.addProperty("ysm_format_version", format);
-        if (events != null)
-        {
+        if (events != null) {
             raw.add("ysm_events", events);
         }
 
-        for (String name : List.of("idle", preview))
-        {
+        for (String name : List.of("idle", preview)) {
             JsonObject clip = JsonParser.parseString("""
                     {"name":"","length":1,"loop":"LOOP","animators":{"body":{"type":"bone","keyframes":[
                       {"channel":"position","time":0,"data_points":[{"x":0,"y":0,"z":0}]}]}}}
                     """).getAsJsonObject();
             clip.addProperty("name", name);
             clip.addProperty("loop", name.equals(preview) ? loop : "LOOP");
-            if (format < 19)
-            {
+            if (format < 19) {
                 clip.addProperty("ysm_primary", false);
             }
 
@@ -416,8 +387,7 @@ class PreviewSceneTest
             raw.getAsJsonArray("animations").add(clip);
         }
         try (InputStream texture = YsmFolderModel.class
-                .getResourceAsStream("/assets/meplayeractions/builtin/openysm_default/textures/default.png"))
-        {
+                .getResourceAsStream("/assets/meplayeractions/builtin/openysm_default/textures/default.png")) {
             assertNotNull(texture);
             JsonObject entry = new JsonObject();
             entry.addProperty("source",
@@ -427,14 +397,11 @@ class PreviewSceneTest
         return BbModel.parse(raw.toString().getBytes(StandardCharsets.UTF_8));
     }
 
-    private static int whiteEyeFaces(List<BbModel.Vertex> vertices)
-    {
+    private static int whiteEyeFaces(List<BbModel.Vertex> vertices) {
         int count = 0;
-        for (int i = 0; i < vertices.size(); i += 4)
-        {
+        for (int i = 0; i < vertices.size(); i += 4) {
             if (vertices.subList(i, i + 4).stream().allMatch(vertex -> vertex.u() >= 23f / 128
-                    && vertex.u() <= 25f / 128 && vertex.v() >= 42f / 128 && vertex.v() <= 44f / 128))
-            {
+                    && vertex.u() <= 25f / 128 && vertex.v() >= 42f / 128 && vertex.v() <= 44f / 128)) {
                 count++;
             }
 

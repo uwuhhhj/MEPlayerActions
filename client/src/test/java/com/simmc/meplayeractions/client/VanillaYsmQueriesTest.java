@@ -10,28 +10,23 @@ import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class VanillaYsmQueriesTest
-{
+class VanillaYsmQueriesTest {
     @Test
-    void officialSlotNamesDoNotInventNumericOrPrefixedEquipmentMappings()
-    {
+    void officialSlotNamesDoNotInventNumericOrPrefixedEquipmentMappings() {
         assertEquals(EquipmentSlot.MAINHAND, VanillaYsmQueries.slot("mainhand"));
         assertEquals(EquipmentSlot.OFFHAND, VanillaYsmQueries.slot("OFFHAND"));
         assertEquals(EquipmentSlot.HEAD, VanillaYsmQueries.slot("head"));
         assertEquals(EquipmentSlot.CHEST, VanillaYsmQueries.slot("chest"));
         assertEquals(EquipmentSlot.LEGS, VanillaYsmQueries.slot("legs"));
         assertEquals(EquipmentSlot.FEET, VanillaYsmQueries.slot("feet"));
-        for (Object slot : List.of(0d, "2", "slot.weapon.mainhand", "main_hand"))
-
-        {
+        for (Object slot : List.of(0d, "2", "slot.weapon.mainhand", "main_hand")) {
             assertThrows(IllegalArgumentException.class, () -> VanillaYsmQueries.slot(slot));
         }
 
     }
 
     @Test
-    void relativeBlockCoordinatesKeepEntityFractionAndCrossNegativeBlockEdges()
-    {
+    void relativeBlockCoordinatesKeepEntityFractionAndCrossNegativeBlockEdges() {
         assertEquals(1, VanillaYsmQueries.relativeCoordinate(.8, .3));
         assertEquals(-1, VanillaYsmQueries.relativeCoordinate(-.2, -.3));
         assertEquals(0, VanillaYsmQueries.relativeCoordinate(-.2, .3));
@@ -43,8 +38,7 @@ class VanillaYsmQueriesTest
     }
 
     @Test
-    void rotationToCameraReadsCameraAnglesWithoutTargetVectorOrYawWrap()
-    {
+    void rotationToCameraReadsCameraAnglesWithoutTargetVectorOrYawWrap() {
         assertEquals(-17, VanillaYsmQueries.cameraRotation(0, 17, -200));
         assertEquals(-20, VanillaYsmQueries.cameraRotation(1, 17, -200));
         assertEquals(530, VanillaYsmQueries.cameraRotation(1, 17, 350));
@@ -52,14 +46,12 @@ class VanillaYsmQueriesTest
     }
 
     @Test
-    void nativeAxesReturnUnavailableAndKeepOrdinaryBbmodelValidation()
-    {
+    void nativeAxesReturnUnavailableAndKeepOrdinaryBbmodelValidation() {
         Vec3d vector = new Vec3d(10, 20, 30);
         assertEquals(10d, VanillaYsmQueries.axis(vector, 0, true).doubleValue());
         assertEquals(20d, VanillaYsmQueries.axis(vector, 1, true).doubleValue());
         assertEquals(30d, VanillaYsmQueries.axis(vector, 2, true).doubleValue());
-        for (int axis : List.of(-1, 3, 8))
-        {
+        for (int axis : List.of(-1, 3, 8)) {
             assertNull(VanillaYsmQueries.axis(vector, axis, true));
             assertThrows(IllegalArgumentException.class, () -> VanillaYsmQueries.axis(vector, axis, false));
         }
@@ -74,8 +66,7 @@ class VanillaYsmQueriesTest
     }
 
     @Test
-    void entityTypeNamesKeepNamespacesExceptTheExactUpstreamPlayerAndMaidAliases()
-    {
+    void entityTypeNamesKeepNamespacesExceptTheExactUpstreamPlayerAndMaidAliases() {
         assertEquals("player", VanillaYsmQueries.entityTypeName(true, "minecraft:player"));
         assertEquals("maid", VanillaYsmQueries.entityTypeName(false, "touhou_little_maid:maid"));
         assertEquals("minecraft:cat", VanillaYsmQueries.entityTypeName(false, "minecraft:cat"));
@@ -85,10 +76,8 @@ class VanillaYsmQueriesTest
     }
 
     @Test
-    void nativeHandAndArmorInvalidSlotsKeepDistinctNullCoalescingResults()
-    {
-        for (Object slot : List.of("unknown", "main_hand", 0d))
-        {
+    void nativeHandAndArmorInvalidSlotsKeepDistinctNullCoalescingResults() {
+        for (Object slot : List.of("unknown", "main_hand", 0d)) {
             assertFalse(VanillaYsmQueries.supportsEquipmentSlot("ctrl.hold", slot));
             assertFalse(VanillaYsmQueries.supportsEquipmentSlot("ctrl.armor", slot));
         }
@@ -107,8 +96,7 @@ class VanillaYsmQueriesTest
     }
 
     @Test
-    void normalizedDayStartsWithQuarterDayOffsetFromMinecraftSunrise()
-    {
+    void normalizedDayStartsWithQuarterDayOffsetFromMinecraftSunrise() {
         assertEquals(.25, VanillaYsmQueries.timeOfDay(0));
         assertEquals(.5, VanillaYsmQueries.timeOfDay(6000));
         assertEquals(0, VanillaYsmQueries.timeOfDay(18000));
@@ -116,8 +104,7 @@ class VanillaYsmQueriesTest
     }
 
     @Test
-    void motionDirectionUsesBodyRelativeForwardAndStrafeAxes()
-    {
+    void motionDirectionUsesBodyRelativeForwardAndStrafeAxes() {
         assertEquals(1, VanillaYsmQueries.inputDirection(0, 1, 0, false), 1e-10);
         assertEquals(0, VanillaYsmQueries.inputDirection(0, 1, 0, true), 1e-10);
         assertEquals(-1, VanillaYsmQueries.inputDirection(1, 0, 0, true), 1e-10);
@@ -126,8 +113,7 @@ class VanillaYsmQueriesTest
     }
 
     @Test
-    void capeFlapIncludesWalkBobCrouchAndOriginalClamps()
-    {
+    void capeFlapIncludesWalkBobCrouchAndOriginalClamps() {
         assertEquals(6d / 108, VanillaYsmQueries.capeFlap(0, 0, 0, 0, 0, 0, false), 1e-10);
         assertEquals(31d / 108, VanillaYsmQueries.capeFlap(0, 0, 0, 0, 0, 0, true), 1e-10);
         assertEquals(38d / 108, VanillaYsmQueries.capeFlap(0, 0, 0, 0, Math.PI / 12, 1, false), 1e-10);
@@ -136,8 +122,7 @@ class VanillaYsmQueriesTest
     }
 
     @Test
-    void blinkWindowIsUuidOffsetAndSleepOverridesOpenEyePhase()
-    {
+    void blinkWindowIsUuidOffsetAndSleepOverridesOpenEyePhase() {
         assertFalse(VanillaYsmQueries.closeEyes(85, 0, false));
         assertTrue(VanillaYsmQueries.closeEyes(85.1, 0, false));
         assertFalse(VanillaYsmQueries.closeEyes(90, 0, false));
@@ -146,8 +131,7 @@ class VanillaYsmQueriesTest
     }
 
     @Test
-    void motionSamplerReusesSameFrameAndRejectsTeleportOrClockResetDeltas()
-    {
+    void motionSamplerReusesSameFrameAndRejectsTeleportOrClockResetDeltas() {
         VanillaYsmQueries.MotionSampler sampler = new VanillaYsmQueries.MotionSampler();
         assertEquals(0, sampler.sample(100, 0, 64, 0, .25).x());
         VanillaYsmQueries.Motion next = sampler.sample(100.25, .1, 64, 0, .25);
@@ -159,8 +143,7 @@ class VanillaYsmQueriesTest
     }
 
     @Test
-    void shieldWindowRequiresActualBlockAndIsNotItemDisableCooldown()
-    {
+    void shieldWindowRequiresActualBlockAndIsNotItemDisableCooldown() {
         VanillaYsmQueries.ShieldWindow window = new VanillaYsmQueries.ShieldWindow();
         assertFalse(window.observed());
         assertFalse(window.inCooldown(100));
@@ -175,8 +158,7 @@ class VanillaYsmQueriesTest
         assertFalse(window.inCooldown(116));
     }
 
-    private static String control(double vertical, String... flags)
-    {
+    private static String control(double vertical, String... flags) {
         Set<String> f = Set.of(flags);
         return VanillaYsmQueries.controlState(
                 new VanillaYsmQueries.ControlSample(f.contains("death"), f.contains("riptide"), f.contains("sleep"),
@@ -186,8 +168,7 @@ class VanillaYsmQueriesTest
     }
 
     @Test
-    void nativeControlPriorityIsExclusiveAndIndependentOfClipPresence()
-    {
+    void nativeControlPriorityIsExclusiveAndIndependentOfClipPresence() {
         assertEquals("death", control(0, "death", "riptide", "sleep", "hurt", "walk"));
         assertEquals("riptide", control(0, "riptide", "sleep", "swim"));
         assertEquals("sleep", control(0, "sleep", "swim"));
@@ -212,8 +193,7 @@ class VanillaYsmQueriesTest
     }
 
     @Test
-    void nativeConditionalFunctionsMatchEquipmentAndNativeActionsRatherThanClipInventory()
-    {
+    void nativeConditionalFunctionsMatchEquipmentAndNativeActionsRatherThanClipInventory() {
         Set<String> tags = Set.of("minecraft:swords");
         assertTrue(VanillaYsmQueries.itemCondition("$minecraft:iron_sword", false, "minecraft:iron_sword", tags,
                 "sword", "none", true));
@@ -232,8 +212,7 @@ class VanillaYsmQueriesTest
     }
 
     @Test
-    void vanillaKindsMatchReferenceSpearAndNewLanceNames()
-    {
+    void vanillaKindsMatchReferenceSpearAndNewLanceNames() {
         assertEquals("sword", VanillaYsmQueries.itemKind("minecraft:diamond_sword", Set.of("minecraft:swords")));
         assertEquals("shield", VanillaYsmQueries.itemKind("minecraft:shield", Set.of()));
         assertEquals("spear", VanillaYsmQueries.itemKind("minecraft:trident", Set.of()));
@@ -243,8 +222,7 @@ class VanillaYsmQueriesTest
     }
 
     @Test
-    void functionArityRejectsMissingTagSelectorsAndWrongAxesArguments()
-    {
+    void functionArityRejectsMissingTagSelectorsAndWrongAxesArguments() {
         assertThrows(IllegalArgumentException.class,
                 () -> VanillaYsmQueries.validateArguments("query.relative_block_has_all_tags", 3));
         assertThrows(IllegalArgumentException.class, () -> VanillaYsmQueries.validateArguments("ysm.keyboard", 0));
@@ -256,8 +234,7 @@ class VanillaYsmQueriesTest
     }
 
     @Test
-    void componentSpatialSampleReplacesOwnerPositionAndUsesComponentFrameMotion()
-    {
+    void componentSpatialSampleReplacesOwnerPositionAndUsesComponentFrameMotion() {
         Molang.Context context = new Molang.Context();
         context.query("query.position_0", 2d);
         context.query("query.position_1", 64d);
@@ -283,8 +260,7 @@ class VanillaYsmQueriesTest
     }
 
     @Test
-    void nonLivingComponentDoesNotInheritOwnerHealthEquipmentOrPlayerControllerState()
-    {
+    void nonLivingComponentDoesNotInheritOwnerHealthEquipmentOrPlayerControllerState() {
         Molang.Context context = new Molang.Context();
         context.query("query.health", 17d);
         context.query("query.equipment_count", 4d);
@@ -297,8 +273,7 @@ class VanillaYsmQueriesTest
         VanillaYsmQueries.clearUnsupportedQueries(context, false);
         for (String key : List.of("query.health", "query.equipment_count", "ysm.has_mainhand", "ysm.texture_name",
                 "ysm.left_shoulder_parrot_variant", "ctrl.walk", "ysm.in_shield_block_cooldown",
-                "ysm.native_living_available", "ysm.native_player_available"))
-        {
+                "ysm.native_living_available", "ysm.native_player_available")) {
             assertEquals(0, context.get(key), key);
         }
 
@@ -306,19 +281,14 @@ class VanillaYsmQueriesTest
     }
 
     @Test
-    void nativeEquipmentFunctionsRequireLivingEntityWhileSpaceAndRideUseEveryEntity()
-    {
+    void nativeEquipmentFunctionsRequireLivingEntityWhileSpaceAndRideUseEveryEntity() {
         for (String function : List.of("query.max_durability", "query.is_item_name_any", "ctrl.hold", "ctrl.swing",
-                "ctrl.use", "ctrl.armor"))
-
-        {
+                "ctrl.use", "ctrl.armor")) {
             assertTrue(VanillaYsmQueries.requiresLiving(function), function);
         }
 
         for (String function : List.of("query.position", "query.position_delta", "query.rotation_to_camera",
-                "query.biome_has_any_tag", "ysm.relative_block_name", "ctrl.ride", "ysm.keyboard"))
-
-        {
+                "query.biome_has_any_tag", "ysm.relative_block_name", "ctrl.ride", "ysm.keyboard")) {
             assertFalse(VanillaYsmQueries.requiresLiving(function), function);
         }
 

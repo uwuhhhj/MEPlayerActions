@@ -4,11 +4,9 @@ import org.junit.jupiter.api.Test;
 import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
-class MovementSamplerTest
-{
+class MovementSamplerTest {
     @Test
-    void irregularSamplingUsesElapsedTicksAndSameTickDoesNotOverwriteHistory()
-    {
+    void irregularSamplingUsesElapsedTicksAndSameTickDoesNotOverwriteHistory() {
         MovementSampler s = new MovementSampler();
         UUID world = UUID.randomUUID();
         assertFalse(s.sample(world, 0, 0, 0, 100, false, false, 0.015));
@@ -18,8 +16,7 @@ class MovementSamplerTest
     }
 
     @Test
-    void verticalFlightAndInputAreMovementButWorldChangesAndTeleportsAreNot()
-    {
+    void verticalFlightAndInputAreMovementButWorldChangesAndTeleportsAreNot() {
         MovementSampler s = new MovementSampler();
         UUID world = UUID.randomUUID();
         s.sample(world, 0, 0, 0, 100, true, false, 0.015);

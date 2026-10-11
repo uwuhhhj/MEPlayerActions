@@ -17,16 +17,14 @@ import java.nio.file.Path;
 import java.util.List;
 
 /** One player-facing guide shared by the client and server gallery information buttons. */
-public final class ModelHelpScreen extends Screen
-{
+public final class ModelHelpScreen extends Screen {
     private final ClientRuntime runtime;
     private final Screen parent;
     private final boolean server;
     private int scroll, maxScroll;
     private String message = "";
 
-    public ModelHelpScreen(ClientRuntime runtime, Screen parent, boolean server)
-    {
+    public ModelHelpScreen(ClientRuntime runtime, Screen parent, boolean server) {
         super(Text.literal(server ? "服务端模型教程" : "客户端模型教程"));
         this.runtime = runtime;
         this.parent = parent;
@@ -34,8 +32,7 @@ public final class ModelHelpScreen extends Screen
     }
 
     @Override
-    protected void init()
-    {
+    protected void init() {
         ButtonWidget folder = ButtonWidget
                 .builder(Text.literal(this.server ? "打开本机缓存目录" : "打开模型文件夹"), b -> openDirectory())
                 .dimensions(super.width / 2 - 107, super.height - 34, 134, 20).build();
@@ -48,32 +45,24 @@ public final class ModelHelpScreen extends Screen
         addDrawableChild(back);
     }
 
-    private void openDirectory()
-    {
-        try
-        {
+    private void openDirectory() {
+        try {
             Path path = this.server ? this.runtime.localServerCacheDirectory() : this.runtime.localModelDirectory();
             Files.createDirectories(path);
             Util.getOperatingSystem().open(path);
             this.message = this.server ? "已打开本机缓存目录" : "放入模型后，返回图库点击刷新";
-        }
-        catch (IOException | SecurityException unavailable)
-        {
+        } catch (IOException | SecurityException unavailable) {
             this.message = "无法打开本机目录，请检查文件权限";
         }
     }
 
-    private MutableText guide()
-    {
+    private MutableText guide() {
         MutableText text = Text.empty();
         section(text, "三种使用方式", "本地私人：使用尚未上传的客户端模型，仅自己看到私人外观。\n" + "私人分享：主动上传给服务器，获准的模组玩家下载后可见；原版玩家仍看到原版人物。\n"
                 + "服务端伪装：服务器管理模型与伪装，模组客户端接管绘制，原版客户端看到服务器模型。");
-        if (this.server)
-        {
+        if (this.server) {
             serverGuide(text);
-        }
-        else
-        {
+        } else {
             clientGuide(text);
         }
 
@@ -83,8 +72,7 @@ public final class ModelHelpScreen extends Screen
         return text;
     }
 
-    private void clientGuide(MutableText text)
-    {
+    private void clientGuide(MutableText text) {
         section(text, "1 · 放入模型",
                 "点击“打开模型文件夹”，只放入你有权使用、分享的资源。YSM 支持 .ysm、ZIP 模型包和原始模型文件夹；文件夹需保留 ysm.json、models、animations、textures 等完整资源。\n"
                         + "YSM 可用子文件夹分类。独立 .bbmodel 文件放在模型目录根部；支持嵌入纹理，也可保留模型声明的目录内 PNG 伴随资源。全部伴随文件须在模型目录内；放好后返回图库点击“刷新”。");
@@ -101,8 +89,7 @@ public final class ModelHelpScreen extends Screen
                         + "分享结束后缓存可保留供历史预览，文件存在不表示仍有显示授权。本人上传存档仍在客户端的“已上传”云朵中管理。");
     }
 
-    private void serverGuide(MutableText text)
-    {
+    private void serverGuide(MutableText text) {
         section(text, "1 · 浏览与伪装", "图库展示服务器提供的模型。点击卡片只浏览，点击“使用模型”才请求伪装，相当于 /meplayeractions disguise 模型ID。\n"
                 + "权限由服务器检查。“等待服务器确认”表示请求中；收到服务器绑定后才显示“当前使用”，模型资源由服务器下发。");
         section(text, "离线缓存不等于使用授权", "未连接服务器时显示离线模式，可预览本机已下载的缓存模型、保存外观参数或打开缓存目录。\n" + "尚无服务器模型 ID 的旧缓存只可预览，不能保存伪装参数。\n"
@@ -117,10 +104,8 @@ public final class ModelHelpScreen extends Screen
                         + "历史文件没有可靠发布者身份时只显示资源短 hash，不认定为某个玩家。打开缓存目录可检查本机文件；“本人已上传”跳转客户端云朵，管理本人服务器存档。");
     }
 
-    private static void section(MutableText target, String title, String body)
-    {
-        if (!target.getString().isEmpty())
-        {
+    private static void section(MutableText target, String title, String body) {
+        if (!target.getString().isEmpty()) {
             target.append("\n\n");
         }
 
@@ -129,8 +114,7 @@ public final class ModelHelpScreen extends Screen
     }
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta)
-    {
+    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         context.fill(0, 0, super.width, super.height, 0xED171F2A);
         context.drawCenteredTextWithShadow(super.textRenderer, super.title, super.width / 2, 12, 0xfff3f6ff);
         context.drawCenteredTextWithShadow(super.textRenderer, "滚轮浏览教程", super.width / 2, 25, 0xff92b9df);
@@ -141,22 +125,19 @@ public final class ModelHelpScreen extends Screen
         this.maxScroll = Math.max(0, lines.size() * 11 - viewport);
         this.scroll = Math.min(this.scroll, this.maxScroll);
         context.enableScissor(x, top, x + textWidth, bottom);
-        for (int index = 0; index < lines.size(); index++)
-        {
+        for (int index = 0; index < lines.size(); index++) {
             context.drawTextWithShadow(super.textRenderer, lines.get(index), x, top + index * 11 - this.scroll,
                     0xffc6d5e7);
         }
 
         context.disableScissor();
-        if (this.maxScroll > 0)
-        {
+        if (this.maxScroll > 0) {
             int thumbHeight = Math.max(12, viewport * viewport / (lines.size() * 11)),
                     thumbTop = top + this.scroll * (viewport - thumbHeight) / this.maxScroll;
             context.fill(x + textWidth + 5, top, x + textWidth + 7, bottom, 0xff353d48);
             context.fill(x + textWidth + 5, thumbTop, x + textWidth + 7, thumbTop + thumbHeight, 0xff92b9df);
         }
-        if (!this.message.isEmpty())
-        {
+        if (!this.message.isEmpty()) {
             context.drawCenteredTextWithShadow(super.textRenderer,
                     super.textRenderer.trimToWidth(this.message, textWidth), super.width / 2, super.height - 48,
                     0xffffd589);
@@ -166,10 +147,8 @@ public final class ModelHelpScreen extends Screen
     }
 
     @Override
-    public boolean mouseScrolled(double x, double y, double horizontal, double vertical)
-    {
-        if (vertical == 0)
-        {
+    public boolean mouseScrolled(double x, double y, double horizontal, double vertical) {
+        if (vertical == 0) {
             return super.mouseScrolled(x, y, horizontal, vertical);
         }
 
@@ -178,14 +157,12 @@ public final class ModelHelpScreen extends Screen
     }
 
     @Override
-    public void close()
-    {
+    public void close() {
         super.client.setScreen(this.parent);
     }
 
     @Override
-    public boolean shouldPause()
-    {
+    public boolean shouldPause() {
         return false;
     }
 }

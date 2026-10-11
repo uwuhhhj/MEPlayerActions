@@ -27,16 +27,12 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.RecordComponent;
 
 /** Actual relay messages/maintenance using public Bukkit interface proxies; no running server. */
-class PrivateModelLifecycleTest
-{
+class PrivateModelLifecycleTest {
     @ParameterizedTest
-    @ValueSource(strings =
-    { "OFFERED", "CACHED", "QUEUED", "SENDING", "DELIVERED", "READY" })
+    @ValueSource(strings = { "OFFERED", "CACHED", "QUEUED", "SENDING", "DELIVERED", "READY" })
     void diagnosticsSeparateOwnPublicationFromReceivingOtherPlayersAndDescribeEachTransferPhase(String phase)
-            throws Exception
-    {
-        try (PrivateModelLifecycleTest.Scene scene = new Scene())
-        {
+            throws Exception {
+        try (PrivateModelLifecycleTest.Scene scene = new Scene()) {
             scene.transition(phase);
             Object original = scene.offer();
             int sent = scene.viewer.messages.size();
@@ -47,8 +43,7 @@ class PrivateModelLifecycleTest
             assertTrue(diagnostic.contains("ysm:winefox"));
             assertTrue(diagnostic.contains(scene.hash));
             assertTrue(diagnostic.contains(scene.generation.toString()));
-            String expected = switch (phase)
-            {
+            String expected = switch (phase) {
             case "OFFERED" -> "等待客户端报告缓存情况";
             case "CACHED" -> "客户端报告已有缓存";
             case "QUEUED" -> "资源传送排队中";
@@ -69,10 +64,8 @@ class PrivateModelLifecycleTest
     }
 
     @Test
-    void diagnosticsRetainRejectionIdentityWithoutCallingItAnActiveCachedOrRenderedModel() throws Exception
-    {
-        try (PrivateModelLifecycleTest.Scene scene = new Scene())
-        {
+    void diagnosticsRetainRejectionIdentityWithoutCallingItAnActiveCachedOrRenderedModel() throws Exception {
+        try (PrivateModelLifecycleTest.Scene scene = new Scene()) {
             scene.transition("READY");
             scene.feedback("rejected");
             String diagnostic = String.join("\n", scene.service.statusLines(scene.viewer.player));
@@ -88,12 +81,9 @@ class PrivateModelLifecycleTest
     }
 
     @Test
-    void recentFailureDiagnosticsAreBoundedAndExpireWithoutRetainingModelBundlesOrScanningPlayers() throws Exception
-    {
-        try (PrivateModelLifecycleTest.Scene scene = new Scene())
-        {
-            for (int index = 0; index < 12; index++)
-            {
+    void recentFailureDiagnosticsAreBoundedAndExpireWithoutRetainingModelBundlesOrScanningPlayers() throws Exception {
+        try (PrivateModelLifecycleTest.Scene scene = new Scene()) {
+            for (int index = 0; index < 12; index++) {
                 Person person = scene.person(index + 2);
                 scene.publication(person, UUID.randomUUID());
                 Object publication = scene.publications().get(person.id);
@@ -103,19 +93,16 @@ class PrivateModelLifecycleTest
                 constructor.setAccessible(true);
                 Object offer = constructor.newInstance(scene.viewer.id, publication, (long) scene.tick);
                 scene.offers().put(person.id, offer);
-                invoke(scene.service, "removeOffer", new Class<?>[]
-                { Player.class, scene.session().getClass(), type, String.class }, scene.viewer.player, scene.session(),
-                        offer, "asset_rejected");
+                invoke(scene.service, "removeOffer",
+                        new Class<?>[] { Player.class, scene.session().getClass(), type, String.class },
+                        scene.viewer.player, scene.session(), offer, "asset_rejected");
             }
             Map<?, ?> history = (Map<?, ?>) field(scene.session(), "observationFailures");
             assertEquals(8, history.size());
             assertEquals(8, scene.service.statusLines(scene.viewer.player).stream()
                     .filter(line -> line.contains("最近停止接收")).count());
-            for (Object failure : history.values())
-            {
-                for (RecordComponent component : failure.getClass().getRecordComponents())
-
-                {
+            for (Object failure : history.values()) {
+                for (RecordComponent component : failure.getClass().getRecordComponents()) {
                     assertTrue(Set.of(UUID.class, String.class, long.class).contains(component.getType()),
                             "diagnostics retain only bounded scalar identities");
                 }
@@ -130,10 +117,8 @@ class PrivateModelLifecycleTest
     }
 
     @Test
-    void negotiatedViewerPauseRevokesOnlyIncomingAuthorizationAndResumeCanReceiveTheSameGeneration() throws Exception
-    {
-        try (PrivateModelLifecycleTest.Scene scene = new Scene())
-        {
+    void negotiatedViewerPauseRevokesOnlyIncomingAuthorizationAndResumeCanReceiveTheSameGeneration() throws Exception {
+        try (PrivateModelLifecycleTest.Scene scene = new Scene()) {
             scene.hello(scene.viewer, true);
             scene.advance(100);
             scene.transition("READY");
@@ -168,16 +153,12 @@ class PrivateModelLifecycleTest
     }
 
     @ParameterizedTest
-    @ValueSource(strings =
-    { "OFFERED", "CACHED", "QUEUED", "SENDING", "DELIVERED" })
-    void repeatedlyPausingBeforeReadyDoesNotConsumeTheThreeActualFailureAttempts(String phase) throws Exception
-    {
-        try (PrivateModelLifecycleTest.Scene scene = new Scene())
-        {
+    @ValueSource(strings = { "OFFERED", "CACHED", "QUEUED", "SENDING", "DELIVERED" })
+    void repeatedlyPausingBeforeReadyDoesNotConsumeTheThreeActualFailureAttempts(String phase) throws Exception {
+        try (PrivateModelLifecycleTest.Scene scene = new Scene()) {
             scene.hello(scene.viewer, true);
             scene.advance(100);
-            for (int cycle = 0; cycle < 4; cycle++)
-            {
+            for (int cycle = 0; cycle < 4; cycle++) {
                 assertNotNull(scene.offer(), "same publication can resume at cycle " + cycle);
                 scene.transition(phase);
                 assertEquals(phase, field(scene.offer(), "status").toString());
@@ -195,15 +176,12 @@ class PrivateModelLifecycleTest
     }
 
     @Test
-    void pausingAfterAnActualTimeoutDoesNotRefundFailuresOrResetTheHelloFailureBudget() throws Exception
-    {
-        try (PrivateModelLifecycleTest.Scene scene = new Scene())
-        {
+    void pausingAfterAnActualTimeoutDoesNotRefundFailuresOrResetTheHelloFailureBudget() throws Exception {
+        try (PrivateModelLifecycleTest.Scene scene = new Scene()) {
             // Replacing the original legacy handshake already consumed one non-pause attempt.
             scene.hello(scene.viewer, true);
             scene.advance(100);
-            for (int failure = 0; failure < 2; failure++)
-            {
+            for (int failure = 0; failure < 2; failure++) {
                 assertNotNull(scene.offer());
                 scene.advance(101);
                 assertNull(scene.offer());
@@ -213,8 +191,7 @@ class PrivateModelLifecycleTest
                 scene.advance(100);
             }
             assertNull(scene.offer(), "one replaced handshake plus two real timeouts exhaust the three-attempt budget");
-            for (int retry = 0; retry < 4; retry++)
-            {
+            for (int retry = 0; retry < 4; retry++) {
                 scene.viewHeartbeat(false, null);
                 scene.viewHeartbeat(true, null);
                 scene.advance(100);
@@ -224,15 +201,12 @@ class PrivateModelLifecycleTest
     }
 
     @Test
-    void pausingAfterAClientRejectionNeverClearsItsGenerationLock() throws Exception
-    {
-        try (PrivateModelLifecycleTest.Scene scene = new Scene())
-        {
+    void pausingAfterAClientRejectionNeverClearsItsGenerationLock() throws Exception {
+        try (PrivateModelLifecycleTest.Scene scene = new Scene()) {
             scene.hello(scene.viewer, true);
             scene.advance(100);
             scene.feedback("rejected");
-            for (int retry = 0; retry < 4; retry++)
-            {
+            for (int retry = 0; retry < 4; retry++) {
                 scene.viewHeartbeat(false, null);
                 scene.viewHeartbeat(true, null);
                 scene.advance(100);
@@ -243,10 +217,9 @@ class PrivateModelLifecycleTest
     }
 
     @Test
-    void enablingPrivateViewCannotBypassPermissionsAndLegacyClientsCannotControlItWithoutNegotiation() throws Exception
-    {
-        try (PrivateModelLifecycleTest.Scene scene = new Scene())
-        {
+    void enablingPrivateViewCannotBypassPermissionsAndLegacyClientsCannotControlItWithoutNegotiation()
+            throws Exception {
+        try (PrivateModelLifecycleTest.Scene scene = new Scene()) {
             JsonObject forbidden = packet("private_heartbeat");
             forbidden.add("bindings", new JsonArray());
             forbidden.addProperty("viewEnabled", false);
@@ -267,10 +240,8 @@ class PrivateModelLifecycleTest
     }
 
     @Test
-    void negotiatedInitialPauseAndOfferMetadataDoNotChangeLegacyDownloadOrPublishingRules() throws Exception
-    {
-        try (PrivateModelLifecycleTest.Scene scene = new Scene())
-        {
+    void negotiatedInitialPauseAndOfferMetadataDoNotChangeLegacyDownloadOrPublishingRules() throws Exception {
+        try (PrivateModelLifecycleTest.Scene scene = new Scene()) {
             assertFalse(scene.viewer.last("private_offer").has("modelId"));
             scene.hello(scene.viewer, false);
             JsonObject ack = scene.viewer.last("hello_ack");
@@ -287,10 +258,8 @@ class PrivateModelLifecycleTest
     }
 
     @Test
-    void aViewCapableClientWithoutAnInitialIntentCannotAccidentallyReceivePrivateModels() throws Exception
-    {
-        try (PrivateModelLifecycleTest.Scene scene = new Scene())
-        {
+    void aViewCapableClientWithoutAnInitialIntentCannotAccidentallyReceivePrivateModels() throws Exception {
+        try (PrivateModelLifecycleTest.Scene scene = new Scene()) {
             scene.tick += 20;
             JsonObject hello = packet("hello");
             JsonArray capabilities = new JsonArray();
@@ -308,10 +277,8 @@ class PrivateModelLifecycleTest
     }
 
     @Test
-    void authoritativeFlightChangesReachOnlyAuthorizedReadyViewersWithoutReplayingAppearanceOrExtra() throws Exception
-    {
-        try (PrivateModelLifecycleTest.Scene scene = new Scene())
-        {
+    void authoritativeFlightChangesReachOnlyAuthorizedReadyViewersWithoutReplayingAppearanceOrExtra() throws Exception {
+        try (PrivateModelLifecycleTest.Scene scene = new Scene()) {
             scene.transition("READY");
             Object original = scene.offer();
             JsonObject initial = scene.viewer.last("private_state");
@@ -343,12 +310,9 @@ class PrivateModelLifecycleTest
     }
 
     @ParameterizedTest
-    @ValueSource(strings =
-    { "OFFERED", "CACHED", "QUEUED", "SENDING", "DELIVERED", "READY" })
-    void rendererRejectionRevokesEveryOfferPhaseAndWaitsForANewGeneration(String phase) throws Exception
-    {
-        try (PrivateModelLifecycleTest.Scene scene = new Scene())
-        {
+    @ValueSource(strings = { "OFFERED", "CACHED", "QUEUED", "SENDING", "DELIVERED", "READY" })
+    void rendererRejectionRevokesEveryOfferPhaseAndWaitsForANewGeneration(String phase) throws Exception {
+        try (PrivateModelLifecycleTest.Scene scene = new Scene()) {
             scene.transition(phase);
             assertEquals(phase, field(scene.offer(), "status").toString());
             int offers = scene.viewer.count("private_offer");
@@ -361,8 +325,7 @@ class PrivateModelLifecycleTest
             assertEquals(scene.owner.id.toString(), removed.get("owner").getAsString());
             assertEquals(rejectedGeneration.toString(), removed.get("generation").getAsString());
             assertEquals(scene.hash, removed.get("hash").getAsString());
-            for (int retry = 0; retry < 4; retry++)
-            {
+            for (int retry = 0; retry < 4; retry++) {
                 scene.advance(100);
             }
 
@@ -382,10 +345,8 @@ class PrivateModelLifecycleTest
     }
 
     @Test
-    void feedbackRequiresAnExactStillAuthorizedTokenAndCannotRewindReadyToCachedOrMissing() throws Exception
-    {
-        try (PrivateModelLifecycleTest.Scene scene = new Scene())
-        {
+    void feedbackRequiresAnExactStillAuthorizedTokenAndCannotRewindReadyToCachedOrMissing() throws Exception {
+        try (PrivateModelLifecycleTest.Scene scene = new Scene()) {
             scene.transition("READY");
             Object ready = scene.offer();
             UUID token = (UUID) field(ready, "id");
@@ -409,12 +370,9 @@ class PrivateModelLifecycleTest
     }
 
     @Test
-    void rejectionRecordsShareTheOfferBudgetWithoutEvictingAnUnchangedGeneration() throws Exception
-    {
-        try (PrivateModelLifecycleTest.Scene scene = new Scene())
-        {
-            for (int i = 0; i < 63; i++)
-            {
+    void rejectionRecordsShareTheOfferBudgetWithoutEvictingAnUnchangedGeneration() throws Exception {
+        try (PrivateModelLifecycleTest.Scene scene = new Scene()) {
+            for (int i = 0; i < 63; i++) {
                 scene.rejected().put(new UUID(1, i + 1), UUID.randomUUID());
             }
 
@@ -436,8 +394,7 @@ class PrivateModelLifecycleTest
         }
     }
 
-    private static final class Scene implements AutoCloseable
-    {
+    private static final class Scene implements AutoCloseable {
         final Field bukkitServer = Bukkit.class.getDeclaredField("server");
         final Object previousServer;
         final Map<UUID, Person> people = new HashMap<>();
@@ -450,24 +407,20 @@ class PrivateModelLifecycleTest
         UUID generation = UUID.randomUUID();
         int tick = 100;
 
-        Scene() throws Exception
-        {
+        Scene() throws Exception {
             this.bundle = bundle();
             this.hash = PrivateModelBundle.hash(this.bundle);
             PrivateModelBundle.validate(this.bundle, "ysm");
-            Server server = proxy(Server.class, (instance, method, args) -> switch (method.getName())
-            {
+            Server server = proxy(Server.class, (instance, method, args) -> switch (method.getName()) {
             case "getCurrentTick" -> this.tick;
             case "isPrimaryThread" -> true;
-            case "getPlayer" ->
-            {
+            case "getPlayer" -> {
                 Person person = this.people.get(args[0]);
                 yield person == null ? null : person.player;
             }
             default -> objectMethod(instance, method, args);
             });
-            Plugin plugin = proxy(Plugin.class, (instance, method, args) -> switch (method.getName())
-            {
+            Plugin plugin = proxy(Plugin.class, (instance, method, args) -> switch (method.getName()) {
             case "getServer" -> server;
             case "isEnabled" -> true;
             case "getName" -> "PrivateRelayFixture";
@@ -476,8 +429,7 @@ class PrivateModelLifecycleTest
             this.bukkitServer.setAccessible(true);
             this.previousServer = this.bukkitServer.get(null);
             this.bukkitServer.set(null, server);
-            try
-            {
+            try {
                 this.service = new PrivateModelSyncService(plugin, Set::of, this.limits,
                         () -> 10_000_000_000L + this.tick * 50_000_000L);
                 this.service.configure(new PrivateModelSyncService.Policy(true, 16000, 8 * 1024 * 1024,
@@ -489,23 +441,19 @@ class PrivateModelLifecycleTest
                 publication(this.owner, this.generation);
                 maintenance();
                 assertNotNull(offer());
-            }
-            catch (Exception | Error failure)
-            {
+            } catch (Exception | Error failure) {
                 this.bukkitServer.set(null, this.previousServer);
                 throw failure;
             }
         }
 
-        Person person(double x)
-        {
+        Person person(double x) {
             Person person = new Person(this.world, x);
             this.people.put(person.id, person);
             return person;
         }
 
-        void hello(Person person)
-        {
+        void hello(Person person) {
             JsonObject packet = packet("hello");
             JsonArray capabilities = new JsonArray();
             capabilities.add(PrivateModelSyncService.CAPABILITY);
@@ -513,8 +461,7 @@ class PrivateModelLifecycleTest
             send(person, packet);
         }
 
-        void hello(Person person, boolean enabled)
-        {
+        void hello(Person person, boolean enabled) {
             this.tick += 20;
             JsonObject packet = packet("hello");
             JsonArray capabilities = new JsonArray();
@@ -525,13 +472,11 @@ class PrivateModelLifecycleTest
             send(person, packet);
         }
 
-        void viewHeartbeat(boolean enabled, UUID ownGeneration)
-        {
+        void viewHeartbeat(boolean enabled, UUID ownGeneration) {
             JsonObject heartbeat = packet("private_heartbeat");
             heartbeat.addProperty("viewEnabled", enabled);
             JsonArray bindings = new JsonArray();
-            if (ownGeneration != null)
-            {
+            if (ownGeneration != null) {
                 JsonObject own = new JsonObject();
                 own.addProperty("owner", this.viewer.id.toString());
                 own.addProperty("generation", ownGeneration.toString());
@@ -542,8 +487,7 @@ class PrivateModelLifecycleTest
             send(this.viewer, heartbeat);
         }
 
-        void sendReady(Person person, UUID generation)
-        {
+        void sendReady(Person person, UUID generation) {
             JsonObject ready = packet("private_ready");
             ready.addProperty("owner", this.owner.id.toString());
             ready.addProperty("generation", generation.toString());
@@ -551,14 +495,12 @@ class PrivateModelLifecycleTest
             send(person, ready);
         }
 
-        void send(Person person, JsonObject packet)
-        {
+        void send(Person person, JsonObject packet) {
             this.service.onPluginMessageReceived(PrivateModelSyncService.CHANNEL, person.player,
                     packet.toString().getBytes(StandardCharsets.UTF_8));
         }
 
-        void publication(Person person, UUID generation) throws Exception
-        {
+        void publication(Person person, UUID generation) throws Exception {
             Class<?> type = Class.forName(PrivateModelSyncService.class.getName() + "$Publication");
             Constructor<?> constructor = type.getDeclaredConstructor(UUID.class, UUID.class, String.class, String.class,
                     byte[].class, JsonObject.class, long.class);
@@ -570,16 +512,14 @@ class PrivateModelLifecycleTest
             setField(this.service, "storedBytes", (long) publications().size() * this.bundle.length);
         }
 
-        void newGeneration() throws Exception
-        {
-            invoke(this.service, "removePublication", new Class<?>[]
-            { UUID.class, String.class }, this.owner.id, "model_changed");
+        void newGeneration() throws Exception {
+            invoke(this.service, "removePublication", new Class<?>[] { UUID.class, String.class }, this.owner.id,
+                    "model_changed");
             this.generation = UUID.randomUUID();
             publication(this.owner, this.generation);
         }
 
-        void advance(int ticks) throws Exception
-        {
+        void advance(int ticks) throws Exception {
             this.tick += ticks;
             JsonObject heartbeat = packet("private_heartbeat"), identity = new JsonObject();
             JsonArray bindings = new JsonArray();
@@ -590,8 +530,7 @@ class PrivateModelLifecycleTest
             heartbeat.add("bindings", bindings);
             send(this.owner, heartbeat);
             Object own = publications().get(this.viewer.id);
-            if (own != null)
-            {
+            if (own != null) {
                 JsonObject viewerHeartbeat = packet("private_heartbeat"), ownIdentity = new JsonObject();
                 JsonArray ownBindings = new JsonArray();
                 ownIdentity.addProperty("owner", this.viewer.id.toString());
@@ -604,19 +543,15 @@ class PrivateModelLifecycleTest
             maintenance();
         }
 
-        void maintenance() throws Exception
-        {
-            invoke(this.service, "maintain", new Class<?>[]
-            {});
+        void maintenance() throws Exception {
+            invoke(this.service, "maintain", new Class<?>[] {});
         }
 
-        void feedback(String status) throws Exception
-        {
+        void feedback(String status) throws Exception {
             feedback(status, (UUID) field(offer(), "id"), this.hash);
         }
 
-        void feedback(String status, UUID token, String hash)
-        {
+        void feedback(String status, UUID token, String hash) {
             JsonObject packet = packet("private_status");
             packet.addProperty("offerId", token.toString());
             packet.addProperty("hash", hash);
@@ -624,26 +559,19 @@ class PrivateModelLifecycleTest
             send(this.viewer, packet);
         }
 
-        void transition(String phase) throws Exception
-        {
-            if (phase.equals("OFFERED"))
-            {
+        void transition(String phase) throws Exception {
+            if (phase.equals("OFFERED")) {
                 return;
             }
 
-            if (phase.equals("CACHED") || phase.equals("READY"))
-            {
+            if (phase.equals("CACHED") || phase.equals("READY")) {
                 feedback("cached");
-                if (phase.equals("READY"))
-                {
+                if (phase.equals("READY")) {
                     sendReady(this.viewer, this.generation);
                 }
-            }
-            else
-            {
+            } else {
                 feedback("missing");
-                if (phase.equals("QUEUED"))
-                {
+                if (phase.equals("QUEUED")) {
                     return;
                 }
 
@@ -653,43 +581,36 @@ class PrivateModelLifecycleTest
             }
         }
 
-        Object session() throws Exception
-        {
+        Object session() throws Exception {
             return ((Map<?, ?>) field(this.service, "sessions")).get(this.viewer.id);
         }
 
         @SuppressWarnings("unchecked")
-        Map<UUID, Object> offers() throws Exception
-        {
+        Map<UUID, Object> offers() throws Exception {
             return (Map<UUID, Object>) field(session(), "offers");
         }
 
         @SuppressWarnings("unchecked")
-        Map<UUID, UUID> rejected() throws Exception
-        {
+        Map<UUID, UUID> rejected() throws Exception {
             return (Map<UUID, UUID>) field(session(), "rejected");
         }
 
         @SuppressWarnings("unchecked")
-        Map<UUID, Object> publications() throws Exception
-        {
+        Map<UUID, Object> publications() throws Exception {
             return (Map<UUID, Object>) field(this.service, "publications");
         }
 
-        Object offer() throws Exception
-        {
+        Object offer() throws Exception {
             return offers().get(this.owner.id);
         }
 
         @Override
-        public void close() throws Exception
-        {
+        public void close() throws Exception {
             this.bukkitServer.set(null, this.previousServer);
         }
     }
 
-    private static final class Person
-    {
+    private static final class Person {
         final UUID id = UUID.randomUUID();
         final String name;
         final Player player;
@@ -697,11 +618,9 @@ class PrivateModelLifecycleTest
         final List<JsonObject> messages = new ArrayList<>();
         boolean allowed = true, dropAssetChunks, flying;
 
-        Person(World world, double x)
-        {
+        Person(World world, double x) {
             this.name = x == 0 ? "Loliiiico" : (x == 1 ? "zztyx_" : "Viewer" + (int) x);
-            this.player = proxy(Player.class, (instance, method, args) -> switch (method.getName())
-            {
+            this.player = proxy(Player.class, (instance, method, args) -> switch (method.getName()) {
             case "getUniqueId" -> this.id;
             case "isOnline" -> true;
             case "getWorld" -> world;
@@ -712,12 +631,10 @@ class PrivateModelLifecycleTest
             case "isFlying" -> this.flying;
             case "hasPermission" ->
                 this.allowed && Set.of("mact.private.upload", "mact.private.view").contains(args[0]);
-            case "sendPluginMessage" ->
-            {
+            case "sendPluginMessage" -> {
                 JsonObject packet = JsonParser.parseString(new String((byte[]) args[2], StandardCharsets.UTF_8))
                         .getAsJsonObject();
-                if (this.dropAssetChunks && packet.get("type").getAsString().equals("asset_chunk"))
-                {
+                if (this.dropAssetChunks && packet.get("type").getAsString().equals("asset_chunk")) {
                     throw new IllegalStateException("fixture drops chunk");
                 }
 
@@ -728,35 +645,29 @@ class PrivateModelLifecycleTest
             });
         }
 
-        int count(String type)
-        {
+        int count(String type) {
             return (int) this.messages.stream().filter(packet -> packet.get("type").getAsString().equals(type)).count();
         }
 
-        JsonObject last(String type)
-        {
+        JsonObject last(String type) {
             return this.messages.stream().filter(packet -> packet.get("type").getAsString().equals(type))
                     .reduce((left, right) -> right).orElseThrow();
         }
     }
 
-    private static JsonObject packet(String type)
-    {
+    private static JsonObject packet(String type) {
         JsonObject packet = new JsonObject();
         packet.addProperty("protocol", 1);
         packet.addProperty("type", type);
         return packet;
     }
 
-    private static byte[] bundle() throws Exception
-    {
+    private static byte[] bundle() throws Exception {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-        try (ZipOutputStream zip = new ZipOutputStream(bytes))
-        {
+        try (ZipOutputStream zip = new ZipOutputStream(bytes)) {
             for (Map.Entry<String, String> file : Map
                     .of("manifest.json", "{\"format\":1,\"kind\":\"ysm\",\"entry\":\"ysm.json\"}", "ysm.json", "{}")
-                    .entrySet())
-            {
+                    .entrySet()) {
                 zip.putNextEntry(new ZipEntry(file.getKey()));
                 zip.write(file.getValue().getBytes(StandardCharsets.UTF_8));
                 zip.closeEntry();
@@ -765,42 +676,33 @@ class PrivateModelLifecycleTest
         return bytes.toByteArray();
     }
 
-    private static Object field(Object target, String name) throws Exception
-    {
+    private static Object field(Object target, String name) throws Exception {
         Field field = target.getClass().getDeclaredField(name);
         field.setAccessible(true);
         return field.get(target);
     }
 
-    private static void setField(Object target, String name, Object value) throws Exception
-    {
+    private static void setField(Object target, String name, Object value) throws Exception {
         Field field = target.getClass().getDeclaredField(name);
         field.setAccessible(true);
         field.set(target, value);
     }
 
-    private static Object invoke(Object target, String name, Class<?>[] types, Object... args) throws Exception
-    {
+    private static Object invoke(Object target, String name, Class<?>[] types, Object... args) throws Exception {
         Method method = target.getClass().getDeclaredMethod(name, types);
         method.setAccessible(true);
-        try
-        {
+        try {
             return method.invoke(target, args);
-        }
-        catch (InvocationTargetException failure)
-        {
-            if (failure.getCause() instanceof Exception cause)
-            {
+        } catch (InvocationTargetException failure) {
+            if (failure.getCause() instanceof Exception cause) {
                 throw cause;
             }
             throw failure;
         }
     }
 
-    private static Object objectMethod(Object instance, Method method, Object[] args)
-    {
-        return switch (method.getName())
-        {
+    private static Object objectMethod(Object instance, Method method, Object[] args) {
+        return switch (method.getName()) {
         case "equals" -> instance == args[0];
         case "hashCode" -> System.identityHashCode(instance);
         case "toString" -> "PrivateRelayFixture";
@@ -808,9 +710,7 @@ class PrivateModelLifecycleTest
         };
     }
 
-    private static <T> T proxy(Class<T> type, InvocationHandler handler)
-    {
-        return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]
-        { type }, handler));
+    private static <T> T proxy(Class<T> type, InvocationHandler handler) {
+        return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[] { type }, handler));
     }
 }

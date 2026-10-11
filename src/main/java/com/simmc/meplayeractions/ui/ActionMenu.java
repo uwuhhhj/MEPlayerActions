@@ -18,62 +18,51 @@ import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 import com.simmc.meplayeractions.action.SyncFeature;
 
-public final class ActionMenu implements Listener
-{
+public final class ActionMenu implements Listener {
     private final JavaPlugin plugin;
     private final Supplier<ActionController> controllers;
     private final Supplier<Settings> settings;
     private final BiConsumer<Player, String[]> perform;
 
-    private static final class Holder implements InventoryHolder
-    {
+    private static final class Holder implements InventoryHolder {
         final Map<Integer, String[]> actions = new HashMap<>();
         final int page;
         final Inventory inventory;
 
-        Holder(int page)
-        {
+        Holder(int page) {
             this.page = page;
             this.inventory = Bukkit.createInventory(this, 54, "玩家动作 · " + (page + 1));
         }
 
         @Override
-        public Inventory getInventory()
-        {
+        public Inventory getInventory() {
             return this.inventory;
         }
     }
 
     public ActionMenu(JavaPlugin plugin, Supplier<ActionController> controllers, Supplier<Settings> settings,
-            BiConsumer<Player, String[]> perform)
-    {
+            BiConsumer<Player, String[]> perform) {
         this.plugin = plugin;
         this.controllers = controllers;
         this.settings = settings;
         this.perform = perform;
     }
 
-    public void open(Player player, int requestedPage)
-    {
+    public void open(Player player, int requestedPage) {
         ActionController c = this.controllers.get();
         Settings cfg = this.settings.get();
         List<String> clips = c.animations(player);
         Map<String, String> entries = new LinkedHashMap<>();
-        for (Settings.CustomAction action : cfg.customActions.values())
-
-        {
+        for (Settings.CustomAction action : cfg.customActions.values()) {
             if (clips.contains(action.animation())
-                    && (action.permission().isEmpty() || player.hasPermission(action.permission())))
-            {
+                    && (action.permission().isEmpty() || player.hasPermission(action.permission()))) {
                 entries.put(action.id(), action.label());
             }
 
         }
 
-        if (cfg.rawPlay && player.hasPermission("mact.play"))
-        {
-            for (String clip : clips)
-            {
+        if (cfg.rawPlay && player.hasPermission("mact.play")) {
+            for (String clip : clips) {
                 entries.putIfAbsent(clip, cfg.animationLabel(clip));
             }
 
@@ -82,25 +71,20 @@ public final class ActionMenu implements Listener
         List<Map.Entry<String, String>> display = List.copyOf(entries.entrySet());
         int pages = Math.max(1, (display.size() + 35) / 36), page = Math.max(0, Math.min(requestedPage, pages - 1));
         Holder holder = new Holder(page);
-        for (int slot = 0; slot < 36 && page * 36 + slot < display.size(); slot++)
-        {
+        for (int slot = 0; slot < 36 && page * 36 + slot < display.size(); slot++) {
             Map.Entry<String, String> entry = display.get(page * 36 + slot);
             button(holder, slot, Material.PAPER, entry.getValue(),
                     List.of("§7动作名：" + entry.getKey(), "§e点击展示动画", "§7姿态动画不会改变真实姿态"), "play", entry.getKey());
         }
-        if (player.hasPermission("mact.sit"))
-        {
+        if (player.hasPermission("mact.sit")) {
             button(holder, 45, Material.OAK_STAIRS, "真实坐下", List.of("§7需要 GSit；潜行可起身"), "pose", "sit");
         }
 
-        if (player.hasPermission("mact.crawl"))
-        {
+        if (player.hasPermission("mact.crawl")) {
             button(holder, 46, Material.LEATHER_BOOTS, "真实爬行", List.of("§7需要 GSit 与爬行动画"), "pose", "crawl");
         }
 
-        if (cfg.allowFlight && player.hasPermission("mact.flight"))
-
-        {
+        if (cfg.allowFlight && player.hasPermission("mact.flight")) {
             button(holder, 47, Material.FEATHER, "真实飞行开关", List.of("§7切换本插件授予的飞行"), "pose", "fly");
         }
 
@@ -108,13 +92,11 @@ public final class ActionMenu implements Listener
         button(holder, 49, Material.BARRIER, "重置动作与姿态", List.of(), "reset");
         button(holder, 50, Material.LEVER, "坐姿动画同步开关", List.of("§7不会改变真实坐下状态"), "sync", "sit",
                 c.syncEnabled(player, SyncFeature.SIT) ? "off" : "on");
-        if (page > 0)
-        {
+        if (page > 0) {
             button(holder, 51, Material.ARROW, "上一页", List.of(), "page", Integer.toString(page - 1));
         }
 
-        if (page + 1 < pages)
-        {
+        if (page + 1 < pages) {
             button(holder, 52, Material.ARROW, "下一页", List.of(), "page", Integer.toString(page + 1));
         }
 
@@ -123,8 +105,7 @@ public final class ActionMenu implements Listener
     }
 
     private static void button(Holder holder, int slot, Material material, String title, List<String> lore,
-            String... action)
-    {
+            String... action) {
         ItemStack item = new ItemStack(material);
         ItemMeta meta = item.getItemMeta();
         meta.setDisplayName("§b" + title);
@@ -135,42 +116,33 @@ public final class ActionMenu implements Listener
     }
 
     @EventHandler
-    public void click(InventoryClickEvent event)
-    {
-        if (!(event.getView().getTopInventory().getHolder() instanceof Holder holder))
-        {
+    public void click(InventoryClickEvent event) {
+        if (!(event.getView().getTopInventory().getHolder() instanceof Holder holder)) {
             return;
         }
 
         event.setCancelled(true);
-        if (!(event.getWhoClicked() instanceof Player player))
-        {
+        if (!(event.getWhoClicked() instanceof Player player)) {
             return;
         }
 
         String[] action = holder.actions.get(event.getRawSlot());
-        if (action == null)
-        {
+        if (action == null) {
             return;
         }
 
-        Bukkit.getScheduler().runTask(this.plugin, () ->
-        {
-            if (!player.isOnline() || player.getOpenInventory().getTopInventory().getHolder() != holder)
-            {
+        Bukkit.getScheduler().runTask(this.plugin, () -> {
+            if (!player.isOnline() || player.getOpenInventory().getTopInventory().getHolder() != holder) {
                 return;
             }
 
-            if (action[0].equals("page"))
-            {
+            if (action[0].equals("page")) {
                 open(player, Integer.parseInt(action[1]));
             }
 
-            else
-            {
+            else {
                 player.closeInventory();
-                if (!action[0].equals("close"))
-                {
+                if (!action[0].equals("close")) {
                     this.perform.accept(player, action);
                 }
             }
@@ -178,23 +150,17 @@ public final class ActionMenu implements Listener
     }
 
     @EventHandler
-    public void drag(InventoryDragEvent event)
-    {
+    public void drag(InventoryDragEvent event) {
         if (event.getView().getTopInventory().getHolder() instanceof Holder
-                && event.getRawSlots().stream().anyMatch(i -> i < 54))
-
-        {
+                && event.getRawSlots().stream().anyMatch(i -> i < 54)) {
             event.setCancelled(true);
         }
 
     }
 
-    public void closeAll()
-    {
-        for (Player player : Bukkit.getOnlinePlayers())
-        {
-            if (player.getOpenInventory().getTopInventory().getHolder() instanceof Holder)
-            {
+    public void closeAll() {
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            if (player.getOpenInventory().getTopInventory().getHolder() instanceof Holder) {
                 player.closeInventory();
             }
 

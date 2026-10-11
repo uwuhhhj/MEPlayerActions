@@ -17,11 +17,9 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.lang.reflect.Method;
 
 /** Isolated dependency checks without loading ModelEngine or starting a server. */
-class OptionalModelEngineBootstrapTest
-{
+class OptionalModelEngineBootstrapTest {
     @Test
-    void descriptorMakesBothIntegrationsOptionalAndNeverGrantsPrivateAssetsByDefault()
-    {
+    void descriptorMakesBothIntegrationsOptionalAndNeverGrantsPrivateAssetsByDefault() {
         YamlConfiguration descriptor = YamlConfiguration.loadConfiguration(
                 new InputStreamReader(getClass().getResourceAsStream("/plugin.yml"), StandardCharsets.UTF_8));
         assertTrue(descriptor.getStringList("depend").isEmpty());
@@ -31,8 +29,7 @@ class OptionalModelEngineBootstrapTest
     }
 
     @Test
-    void missingDisabledAndIncompatibleDependenciesSelectThePrivateMode()
-    {
+    void missingDisabledAndIncompatibleDependenciesSelectThePrivateMode() {
         assertNotNull(MEPlayerActionsPlugin.unavailableReason(false, false, null));
         assertNotNull(MEPlayerActionsPlugin.unavailableReason(true, false, "R4.1.1"));
         assertNotNull(MEPlayerActionsPlugin.unavailableReason(true, true, "R4.0.9"));
@@ -40,16 +37,13 @@ class OptionalModelEngineBootstrapTest
     }
 
     @Test
-    void bootstrapCommandSignaturesAndPrivatePolicyLoadWithAllModelEngineClassesUnavailable() throws Exception
-    {
+    void bootstrapCommandSignaturesAndPrivatePolicyLoadWithAllModelEngineClassesUnavailable() throws Exception {
         URL classes = MEPlayerActionsPlugin.class.getProtectionDomain().getCodeSource().getLocation();
         try (OptionalModelEngineBootstrapTest.WithoutModelEngine isolated = new WithoutModelEngine(classes,
-                getClass().getClassLoader()))
-        {
+                getClass().getClassLoader())) {
             Class<?> bootstrap = Class.forName("com.simmc.meplayeractions.MEPlayerActionsPlugin", true, isolated);
             Class<?> privateMode = Class.forName("com.simmc.meplayeractions.server.PrivateOnlyBackend", true, isolated);
-            for (Class<?> type : List.of(bootstrap, privateMode))
-            {
+            for (Class<?> type : List.of(bootstrap, privateMode)) {
                 assertDoesNotThrow(type::getDeclaredConstructors);
                 assertDoesNotThrow(type::getDeclaredFields);
                 assertDoesNotThrow(type::getDeclaredMethods);
@@ -58,8 +52,7 @@ class OptionalModelEngineBootstrapTest
             List<Method> listeners = Arrays.stream(bootstrap.getDeclaredMethods())
                     .filter(method -> method.isAnnotationPresent(EventHandler.class)).toList();
             assertEquals(1, listeners.size());
-            assertArrayEquals(new Class<?>[]
-            { PlayerQuitEvent.class }, listeners.getFirst().getParameterTypes());
+            assertArrayEquals(new Class<?>[] { PlayerQuitEvent.class }, listeners.getFirst().getParameterTypes());
             Class<?> policy = Class.forName("com.simmc.meplayeractions.client.PrivateModelSyncService$Policy", true,
                     isolated);
             YamlConfiguration config = new YamlConfiguration();
@@ -72,43 +65,35 @@ class OptionalModelEngineBootstrapTest
         }
     }
 
-    private static final class WithoutModelEngine extends URLClassLoader
-    {
+    private static final class WithoutModelEngine extends URLClassLoader {
         final List<String> blocked = new ArrayList<>();
 
-        WithoutModelEngine(URL classes, ClassLoader parent)
-        {
-            super(new URL[]
-            { classes }, parent);
+        WithoutModelEngine(URL classes, ClassLoader parent) {
+            super(new URL[] { classes }, parent);
         }
 
         @Override
-        protected synchronized Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException
-        {
+        protected synchronized Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
             if (name.startsWith("com.ticxo.modelengine.") || name.startsWith("com.simmc.meplayeractions.me.")
                     || name.startsWith("com.simmc.meplayeractions.action.")
                     || name.startsWith("com.simmc.meplayeractions.config.")
                             && !name.equals("com.simmc.meplayeractions.config.PerformanceSettings")
                     || name.startsWith("com.simmc.meplayeractions.gameplay.")
                     || name.startsWith("com.simmc.meplayeractions.ui.")
-                    || name.equals("com.simmc.meplayeractions.client.ClientSyncService"))
-            {
+                    || name.equals("com.simmc.meplayeractions.client.ClientSyncService")) {
                 this.blocked.add(name);
                 throw new ClassNotFoundException("Optional dependency intentionally unavailable: " + name);
             }
-            if (!name.startsWith("com.simmc.meplayeractions."))
-            {
+            if (!name.startsWith("com.simmc.meplayeractions.")) {
                 return super.loadClass(name, resolve);
             }
 
             Class<?> type = findLoadedClass(name);
-            if (type == null)
-            {
+            if (type == null) {
                 type = findClass(name);
             }
 
-            if (resolve)
-            {
+            if (resolve) {
                 resolveClass(type);
             }
 

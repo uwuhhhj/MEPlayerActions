@@ -4,11 +4,9 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class GalleryModelUseStateTest
-{
+class GalleryModelUseStateTest {
     @Test
-    void sendingACommandRemainsPendingUntilTheAuthoritativeBindingChanges()
-    {
+    void sendingACommandRemainsPendingUntilTheAuthoritativeBindingChanges() {
         GalleryModelUseState.State sent = GalleryModelUseState.server("new-model", "old-model", "new-model", false);
         assertTrue(sent.waiting());
         assertFalse(sent.current());
@@ -24,16 +22,14 @@ class GalleryModelUseStateTest
     }
 
     @Test
-    void aServerBindingIsCurrentWithoutPreviewAssetsOrALocalRenderingLease()
-    {
+    void aServerBindingIsCurrentWithoutPreviewAssetsOrALocalRenderingLease() {
         GalleryModelUseState.State state = GalleryModelUseState.server("bound-model", "bound-model", "", false);
         assertTrue(state.current());
         assertFalse(state.canUse());
     }
 
     @Test
-    void failedOrExpiredRequestsDoNotLeaveAnUnconfirmedCurrentModel()
-    {
+    void failedOrExpiredRequestsDoNotLeaveAnUnconfirmedCurrentModel() {
         assertTrue(GalleryModelUseState.server("requested", "", "requested", false).waiting());
         GalleryModelUseState.State expired = GalleryModelUseState.server("requested", "", "", true);
         assertFalse(expired.current());
@@ -42,8 +38,7 @@ class GalleryModelUseStateTest
     }
 
     @Test
-    void savedServerSettingsRequireExplicitApplicationAndAnotherBindingConfirmation()
-    {
+    void savedServerSettingsRequireExplicitApplicationAndAnotherBindingConfirmation() {
         GalleryModelUseState.State draft = GalleryModelUseState.server("bound", "bound", "", true, true);
         assertTrue(draft.current());
         assertTrue(draft.canUse());
@@ -57,8 +52,7 @@ class GalleryModelUseStateTest
     }
 
     @Test
-    void loadingPrivateContentBecomesCurrentOnlyAfterTheExactAssetIsApplied()
-    {
+    void loadingPrivateContentBecomesCurrentOnlyAfterTheExactAssetIsApplied() {
         GalleryModelUseState.State loading = GalleryModelUseState.local("private", "content", "", "", "private", true,
                 true);
         assertTrue(loading.waiting());
@@ -79,8 +73,7 @@ class GalleryModelUseStateTest
     }
 
     @Test
-    void aServerDisguiseBlocksPrivateApplicationAndSavedDefaultsAreNotCurrent()
-    {
+    void aServerDisguiseBlocksPrivateApplicationAndSavedDefaultsAreNotCurrent() {
         GalleryModelUseState.State blocked = GalleryModelUseState.local("private", "content", "private", "content", "",
                 false, true);
         assertFalse(blocked.current());

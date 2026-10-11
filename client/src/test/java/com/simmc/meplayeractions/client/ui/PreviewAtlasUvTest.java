@@ -8,26 +8,18 @@ import javax.imageio.ImageIO;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class PreviewAtlasUvTest
-{
+class PreviewAtlasUvTest {
     @Test
-    void tinyDefaultWhiteEyeCannotSampleAdjacentTransparentOrSkinPixels() throws Exception
-    {
+    void tinyDefaultWhiteEyeCannotSampleAdjacentTransparentOrSkinPixels() throws Exception {
         BufferedImage source;
         try (InputStream input = getClass()
-                .getResourceAsStream("/assets/meplayeractions/builtin/openysm_default/textures/default.png"))
-        {
+                .getResourceAsStream("/assets/meplayeractions/builtin/openysm_default/textures/default.png")) {
             assertNotNull(input);
             source = ImageIO.read(input);
         }
         PreviewAtlasUv rect = new PreviewAtlasUv(131, 7, source.getWidth(), source.getHeight(), 512, 256);
-        for (float pixelX : new float[]
-        { 23.05f, 23.95f, 24.05f, 24.95f })
-
-        {
-            for (float pixelY : new float[]
-            { 42.05f, 42.95f, 43.05f, 43.95f })
-            {
+        for (float pixelX : new float[] { 23.05f, 23.95f, 24.05f, 24.95f }) {
+            for (float pixelY : new float[] { 42.05f, 42.95f, 43.05f, 43.95f }) {
                 int sampledX = (int) Math.floor(rect.u(pixelX / source.getWidth()) * rect.atlasWidth() - rect.x());
                 int sampledY = (int) Math.floor(rect.v(pixelY / source.getHeight()) * rect.atlasHeight() - rect.y());
                 int pixel = source.getRGB(sampledX, sampledY);
@@ -43,12 +35,9 @@ class PreviewAtlasUvTest
     }
 
     @Test
-    void everyAtlasRegionPreservesOriginalPixelBoundariesWithoutWholeImageInset()
-    {
-        for (PreviewAtlasUv rect : new PreviewAtlasUv[]
-        { new PreviewAtlasUv(1, 1, 128, 128, 256, 256), new PreviewAtlasUv(257, 3, 64, 32, 512, 128),
-                new PreviewAtlasUv(0, 0, 4096, 4096, 4096, 4096) })
-        {
+    void everyAtlasRegionPreservesOriginalPixelBoundariesWithoutWholeImageInset() {
+        for (PreviewAtlasUv rect : new PreviewAtlasUv[] { new PreviewAtlasUv(1, 1, 128, 128, 256, 256),
+                new PreviewAtlasUv(257, 3, 64, 32, 512, 128), new PreviewAtlasUv(0, 0, 4096, 4096, 4096, 4096) }) {
             assertEquals(rect.x(), rect.u(0) * rect.atlasWidth(), .0001);
             assertEquals(rect.x() + rect.width(), rect.u(1) * rect.atlasWidth(), .0001);
             assertEquals(rect.y(), rect.v(0) * rect.atlasHeight(), .0001);

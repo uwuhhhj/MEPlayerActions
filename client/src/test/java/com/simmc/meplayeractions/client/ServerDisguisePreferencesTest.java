@@ -13,19 +13,16 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class ServerDisguisePreferencesTest
-{
+class ServerDisguisePreferencesTest {
     @TempDir
     Path directory;
 
-    private static ServerDisguisePreferences example()
-    {
+    private static ServerDisguisePreferences example() {
         return ServerDisguisePreferences.fromFields("0.8", "", "true", "8", "10", "2", "slowness:1");
     }
 
     @Test
-    void unsetFieldsInheritServerDefaultsAndAnExplicitExampleUsesOnlyExistingArguments()
-    {
+    void unsetFieldsInheritServerDefaultsAndAnExplicitExampleUsesOnlyExistingArguments() {
         assertEquals("meplayeractions disguise ysm_01_jk", ServerDisguisePreferences.defaults().command("ysm_01_jk"));
         assertEquals(
                 "meplayeractions disguise ysm_02_jk scale=0.8 show-self=true view-distance=8 max-viewers=10 delay=2 effect=slowness:1",
@@ -35,18 +32,13 @@ class ServerDisguisePreferencesTest
     }
 
     @Test
-    void commandAssemblyRejectsAdditionalCommandsAndEffectsOutsideTheServerContract()
-    {
-        for (String id : List.of("ysm_01_jk scale=8", "ysm_01_jk\nstop", "../model", "ysm_01_jk;op"))
-
-        {
+    void commandAssemblyRejectsAdditionalCommandsAndEffectsOutsideTheServerContract() {
+        for (String id : List.of("ysm_01_jk scale=8", "ysm_01_jk\nstop", "../model", "ysm_01_jk;op")) {
             assertThrows(IllegalArgumentException.class, () -> example().command(id));
         }
 
         for (String effect : List.of("slowness:1 show-self=false", "slowness:0", "slowness:257", "slowness:1:0",
-                "speed:1", "slowness:1:86401"))
-
-        {
+                "speed:1", "slowness:1:86401")) {
             assertThrows(IllegalArgumentException.class,
                     () -> ServerDisguisePreferences.fromFields("", "", "", "", "", "", effect));
         }
@@ -60,8 +52,7 @@ class ServerDisguisePreferencesTest
     }
 
     @Test
-    void profilesPersistByServerModelWithoutEnablingPrivateAppearanceOrReplacingOtherChoices()
-    {
+    void profilesPersistByServerModelWithoutEnablingPrivateAppearanceOrReplacingOtherChoices() {
         Path path = this.directory.resolve("options.json");
         ClientOptions options = new ClientOptions(path);
         options.toggleFavorite("openysm_default");
@@ -77,8 +68,7 @@ class ServerDisguisePreferencesTest
     }
 
     @Test
-    void oneMalformedProfileDoesNotDiscardValidProfilesOrPrivateOptions() throws Exception
-    {
+    void oneMalformedProfileDoesNotDiscardValidProfilesOrPrivateOptions() throws Exception {
         JsonObject json = new JsonObject();
         json.addProperty("enabled", false);
         JsonObject profiles = new JsonObject();
@@ -98,11 +88,9 @@ class ServerDisguisePreferencesTest
     }
 
     @Test
-    void capacityAndIoFailuresLeaveThePreviousDraftAndUnrelatedOptionsIntact() throws Exception
-    {
+    void capacityAndIoFailuresLeaveThePreviousDraftAndUnrelatedOptionsIntact() throws Exception {
         ClientOptions options = new ClientOptions(this.directory.resolve("options.json"));
-        for (int index = 0; index < ClientOptions.MAX_SERVER_DISGUISE_PROFILES; index++)
-        {
+        for (int index = 0; index < ClientOptions.MAX_SERVER_DISGUISE_PROFILES; index++) {
             assertTrue(options.updateServerDisguisePreferences("model_" + index, example()));
         }
 
@@ -120,8 +108,7 @@ class ServerDisguisePreferencesTest
     }
 
     @Test
-    void savedParametersStillRequireCurrentCatalogueAuthorityAndRespectTheSharedCommandCooldown()
-    {
+    void savedParametersStillRequireCurrentCatalogueAuthorityAndRespectTheSharedCommandCooldown() {
         ServerModelCatalogSnapshot catalogue = new ServerModelCatalogSnapshot();
         JsonObject chunk = new JsonObject();
         chunk.addProperty("revision", 1);
@@ -147,8 +134,7 @@ class ServerDisguisePreferencesTest
     }
 
     @Test
-    void serverSuspensionSurvivesAClientRestartWithoutErasingTheSavedPrivateModel()
-    {
+    void serverSuspensionSurvivesAClientRestartWithoutErasingTheSavedPrivateModel() {
         Path path = this.directory.resolve("paused.json");
         ClientOptions options = new ClientOptions(path);
         LocalAppearanceSettings saved = new LocalAppearanceSettings(true, "openysm_default", 1.2f, 0, 0, 0);

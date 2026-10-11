@@ -6,11 +6,9 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import static org.junit.jupiter.api.Assertions.*;
 
-class NativeHandlerInstallationTest
-{
+class NativeHandlerInstallationTest {
     @Test
-    void theCallerReturnsPendingUntilNetworkInstallationAndMainValidationBothComplete()
-    {
+    void theCallerReturnsPendingUntilNetworkInstallationAndMainValidationBothComplete() {
         Rig rig = new Rig();
         Object lease = new Object();
         assertFalse(rig.installation.request("owner", lease, () -> true));
@@ -28,8 +26,7 @@ class NativeHandlerInstallationTest
     }
 
     @Test
-    void cancellingBeforeInstallationCannotInstallOrBecomeReadyLater()
-    {
+    void cancellingBeforeInstallationCannotInstallOrBecomeReadyLater() {
         Rig rig = new Rig();
         Object lease = new Object();
         rig.installation.request("owner", lease, () -> true);
@@ -43,8 +40,7 @@ class NativeHandlerInstallationTest
     }
 
     @Test
-    void cancellingAfterTheNetworkTaskStillRemovesTheHandlerAndDiscardsTheMainCompletion()
-    {
+    void cancellingAfterTheNetworkTaskStillRemovesTheHandlerAndDiscardsTheMainCompletion() {
         Rig rig = new Rig();
         Object lease = new Object();
         rig.installation.request("owner", lease, () -> true);
@@ -58,21 +54,15 @@ class NativeHandlerInstallationTest
     }
 
     @Test
-    void aReplacedOrDisconnectedChannelCannotReuseAnOldCompletion()
-    {
-        for (boolean replaced : new boolean[]
-        { false, true })
-        {
+    void aReplacedOrDisconnectedChannelCannotReuseAnOldCompletion() {
+        for (boolean replaced : new boolean[] { false, true }) {
             Rig rig = new Rig();
             Object lease = new Object();
             rig.installation.request("owner", lease, () -> true);
             rig.network.drain();
-            if (replaced)
-            {
+            if (replaced) {
                 rig.current = false;
-            }
-            else
-            {
+            } else {
                 rig.live = false;
             }
 
@@ -85,8 +75,7 @@ class NativeHandlerInstallationTest
     }
 
     @Test
-    void concurrentOwnersShareOneInstallationAndOneCancellationDoesNotWithdrawTheOther()
-    {
+    void concurrentOwnersShareOneInstallationAndOneCancellationDoesNotWithdrawTheOther() {
         Rig rig = new Rig();
         Object first = new Object(), second = new Object();
         rig.installation.request("one", first, () -> true);
@@ -104,12 +93,10 @@ class NativeHandlerInstallationTest
     }
 
     @Test
-    void ownerGenerationsAndLiveAuthorizationAreRecheckedOnTheMainThread()
-    {
+    void ownerGenerationsAndLiveAuthorizationAreRecheckedOnTheMainThread() {
         Rig rig = new Rig();
         Object old = new Object(), fresh = new Object();
-        boolean[] allowed =
-        { true };
+        boolean[] allowed = { true };
         rig.installation.request("owner", old, () -> allowed[0]);
         rig.installation.request("owner", fresh, () -> allowed[0]);
         assertFalse(rig.installation.pending("owner", old));
@@ -123,16 +110,12 @@ class NativeHandlerInstallationTest
     }
 
     @Test
-    void aStoppedMainSchedulerCannotLeaveAnAuthorizedHandlerBehind()
-    {
+    void aStoppedMainSchedulerCannotLeaveAnAuthorizedHandlerBehind() {
         Queue network = new Queue();
-        boolean[] handler =
-        { false };
-        NativeHandlerInstallation installation = new NativeHandlerInstallation(network, task ->
-        {
+        boolean[] handler = { false };
+        NativeHandlerInstallation installation = new NativeHandlerInstallation(network, task -> {
             throw new RejectedExecutionException();
-        }, () -> true, () -> true, () ->
-        {
+        }, () -> true, () -> true, () -> {
             handler[0] = true;
             return true;
         }, () -> handler[0] = false);
@@ -143,8 +126,7 @@ class NativeHandlerInstallationTest
     }
 
     @Test
-    void anUnavailablePipelineFallsBackWithoutReportingAnEndlessPendingRequest()
-    {
+    void anUnavailablePipelineFallsBackWithoutReportingAnEndlessPendingRequest() {
         Rig rig = new Rig();
         rig.installSuccess = false;
         Object lease = new Object();
@@ -158,32 +140,26 @@ class NativeHandlerInstallationTest
         assertEquals(1, rig.installs);
     }
 
-    private static final class Queue implements Executor
-    {
+    private static final class Queue implements Executor {
         final Deque<Runnable> tasks = new ArrayDeque<>();
 
-        public void execute(Runnable task)
-        {
+        public void execute(Runnable task) {
             this.tasks.addLast(task);
         }
 
-        void drain()
-        {
-            while (!this.tasks.isEmpty())
-            {
+        void drain() {
+            while (!this.tasks.isEmpty()) {
                 this.tasks.removeFirst().run();
             }
         }
     }
 
-    private static final class Rig
-    {
+    private static final class Rig {
         final Queue network = new Queue(), main = new Queue();
         boolean live = true, current = true, handler, installSuccess = true;
         int installs;
         final NativeHandlerInstallation installation = new NativeHandlerInstallation(this.network, this.main,
-                () -> this.live, () -> this.current, () ->
-                {
+                () -> this.live, () -> this.current, () -> {
                     this.installs++;
                     this.handler = this.installSuccess;
                     return this.installSuccess;

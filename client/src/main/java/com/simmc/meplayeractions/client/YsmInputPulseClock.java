@@ -1,93 +1,75 @@
 package com.simmc.meplayeractions.client;
 
 /** Sparkle b1230a4 InputStateKey's bounded local interaction clocks. No render-time mutation. */
-final class YsmInputPulseClock
-{
+final class YsmInputPulseClock {
     private int swingTicks, swingAge, swingSequence, useTicks, useAge;
 
-    void swing()
-    {
+    void swing() {
         this.swingTicks = 10;
         this.swingAge = 1;
         this.swingSequence = this.swingSequence == Integer.MAX_VALUE ? 1 : this.swingSequence + 1;
     }
 
-    void use()
-    {
+    void use() {
         this.useTicks = 2;
         this.useAge = 1;
     }
 
-    void tick(boolean nativeUsing, boolean validUse)
-    {
-        if (this.useTicks > 0)
-        {
-            if (nativeUsing || !validUse)
-            {
+    void tick(boolean nativeUsing, boolean validUse) {
+        if (this.useTicks > 0) {
+            if (nativeUsing || !validUse) {
                 clearUse();
             }
 
-            else
-            {
+            else {
                 this.useTicks--;
                 this.useAge++;
-                if (this.useTicks <= 0)
-                {
+                if (this.useTicks <= 0) {
                     clearUse();
                 }
             }
         }
-        if (this.swingTicks > 0)
-        {
+        if (this.swingTicks > 0) {
             this.swingTicks--;
             this.swingAge++;
         }
     }
 
-    void clearUse()
-    {
+    void clearUse() {
         this.useTicks = 0;
         this.useAge = 0;
     }
 
-    void reset()
-    {
+    void reset() {
         this.swingTicks = 0;
         this.swingAge = 0;
         this.swingSequence = 0;
         clearUse();
     }
 
-    int swingTicks()
-    {
+    int swingTicks() {
         return this.swingTicks;
     }
 
-    int swingAge()
-    {
+    int swingAge() {
         return this.swingAge;
     }
 
-    int sequence()
-    {
+    int sequence() {
         return this.swingSequence;
     }
 
-    int useTicks()
-    {
+    int useTicks() {
         return this.useTicks;
     }
 
-    int useAge()
-    {
+    int useAge() {
         return this.useAge;
     }
 
     /** InputStateKey.getSwingTicks prefers the real entity swing, then the local pending pulse. */
-    float swingTicks(boolean nativeSwinging, int nativeTicks, float fraction, boolean local)
-    {
-        if (nativeSwinging)
-        {
+    float swingTicks(boolean nativeSwinging, int nativeTicks, float fraction, boolean local) {
+        if (nativeSwinging) {
             return Math.max(0, nativeTicks + fraction);
         }
 
@@ -95,10 +77,8 @@ final class YsmInputPulseClock
     }
 
     /** InputStateKey.getAttackProgress prefers positive vanilla interpolation before the main-hand pulse. */
-    float attackProgress(float nativeProgress, boolean localMainHand, float resolvedSwingTicks)
-    {
-        if (nativeProgress > 0)
-        {
+    float attackProgress(float nativeProgress, boolean localMainHand, float resolvedSwingTicks) {
+        if (nativeProgress > 0) {
             return nativeProgress;
         }
 

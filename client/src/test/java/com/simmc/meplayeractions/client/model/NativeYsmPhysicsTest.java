@@ -3,11 +3,9 @@ package com.simmc.meplayeractions.client.model;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
-class NativeYsmPhysicsTest
-{
+class NativeYsmPhysicsTest {
     @Test
-    void firstOrderUsesAuthorResponseAndClampsOversizedSteps()
-    {
+    void firstOrderUsesAuthorResponseAndClampsOversizedSteps() {
         NativeYsmPhysics physics = new NativeYsmPhysics(false);
         physics.args(8, .1f, 0, 0);
         physics.update(.025f);
@@ -17,8 +15,7 @@ class NativeYsmPhysicsTest
     }
 
     @Test
-    void nonPositiveFirstOrderResponseSnapsToInputLikeUpstream()
-    {
+    void nonPositiveFirstOrderResponseSnapsToInputLikeUpstream() {
         NativeYsmPhysics physics = new NativeYsmPhysics(false);
         physics.args(9, 0, 0, 0);
         physics.update(.02f);
@@ -29,8 +26,7 @@ class NativeYsmPhysicsTest
     }
 
     @Test
-    void secondOrderClampsFrameCatchupToOneTenthOfASecond()
-    {
+    void secondOrderClampsFrameCatchupToOneTenthOfASecond() {
         NativeYsmPhysics a = new NativeYsmPhysics(true);
         NativeYsmPhysics b = new NativeYsmPhysics(true);
         a.args(16, 1, .5f, 0);
@@ -44,12 +40,10 @@ class NativeYsmPhysicsTest
     }
 
     @Test
-    void zeroFrequencyUsesMinimumFrequencyAndRemainsFinite()
-    {
+    void zeroFrequencyUsesMinimumFrequencyAndRemainsFinite() {
         NativeYsmPhysics physics = new NativeYsmPhysics(true);
         physics.args(16, 0, .5f, 0);
-        for (int i = 0; i < 100; i++)
-        {
+        for (int i = 0; i < 100; i++) {
             physics.update(.05f);
         }
 
@@ -58,16 +52,14 @@ class NativeYsmPhysicsTest
     }
 
     @Test
-    void invalidInputsAndTimeStepsAreSanitizedWithoutSharingState()
-    {
+    void invalidInputsAndTimeStepsAreSanitizedWithoutSharingState() {
         NativeYsmPhysics a = new NativeYsmPhysics(true);
         NativeYsmPhysics b = new NativeYsmPhysics(true);
         a.args(Float.NaN, Float.NaN, Float.NaN, Float.NaN);
         a.update(Float.NaN);
         assertEquals(0, a.value());
         b.args(4, 1, .5f, 0);
-        for (int i = 0; i < 100; i++)
-        {
+        for (int i = 0; i < 100; i++) {
             b.update(.05f);
         }
 
