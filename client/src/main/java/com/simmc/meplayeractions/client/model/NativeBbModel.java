@@ -22,15 +22,15 @@ import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 
-/** Host boundary around the migrated Sparkle parser/converter; server blueprints keep BbModel.parse. */
+/** Format boundary around the migrated Sparkle parser/converter, shared by every delivery path. */
 public final class NativeBbModel {
     private NativeBbModel() { }
 
-    /** Both local import and a passive private receiver run the same source conversion chain. */
+    /** Local, passive private and server receivers interpret the same source bytes identically. */
     public static YsmFolderModel.Imported read(byte[] bytes, Map<String, byte[]> sourceFiles, String textureId) throws IOException {
         JsonObject document = document(bytes);
         // Earlier MPA exports carry already converted runtime data, not author Blockbench input.
-        if (document.has("ysm_format_version")) {
+        if (preparedRuntime(document)) {
             if (textureId != null && !textureId.isEmpty()) throw new IOException("旧转换模型没有皮肤列表");
             BbModel.parseLocal(bytes);
             return new YsmFolderModel.Imported(bytes, "", YsmModelProfile.empty(), sourceFiles);
@@ -38,8 +38,10 @@ public final class NativeBbModel {
         try {
             BBModelFile model = BBModelParser.parse(document.toString());
             validateModel(model);
+            completeEmbeddedTextureMetadata(model);
             Map<String, byte[]> textures = sideTextures(sourceFiles);
             var raw = BBToRawConverter.convert(model, textures);
+            NativeBbModelBasis.restoreEditorRotations(raw);
             NativeBbmodelActions.apply(raw);
             return NativeYsmFile.importModel(raw, textureId);
         } catch (RuntimeException invalid) {
@@ -51,7 +53,7 @@ public final class NativeBbModel {
     public static Map<String, byte[]> localSourceFiles(Path modelPath, byte[] bytes) throws IOException {
         JsonObject document = document(bytes);
         Map<String, byte[]> files = new LinkedHashMap<>(); files.put("model.bbmodel", bytes);
-        if (document.has("ysm_format_version")) return files;
+        if (preparedRuntime(document)) return files;
         BBModelFile model;
         try { model = BBModelParser.parse(document.toString()); validateModel(model); }
         catch (RuntimeException invalid) { throw new IOException("Blockbench 模型结构无效", invalid); }
@@ -81,6 +83,35 @@ public final class NativeBbModel {
             NativeModelBundle.checkedLocalFiles(files);
         }
         return NativeModelBundle.checkedLocalFiles(files);
+    }
+
+    /** Explicit runtime metadata prevents a second author-format conversion; filenames grant no special semantics. */
+    private static boolean preparedRuntime(JsonObject document) {
+        return document.has("ysm_format_version")
+                || document.has("mpa_runtime") && document.get("mpa_runtime").isJsonObject();
+    }
+
+    /** Optional editor labels/UUIDs are not required to render an indexed, self-contained PNG. */
+    private static void completeEmbeddedTextureMetadata(BBModelFile model) {
+        var names = new java.util.HashSet<String>();
+        var ids = new java.util.HashSet<String>();
+        for (BBTexture texture : model.textures) {
+            if (texture.name != null && !texture.name.isBlank()) names.add(texture.name.toLowerCase(Locale.ROOT));
+            if (texture.uuid != null && !texture.uuid.isBlank()) ids.add(texture.uuid);
+        }
+        for (int index = 0; index < model.textures.size(); index++) {
+            BBTexture texture = model.textures.get(index);
+            if (texture.isEmbedded() && (texture.name == null || texture.name.isBlank())) {
+                String name = "mpa_embedded_" + index + ".png";
+                while (!names.add(name.toLowerCase(Locale.ROOT))) name = "_" + name;
+                texture.name = name;
+            }
+            if (texture.uuid == null || texture.uuid.isBlank()) {
+                String id = "mpa_texture_" + index;
+                while (!ids.add(id)) id = "_" + id;
+                texture.uuid = id;
+            }
+        }
     }
 
     private static Map<String, byte[]> sideTextures(Map<String, byte[]> files) throws IOException {

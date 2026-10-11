@@ -37,7 +37,7 @@ class NativeBbModelTest {
         assertFalse(model.basisVertices().isEmpty());
         assertTrue(model.animations().contains("authored"));
         assertEquals("HOLD", model.animationLoop("authored"));
-        assertThrows(IllegalArgumentException.class, () -> BbModel.parse(bytes(source)), "ordinary/server raw semantics remain distinct");
+        assertThrows(IllegalArgumentException.class, () -> BbModel.parse(bytes(source)), "The low-level runtime reader does not convert author group tables");
     }
 
     @Test void numericBezierBakingPreservesAuthorCurveInsteadOfDroppingOrUsingAnEndpointLine() throws Exception {
@@ -100,6 +100,33 @@ class NativeBbModelTest {
         byte[] bytes = YsmFolderModel.bundledDefault();
         var imported = NativeBbModel.read(bytes, Map.of("model.bbmodel", bytes), null);
         assertArrayEquals(bytes, imported.raw());
+    }
+
+    @Test void unnamedEmbeddedTextureRemainsUsableAndHasStableDerivedIdentity() throws Exception {
+        JsonObject source = source();
+        JsonObject texture = source.getAsJsonArray("textures").get(0).getAsJsonObject();
+        texture.remove("name"); texture.remove("uuid");
+        byte[] original = bytes(source);
+        var first = NativeBbModel.read(original, Map.of("model.bbmodel", original), null);
+        var second = NativeBbModel.read(original, Map.of("model.bbmodel", original), null);
+        assertArrayEquals(first.raw(), second.raw());
+        assertFalse(BbModelAsset.read(original).model().basisVertices().isEmpty());
+        assertEquals(1, first.profile().textures().size());
+        assertArrayEquals(bytes(source), original, "Import must not rewrite the original transfer bytes");
+    }
+
+    @Test void unnamedTextureMetadataDoesNotCollapseOrReplaceAnotherDeclaredTexture() throws Exception {
+        JsonObject source = source();
+        JsonObject first = source.getAsJsonArray("textures").get(0).getAsJsonObject();
+        JsonObject second = first.deepCopy();
+        first.remove("name"); first.remove("uuid"); second.remove("uuid");
+        second.addProperty("name", "mpa_embedded_0.png");
+        source.getAsJsonArray("textures").add(second);
+        byte[] original = bytes(source);
+        var imported = NativeBbModel.read(original, Map.of("model.bbmodel", original), null);
+        assertEquals(2, imported.profile().textures().size());
+        assertEquals(2, imported.profile().textures().stream().map(YsmModelProfile.TextureChoice::id).distinct().count());
+        assertTrue(imported.profile().textures().stream().anyMatch(texture -> texture.path().endsWith("mpa_embedded_0.png")));
     }
 
     static JsonObject source() throws IOException {
