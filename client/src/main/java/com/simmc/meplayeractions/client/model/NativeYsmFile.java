@@ -119,6 +119,7 @@ public final class NativeYsmFile {
             JsonObject value = new JsonObject(), bones = new JsonObject();
             value.addProperty("loop", animation.loopMode == 1 ? "loop" : animation.loopMode == 3 ? "hold_on_last_frame" : "once");
             if (Float.isFinite(animation.length)) value.addProperty("animation_length", animation.length);
+            if (animation.bbEditorAxes != 0) value.addProperty("mpa_bb_editor_axes", animation.bbEditorAxes);
             if (animation.blendWeight != null) value.add("blend_weight", scalar(animation.blendWeight));
             for (var bone : animation.boneAnimations) {
                 JsonObject channels = new JsonObject();

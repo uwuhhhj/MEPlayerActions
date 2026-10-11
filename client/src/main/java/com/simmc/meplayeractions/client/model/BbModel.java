@@ -530,7 +530,7 @@ public final class BbModel {
                 Vector3f current = previousControllerPose == null ? null : previousControllerPose.channels[entry.getKey()][c];
                 current = current == null ? defaultValue(c) : new Vector3f(current);
                 // Sparkle supplies prior controller snapshot values: rotation is radians; position X is before render reflection.
-                if (c == 1) current.mul((float) DEG); else if (c == 0 && legacyAnimationAxes) current.x = -current.x;
+                if (c == 1) current.mul((float) DEG); else if (c == 0 && track.keys[0].pre.legacy) current.x = -current.x;
                 String previousScope = context.physicsScope();
                 try {
                     if (nativeFormatVersion > 0) context.physicsScope(bones.get(entry.getKey()).id);
@@ -554,7 +554,7 @@ public final class BbModel {
         Track track = tracks[channel];
         Vector3f current = previousControllerPose == null ? null : previousControllerPose.channels[bone][channel];
         current = current == null ? defaultValue(channel) : new Vector3f(current);
-        if (channel == 1) current.mul((float) DEG); else if (channel == 0 && legacyAnimationAxes) current.x = -current.x;
+        if (channel == 1) current.mul((float) DEG); else if (channel == 0 && track.keys[0].pre.legacy) current.x = -current.x;
         String previousScope = context.physicsScope();
         try {
             if (nativeFormatVersion > 0) context.physicsScope(bones.get(bone).id);
@@ -932,6 +932,8 @@ public final class BbModel {
                 String name = string(animation, "name", "");
                 if (name.isBlank() || name.length() > 128 || clips.containsKey(name)) throw invalid("Missing/duplicate animation name");
                 boolean nativeFolder = animationFormatVersion > 0;
+                int editorAxes = nativeFolder ? integer(animation, "mpa_bb_editor_axes", 0, 4, 5) : 0;
+                boolean clipLegacyAxes = editorAxes == 0 ? legacyAnimationAxes : editorAxes == 4;
                 if (!nativeFolder) rejectScript(animation, "anim_time_update", "animation_time_update", "start_delay", "loop_delay");
                 if (nativeFolder && animation.has("anim_time_update") && animation.has("animation_time_update"))
                     throw invalid("Ambiguous YSM animation time update aliases");
@@ -1000,8 +1002,8 @@ public final class BbModel {
                         JsonArray points = array(frame, "data_points", true);
                         if (points.isEmpty() || points.size() > 2) throw invalid("Unsupported keyframe data point count");
                         boolean injectedHead = serverYsmHeadQueries && channel == 1 && bones.get(index).name.equals("Head");
-                        Point pre = point(object(points.get(0)), channel, injectedHead);
-                        Point post = points.size() == 2 ? point(object(points.get(1)), channel, injectedHead) : pre;
+                        Point pre = point(object(points.get(0)), channel, injectedHead, clipLegacyAxes);
+                        Point post = points.size() == 2 ? point(object(points.get(1)), channel, injectedHead, clipLegacyAxes) : pre;
                         channels[channel].add(new Key(time, pre, post, interpolation));
                     }
                     Track[] boneTracks = new Track[3];
@@ -1036,7 +1038,7 @@ public final class BbModel {
         Molang.Program compileExpression(String expression) {
             return animationFormatVersion > 0 ? Molang.compileNativeYsm(expression) : Molang.compile(expression);
         }
-        Point point(JsonObject point, int channel, boolean injectedHead) {
+        Point point(JsonObject point, int channel, boolean injectedHead, boolean clipLegacyAxes) {
             if (point.has("script") || point.has("effect") || point.has("file")) throw invalid("Script/external keyframe data is unsupported");
             float fallback = channel == 2 ? 1 : 0;
             double bound = channel == 2 ? 64 : channel == 1 ? 36_000 : 4096;
@@ -1053,7 +1055,7 @@ public final class BbModel {
                 } catch (NumberFormatException expression) { /* Compile bounded numeric Molang below. */ }
             }
             return new Point(compileExpression(axes[0]), compileExpression(axes[1]), compileExpression(axes[2]),
-                    channel, legacyAnimationAxes, String.join("|", axes));
+                    channel, clipLegacyAxes, String.join("|", axes));
         }
     }
 

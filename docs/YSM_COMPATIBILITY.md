@@ -49,6 +49,8 @@
 
 BBModel 静态骨骼和 locator 旋转使用 Blockbench 项目坐标。固定 Sparkle 转换器把项目 X／Y 旋转当作 Bedrock 几何反转；BBModel 专用适配层恢复作者初始角度，并按 ZYX 合成。依据为 [Blockbench 4.10.4 项目预览](https://github.com/JannisX11/blockbench/blob/v4.10.4/js/outliner/outliner.js#L575) 与 [Bedrock 导出](https://github.com/JannisX11/blockbench/blob/v4.10.4/js/io/formats/bedrock.js#L816)；[5.0 格式迁移](https://github.com/JannisX11/blockbench/blob/v5.0.0/js/io/formats/bbmodel.js#L67)只迁移动画通道，不反转静态骨骼。这项适配仅作用于作者 BBModel 导入，原生二进制／文件夹 YSM 与已转换资产保持各自格式规则。入口见 [NativeBbModelBasis](../client/src/main/java/com/simmc/meplayeractions/client/model/NativeBbModelBasis.java)。
 
+作者 BBModel 动画按原文件版本保留通道语义：4.x 的位置 X、旋转 X／Y 反号，5.x 保持各轴正值，均按项目 ZYX 合成。版本标记随作者动画、别名与第一人称副本保留，在表达式求值后适配，不重写作者 Molang 程序；生成动作预设与原生 YSM 不使用这个标记。数值 Bézier 的时间／值挂柄按关键帧端点偏移解释，双数据点保留前／后顺序。依据为 [4.10 动画预览](https://github.com/JannisX11/blockbench/blob/v4.10.4/js/animations/timeline_animators.js#L331)、[5.0 动画预览](https://github.com/JannisX11/blockbench/blob/v5.0.0/js/animations/timeline_animators.js#L369)和 [Bézier 挂柄](https://github.com/JannisX11/blockbench/blob/v5.0.0/js/animations/keyframe.js#L209)。入口见 [NativeBbModelAnimations](../client/src/main/java/com/simmc/meplayeractions/client/model/NativeBbModelAnimations.java)。
+
 ## 来源执行语义
 
 - 动画从已解析的最终骨骼姿态建立开始快照；最终无人接管的通道在 3 tick 内回位，其他播放槽继续输出。predicate 控制器保留来源的缩放过渡、结束进度缓存和作者权重；作者状态控制器使用其自身进度规则。原生旋转混合计入骨骼 initial rotation。见 [NativeYsmAnimationProcessor](../client/src/main/java/com/simmc/meplayeractions/client/model/NativeYsmAnimationProcessor.java)。

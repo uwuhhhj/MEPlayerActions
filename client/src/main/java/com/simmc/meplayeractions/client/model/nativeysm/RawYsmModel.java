@@ -105,6 +105,8 @@ public class RawYsmModel {
 
     public static class RawAnimation {
         public String name;
+        /** Host-only authored BBModel axes: 4/5, or 0 for unchanged native/preset semantics; never a binary field. */
+        public int bbEditorAxes;
         public float length;
         public int loopMode;
         // Float or String

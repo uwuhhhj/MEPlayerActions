@@ -40,7 +40,8 @@ public final class NativeBbModel {
             validateModel(model);
             completeEmbeddedTextureMetadata(model);
             Map<String, byte[]> textures = sideTextures(sourceFiles);
-            var raw = BBToRawConverter.convert(model, textures);
+            var raw = BBToRawConverter.convertEditorAnimations(model, textures);
+            NativeBbModelAnimations.retainEditorAxes(model, raw);
             NativeBbModelBasis.restoreEditorRotations(raw);
             NativeBbmodelActions.apply(raw);
             return NativeYsmFile.importModel(raw, textureId);
@@ -140,10 +141,10 @@ public final class NativeBbModel {
             if (faces > 24_576 || vertices > 98_304) throw new IOException("Blockbench 几何展开数量超出限制");
         }
         for (var animation : model.animations) for (var animator : animation.animators.values()) {
-            // Source numeric Bezier baking emits at most 24 samples for one segment.
+            // An editor Bézier key can control both adjacent segments, each with at most 24 samples.
             // Bound that expansion before allocating its RawYSM keyframes.
             for (var keyframe : animator.keyframes)
-                frames += "bezier".equalsIgnoreCase(keyframe.interpolation) ? 24 : 1;
+                frames += "bezier".equalsIgnoreCase(keyframe.interpolation) ? 48 : 1;
             if (frames > 200_000) throw new IOException("Blockbench 关键帧展开数量超出限制");
         }
     }

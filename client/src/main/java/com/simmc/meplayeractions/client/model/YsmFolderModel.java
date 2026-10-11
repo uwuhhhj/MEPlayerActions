@@ -719,6 +719,12 @@ public final class YsmFolderModel {
                     throw invalid("YSM 动画时间更新标准字段与兼容别名不能同时定义");
                 JsonObject clip = new JsonObject(); clip.addProperty("name", name); JsonObject animators = new JsonObject(); clip.add("animators", animators);
                 clip.addProperty("ysm_primary", true);
+                if (authored.has("mpa_bb_editor_axes")) {
+                    double axes = number(authored, "mpa_bb_editor_axes", 0);
+                    if (axes != 4 && axes != 5) throw invalid("BBModel editor axes must be 4 or 5");
+                    clip.addProperty("mpa_bb_editor_axes", (int) axes);
+                }
+                boolean editorPrograms = clip.has("mpa_bb_editor_axes");
                 clip.addProperty("loop", animationLoop(authored.get("loop")));
                 for (String field : List.of("anim_time_update", "animation_time_update", "start_delay", "loop_delay")) if (authored.has(field)) {
                     JsonElement value = authored.get(field);
@@ -745,8 +751,8 @@ public final class YsmFolderModel {
                         JsonElement data = channels.get(channel);
                         if (data.isJsonObject()) for (var key : object(data).entrySet()) {
                             double time = Double.parseDouble(key.getKey());
-                            keys.add(keyframe(channel, time, key.getValue()));
-                        } else keys.add(keyframe(channel, 0, data));
+                            keys.add(keyframe(channel, time, key.getValue(), editorPrograms));
+                        } else keys.add(keyframe(channel, 0, data, editorPrograms));
                     }
                     if (!keys.isEmpty()) animators.add(node.get("uuid").getAsString(), animator);
                 }
@@ -831,7 +837,7 @@ public final class YsmFolderModel {
             };
         }
 
-        JsonObject keyframe(String channel, double time, JsonElement source) {
+        JsonObject keyframe(String channel, double time, JsonElement source, boolean editorPrograms) {
             if (++frames > MAX_FRAMES || time < 0 || !Double.isFinite(time) || time > MAX_ANIMATION_SECONDS) throw invalid("YSM 关键帧超出限制");
             JsonObject frame = new JsonObject(); frame.addProperty("channel", channel); frame.addProperty("time", time); frame.addProperty("interpolation", "linear");
             JsonArray points = new JsonArray();
@@ -839,13 +845,13 @@ public final class YsmFolderModel {
                 JsonObject key = object(source); JsonElement post = key.get("post");
                 if (post == null) post = key.get("pre");
                 if (post == null) throw invalid("YSM 关键帧缺少 pre/post");
-                if (key.has("pre")) points.add(point(channel, key.get("pre")));
-                points.add(point(channel, post)); frame.addProperty("interpolation", string(key, "lerp_mode", "linear"));
-            } else points.add(point(channel, source));
+                if (key.has("pre")) points.add(point(channel, key.get("pre"), editorPrograms));
+                points.add(point(channel, post, editorPrograms)); frame.addProperty("interpolation", string(key, "lerp_mode", "linear"));
+            } else points.add(point(channel, source, editorPrograms));
             frame.add("data_points", points); return frame;
         }
 
-        JsonObject point(String channel, JsonElement data) {
+        JsonObject point(String channel, JsonElement data, boolean editorPrograms) {
             JsonArray axes;
             if (data.isJsonArray()) { axes = array(data); if (axes.size() != 3) throw invalid("YSM 动画需要三维向量"); }
             else { axes = new JsonArray(); for (int i = 0; i < 3; i++) axes.add(data.deepCopy()); }
@@ -853,7 +859,12 @@ public final class YsmFolderModel {
             for (int i = 0; i < 3; i++) {
                 JsonElement axis = axes.get(i);
                 if (!axis.isJsonPrimitive() || axis.getAsJsonPrimitive().isBoolean()) throw invalid("YSM 动画坐标无效");
-                String expression = normalize(axis.getAsString()); Molang.compileNativeYsm(expression);
+                String expression = axis.getAsString();
+                if (expression.length() > 8192) throw invalid("YSM 表达式过长");
+                // Authored BBModel programs are already complete. Completing a ternary here can
+                // rewrite an inner return block; the shared parser evaluates the original program.
+                if (!editorPrograms) expression = normalize(expression);
+                Molang.compileNativeYsm(expression);
                 point.addProperty(List.of("x", "y", "z").get(i), expression);
             }
             return point;

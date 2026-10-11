@@ -90,6 +90,7 @@ public final class NativeBbmodelActions {
     private static RawYsmModel.RawAnimation copy(RawYsmModel.RawAnimation source, String name) {
         var result = new RawYsmModel.RawAnimation(); result.name = name; result.length = source.length;
         result.loopMode = source.loopMode; result.blendWeight = source.blendWeight;
+        result.bbEditorAxes = source.bbEditorAxes;
         result.unkInt1 = source.unkInt1; result.unkInt2 = source.unkInt2; result.unkInt4 = source.unkInt4;
         result.boneAnimations = source.boneAnimations; result.timelineEvents = source.timelineEvents; result.soundEffects = source.soundEffects;
         return result;

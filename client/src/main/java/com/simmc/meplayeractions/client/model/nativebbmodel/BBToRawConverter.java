@@ -59,6 +59,20 @@ public class BBToRawConverter {
      * @param bbmodel       宸茶В鏋愮殑 bbmodel 鏁版嵁
      * @param sideTextures  鏉ヨ嚜澶栭儴锛堝 Figura zip 鍚岀洰褰曪級鐨?PNG 绾圭悊瑕嗙洊銆?     *                      key 鏄?PNG 鏂囦欢鍚嶏紙灏忓啓锛屼笉鍚洰褰曪級锛寁alue 鏄?PNG 瀛楄妭銆?     *                      闈?null 涓斿尮閰嶆椂浼樺厛浜?bbmodel 鍐呭祵鐨?base64 source銆?     */
     public static RawYsmModel convert(BBModelFile bbmodel, Map<String, byte[]> sideTextures) {
+        return convert(bbmodel, sideTextures, true);
+    }
+
+    /**
+     * Host adapter: preserve authored ZYX channel values for per-clip evaluation of editor version axes.
+     * Author Bézier handles use endpoint offsets and dual points use pre/post editor order.
+     * Keep the fixed source conversion above unchanged for its callers and generated presets.
+     */
+    public static RawYsmModel convertEditorAnimations(BBModelFile bbmodel, Map<String, byte[]> sideTextures) {
+        return convert(bbmodel, sideTextures, false);
+    }
+
+    private static RawYsmModel convert(BBModelFile bbmodel, Map<String, byte[]> sideTextures,
+                                      boolean sourceRotationCompat) {
         Objects.requireNonNull(bbmodel, "bbmodel");
         RawYsmModel raw = new RawYsmModel();
 
@@ -93,7 +107,7 @@ public class BBToRawConverter {
         LocatorInference.ensureHandLocators(raw.mainEntity.mainModel);
 
         // 鍔ㄧ敾
-        convertAnimations(bbmodel, raw);
+        convertAnimations(bbmodel, raw, sourceRotationCompat);
         ImportedActionPresetInstaller.ensureVanillaFallbackAnimations(raw);
         ImportedHumanoidNormalizer.putImportedRouletteDefaults(raw);
 
@@ -642,7 +656,7 @@ public class BBToRawConverter {
     // Animations
     // ============================================================
 
-    private static void convertAnimations(BBModelFile bbmodel, RawYsmModel raw) {
+    private static void convertAnimations(BBModelFile bbmodel, RawYsmModel raw, boolean sourceRotationCompat) {
         if (bbmodel.animations == null || bbmodel.animations.isEmpty()) {
             return;
         }
@@ -669,7 +683,7 @@ public class BBToRawConverter {
         }
 
         for (BBAnimation bbAnim : bbmodel.animations) {
-            RawYsmModel.RawAnimation rawAnim = convertAnimation(bbAnim, groupUuidToName);
+            RawYsmModel.RawAnimation rawAnim = convertAnimation(bbAnim, groupUuidToName, sourceRotationCompat);
             animFile.animations.put(rawAnim.name == null ? bbAnim.uuid : rawAnim.name, rawAnim);
         }
 
@@ -690,7 +704,8 @@ public class BBToRawConverter {
     }
 
     private static RawYsmModel.RawAnimation convertAnimation(BBAnimation bbAnim,
-                                                             Map<String, String> groupUuidToName) {
+                                                             Map<String, String> groupUuidToName,
+                                                             boolean sourceRotationCompat) {
         RawYsmModel.RawAnimation rawAnim = new RawYsmModel.RawAnimation();
         rawAnim.name = bbAnim.name;
         rawAnim.length = bbAnim.length;
@@ -721,9 +736,9 @@ public class BBToRawConverter {
                 boneAnim.boneName = groupUuidToName.getOrDefault(entry.getKey(), entry.getKey());
             }
 
-            addChannelKeyframes(animator.keyframes, "rotation", boneAnim.rotation);
-            addChannelKeyframes(animator.keyframes, "position", boneAnim.position);
-            addChannelKeyframes(animator.keyframes, "scale", boneAnim.scale);
+            addChannelKeyframes(animator.keyframes, "rotation", boneAnim.rotation, sourceRotationCompat);
+            addChannelKeyframes(animator.keyframes, "position", boneAnim.position, sourceRotationCompat);
+            addChannelKeyframes(animator.keyframes, "scale", boneAnim.scale, sourceRotationCompat);
             rawAnim.boneAnimations.add(boneAnim);
         }
 
@@ -731,7 +746,7 @@ public class BBToRawConverter {
     }
 
     private static void addChannelKeyframes(List<BBAnimation.BBKeyframe> keyframes, String channel,
-                                            List<RawYsmModel.RawKeyframe> out) {
+                                            List<RawYsmModel.RawKeyframe> out, boolean sourceRotationCompat) {
         if (keyframes == null || keyframes.isEmpty()) {
             return;
         }
@@ -745,9 +760,9 @@ public class BBToRawConverter {
         int outStart = out.size();
         for (int i = 0; i < channelFrames.size(); i++) {
             BBAnimation.BBKeyframe current = channelFrames.get(i);
-            RawYsmModel.RawKeyframe raw = convertKeyframe(current);
+            RawYsmModel.RawKeyframe raw = convertKeyframe(current, sourceRotationCompat);
             BBAnimation.BBKeyframe next = i + 1 < channelFrames.size() ? channelFrames.get(i + 1) : null;
-            List<RawYsmModel.RawKeyframe> baked = bakeBezierSegment(current, next, raw);
+            List<RawYsmModel.RawKeyframe> baked = bakeBezierSegment(current, next, raw, sourceRotationCompat);
             if (baked.isEmpty()) {
                 out.add(raw);
             } else {
@@ -756,7 +771,7 @@ public class BBToRawConverter {
         }
         // Blockbench rotation keyframe 是 THREE 'XYZ' 欧拉序；YSM 渲染端按
         // Rz*Ry*Rx + X/Y 取负解读。多轴组合旋转必须做等效角度转换，否则镜像。
-        if ("rotation".equals(channel)) {
+        if (sourceRotationCompat && "rotation".equals(channel)) {
             for (int i = outStart; i < out.size(); i++) {
                 BbRotationCompat.convertRotationKeyframeValues(out.get(i));
             }
@@ -765,19 +780,28 @@ public class BBToRawConverter {
 
     private static List<RawYsmModel.RawKeyframe> bakeBezierSegment(BBAnimation.BBKeyframe current,
                                                                   BBAnimation.BBKeyframe next,
-                                                                  RawYsmModel.RawKeyframe currentRaw) {
-        if (!"bezier".equalsIgnoreCase(current.interpolation)) {
-            return Collections.emptyList();
+                                                                  RawYsmModel.RawKeyframe currentRaw,
+                                                                  boolean sourceRotationCompat) {
+        if (sourceRotationCompat) {
+            if (!"bezier".equalsIgnoreCase(current.interpolation)) return Collections.emptyList();
+        } else {
+            // Editor preview: outgoing step wins; Catmull at either endpoint wins over Bézier;
+            // otherwise a Bézier key controls both its incoming and outgoing segments.
+            // https://github.com/JannisX11/blockbench/blob/v4.10.0/js/animations/timeline_animators.js#L400-L435
+            if (next == null || "step".equalsIgnoreCase(current.interpolation)
+                    || "catmullrom".equalsIgnoreCase(current.interpolation) || "catmullrom".equalsIgnoreCase(next.interpolation)
+                    || !"bezier".equalsIgnoreCase(current.interpolation) && !"bezier".equalsIgnoreCase(next.interpolation))
+                return Collections.emptyList();
         }
         if (next == null || next.time <= current.time) {
             logBezierRuntimeFallback(current, "there is no following keyframe");
             return Collections.emptyList();
         }
-        RawYsmModel.RawKeyframe nextRaw = convertKeyframe(next);
+        RawYsmModel.RawKeyframe nextRaw = convertKeyframe(next, sourceRotationCompat);
         Object[] start = currentRaw.postData;
         Object[] end = nextRaw.hasPreData ? nextRaw.preData : nextRaw.postData;
         if (!allNumeric(start) || !allNumeric(end)
-                || current.bezier_right_time.length == 0 || current.bezier_right_value.length == 0) {
+                || sourceRotationCompat && (current.bezier_right_time.length == 0 || current.bezier_right_value.length == 0)) {
             logBezierRuntimeFallback(current, "handles or endpoint values are not numeric");
             return Collections.emptyList();
         }
@@ -793,26 +817,42 @@ public class BBToRawConverter {
             RawYsmModel.RawKeyframe sample = new RawYsmModel.RawKeyframe();
             sample.timestamp = current.time + duration * percent;
             sample.interpolationMode = RawYsmModel.RawKeyframe.INTERPOLATION_LINEAR;
-            sample.postData = sampleBezier(current, next, start, end, duration, percent);
+            sample.postData = sampleBezier(current, next, start, end, duration, percent, sourceRotationCompat);
             baked.add(sample);
         }
         return baked;
     }
 
     private static Object[] sampleBezier(BBAnimation.BBKeyframe current, BBAnimation.BBKeyframe next,
-                                         Object[] start, Object[] end, float duration, float percent) {
+                                         Object[] start, Object[] end, float duration, float percent,
+                                         boolean sourceRotationCompat) {
         Object[] out = new Object[3];
         for (int axis = 0; axis < 3; axis++) {
             float startValue = ((Number) start[axis]).floatValue();
             float endValue = ((Number) end[axis]).floatValue();
-            float rightTime = handleTime(current.bezier_right_time, axis, 0.33f, duration, current.time);
-            float leftTime = handleTime(next.bezier_left_time, axis, 0.66f, duration, current.time);
-            float rightValue = handleValue(current.bezier_right_value, axis, startValue);
-            float leftValue = handleValue(next.bezier_left_value, axis, endValue);
+            float rightTime = sourceRotationCompat
+                    ? handleTime(current.bezier_right_time, axis, 0.33f, duration, current.time)
+                    : editorHandleTime(current.bezier_right_time, axis, duration, false);
+            float leftTime = sourceRotationCompat
+                    ? handleTime(next.bezier_left_time, axis, 0.66f, duration, current.time)
+                    : editorHandleTime(next.bezier_left_time, axis, duration, true);
+            float rightValue = sourceRotationCompat ? handleValue(current.bezier_right_value, axis, startValue)
+                    : startValue + handleValue(current.bezier_right_value, axis, 0);
+            float leftValue = sourceRotationCompat ? handleValue(next.bezier_left_value, axis, endValue)
+                    : endValue + handleValue(next.bezier_left_value, axis, 0);
             float curveT = Interpolations.bezierX(rightTime, leftTime, percent);
             out[axis] = Interpolations.bezier(startValue, rightValue, leftValue, endValue, curveT);
         }
         return out;
+    }
+
+    /** Editor handle time is a signed endpoint offset, in seconds, in both Blockbench versions. */
+    private static float editorHandleTime(float[] values, int axis, float duration, boolean left) {
+        // https://github.com/JannisX11/blockbench/blob/v4.10.0/js/animations/keyframe.js#L220-L233
+        // https://github.com/JannisX11/blockbench/blob/v5.0.0/js/animations/keyframe.js#L209-L222
+        float offset = handleValue(values, axis, 0);
+        return left ? 1 + Math.max(-duration, Math.min(0, offset)) / duration
+                : Math.max(0, Math.min(duration, offset)) / duration;
     }
 
     private static float handleTime(float[] values, int axis, float fallback, float duration, float startTime) {
@@ -943,7 +983,7 @@ public class BBToRawConverter {
         return "";
     }
 
-    private static RawYsmModel.RawKeyframe convertKeyframe(BBAnimation.BBKeyframe bbKf) {
+    private static RawYsmModel.RawKeyframe convertKeyframe(BBAnimation.BBKeyframe bbKf, boolean sourceRotationCompat) {
         RawYsmModel.RawKeyframe rawKf = new RawYsmModel.RawKeyframe();
         rawKf.timestamp = bbKf.time;
         switch ((bbKf.interpolation == null ? "" : bbKf.interpolation).toLowerCase(Locale.ROOT)) {
@@ -985,6 +1025,13 @@ public class BBToRawConverter {
                         foldOrKeep(pre.z)
                 };
                 rawKf.hasPreData = true;
+                if (!sourceRotationCompat) {
+                    // Official editor sampling uses the first data point before the key, and the last after it.
+                    // https://github.com/JannisX11/blockbench/blob/v4.10.0/js/animations/timeline_animators.js#L437-L442
+                    Object[] first = rawKf.postData;
+                    rawKf.postData = rawKf.preData;
+                    rawKf.preData = first;
+                }
             }
         }
         return rawKf;
