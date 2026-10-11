@@ -43,6 +43,8 @@
 
 原生头部查询沿来源：`ysm.head_pitch` 取原版俯仰角负值；`ysm.head_yaw` 先环绕到 `[-180,180)`、限制在 `[-85,85]` 后取负。`query.head_x_rotation` 对应 yaw，`query.head_y_rotation` 对应 pitch。自动头部跟随接收原版角度，与作者脚本查询分离。
 
+明确带 `mpa_runtime` 来源标记的服务器 YSM 派生资产也使用同一头部查询函数，不依赖本地／私人模型的 profile。读取这些资产时移除旧导出工具注入的 Head 查询加项，复用原版自动跟随；作者头发、弹簧和特殊动作表达式保持原样。完整资产的下载、已有磁盘缓存与离线预览均在资产解析入口应用此规则，不改原版位置、服务器动画层、模型尺寸或普通 BBModel 语义。已烘焙的 ME 数值蓝图不含这些作者公式，角度修复不能还原丢失的脚本；须由服务器提供完整原资产，见 [模型来源与部署](MODEL_DELIVERY.md#服务器伪装原模型的正确放置)。入口见 [YsmHeadQueries](../client/src/main/java/com/simmc/meplayeractions/client/model/YsmHeadQueries.java) 与 [BbModel](../client/src/main/java/com/simmc/meplayeractions/client/model/BbModel.java)。
+
 ## 来源执行语义
 
 - 动画从已解析的最终骨骼姿态建立开始快照；最终无人接管的通道在 3 tick 内回位，其他播放槽继续输出。predicate 控制器保留来源的缩放过渡、结束进度缓存和作者权重；作者状态控制器使用其自身进度规则。原生旋转混合计入骨骼 initial rotation。见 [NativeYsmAnimationProcessor](../client/src/main/java/com/simmc/meplayeractions/client/model/NativeYsmAnimationProcessor.java)。

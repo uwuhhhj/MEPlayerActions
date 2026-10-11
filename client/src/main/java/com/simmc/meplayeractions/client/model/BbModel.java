@@ -40,6 +40,7 @@ public final class BbModel {
     private final int cubeCount;
     private final int nativeFormatVersion;
     private final boolean legacyAnimationAxes;
+    private final boolean serverYsmHeadQueries;
     private final int[] headBones;
     private final YsmAnimationController.Definitions controllers;
     private final String controllerFamily;
@@ -145,7 +146,8 @@ public final class BbModel {
 
     private BbModel(List<Texture> textures, List<Bone> bones, List<BakedFace> faces,
                     Map<String, Clip> clips, int cubeCount, YsmAnimationController.Definitions controllers, String family,
-                    Map<String,List<Molang.Program>> events, Map<String,Molang.Program> functions, int formatVersion, boolean legacyAnimationAxes) {
+                    Map<String,List<Molang.Program>> events, Map<String,Molang.Program> functions, int formatVersion, boolean legacyAnimationAxes,
+                    boolean serverYsmHeadQueries) {
         this.textures = List.copyOf(textures);
         this.bones = List.copyOf(bones);
         this.faces = List.copyOf(faces);
@@ -153,6 +155,7 @@ public final class BbModel {
         this.cubeCount = cubeCount;
         this.nativeFormatVersion = formatVersion;
         this.legacyAnimationAxes = legacyAnimationAxes;
+        this.serverYsmHeadQueries = serverYsmHeadQueries;
         this.controllers = controllers; this.controllerFamily = family; this.controllerEvents = events; this.authorFunctions = functions;
         Map<String,String> authoredLoops = new LinkedHashMap<>(); Set<String> primaryAnimations = new LinkedHashSet<>();
         clips.forEach((name, clip) -> {
@@ -271,6 +274,8 @@ public final class BbModel {
     }
     public boolean hasBone(String name) { return bones.stream().anyMatch(bone -> bone.name.equals(name)); }
     public boolean ysmControllers() { return !controllerFamily.isEmpty(); }
+    /** Explicit server YSM export metadata preserves author head semantics without changing its renderer. */
+    public boolean usesYsmHeadQueries() { return serverYsmHeadQueries; }
     YsmAnimationController.Definitions controllerDefinitions() { return controllers; }
     public String controllerFamily() { return controllerFamily; }
     Map<String,List<Molang.Program>> controllerEvents() { return controllerEvents; }
@@ -394,8 +399,13 @@ public final class BbModel {
         Pose pose = new Pose(bones.size());
         double[] headWeights = defaultHeadWeights();
         Molang.Context context = new Molang.Context();
-        context.frame(Map.of("ysm.head_yaw", (double) relativeHeadYaw, "ysm.head_pitch", (double) headPitch,
+        var head = YsmHeadQueries.angles(relativeHeadYaw, headPitch, usesYsmHeadQueries());
+        context.frame(Map.of("ysm.head_yaw", head.yaw(), "ysm.head_pitch", head.pitch(),
                 "ysm.food_level", 20d, "query.life_time", serverTick / 20));
+        if (usesYsmHeadQueries()) {
+            context.query("query.head_x_rotation", head.yaw());
+            context.query("query.head_y_rotation", head.pitch());
+        }
         initializePhysics(context);
         for (Layer layer : ordered(withParallelLayers(layers))) {
             Evaluated result = evaluate(serverTick, layer, true, context);
@@ -697,6 +707,7 @@ public final class BbModel {
     private static final class Reader {
         final JsonObject root;
         final boolean legacyAnimationAxes;
+        final boolean serverYsmHeadQueries;
         final int animationFormatVersion;
         final List<Texture> textures = new ArrayList<>();
         final List<Bone> bones = new ArrayList<>();
@@ -721,6 +732,8 @@ public final class BbModel {
             // keyframes: position X and rotation X/Y change sign. Geometry
             // pivots and rest/cube rotations do not use this migration.
             legacyAnimationAxes = major < 5;
+            // MPA's YSM-derived server resources retain this origin marker in both downloads and disk caches.
+            serverYsmHeadQueries = root.has("mpa_runtime") && root.get("mpa_runtime").isJsonObject();
             if (root.has("groups") && !array(root, "groups", true).isEmpty())
                 throw invalid("Separate group tables are unsupported; export an inline outliner BBModel");
         }
@@ -783,7 +796,7 @@ public final class BbModel {
             }
             return new BbModel(textures, bones, faces, clips, cubes.size(), definitions, family,
                     Collections.unmodifiableMap(events), Collections.unmodifiableMap(functions),
-                    animationFormatVersion, legacyAnimationAxes);
+                    animationFormatVersion, legacyAnimationAxes, serverYsmHeadQueries);
         }
         void readTextures() {
             JsonArray items = array(root, "textures", true);
@@ -986,8 +999,9 @@ public final class BbModel {
                             throw invalid("Unsupported keyframe interpolation: " + interpolation);
                         JsonArray points = array(frame, "data_points", true);
                         if (points.isEmpty() || points.size() > 2) throw invalid("Unsupported keyframe data point count");
-                        Point pre = point(object(points.get(0)), channel);
-                        Point post = points.size() == 2 ? point(object(points.get(1)), channel) : pre;
+                        boolean injectedHead = serverYsmHeadQueries && channel == 1 && bones.get(index).name.equals("Head");
+                        Point pre = point(object(points.get(0)), channel, injectedHead);
+                        Point post = points.size() == 2 ? point(object(points.get(1)), channel, injectedHead) : pre;
                         channels[channel].add(new Key(time, pre, post, interpolation));
                     }
                     Track[] boneTracks = new Track[3];
@@ -1022,7 +1036,7 @@ public final class BbModel {
         Molang.Program compileExpression(String expression) {
             return animationFormatVersion > 0 ? Molang.compileNativeYsm(expression) : Molang.compile(expression);
         }
-        Point point(JsonObject point, int channel) {
+        Point point(JsonObject point, int channel, boolean injectedHead) {
             if (point.has("script") || point.has("effect") || point.has("file")) throw invalid("Script/external keyframe data is unsupported");
             float fallback = channel == 2 ? 1 : 0;
             double bound = channel == 2 ? 64 : channel == 1 ? 36_000 : 4096;
@@ -1032,6 +1046,7 @@ public final class BbModel {
                 JsonElement value = point.get(axis);
                 if (value != null && (!value.isJsonPrimitive() || value.getAsJsonPrimitive().isBoolean())) throw invalid("Invalid coordinate");
                 axes[i++] = value == null ? Float.toString(fallback) : value.getAsString();
+                if (injectedHead) axes[i - 1] = YsmHeadQueries.withoutInjectedLook(axes[i - 1], axis);
                 try {
                     double number = Double.parseDouble(axes[i - 1]);
                     if (!Double.isFinite(number) || Math.abs(number) > bound) throw invalid("Coordinate range exceeded");
