@@ -13,6 +13,10 @@
 | MEPlayerActions 服务端 | 管理服务器伪装、动作、观看许可与绑定；独立校验、缓存和中继玩家上传的私人模型 |
 | MEPlayerActions 客户端 | 校验资产、计算本地动画并接管授权模型；可独立使用私人外观 |
 
+服务器伪装与 `/meplayeractions disguise` 补全使用 ModelEngine 已注册的模型，不依赖 MPA 配置中的模型列表或 MPA `models/` 文件。MPA 配置管理动作、观看和同步策略；MPA `models/` 是客户端原始资源的可选覆盖目录，不向 ModelEngine 注册蓝图。缺失或无效客户端资源只影响接管，服务器继续显示 ME 伪装。
+
+MPA 模型 ID 沿既有命令与协议格式：1–64 位小写英文字母、数字、`_` 或 `-`。补全取 ME 注册表中符合此格式的 ID；ME 自身支持的其他名称格式不在本协议范围内。
+
 MPA 不生成或重打包 ME／CE 资源包。完整原模型含内嵌贴图，可能与服务器资源包中的贴图重复；当前推送路径尚未跨包复用材质。ME／CE 的资源包保护也不加密 MPA 推送的原模型，被授权接收者可以取得这份资产。
 
 仅中继私人模型分享时，同一个服务端 JAR 可运行在 Paper 1.21.11／Java 21 上，无需 ModelEngine 或服务器资源包。客户端本地私人外观无需服务端；多人分享由发布者主动选择、服务器启用并授权，获准观看者被动接收。私人上传不创建 ME 蓝图、伪装实体或原版资源包，原版玩家仍看见原版人物。
@@ -23,7 +27,6 @@ MPA 不生成或重打包 ME／CE 资源包。完整原模型含内嵌贴图，�
 
 | 配置 | 默认值与作用 |
 | --- | --- |
-| `models.default` / `models.allowed` | `ysm_01_jk` / 两套示例；默认模型与可用模型白名单 |
 | `disguise.scale` | `1.0`，在原始尺寸上缩放 |
 | `disguise.hide-self` / `show-self` | 均 `true`；隐藏原版本人并显示伪装，第一人称由客户端跳过完整身体 |
 | `disguise.view-distance` / `max-viewers` | `8` 格 / `10` 名其他观看者，不包含本人；距离须严格小于设置值 |
@@ -72,7 +75,7 @@ MPA 依次查找：
 2. 服务端 JAR 的 `models/<模型ID>.bbmodel`：内置示例原模型。
 3. `plugins/ModelEngine/blueprints/`：递归匹配文件名，再匹配 `model_identifier`。
 
-**通常自定义模型只需放在 ModelEngine 的 `blueprints/` 中**，不必再复制进 MPA。该文件须保留客户端需要的完整骨架、动画和内嵌 PNG；只有 ME 蓝图已经烘焙、缺少原始表达式或资源时，才需第一项目录提供完整原模型覆盖。ME 模型 ID、MPA 白名单与原模型 ID 应一致。
+**服务器伪装的自定义模型放在 ModelEngine 的 `blueprints/` 中并由 ME 加载**，不必再复制进 MPA。客户端接管另需完整骨架、动画和内嵌 PNG；只有 ME 蓝图已经烘焙、缺少原始表达式或资源时，才需第一项目录提供完整原模型覆盖。下发文件名或原模型 ID 应与 ME 注册 ID 对应；仅放入 MPA `models/` 不会创建服务器伪装。
 
 服务端 JAR 内置 `ysm_01_jk`、`ysm_02_jk` 完整原模型；客户端 JAR 不内置这两套服务器示例。安装包的 `plugins/ModelEngine/blueprints/meplayeractions/` 是 ME 数值蓝图，`examples/models/` 仅供参考。示例完整原模型有 60 个动作及脚本，ME 数值蓝图有 57 个动作；烘焙蓝图不能恢复已移除的表达式、物理脚本或原始文件 hash，不应用它覆盖完整原模型。
 
@@ -94,7 +97,7 @@ MPA 不自动把内置原模型复制到自己的 `models/` 目录。该目录�
 
 ## 部署排查与兼容
 
-1. 确认两端版本、ME 模型加载、白名单和观众许可；客户端检查 `/mpaclient status`，管理员检查 `/meplayeractions status` 与 `status player <玩家名>`。
+1. 确认两端版本、ME 模型注册与命令／观众权限；客户端检查 `/mpaclient status`，管理员检查 `/meplayeractions status` 与 `status player <玩家名>`。
 2. 接管数为 0、模型“加载中”时，查看服务器资产来源与原因，核对上面的完整原模型来源。默认推送路线无需排查 MPA 资源包索引。
 3. 服务端日志搜索“客户端模型资产”，关注 `missing`／`invalid`、模型 ID、来源与原因。缺失／无效覆盖文件、哈希不符和纹理解析失败分别按资产原因处理。
 4. 渲染成功但本人不可见时，按 F5 查看第三人称，检查“伪装显示”和服务器本人观看许可；玩家／装备显隐是不同选项。

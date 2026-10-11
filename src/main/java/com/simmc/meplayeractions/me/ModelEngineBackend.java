@@ -2,6 +2,7 @@ package com.simmc.meplayeractions.me;
 
 import com.simmc.meplayeractions.MEPlayerActionsPlugin;
 import com.simmc.meplayeractions.server.ServerBackend;
+import com.simmc.meplayeractions.server.ServerMessages;
 import static com.simmc.meplayeractions.MEPlayerActionsPlugin.message;
 import com.simmc.meplayeractions.action.ActionController;
 import com.simmc.meplayeractions.action.DisguiseOptions;
@@ -56,7 +57,7 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
         gameplay = new GameplayBackend(plugin);
         bridge = new ModelEngineBridge();
         bridge.configurePerformance(settings.performance);
-        bridge.configureResources(plugin, plugin.resources(), settings.allowedModels);
+        bridge.configureResources(plugin, plugin.resources());
         controller = new ActionController(plugin, settings, bridge, gameplay);
         clients = new ClientSyncService(plugin, controller::snapshots,
                 request -> plugin.handleAction(request.player(), CommandLayout.clientAction(request.action(), request.argument())));
@@ -86,12 +87,21 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
     }
     @Override public String diagnosis() { return "ModelEngine R4.1.1 动作后端；" + gameplay.diagnosis(); }
     @Override public void status(CommandSender sender) {
-        message(sender, "模式：" + diagnosis());
-        message(sender, "私人多人同步 " + (settings.privateModels.enabled() ? "已开启；发布和观看各自需要许可。" : "关闭。"));
+        message(sender, "§e服务器模型：ModelEngine 已注册蓝图（/meg disguise 同源）。");
+        message(sender, "§7MPA models/ 只提供客户端资源；资源准备不会替代 ME 的模型注册。");
+        message(sender, "§7私人多人分享：" + (settings.privateModels.enabled() ? "§a开启§7；发布和观看各自需要许可。" : "关闭。"));
+        message(sender, "§7姿态后端：" + gameplay.diagnosis());
     }
     @Override public void playerStatus(CommandSender sender, Player player) {
-        message(sender, "玩家：" + player.getName());
-        controller.debug(player).forEach(line -> message(sender, line));
+        message(sender, "§e玩家：§f" + player.getName());
+        if (controller.controlled(player)) controller.debug(player).forEach(line -> message(sender, line));
+        else {
+            message(sender, "§7当前没有 MPA 管理的服务器伪装。");
+            List<String> attached = controller.existingModels(player);
+            ServerMessages.list("§7当前附着的 ME 模型：", attached).forEach(line -> message(sender, line));
+            if (!attached.isEmpty()) message(sender, "§e用 /meplayeractions attach" + (attached.size() == 1 ? "" : " <模型名>") + " 管理现有动作。");
+            clients.statusLines(player).forEach(line -> message(sender, line));
+        }
     }
     @Override public void close() {
         running = false;
@@ -124,16 +134,20 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
                 case "help" -> help(player);
                 case "disguise" -> {
                     ActionController.permission(player, "mact.disguise");
-                    var options = DisguiseOptions.parse(args, DisguiseOptions.defaults(settings.defaultModel, settings));
+                    var options = DisguiseOptions.parse(args, settings);
                     controller.disguise(player, options);
                     if (resultRequest != null) clients.disguiseSucceeded(player, resultRequest,
                             controller.snapshot(player.getUniqueId()).instance(), controller.disguiseOptions(player));
-                    message(player, "已伪装为 " + controller.modelId(player) + "；" + options.description() + "。/meplayeractions menu 打开动作菜单。");
+                    ServerMessages.disguise(controller.disguiseOptions(player)).forEach(line -> message(player, line));
+                    clients.modelResourceLines(controller.modelId(player), controller.snapshot(player.getUniqueId()).localRenderable())
+                            .forEach(line -> message(player, line));
                 }
                 case "attach" -> {
                     ActionController.permission(player, "mact.disguise");
-                    controller.attach(player, args.length > 1 ? Settings.id(args[1]) : settings.defaultModel);
-                    message(player, "已接管现有伪装的动作。");
+                    if (args.length > 1) controller.attach(player, Settings.id(args[1]));
+                    else controller.attach(player);
+                    message(player, "§a已管理现有 ME 模型的动作：§f" + controller.modelId(player));
+                    message(player, "§7保留 ME 原有伪装参数；客户端接管需资源准备与观看者确认。");
                 }
                 case "undisguise" -> {
                     ActionController.permission(player, "mact.disguise");
@@ -141,9 +155,17 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
                     boolean owned = controller.remove(player, "command");
                     message(player, owned ? "伪装已解除。" : "动作接管已停止；原生伪装用 /meg undisguise 解除。");
                 }
-                case "models" -> message(player, "已加载且允许的模型：" + String.join(", ", controller.models()));
-                case "animations" -> message(player, "当前模型动画：" + String.join("，", controller.animations(player)
-                        .stream().map(clip -> AnimationLabels.displayWithId(clip, settings.animationLabel(clip))).toList()));
+                case "models" -> {
+                    ServerMessages.list("§e已注册的 ModelEngine 蓝图：", controller.models()).forEach(line -> message(player, line));
+                    message(player, "§7使用 /meplayeractions disguise <模型名>；无需在 MPA 配置或 models/ 重复登记。");
+                    message(player, "§7模型名沿用安全格式：1–64 位小写英文、数字、_、-。");
+                }
+                case "animations" -> {
+                    ServerMessages.list("§e当前模型动作：", controller.animations(player)
+                            .stream().map(clip -> AnimationLabels.displayWithId(clip, settings.animationLabel(clip))).toList())
+                            .forEach(line -> message(player, line));
+                    message(player, "§7播放：/meplayeractions play <动作 ID>；J 轮盘或 menu 可直接选择。");
+                }
                 case "menu" -> menu.open(player, 0);
                 case "play" -> {
                     if (args.length < 2) throw new IllegalArgumentException("用法：/meplayeractions play <动作> [速度] [ONCE|LOOP|HOLD]");
@@ -212,7 +234,10 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
     }
     private void help(Player player) {
         String prefix = CommandLayout.PREFIX;
-        for (String line : List.of("§e模型：" + prefix + " disguise <模型名> [参数...]；undisguise 解除；models 列出模型；attach [模型名] 接管。",
+        for (String line : List.of("§e服务器伪装：" + prefix + " disguise <ME 模型名> [参数...]；undisguise 解除。",
+                "§7models 列出 ME 已注册模型；attach [模型名] 管理现有 ME 动作（仅一个模型时可省略）。",
+                "§7MPA models/ 用于客户端下载；没有这些资源仍可使用 ME 伪装。",
+                "§7模型名：1–64 位小写英文、数字、_、-；沿用 MPA 的安全格式。",
                 "伪装参数：scale、hide-self、delay、effect=slowness:等级[:秒数]；药水仅支持缓慢。",
                 "观众参数：show-self（默认 " + settings.showSelf + "）、view-distance（默认 " + settings.modelViewDistance
                         + " 格）、max-viewers（默认 " + settings.maxViewers + " 名其他玩家）。",
@@ -258,7 +283,8 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
             return options.stream().filter(s -> s.startsWith(prefix)).toList();
         } else if (args.length == 2) {
             switch (args[0].toLowerCase(Locale.ROOT)) {
-                case "disguise", "attach" -> options.addAll(controller.models());
+                case "disguise" -> options.addAll(controller.models());
+                case "attach" -> options.addAll(controller.existingModels(p));
                 case "play" -> {
                     if (!p.hasPermission("mact.play")) break;
                     for (var action : settings.customActions.values())

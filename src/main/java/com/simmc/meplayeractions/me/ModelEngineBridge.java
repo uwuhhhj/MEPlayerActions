@@ -41,12 +41,11 @@ public final class ModelEngineBridge {
     private ModelAudience.Guard audienceGuard;
     private ServerTemplatePreparation runtimeTemplates;
     private com.simmc.meplayeractions.protection.ResourceProtection resources;
-    public void configureResources(JavaPlugin plugin, com.simmc.meplayeractions.protection.ResourceProtection resources,
-                                   java.util.Collection<String> allowed) {
+    public void configureResources(JavaPlugin plugin, com.simmc.meplayeractions.protection.ResourceProtection resources) {
         requireMainThread();
         this.resources = Objects.requireNonNull(resources);
         runtimeTemplates = new ServerTemplatePreparation(plugin, resources);
-        runtimeTemplates.preload(allowed);
+        runtimeTemplates.preload(modelIds());
     }
     /** The pure template must be ready before an existing appearance is replaced. */
     public void prepareRuntime(String id) {
@@ -54,12 +53,12 @@ public final class ModelEngineBridge {
         ModelBlueprint blueprint = ModelEngineAPI.getBlueprint(id);
         if (blueprint != null) {
             validateComplexity(blueprint);
-            if (runtimeTemplates != null) runtimeTemplates.ensure(blueprint.getName());
+            if (runtimeTemplates != null) runtimeTemplates.ensureIfPresent(blueprint.getName());
         }
     }
     private Optional<YsmModelTemplates.Model> runtimeModel(ModelBlueprint blueprint) {
         validateComplexity(blueprint);
-        return runtimeTemplates == null ? null : runtimeTemplates.ensure(blueprint.getName());
+        return runtimeTemplates == null ? null : runtimeTemplates.ensureIfPresent(blueprint.getName());
     }
     private void validateComplexity(ModelBlueprint blueprint) {
         if (resources == null) return;
@@ -90,7 +89,12 @@ public final class ModelEngineBridge {
 
     public List<String> modelIds() {
         requireMainThread();
-        return ModelEngineAPI.getAPI().getModelRegistry().getOrderedId().stream().sorted().toList();
+        // ModelEngine's /meg disguise completion uses ModelRegistry.getKeys(), not its generation order.
+        return RegisteredModels.ids(ModelEngineAPI.getAPI().getModelRegistry().getKeys());
+    }
+
+    public String uniqueAttachedModel(Player player) {
+        return RegisteredModels.uniqueAttached(existingModels(player));
     }
 
     /** Creates a model only when the player has no other attached ModelEngine models. */
@@ -102,7 +106,7 @@ public final class ModelEngineBridge {
         boolean hideSelf = options.hideSelf();
         String id = requireId(options.modelId(), "模型");
         ModelBlueprint blueprint = ModelEngineAPI.getBlueprint(id);
-        if (blueprint == null) throw new IllegalArgumentException("模型未加载：" + id);
+        if (blueprint == null) throw new IllegalArgumentException("ModelEngine 未加载蓝图：" + id + "；MPA models/ 目录不会注册 ME 蓝图。");
         Optional<YsmModelTemplates.Model> prepared = runtimeModel(blueprint);
 
         ModeledEntity entity = ModelEngineAPI.getModeledEntity(player.getUniqueId());
@@ -223,7 +227,7 @@ public final class ModelEngineBridge {
         return attachment;
     }
 
-    /** Existing native model IDs only; avoids attempting every allowed model for each online player. */
+    /** Existing native model IDs only; avoids attempting every registered model for each online player. */
     public List<String> existingModels(Player player) {
         requireMainThread();
         ModeledEntity entity = ModelEngineAPI.getModeledEntity(player.getUniqueId());

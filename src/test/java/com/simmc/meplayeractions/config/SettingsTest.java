@@ -83,15 +83,15 @@ class SettingsTest {
     }
 
     @Test
-    void allowlistRequiresTheDefaultAndRejectsUnapprovedModels() throws IOException {
-        Settings settings = Settings.load(configuration());
-
+    void legacyModelRegistrationConfigurationDoesNotLimitModelEngineDisguises() throws IOException {
+        YamlConfiguration withoutModels = configuration();
+        withoutModels.set("models", null);
         assertAll(
-                () -> assertDoesNotThrow(() -> settings.requireAllowedModel("ysm_01_jk")),
-                () -> assertThrows(IllegalArgumentException.class, () -> settings.requireAllowedModel("another_model")),
-                () -> assertThrows(IllegalArgumentException.class, () -> loadWith("models.allowed", List.of())),
-                () -> assertThrows(IllegalArgumentException.class, () -> loadWith("models.allowed", List.of("another_model"))),
-                () -> assertThrows(IllegalArgumentException.class, () -> loadWith("models.allowed", List.of("ysm_01_jk", "Invalid Model")))
+                () -> assertDoesNotThrow(() -> Settings.load(withoutModels)),
+                () -> assertDoesNotThrow(() -> loadWith("models.allowed", List.of())),
+                () -> assertDoesNotThrow(() -> loadWith("models.allowed", List.of("another_model"))),
+                () -> assertDoesNotThrow(() -> loadWith("models.allowed", List.of("ysm_01_jk", "Invalid Model"))),
+                () -> assertDoesNotThrow(() -> loadWith("models.default", "Invalid Model"))
         );
     }
 
@@ -149,9 +149,6 @@ class SettingsTest {
                 () -> assertEquals("ysm_01_jk-player", Settings.id("ysm_01_jk-player")),
                 () -> assertThrows(IllegalArgumentException.class, () -> Settings.id("fox.v1")),
                 () -> assertThrows(IllegalArgumentException.class, () -> Settings.id("wave.happy")),
-                () -> assertThrows(IllegalArgumentException.class, () -> loadWith("models.default", "fox.v1")),
-                () -> assertThrows(IllegalArgumentException.class,
-                        () -> loadWith("models.allowed", List.of("ysm_01_jk", "fox.v1"))),
                 () -> assertThrows(IllegalArgumentException.class,
                         () -> loadWith("custom-actions.wave.animation", "wave.happy"))
         );

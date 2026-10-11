@@ -17,8 +17,6 @@ public final class Settings {
             "speed", "permission", "max-duration-ticks");
     private static final Set<String> ANIMATION_FIELDS = Set.copyOf(Arrays.stream(ActionState.values())
             .map(ActionState::key).toList());
-    public final String defaultModel;
-    public final Set<String> allowedModels;
     public final double scale, manualMinSpeed, manualMaxSpeed, movementThreshold, flightSpeed;
     public final int interval, animationInterval, inTicks, outTicks, posturePriority, interactionPriority, manualPriority,
             cooldownTicks, maxManualTicks, clientMaxPayload, clientCooldownTicks, swingTicks, miningTimeoutTicks,
@@ -44,12 +42,6 @@ public final class Settings {
 
     private Settings(FileConfiguration c) {
         performance = PerformanceSettings.fromConfiguration(c);
-        defaultModel = id(c.getString("models.default", "ysm_01_jk"));
-        Set<String> models = new LinkedHashSet<>();
-        for (String name : c.getStringList("models.allowed")) models.add(id(name));
-        if (models.isEmpty()) throw new IllegalArgumentException("models.allowed 至少需要一个模型");
-        if (!models.contains(defaultModel)) throw new IllegalArgumentException("默认模型必须包含在 models.allowed");
-        allowedModels = Collections.unmodifiableSet(models);
         scale = number(c, "disguise.scale", 1, 0.05, 8);
         hideSelf = c.getBoolean("disguise.hide-self", true);
         showSelf = c.getBoolean("disguise.show-self", true);
@@ -191,9 +183,6 @@ public final class Settings {
     public void validateSpeed(double speed) {
         if (!Double.isFinite(speed) || speed < manualMinSpeed || speed > manualMaxSpeed)
             throw new IllegalArgumentException("动作速度范围：" + manualMinSpeed + " ~ " + manualMaxSpeed);
-    }
-    public void requireAllowedModel(String model) {
-        if (!allowedModels.contains(model)) throw new IllegalArgumentException("模型未列入 models.allowed：" + model);
     }
     public String animation(String model, ActionState state, Collection<String> existing) {
         for (String name : animationCandidates(model, state)) if (existing.contains(name)) return name;

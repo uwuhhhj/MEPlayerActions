@@ -41,10 +41,14 @@ public record DisguiseOptions(String modelId, double scale, boolean hideSelf, in
         return new DisguiseOptions(model, settings.scale, settings.hideSelf, settings.visualDelayTicks,
                 settings.showSelf, settings.modelViewDistance, settings.maxViewers, List.of());
     }
+    /** The command's explicit model supplies the defaults; no configuration model registration is needed. */
+    public static DisguiseOptions parse(String[] args, Settings settings) {
+        requireModelArgument(args);
+        return parse(args, defaults(args[1], settings));
+    }
     /** Requires the model first, then key=value, --key=value or --key value overrides. */
     public static DisguiseOptions parse(String[] args, DisguiseOptions defaults) {
-        if (args.length < 2 || args[1].isBlank() || args[1].contains("=") || args[1].startsWith("--"))
-            throw new IllegalArgumentException("用法：" + CommandLayout.PREFIX + " disguise <模型名> [参数...]；模型名必须放在参数前面");
+        requireModelArgument(args);
         String model = Settings.id(args[1]);
         double scale = defaults.scale();
         boolean hide = defaults.hideSelf(), showSelf = defaults.showSelf();
@@ -95,6 +99,10 @@ public record DisguiseOptions(String modelId, double scale, boolean hideSelf, in
             }
         }
         return new DisguiseOptions(model, scale, hide, delay, showSelf, viewDistance, maxViewers, effects);
+    }
+    private static void requireModelArgument(String[] args) {
+        if (args.length < 2 || args[1].isBlank() || args[1].contains("=") || args[1].startsWith("--"))
+            throw new IllegalArgumentException("用法：" + CommandLayout.PREFIX + " disguise <模型名> [参数...]；模型名必须放在参数前面");
     }
     private static boolean bool(String value, String key) {
         return switch (value.toLowerCase(Locale.ROOT)) {

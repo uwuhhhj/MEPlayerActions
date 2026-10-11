@@ -16,12 +16,14 @@ public final class ServerTemplatePreparation implements AutoCloseable {
     private static final long WORK_BYTES=96L*1024*1024,MAX_COMPILED_BYTES=48L*1024*1024;
     private final ResourceProtection protection;
     private final Source source;
+    private final Predicate<String> sourceExists;
     private final Consumer<Runnable> testPreparation;
     private final ModelComplexityLimits limits;
     private final int maxModels;
     private final long maxBytes;
     private final LongSupplier clock;
     private final LinkedHashMap<String,Entry> cache=new LinkedHashMap<>(16,.75f,true);
+    private final LinkedHashMap<String,Boolean> sourcePresence=new LinkedHashMap<>(16,.75f,true);
     private final LinkedHashSet<String> wanted=new LinkedHashSet<>();
     private long retainedBytes;
     private boolean closed;
@@ -29,6 +31,7 @@ public final class ServerTemplatePreparation implements AutoCloseable {
     @FunctionalInterface interface Source {InputStream open(String name)throws IOException;}
     public ServerTemplatePreparation(JavaPlugin plugin,ResourceProtection protection) {
         this.protection=Objects.requireNonNull(protection);source=plugin::getResource;testPreparation=null;
+        sourceExists=path->plugin.getClass().getClassLoader().getResource(path)!=null;
         limits=protection.complexityLimits();maxModels=protection.settings().models().maxAssetCacheModels();
         maxBytes=protection.settings().models().maxAssetCacheBytes();clock=System::nanoTime;
         protection.gauge("models.nativeTemplateBytes",()->metrics().bytes());
@@ -37,9 +40,28 @@ public final class ServerTemplatePreparation implements AutoCloseable {
     }
     ServerTemplatePreparation(Source source,Consumer<Runnable> preparation,ModelComplexityLimits limits,
                               int maxModels,long maxBytes,LongSupplier clock) {
-        this.protection=null;this.source=Objects.requireNonNull(source);testPreparation=Objects.requireNonNull(preparation);
+        this(source,path->true,preparation,limits,maxModels,maxBytes,clock);
+    }
+    ServerTemplatePreparation(Source source,Predicate<String> sourceExists,Consumer<Runnable> preparation,ModelComplexityLimits limits,
+                              int maxModels,long maxBytes,LongSupplier clock) {
+        this.protection=null;this.source=Objects.requireNonNull(source);this.sourceExists=Objects.requireNonNull(sourceExists);
+        testPreparation=Objects.requireNonNull(preparation);
         this.limits=Objects.requireNonNull(limits);this.clock=Objects.requireNonNull(clock);this.maxModels=maxModels;this.maxBytes=maxBytes;
         if(maxModels<1||maxBytes<1)throw new IllegalArgumentException("Invalid template cache limits");
+    }
+    /** A packaged author template is optional. Its absence must never delay a registered ME disguise. */
+    public Optional<YsmModelTemplates.Model> ensureIfPresent(String name) {
+        return hasSource(name)?ensure(name):Optional.empty();
+    }
+    private synchronized boolean hasSource(String name) {
+        if(name==null||!name.matches("[a-z0-9_-]{1,64}"))throw new ResourceRejectedException(new ResourceError("invalid_model",STAGE,false,0));
+        if(closed)throw new ResourceRejectedException(new ResourceError("request_cancelled",STAGE,false,0));
+        Boolean present=sourcePresence.get(name);
+        if(present!=null)return present;
+        // JavaPlugin.getResource uses the same classloader URL lookup. Do not open or parse a file on the main thread.
+        present=sourceExists.test("models/"+name+".bbmodel");
+        if(sourcePresence.size()>=maxModels)sourcePresence.remove(sourcePresence.keySet().iterator().next());
+        sourcePresence.put(name,present);return present;
     }
     public Optional<YsmModelTemplates.Model> ensure(String name) {
         if(name==null||!name.matches("[a-z0-9_-]{1,64}"))throw new ResourceRejectedException(new ResourceError("invalid_model",STAGE,false,0));
@@ -66,7 +88,7 @@ public final class ServerTemplatePreparation implements AutoCloseable {
     public void preload(Collection<String> names) {
         synchronized(this) {
             if(closed)return;
-            for(String name:names)if(wanted.size()<maxModels&&name!=null&&name.matches("[a-z0-9_-]{1,64}"))wanted.add(name);
+            for(String name:names)if(wanted.size()<maxModels&&name!=null&&name.matches("[a-z0-9_-]{1,64}")&&hasSource(name))wanted.add(name);
         }
         pumpPreload();
     }
@@ -74,7 +96,7 @@ public final class ServerTemplatePreparation implements AutoCloseable {
         String next;
         synchronized(this){if(closed||wanted.isEmpty())return;next=wanted.iterator().next();wanted.remove(next);}
         if(protection!=null&&(!protection.acceptingNewWork()||!protection.tryMainWork(1))) {synchronized(this){wanted.add(next);}return;}
-        try{ensure(next);}catch(ResourceRejectedException blocked){if(blocked.error().retryable())synchronized(this){if(!closed)wanted.add(next);}}
+        try{ensureIfPresent(next);}catch(ResourceRejectedException blocked){if(blocked.error().retryable())synchronized(this){if(!closed)wanted.add(next);}}
     }
     private Prepared load(String name) {
         try(InputStream input=source.open("models/"+name+".bbmodel")) {
@@ -124,7 +146,7 @@ public final class ServerTemplatePreparation implements AutoCloseable {
     synchronized Metrics metrics(){return new Metrics(cache.size(),retainedBytes);}
     @Override public synchronized void close() {
         if(closed)return;closed=true;if(maintenance!=null){maintenance.cancel();maintenance=null;}
-        wanted.clear();for(String name:List.copyOf(cache.keySet()))remove(name);
+        wanted.clear();sourcePresence.clear();for(String name:List.copyOf(cache.keySet()))remove(name);
     }
     private static final class Entry {Optional<YsmModelTemplates.Model> model=Optional.empty();boolean ready;long bytes,retryAt;ResourceError error;}
     private record Prepared(Optional<YsmModelTemplates.Model> model,long bytes,ResourceError error){}

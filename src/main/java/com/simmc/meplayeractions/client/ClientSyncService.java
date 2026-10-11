@@ -6,6 +6,7 @@ import com.simmc.meplayeractions.config.PerformanceSettings;
 import com.simmc.meplayeractions.protection.ResourceError;
 import com.simmc.meplayeractions.protection.ResourceProtection;
 import com.simmc.meplayeractions.action.DisguiseOptions;
+import com.simmc.meplayeractions.server.ServerMessages;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -255,6 +256,41 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         return (session == null ? "未握手（服务器渲染）" : "local-render v3；客户端 " + session.clientVersion
                 + "；资产模式 " + session.assetMode() + "；可见实例 " + session.bindings.size()
                 + "；已确认本地渲染 " + session.leases.size()) + diagnostic;
+    }
+    /** Diagnostic reads use prepared metadata and lease identities; they do not prepare assets or change rendering. */
+    public List<String> statusLines(Player player) {
+        List<String> lines = new ArrayList<>();
+        Session session = sessions.get(player.getUniqueId());
+        if (!running || !configuredEnabled) lines.add("§e客户端接管服务已关闭；服务器伪装继续由 ModelEngine 渲染。");
+        else if (session == null) lines.add("§e该玩家的客户端尚未连接模组协议；其画面继续由 ModelEngine 渲染。");
+        else if (!session.helloAcknowledged) lines.add("§e客户端握手正在确认；暂由 ModelEngine 渲染。");
+        else {
+            lines.add("§7客户端连接：§f" + session.clientVersion + "§7；资源方式：§f" + switch (session.assetMode()) {
+                case "server-push" -> "服务器推送";
+                case "resource-pack" -> "资源包";
+                default -> "兼容下载";
+            });
+            lines.add("§7该客户端：可见实例 §f" + session.bindings.size() + "§7；已确认接管 §f" + session.leases.size() + " §7个");
+        }
+        StateSnapshot snapshot = readSnapshot(player.getUniqueId());
+        if (snapshot != null) {
+            lines.addAll(modelResourceLines(snapshot.modelId(), snapshot.localRenderable()));
+            int confirmed = 0;
+            for (UUID viewer : viewersByOwner.getOrDefault(player.getUniqueId(), Set.of())) {
+                Session watching = sessions.get(viewer);
+                BoundState bound = watching == null ? null : watching.bindings.get(player.getUniqueId());
+                if (bound != null && bound.instance().equals(snapshot.instance())
+                        && watching.leases.contains(new RenderLeases.Binding(player.getUniqueId(), bound.instance(), bound.hash()))) confirmed++;
+            }
+            lines.add("§7观看该伪装：§f" + confirmed + " §7个客户端已确认接管（含本人）；其他画面仍由 ME 渲染。");
+        }
+        lines.addAll(ServerMessages.wrapped("§7私人分享：", privateModels.status(player)));
+        lines.addAll(ServerMessages.wrapped("§7服务器模型目录：", modelCatalog.status()));
+        return List.copyOf(lines);
+    }
+    public List<String> modelResourceLines(String modelId, boolean eligible) {
+        ModelAssets.Status asset = assets.status(modelId);
+        return ServerMessages.modelResource(modelId, asset.state(), asset.source(), asset.reason(), eligible);
     }
     @Override public void onPluginMessageReceived(String channel, Player player, byte[] bytes) {
         if (!CHANNEL.equals(channel) || !running || !configuredEnabled || bytes == null || bytes.length == 0 || bytes.length > maxPayload) return;

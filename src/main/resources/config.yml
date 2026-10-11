@@ -1,8 +1,7 @@
 config-version: 4
 
-models:
-  default: ysm_01_jk
-  allowed: [ysm_01_jk, ysm_02_jk]
+# 服务器伪装使用 ModelEngine 已注册的蓝图，模型名与 /meg disguise 一致。
+# MEPlayerActions/models/ 只提供客户端下发资源；无需在本配置中重复登记模型。
 
 disguise:
   scale: 1.0

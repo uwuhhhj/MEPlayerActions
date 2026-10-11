@@ -7,6 +7,7 @@ import com.simmc.meplayeractions.client.ClientSyncService.StateSnapshot;
 import com.simmc.meplayeractions.client.ClientSyncService.AnimationInfo;
 import com.simmc.meplayeractions.client.ClientSyncService.MotionState;
 import com.simmc.meplayeractions.config.Settings;
+import com.simmc.meplayeractions.server.ServerMessages;
 import com.simmc.meplayeractions.gameplay.GameplayBackend;
 import com.simmc.meplayeractions.gameplay.GSitAnchor;
 import com.simmc.meplayeractions.gameplay.DisguiseEffects;
@@ -132,7 +133,7 @@ public final class ActionController {
     public void start() {
         task = Bukkit.getScheduler().runTaskTimer(plugin, this::tick, 1, 1);
     }
-    public List<String> models() { return bridge.modelIds().stream().filter(settings.allowedModels::contains).toList(); }
+    public List<String> models() { return bridge.modelIds(); }
     public boolean controlled(Player player) { return sessions.containsKey(player.getUniqueId()); }
     public String modelId(Player player) { return requireSession(player).attachment.modelId(); }
     public DisguiseOptions disguiseOptions(Player player) { return requireSession(player).options; }
@@ -143,10 +144,10 @@ public final class ActionController {
     }
     public void disguise(Player player, DisguiseOptions options) {
         clock = Integer.toUnsignedLong(Bukkit.getCurrentTick());
-        settings.requireAllowedModel(options.modelId());
         if (!options.effects().isEmpty()) permission(player, "mact.disguise.effects");
         options.requireEffects(PaperEffectPort::supported);
-        if (!bridge.modelIds().contains(options.modelId())) throw new IllegalArgumentException("模型未加载：" + options.modelId());
+        if (!models().contains(options.modelId())) throw new IllegalArgumentException("ModelEngine 未加载蓝图：" + options.modelId()
+                + "；请检查 ME 模型注册，MPA models/ 目录只用于客户端下发。");
         Session existing = sessions.get(player.getUniqueId());
         if (existing != null && !existing.cleanupReason.isEmpty()) throw new IllegalStateException("伪装正在解除，请稍后重试");
         if (existing != null && !existing.attachment.owned())
@@ -160,12 +161,16 @@ public final class ActionController {
     }
     public void attach(Player player, String modelId) {
         clock = Integer.toUnsignedLong(Bukkit.getCurrentTick());
-        settings.requireAllowedModel(modelId);
+        Settings.id(modelId);
         if (controlled(player)) throw new IllegalStateException("已有动作会话；先 /meplayeractions undisguise 释放");
+        if (!bridge.existingModels(player).contains(modelId))
+            throw new IllegalArgumentException("玩家未附着该 ModelEngine 模型：" + modelId + "；attach 仅管理现有模型。");
         bridge.prepareRuntime(modelId);
         admit(player, false);
         register(player, bridge.attachExisting(player, modelId));
     }
+    public void attach(Player player) { attach(player, bridge.uniqueAttachedModel(player)); }
+    public List<String> existingModels(Player player) { return bridge.existingModels(player); }
     private void admit(Player player, boolean replacing) {
         var refused = admission.admit(player.getUniqueId(), replacing, sessions.size(), clock);
         if (refused != null) {
@@ -372,7 +377,7 @@ public final class ActionController {
     public List<String> debug(Player player) {
         Session s = requireSession(player);
         var localRendering = bridge.localRenderingDiagnosis(s.attachment);
-        List<String> lines = new ArrayList<>(List.of("模型：" + s.attachment.modelId(),
+        List<String> lines = new ArrayList<>(List.of("§e服务器伪装（ME 蓝图）：§f" + s.attachment.modelId(),
                 "处理器：" + s.attachment.activeModel().getAnimationHandler().getId(),
                 "模型原有动画：" + s.attachment.activeModel().getBlueprint().getAnimations().size()
                         + "；会话内补齐：" + bridge.compatibilityAnimations(s.attachment),
@@ -380,8 +385,6 @@ public final class ActionController {
                 "伪装来源：" + (s.attachment.owned() ? "本插件创建" : "接管原生 ME"),
                 "模型定位：" + (s.attachment.activeModel().getPivotOverride().isPresent()
                         ? "挂载玩家/原生枢轴（高度由 ME 乘挂偏移决定）" : "独立视觉枢轴（以玩家脚底坐标定位）"),
-                "指令参数：" + (s.attachment.owned() ? s.options.description() : "保留原生伪装参数")
-                        + "；受管药水：" + s.effects.activeIds(),
                 "状态：" + s.state + "；自动动画：" + (s.posture == null ? "无" : s.posture.animation()),
                 "手动动画：" + (s.manual == null ? "无" : s.manual.animation()),
                 "手臂状态：" + s.interactionState + "；动画：" + (s.interaction == null ? "无" : s.interaction.animation()),
@@ -392,11 +395,13 @@ public final class ActionController {
                         + (s.visualFrame == null ? "未采样" : s.visualFrame.air()),
                 "真实坐下/爬行：" + gameplay.isSitting(player) + "/" + gameplay.isCrawling(player),
                 "GSit：" + gameplay.diagnosis(),
-                "本地接管：" + (localRendering.allowed() ? "允许申请" : "不允许")
-                        + "；attached=" + localRendering.attached() + "；owned=" + localRendering.owned()
-                        + "；audience=" + localRendering.audience() + "；模型数量=" + localRendering.modelCount() + "/1"
-                        + "；" + localRendering.reason(),
-                "客户端：" + (clients == null ? "未启用" : clients.status(player))));
+                "§7客户端接管资格：" + (localRendering.allowed() ? "允许申请" : "不可用")
+                        + "；当前 ME 实例数量 " + localRendering.modelCount(),
+                "§7资格原因：" + localRendering.reason()));
+        lines.addAll(ServerMessages.wrapped("§7指令参数：", s.attachment.owned() ? s.options.description() : "保留原生 ME 伪装参数"));
+        lines.add("§7受管药水：" + s.effects.activeIds());
+        if (clients == null) lines.add("§7客户端接管服务未启用；ME 继续渲染。");
+        else lines.addAll(clients.statusLines(player));
         if (!s.failure.isEmpty()) lines.add("最近动作失败：" + s.failure);
         if (s.attachment.owned()) lines.add("模型观众：" + bridge.viewerCount(s.attachment)
                 + "/" + s.options.maxViewers() + " 名其他玩家（最近者优先，受 ME 跟踪/剔除限制）；本人可见 " + s.options.showSelf());
@@ -463,7 +468,7 @@ public final class ActionController {
             for (Player player : adoption.next(clock, Bukkit::getOnlinePlayers)) {
                 if (resources != null && !resources.tryWork()) break;
                 if (!player.isOnline() || controlled(player) || adoptPaused.contains(player.getUniqueId()) || !player.hasPermission("mact.use")) continue;
-                List<String> nativeModels = bridge.existingModels(player).stream().filter(settings.allowedModels::contains).toList();
+                List<String> nativeModels = bridge.existingModels(player);
                 if (nativeModels.isEmpty()) continue;
                 try { bridge.prepareRuntime(nativeModels.getFirst()); admit(player, false); }
                 catch (ResourceRejectedException refused) { continue; }
