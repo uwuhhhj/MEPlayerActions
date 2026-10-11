@@ -5,6 +5,7 @@ import com.simmc.meplayeractions.config.PerformanceSettings;
 import com.simmc.meplayeractions.MEPlayerActionsPlugin;
 import com.simmc.meplayeractions.protection.ResourceProtection;
 import com.simmc.meplayeractions.protection.ResourceError;
+import com.simmc.meplayeractions.server.ServerMessages;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.configuration.ConfigurationSection;
@@ -24,8 +25,10 @@ import java.util.regex.Pattern;
 public final class PrivateModelSyncService implements PluginMessageListener, AutoCloseable {
     public static final String CHANNEL = "meplayeractions:private", CAPABILITY = "private_models_v1";
     public static final String UPLOAD_CREDIT = "private_upload_credit_v1";
+    public static final String VIEW_STATE = "private_view_state_v1";
     public static final int PROTOCOL = 1, HEARTBEAT_TICKS = 20, LEASE_TICKS = 100;
     private static final int CHUNK_BYTES = 8192, MAX_OFFERS = 64, TRANSFER_TIMEOUT = 1200;
+    private static final int DIAGNOSTIC_ENTRIES = 8, DIAGNOSTIC_TICKS = 1200;
     private static final long MAX_SEQUENCE = 9_007_199_254_740_991L;
     private static final Pattern HASH = Pattern.compile("[a-f0-9]{64}"), NAME = Pattern.compile("[a-zA-Z0-9_.:/-]{1,128}");
     private static final Pattern MODEL_VARIABLE = Pattern.compile("variable\\.[\\p{L}_][\\p{L}\\p{N}_]*(?:\\.[\\p{L}_][\\p{L}\\p{N}_]*)*");
@@ -172,9 +175,93 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         Session session=sessions.get(player.getUniqueId());Publication publication=publications.get(player.getUniqueId());
         long ready=session==null?0:session.offers.values().stream().filter(offer->offer.status==Status.READY).count();
         return "私人多人同步 " + (session==null?"未协商":"v1") + "；发布许可 " + canUpload(player) + "；观看许可 " + canView(player)
-                + "；本人 " + (publication==null?"未发布":publication.kind) + "；已确认观看 " + ready
+                + "；本人发布 " + (publication==null?"未发布":publication.kind) + "；接收他人模型就绪回执 " + ready
                 + "；本人已验证资源缓存 " + (store!=null && store.enabled()?"开启":"关闭")
                 + "；上传窗口 " + (session!=null&&session.uploadCredit?"已协商":"传统限额");
+    }
+    /** Command-only diagnostics read bounded relay identities; no disk reads or audience discovery. */
+    public List<String> statusLines(Player player) {
+        if(!policy.enabled())return List.of("§e私人模型分享：服务器已关闭此功能。");
+        UUID owner=player.getUniqueId();Session session=sessions.get(owner);Publication publication=publications.get(owner);long now=tick();
+        List<String> lines=new ArrayList<>();
+        lines.add("§7私人模型分享：协议 §f"+(session==null?"未连接":"v1 已连接")+"§7；发布权限 §f"+permission(canUpload(player))+"§7；观看权限 §f"+permission(canView(player)));
+        lines.add("§7接收他人模型："+(session==null?"§e尚未连接":!session.viewState?"§e旧客户端未报告渲染开关":session.viewEnabled?"§a客户端已开启":"§e客户端已暂停接收（上传权限与存档不受此开关影响）"));
+        lines.add("§7服务器私人资源缓存：§f"+(store!=null&&store.enabled()?"开启":"关闭")+"§7；上传窗口：§f"+(session!=null&&session.uploadCredit?"已协商":"传统限额"));
+        if(publication==null)lines.add("§7本人发布：§f未发布§7；这不影响接收其他玩家的私人模型。");
+        else {
+            lines.add("§7本人发布：§a已验证并发布§7；发布租期余 §f"+remaining(now,publication.lease)+" §7tick");
+            addIdentity(lines,publication.sourceId,publication.kind,publication.hash,publication.generation);
+            int ready=0;List<String> viewers=new ArrayList<>();
+            for(UUID viewer:publication.offeredViewers) {
+                Session watching=sessions.get(viewer);Offer offer=watching==null?null:watching.offers.get(owner);
+                if(offer==null||offer.publication!=publication)continue;
+                if(offer.status==Status.READY&&remaining(now,offer.lease)>0)ready++;
+                if(viewers.size()<DIAGNOSTIC_ENTRIES)viewers.add("§7  观众 §f"+playerName(viewer)+"§7："+offerStage(offer,now));
+            }
+            lines.add("§7本人模型观众：已发资源邀约 §f"+publication.offeredViewers.size()+"§7；就绪回执且租期有效 §f"+ready);
+            lines.addAll(viewers);
+            if(publication.offeredViewers.size()>viewers.size())lines.add("§7  仅列出前 "+DIAGNOSTIC_ENTRIES+" 名观众。");
+        }
+        if(session!=null&&session.upload!=null) {
+            Upload upload=session.upload;
+            lines.add("§7本人上传：§e"+(upload.validating?"服务器正在校验":"已接收 "+upload.offset+" / "+upload.expectedBytes+" 字节"));
+            addIdentity(lines,upload.sourceId,upload.kind,upload.hash,upload.generation);
+        }
+        int incoming=session==null?0:session.offers.size();
+        lines.add("§7接收他人私人模型：§f"+incoming+" §7个资源关系（与本人发布独立）");
+        int shown=0;
+        if(session!=null) {
+            for(Offer offer:session.offers.values()) {
+                if(shown++>=DIAGNOSTIC_ENTRIES)break;
+                lines.add("§7  发布者 §f"+playerName(offer.publication.owner)+"§7："+offerStage(offer,now));
+                addIdentity(lines,offer.publication.sourceId,offer.publication.kind,offer.publication.hash,offer.publication.generation);
+            }
+            if(incoming>DIAGNOSTIC_ENTRIES)lines.add("§7  仅列出前 "+DIAGNOSTIC_ENTRIES+" 个资源关系。");
+            for(ObservationFailure failure:session.observationFailures.values()) {
+                if(distance(now,failure.tick)>=DIAGNOSTIC_TICKS)continue;
+                lines.add("§7最近停止接收 §f"+playerName(failure.owner)+"§7：§e"+failureReason(failure.reason)+"§7（原阶段 "+failure.phase+"）");
+                addIdentity(lines,failure.sourceId,failure.kind,failure.hash,failure.generation);
+            }
+        }
+        lines.add("§7就绪回执只表示客户端报告资源可渲染，服务器已发送授权 ACK。");
+        lines.add("§7客户端是否实际落盘、当前是否绘制模型：服务器无法直接确认。");
+        return List.copyOf(lines);
+    }
+    private static String permission(boolean allowed){return allowed?"有":"无";}
+    private static long remaining(long now,long renewed){return Math.max(0,LEASE_TICKS-distance(now,renewed));}
+    private static String playerName(UUID id){Player player=Bukkit.getPlayer(id);return player==null?id.toString():player.getName();}
+    private static void addIdentity(List<String> lines,String sourceId,String kind,String hash,UUID generation) {
+        lines.addAll(ServerMessages.wrapped("§7  模型：§f",(sourceId.isEmpty()?"未提供模型 ID":sourceId)+"（"+kind+"）"));
+        lines.add("§7  资源 SHA-256：§f"+hash);
+        lines.add("§7  发布代次：§f"+generation);
+    }
+    private static String offerStage(Offer offer,long now) {
+        return switch(offer.status) {
+            case OFFERED -> "§e资源邀约已发；等待客户端报告缓存情况";
+            case CACHED -> "§e客户端报告已有缓存；等待可渲染回执";
+            case QUEUED -> "§e客户端缺少缓存；资源传送排队中";
+            case SENDING -> "§e正在发送资源 "+offer.offset+" / "+offer.publication.bytes.length+" 字节";
+            case DELIVERED -> "§e资源已全部发送；等待校验和可渲染回执";
+            case READY -> remaining(now,offer.lease)>0?"§a收到可渲染回执，已发送授权 ACK；租期余 "+remaining(now,offer.lease)+" tick":"§e授权租期已到期，等待撤销";
+        };
+    }
+    private static String failureReason(String reason) {
+        return switch(reason) {
+            case "asset_rejected" -> "客户端拒绝资源解析或渲染";
+            case "offer_expired" -> "资源传送或可渲染回执超时";
+            case "lease_expired" -> "渲染授权心跳超时";
+            case "server_model_priority" -> "发布者改用服务器伪装，私人分享停止";
+            case "owner_cleared" -> "发布者停止分享";
+            case "upload_deleted" -> "发布者删除已上传资源";
+            case "publisher_expired" -> "发布者离线、权限变化或发布心跳超时";
+            case "out_of_range" -> "观察范围、追踪或观看权限不再满足";
+            case "observation_changed" -> "传送或世界变化，等待重新授权";
+            case "model_changed" -> "发布者切换模型";
+            case "transfer_queue_full" -> "资源传送队列已满";
+            case "tps_protection" -> "服务器负载保护暂停分享";
+            case "viewer_paused" -> "观看者关闭客户端渲染，已暂停接收";
+            default -> reason;
+        };
     }
     @Override public void onPluginMessageReceived(String channel,Player player,byte[] bytes) {
         long started=resources!=null&&Bukkit.isPrimaryThread()?System.nanoTime():0;
@@ -203,9 +290,12 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
             Session previous=sessions.remove(owner);if(previous!=null)endSession(owner,previous,"new_handshake");
             Session session=new Session(owner);session.uploadCatalog=packet.getAsJsonArray("capabilities").asList().stream().anyMatch(value->value.getAsString().equals(PrivateUploadCatalog.CAPABILITY));sessions.put(owner,session);
             session.uploadCredit=packet.getAsJsonArray("capabilities").asList().stream().anyMatch(value->value.getAsString().equals(UPLOAD_CREDIT));
+            session.viewState=packet.getAsJsonArray("capabilities").asList().stream().anyMatch(value->value.getAsString().equals(VIEW_STATE));
+            session.viewEnabled=!session.viewState||packet.has("viewEnabled")&&packet.get("viewEnabled").getAsBoolean();
             JsonObject ack=envelope("hello_ack");JsonArray capabilities=new JsonArray();capabilities.add(CAPABILITY);ack.add("capabilities",capabilities);
             if(session.uploadCatalog){capabilities.add(PrivateUploadCatalog.CAPABILITY);ack.addProperty("uploadCatalogToken",session.uploadCatalogToken.toString());}
             if(session.uploadCredit)capabilities.add(UPLOAD_CREDIT);
+            if(session.viewState){capabilities.add(VIEW_STATE);ack.addProperty("viewEnabled",session.viewEnabled);}
             ack.addProperty("allowedUpload",canUpload(player));ack.addProperty("allowedView",canView(player));
             ack.addProperty("maxPayload",policy.maxPayload());ack.addProperty("maxBundleBytes",effectiveBundleLimit(policy));
             ack.addProperty("heartbeatTicks",HEARTBEAT_TICKS);ack.addProperty("leaseTicks",LEASE_TICKS);
@@ -235,6 +325,7 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
     }
     private boolean canUpload(Player owner) {return policy.enabled() && owner.hasPermission(policy.uploadPermission());}
     private boolean canView(Player viewer) {return policy.enabled() && viewer.hasPermission(policy.viewPermission());}
+    private boolean receivesModels(UUID viewer){Session session=sessions.get(viewer);return session!=null&&session.viewEnabled;}
     private Set<UUID> serverDisguised() {
         Set<UUID> owners=serverDisguisedOwners.get();return owners==null?Set.of():Set.copyOf(owners);
     }
@@ -548,6 +639,10 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         if(send(player,ack,false)){offer.status=Status.READY;offer.lease=tick;limits.pushRenderReady(player.getUniqueId(),hash);sendState(player,offer.publication);}
     }
     private void heartbeat(Player player,Session session,JsonObject packet,long tick) throws IOException {
+        if(packet.has("viewEnabled")) {
+            if(!session.viewState)throw new IOException("view_state_not_negotiated");
+            updateViewState(player,session,booleanValue(packet.get("viewEnabled")));
+        }
         JsonArray bindings=packet.getAsJsonArray("bindings");Set<UUID> owners=new HashSet<>();Set<UUID> disguised=serverDisguised();
         JsonArray renewed=new JsonArray();
         for(JsonElement element:bindings) {
@@ -561,7 +656,17 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
             }
         }
         JsonObject confirmation=envelope("heartbeat");confirmation.add("bindings",renewed);
+        if(session.viewState)confirmation.addProperty("viewEnabled",session.viewEnabled);
         confirmation.addProperty("allowedUpload",canUpload(player));confirmation.addProperty("allowedView",canView(player));send(player,confirmation,false);
+    }
+    private void updateViewState(Player viewer,Session session,boolean enabled) {
+        if(session.viewEnabled==enabled)return;
+        session.viewEnabled=enabled;
+        if(!enabled) {
+            for(Offer offer:List.copyOf(session.offers.values()))removeOffer(viewer,session,offer,"viewer_paused");
+            audiences.removeViewer(session.owner);
+        }
+        // Resuming uses the normal phased audience discovery; no all-publication scan on a toggle.
     }
     private Publication owned(Player player,JsonObject packet) throws IOException {
         Publication publication=publications.get(player.getUniqueId());
@@ -686,7 +791,7 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         }
         var origin=owner.getLocation();double range=policy.viewDistance()*policy.viewDistance();
         Set<UUID> discovered=owner.getTrackedBy().stream().filter(Player::isOnline).filter(candidate->!candidate.getUniqueId().equals(owner.getUniqueId()))
-                .filter(candidate->sessions.containsKey(candidate.getUniqueId()) && canView(candidate) && candidate.getWorld().equals(owner.getWorld()) && candidate.canSee(owner))
+                .filter(candidate->receivesModels(candidate.getUniqueId()) && canView(candidate) && candidate.getWorld().equals(owner.getWorld()) && candidate.canSee(owner))
                 .map(candidate->new AudienceCandidate(candidate.getUniqueId(),candidate.getLocation().distanceSquared(origin)))
                 .filter(candidate->candidate.distance<range)
                 .sorted(Comparator.comparingDouble(AudienceCandidate::distance).thenComparing(AudienceCandidate::viewer))
@@ -696,7 +801,7 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         return resources.reserveRelationships("private",publication.owner,discovered);
     }
     private void offer(Player viewer,Publication publication,long tick) {
-        if(viewer==null||!acceptsNewWork())return;Session session=sessions.get(viewer.getUniqueId());if(session==null)return;
+        if(viewer==null||!acceptsNewWork())return;Session session=sessions.get(viewer.getUniqueId());if(session==null||!session.viewEnabled)return;
         if(resources!=null&&session.offers.size()>=resources.settings().models().maxModelsPerViewer())return;
         if(session.offers.size()>=MAX_OFFERS || session.offers.values().stream().filter(offer->offer.status!=Status.READY).count()>=2)return;
         UUID rejected=session.rejected.get(publication.owner);
@@ -709,8 +814,9 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
                 || !limits.canPushOffer(session.owner,publication.hash,Set.of(publication.generation),tick))return;
         Offer offer=new Offer(session.owner,publication,tick);JsonObject packet=binding("private_offer",publication);
         packet.addProperty("offerId",offer.id.toString());packet.addProperty("kind",publication.kind);packet.addProperty("bytes",publication.bytes.length);
+        if(session.viewState&&!publication.sourceId.isEmpty())packet.addProperty("modelId",publication.sourceId);
         addAppearance(packet,publication);
-        if(send(viewer,packet,false)){session.offers.put(publication.owner,offer);publication.offeredViewers.add(session.owner);limits.pushOfferSent(session.owner,publication.hash,Set.of(publication.generation),tick);}
+        if(send(viewer,packet,false)){session.observationFailures.remove(publication.owner);session.offers.put(publication.owner,offer);publication.offeredViewers.add(session.owner);limits.pushOfferSent(session.owner,publication.hash,Set.of(publication.generation),tick);}
     }
     private boolean authorized(Player viewer,Publication publication,Set<UUID> disguised) {
         return liveAuthorized(viewer,publication,disguised.contains(publication.owner));
@@ -719,7 +825,7 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         return liveAuthorized(viewer,publication,isServerDisguised(publication.owner));
     }
     private boolean liveAuthorized(Player viewer,Publication publication,boolean disguised) {
-        if(viewer==null || !viewer.isOnline() || !canView(viewer) || viewer.getUniqueId().equals(publication.owner)
+        if(viewer==null || !viewer.isOnline() || !canView(viewer) || !receivesModels(viewer.getUniqueId()) || viewer.getUniqueId().equals(publication.owner)
                 || publications.get(publication.owner)!=publication || disguised || !audiences.contains(publication.owner,publication.generation,viewer.getUniqueId()))return false;
         Player owner=Bukkit.getPlayer(publication.owner);
         if(owner==null || !owner.isOnline() || !canUpload(owner) || !owner.getWorld().equals(viewer.getWorld()) || !viewer.canSee(owner)
@@ -796,6 +902,12 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
     }
     private void removeOffer(Player viewer,Session session,Offer offer,String reason) {
         if(!session.offers.remove(offer.publication.owner,offer))return;
+        if(reason.equals("viewer_paused")&&offer.status!=Status.READY)
+            limits.cancelPausedPushOffer(session.owner,offer.publication.hash,Set.of(offer.publication.generation),offer.created);
+        session.observationFailures.remove(offer.publication.owner);
+        session.observationFailures.put(offer.publication.owner,new ObservationFailure(offer.publication.owner,offer.publication.generation,
+                offer.publication.sourceId,offer.publication.kind,offer.publication.hash,offer.status.name(),reason,tick()));
+        while(session.observationFailures.size()>DIAGNOSTIC_ENTRIES)session.observationFailures.remove(session.observationFailures.keySet().iterator().next());
         session.pendingStates.remove(offer.publication.owner);
         clearPendingIndex(session);
         pendingTransfers.remove(offer);activeTransfers.remove(offer);offer.publication.offeredViewers.remove(session.owner);
@@ -936,12 +1048,13 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         switch(type) {
             case "hello" -> {
                 keys.add("capabilities");JsonElement element=packet.get("capabilities");
-                if(element==null || !element.isJsonArray() || element.getAsJsonArray().size()<1 || element.getAsJsonArray().size()>3)throw new IOException("capabilities");
+                if(element==null || !element.isJsonArray() || element.getAsJsonArray().size()<1 || element.getAsJsonArray().size()>4)throw new IOException("capabilities");
                 Set<String> seen=new HashSet<>();for(JsonElement capability:element.getAsJsonArray()) {
                     if(!capability.isJsonPrimitive()||!capability.getAsJsonPrimitive().isString())throw new IOException("capabilities");
-                    String name=capability.getAsString();if(!Set.of(CAPABILITY,PrivateUploadCatalog.CAPABILITY,UPLOAD_CREDIT).contains(name)||!seen.add(name))throw new IOException("capabilities");
+                    String name=capability.getAsString();if(!Set.of(CAPABILITY,PrivateUploadCatalog.CAPABILITY,UPLOAD_CREDIT,VIEW_STATE).contains(name)||!seen.add(name))throw new IOException("capabilities");
                 }
                 if(!seen.contains(CAPABILITY))throw new IOException("capabilities");
+                if(packet.has("viewEnabled")){if(!seen.contains(VIEW_STATE))throw new IOException("view_state_not_negotiated");keys.add("viewEnabled");booleanValue(packet.get("viewEnabled"));}
             }
             case "upload_offer" -> {
                 keys.addAll(Set.of("generation","hash","bytes","kind","appearance"));uuid(packet,"generation");hash(packet);PrivateModelBundle.integer(packet,"bytes",1,PrivateModelBundle.MAX_BYTES);
@@ -958,6 +1071,7 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
             case "private_status" -> {keys.addAll(Set.of("offerId","hash","status"));uuid(packet,"offerId");hash(packet);if(!Set.of("cached","missing","rejected").contains(PrivateModelBundle.string(packet,"status",16)))throw new IOException("status");}
             case "private_ready" -> {keys.addAll(Set.of("owner","generation","hash"));uuid(packet,"owner");uuid(packet,"generation");hash(packet);}
             case "private_heartbeat" -> {
+                if(packet.has("viewEnabled")){keys.add("viewEnabled");booleanValue(packet.get("viewEnabled"));}
                 keys.add("bindings");JsonElement value=packet.get("bindings");if(value==null || !value.isJsonArray() || value.getAsJsonArray().size()>64)throw new IOException("bindings");
                 Set<UUID> owners=new HashSet<>();for(JsonElement item:value.getAsJsonArray()){JsonObject binding=PrivateModelBundle.object(item);PrivateModelBundle.requireKeys(binding,Set.of("owner","generation","hash"));
                     if(!owners.add(uuid(binding,"owner")))throw new IOException("duplicate_binding");uuid(binding,"generation");hash(binding);}
@@ -972,6 +1086,10 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
             default -> throw new IOException("type");
         }
         PrivateModelBundle.requireKeys(packet,keys);return packet;
+    }
+    private static boolean booleanValue(JsonElement value) throws IOException {
+        if(value==null||!value.isJsonPrimitive()||!value.getAsJsonPrimitive().isBoolean())throw new IOException("boolean");
+        return value.getAsBoolean();
     }
     static JsonObject appearance(JsonElement element) throws IOException {
         JsonObject source=PrivateModelBundle.object(element),result=new JsonObject();
@@ -1018,8 +1136,9 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
     private enum Status {OFFERED,CACHED,QUEUED,SENDING,DELIVERED,READY}
     private static final class Session {
         final UUID owner;final Map<UUID,Offer> offers=new LinkedHashMap<>();final Map<UUID,UUID> rejected=new LinkedHashMap<>();
+        final Map<UUID,ObservationFailure> observationFailures=new LinkedHashMap<>();
         final Map<UUID,Publication> pendingStates=new LinkedHashMap<>();Publication pendingCommit,committedPublication;UUID committedUploadId;Upload upload;
-        boolean uploadCatalog,uploadCredit,catalogAvailable,catalogInitialized;long catalogRevision,lastCatalogSendTick=-1;
+        boolean uploadCatalog,uploadCredit,catalogAvailable,catalogInitialized,viewState,viewEnabled=true;long catalogRevision,lastCatalogSendTick=-1;
         final UUID uploadCatalogToken=UUID.randomUUID();long lastDeleteSequence;
         List<PrivateModelStore.UploadedModel> catalogModels=List.of();List<JsonObject> catalogPackets=List.of();int catalogIndex;
         final Map<UUID,Delete> deletes=new LinkedHashMap<>();final Map<UUID,JsonObject> deleteReplies=new LinkedHashMap<>();
@@ -1047,6 +1166,7 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         Offer(UUID viewer,Publication publication,long tick){this.viewer=viewer;this.publication=publication;created=lastProgress=tick;}
     }
     private record AudienceCandidate(UUID viewer,double distance) {}
+    private record ObservationFailure(UUID owner,UUID generation,String sourceId,String kind,String hash,String phase,String reason,long tick) {}
     private record OwnerHash(UUID owner,String hash) {}
     private record OwnerSource(UUID owner,String sourceId) {}
     private static final class Delete {

@@ -129,6 +129,7 @@ public final class ClientRuntime {
         if(options.privateAppearancePaused)playerInteractionPolicy.pauseLocalAppearance();
         privateModels=new PrivateModelSyncClient(new PrivateModelSyncClient.Host() {
             @Override public boolean channelAvailable(){return connected&&client.getNetworkHandler()!=null&&ClientPlayNetworking.canSend(PrivateModelPayload.ID);}
+            @Override public boolean viewEnabled(){return options.enabled;}
             @Override public boolean send(JsonObject packet){return sendPrivate(packet);}
             @Override public PrivateModelSyncClient.Local local(){return privateLocalSnapshot();}
             @Override public CompletableFuture<byte[]> bundle(String id){return decodeAsync(()->localModelLibrary.sourceBundle(id));}
@@ -653,6 +654,7 @@ public final class ClientRuntime {
         options.showSelf=true;options.save();return setPrivateSyncEnabled(true);
     }
     public boolean privateSyncEnabled(){return options.privateSyncEnabled;}
+    public List<PrivateModelSyncClient.ReceivedModel> receivedPrivateModels(){return privateModels.receivedModels();}
     public boolean canShareLocalModel(){return privateSyncAvailable() && canActivateLocalAppearance();}
     public String privateSyncStatus(){
         if(serverOwnModelPresent())return "服务端伪装期间，私人展示与分享已暂停；配置已保留";
@@ -662,9 +664,41 @@ public final class ClientRuntime {
         return privateModels.status();
     }
     public Map<String,Object> privateSharingDiagnostics(){
-        return Map.of("requested",options.privateSyncEnabled,"canUpload",privateModels.available(),
-                "canView",privateModels.canView(),"canShare",canShareLocalModel(),"committed",privateModels.committed(),
-                "bytes",privateModels.publicationBytes(),"uploadedBytes",privateModels.uploadedBytes(),"status",privateSyncStatus());
+        var result=new LinkedHashMap<String,Object>();
+        result.put("requested",options.privateSyncEnabled);result.put("canUpload",privateModels.available());
+        result.put("canView",privateModels.canView());result.put("viewingEnabled",privateModels.viewingEnabled());
+        result.put("viewerStateNegotiated",privateModels.viewerStateNegotiated());result.put("canShare",canShareLocalModel());
+        result.put("committed",privateModels.committed());result.put("bytes",privateModels.publicationBytes());
+        result.put("uploadedBytes",privateModels.uploadedBytes());result.put("status",privateSyncStatus());
+        result.put("receiving",receivedPrivateModels().stream().map(model->{
+            var receipt=new LinkedHashMap<String,Object>();
+            receipt.put("owner",model.owner().toString());receipt.put("generation",model.generation().toString());
+            receipt.put("modelId",model.modelId());receipt.put("hash",model.hash());receipt.put("kind",model.kind());
+            receipt.put("bytes",model.bytes());receipt.put("receivedBytes",model.receivedBytes());receipt.put("cacheHit",model.cacheHit());
+            receipt.put("phase",model.phase().name());receipt.put("ready",model.ready());receipt.put("active",model.active());
+            receipt.put("localState",privateViewingStatus(model));receipt.put("failure",model.failure());
+            return receipt;
+        }).toList());
+        return java.util.Collections.unmodifiableMap(result);
+    }
+    /** Readiness is a resource/lease acknowledgement; it cannot prove that an off-screen player was drawn. */
+    private String privateViewingStatus(PrivateModelSyncClient.ReceivedModel model){
+        if(model.phase()==PrivateModelSyncClient.ReceivingPhase.FAILED)return model.failure();
+        if(!options.enabled)return "客户端渲染已关闭，暂停接收";
+        if(isServerDisguised(model.owner()))return "发布者存在服务器伪装，私人外观暂停";
+        if(!model.active())return switch(model.phase()){
+            case CHECKING_CACHE -> "正在校验本地缓存";
+            case WAITING_DOWNLOAD -> "等待服务器下发资源";
+            case DOWNLOADING -> "正在接收资源";
+            case DECODING -> "正在解析并准备纹理";
+            case WAITING_ACK -> "本机资源已就绪，等待服务器观看确认";
+            default -> "等待有效观看租约";
+        };
+        if(client.world==null||client.world.getPlayerByUuid(model.owner())==null)return "已获观看授权，等待原版玩家实体";
+        Binding binding=privateBindings.get(model.owner());
+        if(binding==null||!binding.instance.equals(model.generation().toString())||!ModelRenderer.has(binding.hash))
+            return "已获观看授权，本机绘制资源尚未就绪";
+        return "资源与观看授权已就绪；实际绘制依当前视角与显隐";
     }
     public boolean setPrivateSyncEnabled(boolean enabled){
         if(enabled&&!canShareLocalModel())return false;
@@ -936,6 +970,7 @@ public final class ClientRuntime {
         // render_failed releases only GPU leases, so ME resumes displaying the disguise.
         if(options.enabled) releaseAll();
         options.enabled=!options.enabled;options.save();
+        privateModels.viewerRenderingChanged();
         if(!options.enabled) {
             closeModelEffects();
             previewRequest++;previewPending=false;
@@ -1248,7 +1283,7 @@ public final class ClientRuntime {
     public void renderFailed(UUID owner,String instance,String hash,String reason) {
         for(Binding failedPrivate:List.copyOf(privateBindings.values()))if(failedPrivate.hash.equals(hash)
                 &&(owner==null||failedPrivate.owner.equals(owner)&&failedPrivate.instance.equals(instance)))
-            privateModels.rejectRemote(failedPrivate.owner,UUID.fromString(failedPrivate.instance));
+            privateModels.rejectRemote(failedPrivate.owner,UUID.fromString(failedPrivate.instance),"本机绘制失败，已恢复原版玩家："+reason);
         if(localSelf!=null && localSelf.hash.equals(hash)
                 && (owner==null || localSelf.owner.equals(owner) && localSelf.instance.equals(instance))) {
             localSelf=null;localAppearanceRequest++;localAppearancePending=false;
@@ -1431,6 +1466,7 @@ public final class ClientRuntime {
         return serverDisguiseRequest.preferencesNeedApply(id,serverOwnModelId().equals(id)?serverOwnModelInstance():"",options.serverDisguisePreferences(id));
     }
     public Path localServerCacheDirectory() {return cache.toAbsolutePath().normalize();}
+    public Path localPrivateModelCacheDirectory() {return cache.resolve("private-models").toAbsolutePath().normalize();}
     public boolean serverOwnModelReady() {
         return client.player!=null && serverBridgeReady() && usable(bindings.get(client.player.getUuid()),System.nanoTime());
     }
@@ -1751,7 +1787,17 @@ public final class ClientRuntime {
                 +" · 玩家隐藏设置 "+(ownPlayerHideSetting()?"开启":"关闭")
                 +" · 装备隐藏设置 "+(serverOwnModelPresent() || options.hideVanillaEquipment?"开启":"关闭"));
         if(localAppearance().enabled())text.add("本地外观："+localAppearance().modelId()+" · "+localAppearanceStatus());
-        text.add("私人同步："+privateSyncStatus()+" · 同步选择 "+(options.privateSyncEnabled?"开启":"关闭")+" · 接收模型 "+privateBindings.size());
+        text.add("本人私人分享："+privateSyncStatus()+" · 分享选择 "+(options.privateSyncEnabled?"开启":"关闭"));
+        var receipts=receivedPrivateModels();
+        text.add("观看私人分享："+(!options.enabled?"客户端渲染已关闭":!privateModels.canView()?"尚未获服务器观看许可":"已开启接收")
+                +" · 接收记录 "+receipts.size()+" · "+(privateModels.viewerStateNegotiated()?"服务器已协商观看开关":"服务器未协商观看开关"));
+        for(var model:receipts.stream().limit(8).toList()){
+            var player=client.world==null?null:client.world.getPlayerByUuid(model.owner());
+            String ownerName=player==null?model.owner().toString():player.getName().getString();
+            text.add("分享来源："+ownerName+" · "+(model.modelId().isEmpty()?"模型 ID 未提供":model.modelId())+" · hash "+model.hash().substring(0,12));
+            text.add("资源："+(model.cacheHit()?"本次校验命中磁盘缓存":"本次未命中磁盘缓存")+" · "+model.receivedBytes()+" / "+model.bytes()+" 字节 · "+privateViewingStatus(model));
+        }
+        if(receipts.size()>8)text.add("其余接收记录请查看图库的私人分享缓存或诊断文件");
         if(client.player!=null && localAppearance().enabled() && localModelProfile().isYsm()) {
             var fallbacks=ModelRenderer.queryDiagnostics(client.player.getUuid());
             for(var fallback:fallbacks) {

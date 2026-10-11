@@ -20,6 +20,72 @@ import static org.junit.jupiter.api.Assertions.*;
 /** Real bundle decoding with a deterministic host clock; no game, network or sleeps. */
 class PrivateModelSyncClientTest {
     private static final long NOW=10_000_000_000L,SECOND=1_000_000_000L;
+    @Test void pausedViewerNegotiatesItsIntentWithoutLoadingOffersOrClaimingReadiness() throws Exception {
+        Rig rig=new Rig();rig.host.viewEnabled=false;rig.client.tick(NOW);
+        JsonObject hello=rig.host.sent("hello").getLast();assertFalse(hello.get("viewEnabled").getAsBoolean());
+        assertTrue(hello.getAsJsonArray("capabilities").asList().stream().anyMatch(value->value.getAsString().equals(PrivateModelSyncClient.VIEW_STATE)));
+        rig.acknowledgeViewState(true,true);Offer offer=rig.offer();rig.receive(offer.packet(),NOW);rig.host.drain();
+        assertTrue(rig.client.viewerStateNegotiated());assertFalse(rig.client.viewingEnabled());
+        assertTrue(rig.client.receivedModels().isEmpty());assertTrue(rig.host.sent("private_ready").isEmpty());
+        assertEquals(0,rig.host.cacheReads);assertEquals(0,rig.host.decodes);assertEquals(0,rig.host.prepared);
+    }
+    @Test void viewingPauseCancelsReceiverCallbacksButKeepsOwnPublicationAndResumesWithoutRejectingTheOwner() throws Exception {
+        Rig rig=new Rig();rig.acknowledgeViewState(true,true);rig.host.explicitLocal=true;rig.client.tick(NOW);rig.host.drain();
+        JsonObject publication=rig.host.sent("upload_offer").getLast();rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),publication),NOW);
+        assertTrue(rig.client.committed());
+        Offer remote=rig.offer();rig.host.cached=CompletableFuture.completedFuture(rig.bundle);
+        CompletableFuture<LocalModelLibrary.Loaded> delayed=new CompletableFuture<>();rig.host.decodeResults.add(delayed);
+        rig.receive(remote.packet(),NOW);rig.host.drain();assertEquals(PrivateModelSyncClient.ReceivingPhase.DECODING,rig.client.receivedModels().getFirst().phase());
+        rig.host.viewEnabled=false;rig.client.viewerRenderingChanged();assertTrue(rig.client.committed());assertNull(rig.client.remote(remote.owner));
+        JsonObject paused=rig.host.sent("private_heartbeat").getLast();assertFalse(paused.get("viewEnabled").getAsBoolean());
+        assertEquals(1,paused.getAsJsonArray("bindings").size());assertEquals(rig.host.local.owner().toString(),paused.getAsJsonArray("bindings").get(0).getAsJsonObject().get("owner").getAsString());
+        delayed.complete(NativeModelBundle.decode(rig.bundle,""));rig.host.drain();
+        assertEquals(0,rig.host.prepared);assertTrue(rig.host.sent("private_ready").isEmpty());
+        assertTrue(rig.host.sent("private_status").stream().noneMatch(packet->packet.get("status").getAsString().equals("rejected")));
+        assertTrue(rig.host.sent("clear").isEmpty());
+        rig.host.viewEnabled=true;rig.client.viewerRenderingChanged();assertTrue(rig.host.sent("private_heartbeat").getLast().get("viewEnabled").getAsBoolean());
+        rig.receive(remote.packet(),NOW);rig.host.drain();rig.receive(remote.identity("private_ack"),NOW);
+        assertTrue(rig.client.remote(remote.owner).active);assertEquals(remote.generation,rig.host.visible.get(remote.owner));assertTrue(rig.client.committed());
+    }
+    @Test void viewerStateRetriesCongestedControlAndLegacyServersReceiveOnlyTheirOriginalHeartbeatFields() throws Exception {
+        Rig current=new Rig();current.acknowledgeViewState(false,true);current.host.blockedTypes.add("private_heartbeat");
+        current.host.viewEnabled=false;current.client.viewerRenderingChanged();assertEquals(1,current.host.attempts("private_heartbeat"));
+        current.client.viewerRenderingChanged();assertEquals(1,current.host.attempts("private_heartbeat"));
+        current.host.blockedTypes.remove("private_heartbeat");JsonObject alive=heartbeat();alive.addProperty("viewEnabled",true);
+        current.receive(alive,NOW+SECOND);current.client.tick(NOW+SECOND);
+        assertFalse(current.host.sent("private_heartbeat").getLast().get("viewEnabled").getAsBoolean());
+        Rig legacy=new Rig();legacy.acknowledge(false,true);legacy.host.cached=CompletableFuture.completedFuture(legacy.bundle);Offer offer=legacy.offer();legacy.activate(offer);
+        legacy.host.viewEnabled=false;legacy.client.viewerRenderingChanged();legacy.client.tick(NOW);
+        JsonObject packet=legacy.host.sent("private_heartbeat").getLast();assertEquals(Set.of("protocol","type","bindings"),packet.keySet());
+        assertTrue(packet.getAsJsonArray("bindings").isEmpty());assertTrue(legacy.host.sent("private_status").stream().noneMatch(value->value.get("status").getAsString().equals("rejected")));
+        legacy.host.viewEnabled=true;legacy.client.viewerRenderingChanged();legacy.receive(offer.packet(),NOW);legacy.host.drain();legacy.receive(offer.identity("private_ack"),NOW);
+        assertTrue(legacy.client.remote(offer.owner).active);
+    }
+    @Test void malformedViewerStateEchoCannotRevokePermissionOrCancelTheActiveReceipt() throws Exception {
+        Rig rig=new Rig();rig.acknowledgeViewState(false,true);rig.host.cached=CompletableFuture.completedFuture(rig.bundle);Offer offer=rig.offer();rig.activate(offer);
+        JsonObject malformed=heartbeat();malformed.addProperty("allowedView",false);malformed.addProperty("viewEnabled",1);
+        rig.receive(malformed,NOW);assertTrue(rig.client.canView());assertTrue(rig.client.remote(offer.owner).active);
+        assertEquals(PrivateModelSyncClient.ReceivingPhase.ACTIVE,rig.client.receivedModels().getFirst().phase());
+    }
+    @Test void receivingDiagnosticsSeparateChecksumCacheHitReadinessAcknowledgementAndExactRenderFailure() throws Exception {
+        Rig rig=new Rig();rig.acknowledgeViewState(false,true);Offer offer=rig.offer();rig.host.cached=CompletableFuture.completedFuture(rig.bundle);
+        JsonObject packet=offer.packet();packet.addProperty("modelId","ysm:wine_fox.ysm");rig.receive(packet,NOW);
+        assertEquals(PrivateModelSyncClient.ReceivingPhase.CHECKING_CACHE,rig.client.receivedModels().getFirst().phase());
+        rig.host.drain();var prepared=rig.client.receivedModels().getFirst();assertTrue(prepared.cacheHit());assertTrue(prepared.ready());assertFalse(prepared.active());
+        assertEquals("ysm:wine_fox.ysm",prepared.modelId());assertEquals(offer.bytes,prepared.receivedBytes());assertEquals(PrivateModelSyncClient.ReceivingPhase.WAITING_ACK,prepared.phase());
+        rig.receive(offer.identity("private_ack"),NOW);assertEquals(PrivateModelSyncClient.ReceivingPhase.ACTIVE,rig.client.receivedModels().getFirst().phase());
+        assertFalse(rig.client.rejectRemote(offer.owner,UUID.randomUUID(),"stale"));assertTrue(rig.client.remote(offer.owner).active);
+        assertTrue(rig.client.rejectRemote(offer.owner,offer.generation,"贴图绘制失败\n恢复原版"));assertNull(rig.client.remote(offer.owner));assertTrue(rig.host.visible.isEmpty());
+        var failure=rig.client.receivedModels().getFirst();assertEquals(PrivateModelSyncClient.ReceivingPhase.FAILED,failure.phase());assertFalse(failure.ready());assertFalse(failure.active());assertFalse(failure.failure().contains("\n"));
+        assertThrows(UnsupportedOperationException.class,()->rig.client.receivedModels().clear());rig.client.reset();assertTrue(rig.client.receivedModels().isEmpty());
+    }
+    @Test void liveReceivingMetadataCannotUseUnsafeSourceIdsOrTurnGalleryQueriesIntoUploads() throws Exception {
+        Rig rig=new Rig();rig.acknowledgeViewState(true,true);Offer offer=rig.offer();JsonObject invalid=offer.packet();invalid.addProperty("modelId","local:../../outside.bbmodel");
+        rig.receive(invalid,NOW);rig.host.drain();assertTrue(rig.client.receivedModels().isEmpty());assertEquals(0,rig.host.cacheReads);
+        rig.receive(offer.packet(),NOW);rig.host.drain();for(int i=0;i<5;i++)rig.client.receivedModels();
+        assertEquals(1,rig.host.cacheReads);assertEquals(0,rig.host.bundleReads);assertTrue(rig.host.sent("upload_offer").isEmpty());
+        assertEquals(PrivateModelSyncClient.ReceivingPhase.WAITING_DOWNLOAD,rig.client.receivedModels().getFirst().phase());
+    }
     @Test void negotiatedUploadWindowWaitsForMatchingAbsoluteCreditAndDuplicateGrantsCannotSendAhead() throws Exception {
         Rig rig=new Rig();rig.acknowledge(true,false,false,true);rig.host.explicitLocal=true;rig.client.tick(NOW);rig.host.drain();
         JsonObject offer=rig.host.sent("upload_offer").getLast();JsonObject accept=publicationNotice("upload_accept",rig.host.local.owner(),offer);
@@ -494,10 +560,12 @@ class PrivateModelSyncClientTest {
         assertTrue(rig.client.uploadedModelIds().isEmpty());assertEquals(1,rig.host.bundleReads);assertTrue(rig.host.sent("upload_offer").isEmpty());
     }
     @Test void extendedHelloFallsBackOnceForLegacyServersAndNeverSendsUnnegotiatedSourceIds() throws Exception {
-        Rig rig=new Rig();rig.client.tick(NOW);JsonArray caps=rig.host.sent("hello").getLast().getAsJsonArray("capabilities");assertEquals(3,caps.size());
+        Rig rig=new Rig();rig.client.tick(NOW);JsonArray caps=rig.host.sent("hello").getLast().getAsJsonArray("capabilities");assertEquals(4,caps.size());
         JsonObject denied=PrivateModelSyncClient.envelope("error");denied.addProperty("code","invalid_private_payload");rig.receive(denied,NOW);rig.client.tick(NOW+1);
-        assertEquals(2,rig.host.sent("hello").getLast().getAsJsonArray("capabilities").size());rig.receive(denied,NOW+1);rig.client.tick(NOW+2);assertEquals(3,rig.host.sent("hello").size());
-        assertEquals(1,rig.host.sent("hello").getLast().getAsJsonArray("capabilities").size());rig.receive(denied,NOW+2);rig.client.tick(NOW+3);assertEquals(3,rig.host.sent("hello").size());
+        assertEquals(3,rig.host.sent("hello").getLast().getAsJsonArray("capabilities").size());assertFalse(rig.host.sent("hello").getLast().has("viewEnabled"));
+        rig.receive(denied,NOW+1);rig.client.tick(NOW+2);assertEquals(2,rig.host.sent("hello").getLast().getAsJsonArray("capabilities").size());
+        rig.receive(denied,NOW+2);rig.client.tick(NOW+3);assertEquals(1,rig.host.sent("hello").getLast().getAsJsonArray("capabilities").size());
+        rig.receive(denied,NOW+3);rig.client.tick(NOW+4);assertEquals(4,rig.host.sent("hello").size());
         rig.acknowledge(true,false);rig.host.explicitLocal=true;rig.client.tick(NOW);rig.host.drain();JsonObject offer=rig.host.sent("upload_offer").getLast();
         assertFalse(offer.has("modelId"));rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),offer),NOW);
         assertEquals(PrivateModelSyncClient.UploadPhase.PUBLISHED,rig.client.uploadState(rig.host.local.modelId()).phase());assertTrue(rig.client.uploadedModelIds().isEmpty());
@@ -672,9 +740,14 @@ class PrivateModelSyncClientTest {
             acknowledge(upload,view,catalogue,false);
         }
         void acknowledge(boolean upload,boolean view,boolean catalogue,boolean credit) {
+            acknowledge(upload,view,catalogue,credit,false);
+        }
+        void acknowledgeViewState(boolean upload,boolean view){acknowledge(upload,view,false,false,true);}
+        void acknowledge(boolean upload,boolean view,boolean catalogue,boolean credit,boolean viewState) {
             JsonObject packet=PrivateModelSyncClient.envelope("hello_ack");JsonArray caps=new JsonArray();caps.add("private_models_v1");packet.add("capabilities",caps);
             if(catalogue){caps.add(PrivateUploadCatalogSnapshot.CAPABILITY);packet.addProperty("uploadCatalogToken",UUID.randomUUID().toString());}
             if(credit)caps.add(PrivateModelSyncClient.UPLOAD_CREDIT);
+            if(viewState){caps.add(PrivateModelSyncClient.VIEW_STATE);packet.addProperty("viewEnabled",host.viewEnabled);}
             packet.addProperty("allowedUpload",upload);packet.addProperty("allowedView",view);packet.addProperty("maxPayload",16000);
             packet.addProperty("maxBundleBytes",AssetTransfer.MAX_RAW);packet.addProperty("leaseTicks",20);receive(packet,NOW);
         }
@@ -692,7 +765,7 @@ class PrivateModelSyncClientTest {
         void activate(Offer offer) {receive(offer.packet(),NOW);host.drain();receive(offer.identity("private_ack"),NOW);}
     }
     private static final class FakeHost implements PrivateModelSyncClient.Host {
-        boolean channel=true,explicitLocal;
+        boolean channel=true,explicitLocal,viewEnabled=true;
         int cacheReads,bundleReads,decodes,prepared;
         CompletableFuture<byte[]> cached=CompletableFuture.completedFuture(null),publication;
         final Deque<CompletableFuture<LocalModelLibrary.Loaded>> decodeResults=new ArrayDeque<>();
@@ -709,6 +782,7 @@ class PrivateModelSyncClientTest {
         PrivateModelSyncClient.Local local;
         FakeHost(byte[] bundle) {publication=CompletableFuture.completedFuture(bundle);local=new PrivateModelSyncClient.Local(UUID.randomUUID(),"local:test.bbmodel",appearance(1),extra());}
         public boolean channelAvailable(){return channel;}
+        public boolean viewEnabled(){return viewEnabled;}
         public boolean send(JsonObject packet){String type=packet.get("type").getAsString();controlAttempts.add(type);controlTimes.add(new TimedControl(type,now));if(blockedTypes.contains(type))return false;packets.add(packet.deepCopy());return true;}
         public PrivateModelSyncClient.Local local(){return explicitLocal?local:null;}
         public CompletableFuture<byte[]> bundle(String modelId){bundleReads++;return publication;}

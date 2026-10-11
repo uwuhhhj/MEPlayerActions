@@ -26,6 +26,135 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** Actual relay messages/maintenance using public Bukkit interface proxies; no running server. */
 class PrivateModelLifecycleTest {
+    @ParameterizedTest @ValueSource(strings={"OFFERED","CACHED","QUEUED","SENDING","DELIVERED","READY"})
+    void diagnosticsSeparateOwnPublicationFromReceivingOtherPlayersAndDescribeEachTransferPhase(String phase) throws Exception {
+        try(var scene=new Scene()) {
+            scene.transition(phase);Object original=scene.offer();int sent=scene.viewer.messages.size();
+            String diagnostic=String.join("\n",scene.service.statusLines(scene.viewer.player));
+            assertTrue(diagnostic.contains("本人发布：§f未发布"));assertTrue(diagnostic.contains("接收他人私人模型：§f1"));
+            assertTrue(diagnostic.contains(scene.owner.name));assertTrue(diagnostic.contains("ysm:winefox"));
+            assertTrue(diagnostic.contains(scene.hash));assertTrue(diagnostic.contains(scene.generation.toString()));
+            String expected=switch(phase) {
+                case "OFFERED" -> "等待客户端报告缓存情况";case "CACHED" -> "客户端报告已有缓存";
+                case "QUEUED" -> "资源传送排队中";case "SENDING" -> "正在发送资源";
+                case "DELIVERED" -> "资源已全部发送";case "READY" -> "已发送授权 ACK";default -> throw new AssertionError(phase);
+            };
+            assertTrue(diagnostic.contains(expected),diagnostic);assertTrue(diagnostic.contains("服务器无法直接确认"));
+            assertSame(original,scene.offer());assertEquals(sent,scene.viewer.messages.size(),"diagnostic reads never send or grant resources");
+            String ownerDiagnostic=String.join("\n",scene.service.statusLines(scene.owner.player));
+            assertTrue(ownerDiagnostic.contains("本人发布：§a已验证并发布"));assertTrue(ownerDiagnostic.contains(scene.viewer.name));
+            assertTrue(ownerDiagnostic.contains("接收他人私人模型：§f0"));
+        }
+    }
+    @Test void diagnosticsRetainRejectionIdentityWithoutCallingItAnActiveCachedOrRenderedModel() throws Exception {
+        try(var scene=new Scene()) {
+            scene.transition("READY");scene.feedback("rejected");
+            String diagnostic=String.join("\n",scene.service.statusLines(scene.viewer.player));
+            assertTrue(diagnostic.contains("接收他人私人模型：§f0"));assertTrue(diagnostic.contains("客户端拒绝资源解析或渲染"));
+            assertTrue(diagnostic.contains(scene.owner.name));assertTrue(diagnostic.contains(scene.hash));assertTrue(diagnostic.contains("原阶段 READY"));
+            scene.newGeneration();scene.advance(100);
+            assertFalse(String.join("\n",scene.service.statusLines(scene.viewer.player)).contains("客户端拒绝资源解析或渲染"));
+        }
+    }
+    @Test void recentFailureDiagnosticsAreBoundedAndExpireWithoutRetainingModelBundlesOrScanningPlayers() throws Exception {
+        try(var scene=new Scene()) {
+            for(int index=0;index<12;index++) {
+                Person person=scene.person(index+2);scene.publication(person,UUID.randomUUID());
+                Object publication=scene.publications().get(person.id);
+                Class<?> type=Class.forName(PrivateModelSyncService.class.getName()+"$Offer");
+                Constructor<?> constructor=type.getDeclaredConstructor(UUID.class,publication.getClass(),long.class);constructor.setAccessible(true);
+                Object offer=constructor.newInstance(scene.viewer.id,publication,(long)scene.tick);scene.offers().put(person.id,offer);
+                invoke(scene.service,"removeOffer",new Class<?>[]{Player.class,scene.session().getClass(),type,String.class},scene.viewer.player,scene.session(),offer,"asset_rejected");
+            }
+            Map<?,?> history=(Map<?,?>)field(scene.session(),"observationFailures");assertEquals(8,history.size());
+            assertEquals(8,scene.service.statusLines(scene.viewer.player).stream().filter(line->line.contains("最近停止接收")).count());
+            for(Object failure:history.values())for(var component:failure.getClass().getRecordComponents())
+                assertTrue(Set.of(UUID.class,String.class,long.class).contains(component.getType()),"diagnostics retain only bounded scalar identities");
+            scene.tick+=1200;
+            assertTrue(scene.service.statusLines(scene.viewer.player).stream().noneMatch(line->line.contains("最近停止接收")));
+            assertEquals(8,history.size(),"expiry does not start a background cleanup or unbounded history");
+        }
+    }
+    @Test void negotiatedViewerPauseRevokesOnlyIncomingAuthorizationAndResumeCanReceiveTheSameGeneration() throws Exception {
+        try(var scene=new Scene()) {
+            scene.hello(scene.viewer,true);scene.advance(100);scene.transition("READY");
+            Object original=scene.offer();UUID offerId=(UUID)field(original,"id"),generation=scene.generation;
+            UUID ownGeneration=UUID.randomUUID();scene.publication(scene.viewer,ownGeneration);Object own=scene.publications().get(scene.viewer.id);
+            scene.viewHeartbeat(false,ownGeneration);
+            assertNull(scene.offer());assertSame(own,scene.publications().get(scene.viewer.id));assertTrue(scene.rejected().isEmpty());
+            assertEquals((long)scene.tick,field(own,"lease"));
+            assertFalse(scene.viewer.last("heartbeat").get("viewEnabled").getAsBoolean());
+            assertEquals("viewer_paused",scene.viewer.last("private_remove").get("reason").getAsString());
+            assertTrue(String.join("\n",scene.service.statusLines(scene.viewer.player)).contains("客户端已暂停"));
+            int grants=scene.viewer.count("private_ack");scene.sendReady(scene.viewer,generation);scene.feedback("cached",offerId,scene.hash);
+            assertEquals(grants,scene.viewer.count("private_ack"));assertNull(scene.offer());
+            scene.advance(100);assertNull(scene.offer());
+            scene.viewHeartbeat(true,ownGeneration);scene.advance(100);
+            assertNotNull(scene.offer());assertEquals(generation,field(field(scene.offer(),"publication"),"generation"));
+            assertSame(own,scene.publications().get(scene.viewer.id));scene.transition("READY");assertEquals(grants+1,scene.viewer.count("private_ack"));
+        }
+    }
+    @ParameterizedTest @ValueSource(strings={"OFFERED","CACHED","QUEUED","SENDING","DELIVERED"})
+    void repeatedlyPausingBeforeReadyDoesNotConsumeTheThreeActualFailureAttempts(String phase) throws Exception {
+        try(var scene=new Scene()) {
+            scene.hello(scene.viewer,true);scene.advance(100);
+            for(int cycle=0;cycle<4;cycle++) {
+                assertNotNull(scene.offer(),"same publication can resume at cycle "+cycle);scene.transition(phase);
+                assertEquals(phase,field(scene.offer(),"status").toString());
+                scene.viewHeartbeat(false,null);assertNull(scene.offer());assertTrue(scene.rejected().isEmpty());
+                scene.advance(100);scene.viewHeartbeat(true,null);scene.advance(100);
+                assertNotNull(scene.offer(),"intentional pause must not exhaust retry budget at cycle "+cycle);
+            }
+            scene.transition("READY");assertEquals(1,scene.viewer.count("private_ack"));
+        }
+    }
+    @Test void pausingAfterAnActualTimeoutDoesNotRefundFailuresOrResetTheHelloFailureBudget() throws Exception {
+        try(var scene=new Scene()) {
+            // Replacing the original legacy handshake already consumed one non-pause attempt.
+            scene.hello(scene.viewer,true);scene.advance(100);
+            for(int failure=0;failure<2;failure++) {
+                assertNotNull(scene.offer());scene.advance(101);assertNull(scene.offer());
+                assertEquals("offer_expired",scene.viewer.last("private_remove").get("reason").getAsString());
+                scene.viewHeartbeat(false,null);scene.viewHeartbeat(true,null);scene.advance(100);
+            }
+            assertNull(scene.offer(),"one replaced handshake plus two real timeouts exhaust the three-attempt budget");
+            for(int retry=0;retry<4;retry++) {scene.viewHeartbeat(false,null);scene.viewHeartbeat(true,null);scene.advance(100);assertNull(scene.offer());}
+        }
+    }
+    @Test void pausingAfterAClientRejectionNeverClearsItsGenerationLock() throws Exception {
+        try(var scene=new Scene()) {
+            scene.hello(scene.viewer,true);scene.advance(100);scene.feedback("rejected");
+            for(int retry=0;retry<4;retry++) {scene.viewHeartbeat(false,null);scene.viewHeartbeat(true,null);scene.advance(100);assertNull(scene.offer());}
+            assertEquals(scene.generation,scene.rejected().get(scene.owner.id));
+        }
+    }
+    @Test void enablingPrivateViewCannotBypassPermissionsAndLegacyClientsCannotControlItWithoutNegotiation() throws Exception {
+        try(var scene=new Scene()) {
+            JsonObject forbidden=packet("private_heartbeat");forbidden.add("bindings",new JsonArray());forbidden.addProperty("viewEnabled",false);scene.send(scene.viewer,forbidden);
+            assertNotNull(scene.offer());assertEquals("invalid_private_payload",scene.viewer.last("error").get("code").getAsString());
+            scene.hello(scene.viewer,false);scene.advance(100);assertNull(scene.offer());
+            scene.viewer.allowed=false;scene.viewHeartbeat(true,null);scene.advance(100);assertNull(scene.offer());
+            scene.viewer.allowed=true;scene.advance(100);assertNotNull(scene.offer());
+        }
+    }
+    @Test void negotiatedInitialPauseAndOfferMetadataDoNotChangeLegacyDownloadOrPublishingRules() throws Exception {
+        try(var scene=new Scene()) {
+            assertFalse(scene.viewer.last("private_offer").has("modelId"));
+            scene.hello(scene.viewer,false);JsonObject ack=scene.viewer.last("hello_ack");
+            assertFalse(ack.get("viewEnabled").getAsBoolean());assertTrue(ack.getAsJsonArray("capabilities").asList().stream().anyMatch(value->value.getAsString().equals(PrivateModelSyncService.VIEW_STATE)));
+            scene.advance(100);assertNull(scene.offer());assertNotNull(scene.publications().get(scene.owner.id));
+            scene.viewHeartbeat(true,null);scene.advance(100);
+            assertEquals("ysm:winefox",scene.viewer.last("private_offer").get("modelId").getAsString());
+        }
+    }
+    @Test void aViewCapableClientWithoutAnInitialIntentCannotAccidentallyReceivePrivateModels() throws Exception {
+        try(var scene=new Scene()) {
+            scene.tick+=20;JsonObject hello=packet("hello");JsonArray capabilities=new JsonArray();
+            capabilities.add(PrivateModelSyncService.CAPABILITY);capabilities.add(PrivateModelSyncService.VIEW_STATE);hello.add("capabilities",capabilities);scene.send(scene.viewer,hello);
+            assertFalse(scene.viewer.last("hello_ack").get("viewEnabled").getAsBoolean());scene.advance(100);assertNull(scene.offer());
+            scene.viewHeartbeat(true,null);scene.advance(100);assertNotNull(scene.offer());
+        }
+    }
     @Test void authoritativeFlightChangesReachOnlyAuthorizedReadyViewersWithoutReplayingAppearanceOrExtra() throws Exception {
         try(var scene=new Scene()) {
             scene.transition("READY");Object original=scene.offer();
@@ -116,11 +245,25 @@ class PrivateModelLifecycleTest {
         void hello(Person person) {
             JsonObject packet=packet("hello");JsonArray capabilities=new JsonArray();capabilities.add(PrivateModelSyncService.CAPABILITY);packet.add("capabilities",capabilities);send(person,packet);
         }
+        void hello(Person person,boolean enabled) {
+            tick+=20;
+            JsonObject packet=packet("hello");JsonArray capabilities=new JsonArray();capabilities.add(PrivateModelSyncService.CAPABILITY);capabilities.add(PrivateModelSyncService.VIEW_STATE);
+            packet.add("capabilities",capabilities);packet.addProperty("viewEnabled",enabled);send(person,packet);
+        }
+        void viewHeartbeat(boolean enabled,UUID ownGeneration) {
+            JsonObject heartbeat=packet("private_heartbeat");heartbeat.addProperty("viewEnabled",enabled);JsonArray bindings=new JsonArray();
+            if(ownGeneration!=null) {JsonObject own=new JsonObject();own.addProperty("owner",viewer.id.toString());own.addProperty("generation",ownGeneration.toString());own.addProperty("hash",hash);bindings.add(own);}
+            heartbeat.add("bindings",bindings);send(viewer,heartbeat);
+        }
+        void sendReady(Person person,UUID generation) {
+            JsonObject ready=packet("private_ready");ready.addProperty("owner",owner.id.toString());ready.addProperty("generation",generation.toString());ready.addProperty("hash",hash);send(person,ready);
+        }
         void send(Person person,JsonObject packet) {service.onPluginMessageReceived(PrivateModelSyncService.CHANNEL,person.player,packet.toString().getBytes(StandardCharsets.UTF_8));}
         void publication(Person person,UUID generation) throws Exception {
             Class<?> type=Class.forName(PrivateModelSyncService.class.getName()+"$Publication");
             Constructor<?> constructor=type.getDeclaredConstructor(UUID.class,UUID.class,String.class,String.class,byte[].class,JsonObject.class,long.class);constructor.setAccessible(true);
             Object published=constructor.newInstance(person.id,generation,hash,"ysm",bundle,PrivateModelSyncService.appearance(new JsonObject()),(long)tick);
+            setField(published,"sourceId","ysm:winefox");
             publications().put(person.id,published);setField(service,"storedBytes",(long)publications().size()*bundle.length);
         }
         void newGeneration() throws Exception {
@@ -130,7 +273,14 @@ class PrivateModelLifecycleTest {
         void advance(int ticks) throws Exception {
             tick+=ticks;JsonObject heartbeat=packet("private_heartbeat"),identity=new JsonObject();JsonArray bindings=new JsonArray();
             identity.addProperty("owner",owner.id.toString());identity.addProperty("generation",generation.toString());identity.addProperty("hash",hash);bindings.add(identity);heartbeat.add("bindings",bindings);
-            send(owner,heartbeat);maintenance();
+            send(owner,heartbeat);
+            Object own=publications().get(viewer.id);
+            if(own!=null) {
+                JsonObject viewerHeartbeat=packet("private_heartbeat"),ownIdentity=new JsonObject();JsonArray ownBindings=new JsonArray();
+                ownIdentity.addProperty("owner",viewer.id.toString());ownIdentity.addProperty("generation",field(own,"generation").toString());ownIdentity.addProperty("hash",hash);
+                ownBindings.add(ownIdentity);viewerHeartbeat.add("bindings",ownBindings);send(viewer,viewerHeartbeat);
+            }
+            maintenance();
         }
         void maintenance() throws Exception {invoke(service,"maintain",new Class<?>[]{});}
         void feedback(String status) throws Exception {feedback(status,(UUID)field(offer(),"id"),hash);}
@@ -142,7 +292,7 @@ class PrivateModelLifecycleTest {
             if(phase.equals("CACHED")||phase.equals("READY")) {
                 feedback("cached");
                 if(phase.equals("READY")) {
-                    JsonObject ready=packet("private_ready");ready.addProperty("owner",owner.id.toString());ready.addProperty("generation",generation.toString());ready.addProperty("hash",hash);send(viewer,ready);
+                    sendReady(viewer,generation);
                 }
             } else {
                 feedback("missing");if(phase.equals("QUEUED"))return;
@@ -157,11 +307,13 @@ class PrivateModelLifecycleTest {
         @Override public void close() throws Exception {bukkitServer.set(null,previousServer);}
     }
     private static final class Person {
-        final UUID id=UUID.randomUUID();final Player player;final Set<Player> tracking=new HashSet<>();
+        final UUID id=UUID.randomUUID();final String name;final Player player;final Set<Player> tracking=new HashSet<>();
         final List<JsonObject> messages=new ArrayList<>();boolean allowed=true,dropAssetChunks,flying;
         Person(World world,double x) {
+            name=x==0?"Loliiiico":x==1?"zztyx_":"Viewer"+(int)x;
             player=proxy(Player.class,(instance,method,args)->switch(method.getName()) {
                 case "getUniqueId" -> id;case "isOnline" -> true;case "getWorld" -> world;case "getLocation" -> new Location(world,x,64,0);
+                case "getName" -> name;
                 case "canSee" -> true;case "getTrackedBy" -> Set.copyOf(tracking);
                 case "isFlying" -> flying;
                 case "hasPermission" -> allowed && Set.of("mact.private.upload","mact.private.view").contains(args[0]);

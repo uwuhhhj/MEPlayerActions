@@ -108,6 +108,28 @@ class ConnectionLimitsTest {
         assertTrue(limits.canPushOffer(VIEWER, "hash", Set.of(new UUID(0, 21)), 5000));
         limits.pushRenderReady(VIEWER, "hash"); assertTrue(limits.canPushOffer(VIEWER, "hash", instances, 5000));
     }
+    @Test void cancellingExactlyOnePausedOfferPreservesPriorFailuresAndEveryCooldown() {
+        var limits=new ConnectionLimits();var instances=Set.of(new UUID(0,20));
+        limits.pushOfferSent(VIEWER,"hash",instances,0);limits.pushOfferSent(VIEWER,"hash",instances,100);
+        limits.pushOfferSent(VIEWER,"hash",instances,200);assertFalse(limits.canPushOffer(VIEWER,"hash",instances,300));
+        limits.cancelPausedPushOffer(VIEWER,"hash",instances,200);
+        assertFalse(limits.canPushOffer(VIEWER,"hash",instances,299),"refund preserves this asset's original cooldown");
+        assertFalse(limits.canPushOffer(VIEWER,"other",instances,209),"refund preserves the global offer pace");
+        assertTrue(limits.canPushOffer(VIEWER,"other",instances,210));
+        assertTrue(limits.canPushOffer(VIEWER,"hash",instances,300));
+        limits.cancelPausedPushOffer(VIEWER,"hash",instances,200);limits.cancelPausedPushOffer(VIEWER,"hash",instances,200);
+        limits.pushOfferSent(VIEWER,"hash",instances,300);
+        assertFalse(limits.canPushOffer(VIEWER,"hash",instances,400),"duplicate refund never erases the two prior failures");
+        limits.releaseTransfers(VIEWER);assertFalse(limits.canPushOffer(VIEWER,"hash",instances,5000),"a rehello still cannot erase failures");
+    }
+    @Test void pausedOfferRefundCannotChargeBackAnotherInstanceSetOrALaterSameHashOffer() {
+        var limits=new ConnectionLimits();UUID original=new UUID(0,20),other=new UUID(0,21);var one=Set.of(original);var both=Set.of(original,other);
+        limits.pushOfferSent(VIEWER,"hash",one,0);limits.pushOfferSent(VIEWER,"hash",one,100);limits.pushOfferSent(VIEWER,"hash",both,200);
+        limits.cancelPausedPushOffer(VIEWER,"hash",one,200);assertFalse(limits.canPushOffer(VIEWER,"hash",both,300));
+        limits.cancelPausedPushOffer(VIEWER,"hash",both,100);assertFalse(limits.canPushOffer(VIEWER,"hash",both,300));
+        limits.cancelPausedPushOffer(VIEWER,"different",both,200);assertFalse(limits.canPushOffer(VIEWER,"hash",both,300));
+        limits.cancelPausedPushOffer(VIEWER,"hash",both,200);assertTrue(limits.canPushOffer(VIEWER,"hash",both,300));
+    }
     @Test void switchingExistingSameHashAliasesDoesNotManufactureNewRetryGenerations() {
         var limits = new ConnectionLimits(); UUID first = new UUID(0, 20), second = new UUID(0, 21);
         var both = Set.of(first, second); limits.pushOfferSent(VIEWER, "hash", both, 0);

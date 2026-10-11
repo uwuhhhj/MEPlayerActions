@@ -201,7 +201,7 @@ bindings 最多 64 项，owner 唯一。只续租已有且 instance/hash 完全�
 
 ### 独立协商与上传
 
-客户端发送 `hello {capabilities:["private_models_v1","private_upload_catalog_v1","private_upload_credit_v1"]}`；服务端 `hello_ack` 返回 `capabilities`、`allowedUpload`、`allowedView`、`maxPayload`、`maxBundleBytes`、`heartbeatTicks:20`、`leaseTicks:100`。目录与上传额度各需双方确认；严格旧服务器拒绝扩展时，依次去掉额度能力、再去掉目录能力，每级最多一次，不循环切换。`maxBundleBytes` 仍按归档／分片容量约束协商，默认 8192 字节分片允许完整 8 MiB，maxPayload=1024 时有效容量为 422400 字节；客户端必须按 ACK 预检，超过容量继续仅在本机使用。新服务器可提供 `transferTotalTicks`、`transferIdleTicks`、`validationTimeoutTicks`，客户端按 50 ms/tick 折算总上传、分片无进展与已发送 end 后的校验等待，避免用接收空闲误判后台校验；缺省总等待为 90 秒。能力握手成功不等于取得发布/观看权限，须检查两个 allowed 字段。未知字段、重复 JSON 键、类型强制转换、非有限数、深度超过 64、尾随内容和非规范 UUID/hash 均拒绝。
+客户端发送 `hello {capabilities:["private_models_v1","private_upload_catalog_v1","private_upload_credit_v1","private_view_state_v1"],viewEnabled:true}`；服务端 `hello_ack` 返回 `capabilities`、`allowedUpload`、`allowedView`、`maxPayload`、`maxBundleBytes`、`heartbeatTicks:20`、`leaseTicks:100`。目录、上传额度和观看开关各需双方确认。观看能力被确认时，ACK 回显 `viewEnabled`；声明该能力但没有提供初始值时按暂停接收处理。严格旧服务器拒绝扩展时，依次去掉观看能力及其字段、额度能力、目录能力，每级最多一次，不循环切换。`maxBundleBytes` 仍按归档／分片容量约束协商，默认 8192 字节分片允许完整 8 MiB，maxPayload=1024 时有效容量为 422400 字节；客户端必须按 ACK 预检，超过容量继续仅在本机使用。新服务器可提供 `transferTotalTicks`、`transferIdleTicks`、`validationTimeoutTicks`，客户端按 50 ms/tick 折算总上传、分片无进展与已发送 end 后的校验等待，避免用接收空闲误判后台校验；缺省总等待为 90 秒。能力握手成功不等于取得发布/观看权限，须检查两个 allowed 字段。未知字段、重复 JSON 键、类型强制转换、非有限数、深度超过 64、尾随内容和非规范 UUID/hash 均拒绝。
 
 客户端明确选择同步后发送：
 
@@ -247,7 +247,7 @@ ZIP 原始上限与所有条目展开总量各 8 MiB，扫描条目（含目录�
 
 服务端按 publisher UUID 与当前 generation 缓存最近观看者集合，首次发布立即发现，之后默认每 40 tick 错峰刷新；已有关系每 20 tick 轻检。相关追踪／可见性事件立即撤销对应 offer 并使 owner 缓存失效，publication 更换／移除、策略变更、停用或发现间隔变化也会清理。活跃资产队列每 tick 推进，每片发送前实时检查授权；配置和事件直接转发缓存中仍合法的观看者。禁用或无 publication 时跳过重维护，不读取伪装 supplier。该缓存只复用观众身份，不授予额外观看权限或共享动画状态。
 
-S2C `private_offer {owner,generation,hash,kind,offerId,bytes,sequence,appearance,extra}` 是当次观看授权。客户端只针对该 token 返回 `private_status {offerId,hash,status:"cached"|"missing"|"rejected"}`，不能指定其他 owner/模型。missing 后服务器发送 `asset_begin {offerId,hash,bytes,chunks}`、连续 `asset_chunk {offerId,hash,index,data}`、`asset_end {offerId,hash}`。每连接每次至多两个未完成 offer；它们继续使用 v3 的并发/总带宽上限和同 hash/代次最多三次的尝试预算。每个流每 tick 最多两个片段。
+S2C `private_offer {owner,generation,hash,kind,offerId,bytes,sequence,appearance,extra}` 是当次观看授权。确认观看能力时可附带经过校验的 `modelId`，仅作来源诊断，不授予伪装命令或他人上传权限。客户端只针对该 token 返回 `private_status {offerId,hash,status:"cached"|"missing"|"rejected"}`，不能指定其他 owner/模型。missing 后服务器发送 `asset_begin {offerId,hash,bytes,chunks}`、连续 `asset_chunk {offerId,hash,index,data}`、`asset_end {offerId,hash}`。每连接每次至多两个未完成 offer；它们继续使用 v3 的并发/总带宽上限和同 hash/代次最多三次的尝试预算。每个流每 tick 最多两个片段。
 
 `cached`/`missing` 只接受初始 OFFERED 阶段；仍获授权且 offerId/hash 精确匹配的 `rejected` 可在缓存、下载中、下载完成或 READY 后撤销，服务器释放传输槽并发送精确 `private_remove`。同一观看连接不再推送被拒绝的 owner/generation，直到该 owner 发布新 generation 或客户端重新握手；活动 offer 与拒绝记录合计最多 64 项，不驱逐仍有效的拒绝记录来重试失败模型。
 
@@ -256,6 +256,12 @@ S2C `private_offer {owner,generation,hash,kind,offerId,bytes,sequence,appearance
 private_status、private_ready、upload_offer、upload_end 共用客户端控制预算：滚动一秒最多 16 包，令牌桶初始／突发 8 包、每秒恢复 16 个；各控制身份的重试间隔仍至少一秒。预算延后不扣重试时间、不撤身份，pending 观看者按 tick 轮转。这只限制上述控制包，upload_chunk 仍每 tick 最多一片；服务端两频道合计 48 包／秒入站上限不变。
 
 客户端完成缓存 hash 验证、bundle/model/GPU准备后发送 `private_ready {owner,generation,hash}`，收到精确 `private_ack` 后才允许远端私人绘制。此 ACK 仅是私人显示租约，不调用 ME 可见性接管。每 20 tick 发送 `private_heartbeat {bindings:[{owner,generation,hash}]}`；自己的 upload_committed 身份也必须放进 bindings 续期发布，即使没有其他观众。服务端只确认实际被续期的精确合法身份：`heartbeat {bindings:[...]}`，空数组仍表示频道存活。heartbeat 可额外带布尔 `allowedUpload`、`allowedView`，实时更新当前连接权限；缺省保持原协商权限，收到撤权后撤掉对应发布或远端显示。非法、过期、失去跟踪/权限、被服务器伪装遮盖的观看身份不会被 ACK。
+
+双方确认 `private_view_state_v1` 时，C2S `private_heartbeat` 携带严格布尔 `viewEnabled`，S2C `heartbeat` 回显。关闭客户端渲染立即清理本机接收实例并使在途异步解析失效；服务器收到暂停意图后取消该观看者的接收 offer／租约。重新开启等待维护周期重新授权，可接收同一发布代次，不发送永久拒绝或重新握手。这个字段不授予权限，不改变上传存档；本人是否继续发布由本机分享与外观选择独立决定。未协商的旧服务端不接收该字段，客户端只能停止本机接收及续租，服务器诊断将观看开关标为未知；重新开启仍受旧端邀约和重试预算约束，旧端耗尽预算时需更新服务端或由发布者重新分享。
+
+显式暂停只退回该确切未完成邀约的一次尝试，按实例集合与发送 tick 匹配且不可重复退回；保留共享连接的邀约冷却和先前真实失败计数。普通超时、解析拒绝和重新握手不能借此清除失败保护。
+
+`/meplayeractions status player <观看者>` 分别列出本人发布、本人模型的观看者和接收的发布者／模型 ID／hash／代次，以及发送进度、READY 与租期；最多展示 8 条近期失败，保留 60 秒，不保存资源字节。READY 只证明资源准备 ACK，服务器不能直接确认观看端实际落盘或当前画面。`/mpaclient status` 和客户端诊断提供接收阶段、已验证缓存命中、准备／授权状态及本机绘制失败；原版玩家实体未到达或显示被暂停时另列原因。离线历史文件不具备当前观看授权，私人缓存页面也不创建世界绑定。
 
 publisher 与 ready viewer 租约均 100 tick。模型改变、owner清理、离线、许可变化、失去跟踪、服务器伪装优先或租约到期会发送 `private_remove {owner,generation,hash,reason}`；客户端须按精确代次撤销绘制，资源缓存本身不授予显示权。私人渲染不维护幽灵实体，也不改变非模组玩家的显示。
 

@@ -139,16 +139,25 @@ final class ConnectionLimits {
         Connection connection = connection(viewer);
         PushAttempt previous = connection.pushAttempts.remove(hash);
         int attempts = previous != null && !Collections.disjoint(previous.instances, instances) ? previous.attempts + 1 : 1;
-        connection.pushAttempts.put(hash, new PushAttempt(instances, tick, attempts));
+        connection.pushAttempts.put(hash, new PushAttempt(instances, tick, attempts, true));
         while (connection.pushAttempts.size() > PUSH_MAX_RECORDS)
             connection.pushAttempts.remove(connection.pushAttempts.keySet().iterator().next());
         connection.offerInitialized = true; connection.lastOfferTick = tick;
     }
 
+    /** Refunds this pending offer once when a negotiated viewer pauses; keeps failures and pacing. */
+    void cancelPausedPushOffer(UUID viewer, String hash, Set<UUID> instances, long issuedTick) {
+        Connection connection = connections.get(viewer); if (connection == null) return;
+        PushAttempt previous = connection.pushAttempts.get(hash);
+        if (previous == null || !previous.cancellable || previous.attempts <= 0
+                || previous.lastTick != issuedTick || !previous.instances.equals(instances)) return;
+        connection.pushAttempts.put(hash, new PushAttempt(previous.instances, previous.lastTick, previous.attempts - 1, false));
+    }
+
     /** Only an authorized render_ready resets failure attempts; cached feedback cannot do it. */
     void pushRenderReady(UUID viewer, String hash) {
         Connection connection = connection(viewer); PushAttempt previous = connection.pushAttempts.get(hash);
-        if (previous != null) connection.pushAttempts.put(hash, new PushAttempt(previous.instances, previous.lastTick, 0));
+        if (previous != null) connection.pushAttempts.put(hash, new PushAttempt(previous.instances, previous.lastTick, 0, false));
     }
 
     boolean reserveTransfer(UUID viewer) {
@@ -319,7 +328,7 @@ final class ConnectionLimits {
             if (elapsed >= SECOND_NANOS) { previous = elapsed < SECOND_NANOS * 2 ? current : 0; current = 0; at = now; }
         }
     }
-    private record PushAttempt(Set<UUID> instances, long lastTick, int attempts) {
+    private record PushAttempt(Set<UUID> instances, long lastTick, int attempts, boolean cancellable) {
         private PushAttempt { instances = Set.copyOf(instances); }
     }
     private static final class Window {

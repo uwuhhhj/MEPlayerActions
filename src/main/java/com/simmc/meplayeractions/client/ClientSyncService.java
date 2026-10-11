@@ -291,7 +291,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             }
             lines.add("§7观看该伪装：§f" + confirmed + " §7个客户端已确认接管（含本人）；其他画面仍由 ME 渲染。");
         }
-        lines.addAll(ServerMessages.wrapped("§7私人分享：", privateModels.status(player)));
+        lines.addAll(privateModels.statusLines(player));
         lines.addAll(ServerMessages.wrapped("§7服务器模型目录：", modelCatalog.status()));
         return List.copyOf(lines);
     }

@@ -3,6 +3,7 @@ package com.simmc.meplayeractions.client.network;
 import com.google.gson.*;
 import com.simmc.meplayeractions.client.LocalModelLibrary;
 import com.simmc.meplayeractions.client.ClientOptions;
+import com.simmc.meplayeractions.client.LocalAppearanceSettings;
 import com.simmc.meplayeractions.client.model.NativeModelBundle;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -14,11 +15,14 @@ import java.util.concurrent.CompletionException;
 public final class PrivateModelSyncClient {
     public static final int PROTOCOL = 1;
     public static final String UPLOAD_CREDIT = "private_upload_credit_v1";
+    public static final String VIEW_STATE = "private_view_state_v1";
     private static final long SECOND = 1_000_000_000L;
     private static final long DELETE_TIMEOUT = 90*SECOND;
     private static final int MAX_REMOTES = 16;
     public interface Host {
         boolean channelAvailable();
+        /** Viewing can pause independently of the owner's publication and saved upload directory. */
+        default boolean viewEnabled() { return true; }
         boolean send(JsonObject packet);
         Local local();
         CompletableFuture<byte[]> bundle(String modelId);
@@ -42,6 +46,11 @@ public final class PrivateModelSyncClient {
         public Local { appearance=appearance.deepCopy(); extra=extra.deepCopy(); }
     }
     public enum UploadPhase { NOT_UPLOADED, BUILDING, WAITING_APPROVAL, UPLOADING, VALIDATING, PUBLISHED, UPLOADED, FAILED }
+    public enum ReceivingPhase { CHECKING_CACHE, WAITING_DOWNLOAD, DOWNLOADING, DECODING, WAITING_ACK, ACTIVE, FAILED }
+    /** A live, viewer-authorized offer. Its metadata never permits a server disguise command. */
+    public record ReceivedModel(UUID owner, UUID generation, String modelId, String hash, String kind,
+                                int bytes, int receivedBytes, boolean cacheHit, ReceivingPhase phase,
+                                boolean ready, boolean active, String textureId, String failure) { }
     /** Saved status requires the owner's current server directory and matching local source bytes. */
     public record UploadState(String modelId, UploadPhase phase, String hash, int totalBytes, int sentBytes,
                               boolean published, String message) {
@@ -54,19 +63,22 @@ public final class PrivateModelSyncClient {
     public static final class Remote {
         public final UUID owner, generation, offerId;
         public final String hash, kind;
+        public final String modelId;
         public final int bytes;
         public JsonObject appearance, extra;
         public long sequence, eventSequence=-1, lastLease;
         public boolean ready, active, flying;
+        private boolean cacheHit;
+        private ReceivingPhase phase=ReceivingPhase.CHECKING_CACHE;
         private byte[] bundle;
         private long decodeRevision;
         private String pendingStatus="";
         private boolean statusSent;
         private long lastStatusAttempt=-1,lastReadyAttempt=-1;
         private Download download;
-        private Remote(UUID owner,UUID generation,UUID offerId,String hash,String kind,int bytes,
+        private Remote(UUID owner,UUID generation,UUID offerId,String hash,String kind,String modelId,int bytes,
                        JsonObject appearance,JsonObject extra,long sequence,boolean flying) {
-            this.owner=owner;this.generation=generation;this.offerId=offerId;this.hash=hash;this.kind=kind;this.bytes=bytes;
+            this.owner=owner;this.generation=generation;this.offerId=offerId;this.hash=hash;this.kind=kind;this.modelId=modelId;this.bytes=bytes;
             this.appearance=appearance;this.extra=extra;this.sequence=sequence;this.flying=flying;
         }
     }
@@ -74,12 +86,15 @@ public final class PrivateModelSyncClient {
     public record SourceIdentity(String hash,String kind,int bytes) { }
     private final Host host;
     private final Map<UUID,Remote> remotes=new LinkedHashMap<>();
+    private final Map<UUID,ReceivedModel> receiveFailures=new LinkedHashMap<>();
     private final Map<String,UploadState> sessionUploads=new LinkedHashMap<>();
     private final PrivateUploadCatalogSnapshot uploadCatalog=new PrivateUploadCatalogSnapshot();
     private final Map<String,SourceIdentity> sourceIdentities=new HashMap<>();
     private final ArrayDeque<String> sourceChecks=new ArrayDeque<>();
     private long sourceRevision;
-    private boolean catalogueNegotiated,creditNegotiated,sourceChecking;
+    private boolean catalogueNegotiated,creditNegotiated,viewStateNegotiated,sourceChecking;
+    private boolean observedViewEnabled,viewStateDirty;
+    private long lastViewStateAttempt=-1;
     private int helloFallback;
     private JsonObject deleteRequest;
     private String deletingId="",deletingHash="";
@@ -109,11 +124,12 @@ public final class PrivateModelSyncClient {
     private double controlTokens=8;
     private long controlRefill=-1;
     private int controlRotation;
-    public PrivateModelSyncClient(Host host) { this.host=Objects.requireNonNull(host); }
+    public PrivateModelSyncClient(Host host) { this.host=Objects.requireNonNull(host);observedViewEnabled=host.viewEnabled(); }
     public void reset() {
-        epoch++;publishRevision++;remotes.values().forEach(r->host.remove(r.owner,r.generation));remotes.clear();
+        epoch++;publishRevision++;remotes.values().forEach(r->host.remove(r.owner,r.generation));remotes.clear();receiveFailures.clear();
         acknowledged=allowedUpload=allowedView=building=committed=false;sessionUploads.clear();
-        catalogueNegotiated=creditNegotiated=sourceChecking=false;helloFallback=0;sourceRevision++;uploadCatalog.reset();sourceIdentities.clear();sourceChecks.clear();
+        catalogueNegotiated=creditNegotiated=viewStateNegotiated=sourceChecking=false;helloFallback=0;sourceRevision++;uploadCatalog.reset();sourceIdentities.clear();sourceChecks.clear();
+        observedViewEnabled=host.viewEnabled();viewStateDirty=false;lastViewStateAttempt=-1;
         clearDelete();uploadCatalogToken=null;deleteSequence=publicationSerial=0;deleteStatuses.clear();lateDeletes.clear();
         sourceId=ownHash=kind=sentState="";outgoing=null;ownOwner=ownGeneration=uploadId=null;uploadIndex=0;
         publicationBytes=uploadedBytes=0;
@@ -234,12 +250,41 @@ public final class PrivateModelSyncClient {
     }
     public Collection<Remote> remotes() { return List.copyOf(remotes.values()); }
     public Remote remote(UUID owner) { return remotes.get(owner); }
+    public List<ReceivedModel> receivedModels() {
+        var values=new ArrayList<ReceivedModel>();values.addAll(receiveFailures.values());
+        remotes.values().forEach(remote->values.add(receivedModel(remote,remote.phase,"")));
+        return List.copyOf(values);
+    }
+    private static ReceivedModel receivedModel(Remote remote,ReceivingPhase phase,String failure) {
+        return new ReceivedModel(remote.owner,remote.generation,remote.modelId,remote.hash,remote.kind,remote.bytes,
+                remote.download==null?remote.bundle==null?0:remote.bytes:remote.download.received,remote.cacheHit,phase,
+                phase==ReceivingPhase.FAILED?false:remote.ready,phase==ReceivingPhase.FAILED?false:remote.active,
+                remote.appearance.get("textureId").getAsString(),failure);
+    }
+    private void receiveFailed(Remote remote,String reason) {
+        String failure=reason==null||reason.isBlank()?"客户端模型准备或绘制失败":reason.replaceAll("[\\p{Cntrl}]"," ");
+        if(failure.length()>256)failure=failure.substring(0,256);
+        receiveFailures.put(remote.owner,receivedModel(remote,ReceivingPhase.FAILED,failure));
+        while(receiveFailures.size()>MAX_REMOTES)receiveFailures.remove(receiveFailures.keySet().iterator().next());
+    }
+    public boolean viewingEnabled() { return host.viewEnabled(); }
+    public boolean viewerStateNegotiated() { return viewStateNegotiated; }
+    /** Called after the host flips rendering. In-flight callbacks lose their exact remote identity. */
+    public void viewerRenderingChanged() {
+        boolean enabled=host.viewEnabled();
+        if(observedViewEnabled!=enabled){observedViewEnabled=enabled;viewStateDirty=true;lastViewStateAttempt=-1;}
+        if(!enabled)for(Remote remote:List.copyOf(remotes.values()))remove(remote);
+        if(acknowledged&&viewStateNegotiated&&viewStateDirty)flushViewerState(clockNow);
+    }
     /** Server-authoritative creative flight is not present in vanilla remote player abilities. */
     public boolean isFlying(UUID owner) {Remote remote=remotes.get(owner);return remote!=null && remote.active && remote.flying;}
     /** Reject the exact prepared instance; a delayed render failure cannot remove a newer generation. */
     public boolean rejectRemote(UUID owner,UUID generation){
+        return rejectRemote(owner,generation,"客户端模型绘制失败，已恢复原版玩家");
+    }
+    public boolean rejectRemote(UUID owner,UUID generation,String reason){
         Remote remote=remotes.get(owner);if(remote==null||!remote.generation.equals(generation))return false;
-        status(remote.offerId,remote.hash,"rejected");remove(remote);return true;
+        receiveFailed(remote,reason);status(remote.offerId,remote.hash,"rejected");remove(remote);return true;
     }
     public void stopPublishing() {
         stopPublishing(true);
@@ -272,11 +317,17 @@ public final class PrivateModelSyncClient {
         clockNow=now;
         if(!host.channelAvailable()) { if(acknowledged||ownGeneration!=null||!remotes.isEmpty())reset();return; }
         if(acknowledged&&now-lastReceived>leaseTicks*50_000_000L)reset();
+        if(observedViewEnabled!=host.viewEnabled())viewerRenderingChanged();
         if(!acknowledged&&now-lastHello>3*SECOND) {
-            JsonObject hello=envelope("hello");JsonArray caps=new JsonArray();caps.add("private_models_v1");if(helloFallback<2)caps.add(PrivateUploadCatalogSnapshot.CAPABILITY);if(helloFallback==0)caps.add(UPLOAD_CREDIT);hello.add("capabilities",caps);
+            JsonObject hello=envelope("hello");JsonArray caps=new JsonArray();caps.add("private_models_v1");
+            if(helloFallback<3)caps.add(PrivateUploadCatalogSnapshot.CAPABILITY);
+            if(helloFallback<2)caps.add(UPLOAD_CREDIT);
+            if(helloFallback==0){caps.add(VIEW_STATE);hello.addProperty("viewEnabled",host.viewEnabled());}
+            hello.add("capabilities",caps);
             if(send(hello))lastHello=now;
         }
         if(!acknowledged)return;
+        if(viewStateNegotiated&&viewStateDirty)flushViewerState(now);
         if(deleteRequest!=null&&now-deleteStartedAt>=DELETE_TIMEOUT)expireDelete();
         if(deleteRequest!=null&&allowedUpload&&(lastDeleteAttempt<0||now-lastDeleteAttempt>=SECOND)) {
             Boolean sent=sendControl(deleteRequest,now);if(sent!=null){lastDeleteAttempt=now;deleteSent|=sent;}
@@ -324,11 +375,20 @@ public final class PrivateModelSyncClient {
             }
         }
         if(now-lastHeartbeat>=SECOND) {
-            JsonObject heartbeat=envelope("private_heartbeat");JsonArray values=new JsonArray();heartbeat.add("bindings",values);
-            if(committed&&local!=null)values.add(binding(local.owner(),ownGeneration,ownHash));
-            for(Remote remote:remotes.values())if(remote.ready)values.add(binding(remote.owner,remote.generation,remote.hash));
-            if(send(heartbeat))lastHeartbeat=now;
+            if(send(heartbeatPacket()))lastHeartbeat=now;
         }
+    }
+    private JsonObject heartbeatPacket() {
+        JsonObject heartbeat=envelope("private_heartbeat");JsonArray values=new JsonArray();heartbeat.add("bindings",values);
+        if(viewStateNegotiated)heartbeat.addProperty("viewEnabled",host.viewEnabled());
+        Local local=host.local();if(committed&&local!=null)values.add(binding(local.owner(),ownGeneration,ownHash));
+        if(host.viewEnabled())for(Remote remote:remotes.values())if(remote.ready)values.add(binding(remote.owner,remote.generation,remote.hash));
+        return heartbeat;
+    }
+    private void flushViewerState(long now) {
+        if(lastViewStateAttempt>=0&&now-lastViewStateAttempt<SECOND)return;
+        Boolean sent=sendControl(heartbeatPacket(),now);
+        if(sent!=null){lastViewStateAttempt=now;if(sent)lastHeartbeat=now;}
     }
     private boolean send(JsonObject packet) {
         byte[] bytes=packet.toString().getBytes(StandardCharsets.UTF_8);
@@ -388,15 +448,18 @@ public final class PrivateModelSyncClient {
                 int lease=(int)WireJson.integer(packet,"leaseTicks",20,1200);
                 boolean catalogue=caps.asList().stream().anyMatch(v->v.isJsonPrimitive()&&v.getAsString().equals(PrivateUploadCatalogSnapshot.CAPABILITY));
                 boolean credit=caps.asList().stream().anyMatch(v->v.isJsonPrimitive()&&v.getAsString().equals(UPLOAD_CREDIT));
+                boolean viewState=caps.asList().stream().anyMatch(v->v.isJsonPrimitive()&&v.getAsString().equals(VIEW_STATE));
+                boolean confirmedView=viewState&&packet.has("viewEnabled")&&WireJson.bool(packet,"viewEnabled");
                 UUID catalogToken=catalogue?uuid(packet,"uploadCatalogToken"):null;
                 if(acknowledged)reset();acknowledged=true;allowedUpload=upload;allowedView=view;maxPayload=payload;maxBundleBytes=bundle;leaseTicks=lease;catalogueNegotiated=catalogue;uploadCatalogToken=catalogToken;
                 creditNegotiated=credit;
+                viewStateNegotiated=viewState;viewStateDirty=viewState&&confirmedView!=host.viewEnabled();
                 if(packet.has("transferTotalTicks"))uploadTotalNanos=WireJson.integer(packet,"transferTotalTicks",20,72000)*50_000_000L;
                 if(packet.has("transferIdleTicks"))uploadIdleNanos=WireJson.integer(packet,"transferIdleTicks",20,72000)*50_000_000L;
                 if(packet.has("validationTimeoutTicks"))uploadValidationNanos=WireJson.integer(packet,"validationTimeoutTicks",20,72000)*50_000_000L;
                 status=upload?"可分享私人模型；需要主动开启分享":"没有私人模型上传权限";
             } else if(!acknowledged) {
-                if(type.equals("error")&&helloFallback<2&&WireJson.string(packet,"code",128).equals("invalid_private_payload")){helloFallback++;lastHello=0;}
+                if(type.equals("error")&&helloFallback<3&&WireJson.string(packet,"code",128).equals("invalid_private_payload")){helloFallback++;lastHello=0;}
                 return;
             }
             else switch(type) {
@@ -445,6 +508,7 @@ public final class PrivateModelSyncClient {
                     if(size!=remote.bytes||count>size)throw new IOException("Offer size");
                     if(remotes.values().stream().filter(r->r.download!=null).count()>=4)throw new IOException("Private transfers busy");
                     remote.download=new Download(size,count);remote.lastLease=now;remote.pendingStatus="";remote.statusSent=true;
+                    remote.phase=ReceivingPhase.DOWNLOADING;
                 }
                 case "asset_chunk" -> {
                     Remote remote=offer(packet);if(remote==null||remote.download==null)break;
@@ -457,7 +521,7 @@ public final class PrivateModelSyncClient {
                     remote.bundle=bundle;remote.lastLease=now;decode(remote);
                 }
                 case "private_ack" -> {
-                    Remote remote=matching(packet);if(remote!=null&&remote.ready){remote.active=true;remote.lastLease=now;remote.pendingStatus="";host.state(remote);}
+                    Remote remote=matching(packet);if(remote!=null&&remote.ready&&host.viewEnabled()){remote.active=true;remote.phase=ReceivingPhase.ACTIVE;remote.lastLease=now;remote.pendingStatus="";host.state(remote);}
                 }
                 case "private_remove" -> {
                     UUID owner=uuid(packet,"owner"),generation=uuid(packet,"generation");String hash=WireJson.hash(packet,"hash");
@@ -483,7 +547,9 @@ public final class PrivateModelSyncClient {
                     JsonArray values=packet.getAsJsonArray("bindings");if(values==null||values.size()>128)throw new IOException("Private heartbeat");
                     boolean upload=packet.has("allowedUpload")?WireJson.bool(packet,"allowedUpload"):allowedUpload;
                     boolean view=packet.has("allowedView")?WireJson.bool(packet,"allowedView"):allowedView;
+                    Boolean confirmedView=viewStateNegotiated&&packet.has("viewEnabled")?WireJson.bool(packet,"viewEnabled"):null;
                     permissions(upload,view);
+                    if(confirmedView!=null)viewStateDirty=confirmedView!=host.viewEnabled();
                     for(JsonElement value:values){Remote remote=matching(value.getAsJsonObject());if(remote!=null&&remote.ready&&remote.active)remote.lastLease=now;}
                 }
                 case "error" -> {
@@ -509,15 +575,17 @@ public final class PrivateModelSyncClient {
             status="私人同步数据已拒绝";
             if(packet!=null)try {
                 String type=WireJson.string(packet,"type",32);
-                if(type.startsWith("asset_")){Remote failed=offer(packet);if(failed!=null){status(failed.offerId,failed.hash,"rejected");remove(failed);}}
+                if(type.startsWith("asset_")){Remote failed=offer(packet);if(failed!=null){receiveFailed(failed,"私人模型下载不完整或校验失败");status(failed.offerId,failed.hash,"rejected");remove(failed);}}
             }catch(Exception ignored){ }
         }
     }
     private void offer(JsonObject packet,long now) throws IOException {
-        if(!allowedView)return;
+        if(!allowedView||!host.viewEnabled())return;
         UUID owner=uuid(packet,"owner"),generation=uuid(packet,"generation"),id=uuid(packet,"offerId");
         String hash=WireJson.hash(packet,"hash"),kind=WireJson.string(packet,"kind",16);
         if(!Set.of("ysm","bbmodel").contains(kind))throw new IOException("Private kind");
+        String modelId=packet.has("modelId")?WireJson.string(packet,"modelId",128):"";
+        if(!modelId.isEmpty()&&!LocalAppearanceSettings.isValidModelId(modelId))throw new IOException("Private model ID");
         int bytes=(int)WireJson.integer(packet,"bytes",1,maxBundleBytes);
         JsonObject appearance=appearance(packet),extra=extra(packet);long sequence=WireJson.integer(packet,"sequence",0,9_007_199_254_740_991L);boolean flying=flying(packet);
         Remote previous=remotes.get(owner);
@@ -528,28 +596,35 @@ public final class PrivateModelSyncClient {
             remove(previous);
         }
         if(remotes.size()>=MAX_REMOTES) {status(id,hash,"rejected");return;}
-        Remote remote=new Remote(owner,generation,id,hash,kind,bytes,appearance,extra,sequence,flying);remote.lastLease=now;remotes.put(owner,remote);
+        receiveFailures.remove(owner);
+        Remote remote=new Remote(owner,generation,id,hash,kind,modelId,bytes,appearance,extra,sequence,flying);remote.lastLease=now;remotes.put(owner,remote);
         long revision=epoch;
         host.cached(hash).whenComplete((bundle,error)->host.dispatch(()->{
             if(!current(remote,revision))return;
+            if(!host.viewEnabled()){remove(remote);return;}
             if(error==null&&bundle!=null&&bundle.length==bytes&&hash.equals(AssetTransfer.hash(bundle))) {
-                remote.bundle=bundle;queueStatus(remote,"cached");decode(remote);
-            } else queueStatus(remote,"missing");
+                remote.bundle=bundle;remote.cacheHit=true;queueStatus(remote,"cached");decode(remote);
+            } else {remote.phase=ReceivingPhase.WAITING_DOWNLOAD;queueStatus(remote,"missing");}
         }));
     }
     private void decode(Remote remote) {
+        remote.phase=ReceivingPhase.DECODING;
         long revision=epoch,decodeRevision=++remote.decodeRevision;
         host.decode(remote.bundle,remote.appearance.get("textureId").getAsString()).whenComplete((loaded,error)->host.dispatch(()->{
             if(!current(remote,revision)||decodeRevision!=remote.decodeRevision)return;
-            if(error!=null||loaded==null||!host.prepare(remote,loaded)){status(remote.offerId,remote.hash,"rejected");remove(remote);return;}
-            remote.ready=true;remote.lastLease=clockNow;remote.lastReadyAttempt=-1;host.state(remote);flushControl(remote,clockNow);
+            if(!host.viewEnabled()){remove(remote);return;}
+            if(error!=null||loaded==null||!host.prepare(remote,loaded)){
+                receiveFailed(remote,error==null?"客户端无法准备模型贴图或几何":"客户端模型解析失败："+error.getClass().getSimpleName());
+                status(remote.offerId,remote.hash,"rejected");remove(remote);return;
+            }
+            remote.ready=true;remote.phase=ReceivingPhase.WAITING_ACK;remote.lastLease=clockNow;remote.lastReadyAttempt=-1;host.state(remote);flushControl(remote,clockNow);
             host.cache(remote.hash,remote.bundle);
         }));
     }
     private void permissions(boolean upload,boolean view) {
         boolean uploadChanged=allowedUpload!=upload;
         if(allowedUpload&&!upload&&ownGeneration!=null)stopPublishing();
-        if(allowedView&&!view)for(Remote remote:List.copyOf(remotes.values()))remove(remote);
+        if(allowedView&&!view){for(Remote remote:List.copyOf(remotes.values()))remove(remote);receiveFailures.clear();}
         allowedUpload=upload;allowedView=view;
         if(uploadChanged&&!upload&&deleteRequest!=null) {
             if(deleteSent)rememberDeleteStatus(deletingId,"上传权限已撤销，等待服务器删除结果");
@@ -565,6 +640,7 @@ public final class PrivateModelSyncClient {
     }
     /** A prepared model remains invisible until the exact acknowledgement; congestion only retries control packets. */
     private void flushControl(Remote remote,long now) {
+        if(!host.viewEnabled())return;
         if(!remote.pendingStatus.isEmpty()) {
             if(remote.lastStatusAttempt<0||now-remote.lastStatusAttempt>=SECOND) {
                 Boolean sent=sendControl(feedback(remote.offerId,remote.hash,remote.pendingStatus),now);
