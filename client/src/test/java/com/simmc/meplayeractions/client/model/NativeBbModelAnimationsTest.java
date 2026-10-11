@@ -178,6 +178,64 @@ class NativeBbModelAnimationsTest {
         assertEquals(-23, sample(preserved, 0, context()).channels[preserved.boneIndex("ysmGlowEyes")][1].x, 1e-5);
     }
 
+    @ParameterizedTest
+    @CsvSource({"4.10,false,false,0.5,0.625", "5.0,false,false,0.5,-0.625",
+            "4.10,true,false,0.5,6.875", "5.0,true,false,0.5,-6.875",
+            "4.10,false,true,2.5,-55.625", "5.0,false,true,2.5,55.625",
+            "4.10,true,true,2.5,-55", "5.0,true,true,2.5,55"})
+    void mixedBezierSamplesPreserveOriginalCatmullNeighborsIncludingLoopBoundaries(String version, boolean looping,
+                                                                                boolean tail, double seconds, double expected)
+            throws Exception {
+        JsonObject source = source(version);
+        animation(source).addProperty("length", 3);
+        animation(source).addProperty("loop", looping ? "loop" : "hold");
+        String[] interpolation = tail ? new String[]{"linear", "bezier", "linear", "catmullrom"}
+                : new String[]{"catmullrom", "linear", "bezier", "linear"};
+        String[] value = {"0", "10", "100", "0"};
+        for (int i = 0; i < 4; i++) {
+            JsonObject key = frame("position", i, interpolation[i], value[i], "0", "0");
+            key.add("bezier_left_time", numbers(-.5f, -.5f, -.5f));
+            key.add("bezier_right_time", numbers(.5f, .5f, .5f));
+            key.add("bezier_left_value", numbers(0, 0, 0)); key.add("bezier_right_value", numbers(0, 0, 0));
+            keys(source).add(key);
+        }
+        byte[] bytes = source.toString().getBytes(StandardCharsets.UTF_8);
+        var decoded = NativeBbModel.read(bytes, Map.of("model.bbmodel", bytes), null);
+        JsonObject frames = authoredAnimations(decoded).getAsJsonObject("authored").getAsJsonObject("bones")
+                .getAsJsonObject("Body").getAsJsonObject("position");
+        assertTrue(frames.size() > 4, "The regression must include baked Bézier samples");
+        for (var entry : frames.entrySet()) {
+            boolean originalTime = Double.parseDouble(entry.getKey()) == Math.floor(Double.parseDouble(entry.getKey()));
+            assertEquals(!originalTime, entry.getValue().getAsJsonObject().has("mpa_bb_synthetic"));
+        }
+        BbModel model = BbModel.parseLocal(decoded.raw());
+        Vector3f actual = model.evaluateClip("authored", seconds * 20, looping ? "LOOP" : "HOLD", context())
+                .pose().channels[model.boneIndex("Body")][0];
+        // Official editor Catmull uses original sorted neighbors, including the second /
+        // penultimate original key on a loop. Bézier's interior samples cannot replace them.
+        assertEquals(expected, actual.x, 1e-4);
+    }
+
+    @Test
+    void authoredSyntheticSamplesRequireLinearInterpolationAndOriginalEndpoints() throws Exception {
+        JsonObject source = bezierSource("5.0", 10, 20, 6, -4);
+        byte[] bytes = source.toString().getBytes(StandardCharsets.UTF_8);
+        var imported = NativeBbModel.read(bytes, Map.of("model.bbmodel", bytes), null);
+        JsonObject linear = JsonParser.parseString(new String(imported.raw(), StandardCharsets.UTF_8)).getAsJsonObject();
+        JsonArray frames = runtimeKeys(linear);
+        JsonObject synthetic = null;
+        for (var frame : frames) if (frame.getAsJsonObject().has("mpa_bb_synthetic")) {
+            synthetic = frame.getAsJsonObject(); break;
+        }
+        assertNotNull(synthetic);
+        synthetic.addProperty("interpolation", "catmullrom");
+        assertThrows(IllegalArgumentException.class, () -> BbModel.parseLocal(linear.toString().getBytes(StandardCharsets.UTF_8)));
+
+        JsonObject endpoint = JsonParser.parseString(new String(imported.raw(), StandardCharsets.UTF_8)).getAsJsonObject();
+        runtimeKeys(endpoint).get(0).getAsJsonObject().addProperty("mpa_bb_synthetic", true);
+        assertThrows(IllegalArgumentException.class, () -> BbModel.parseLocal(endpoint.toString().getBytes(StandardCharsets.UTF_8)));
+    }
+
     private static JsonObject bezierSource(String version, float from, float to, float right, float left) throws Exception {
         JsonObject source = source(version);
         JsonObject start = frame("position", 0, "bezier", Float.toString(from), "0", "0");
@@ -204,6 +262,16 @@ class NativeBbModelAnimationsTest {
         byte[] resource = imported.sourceFiles().get(path);
         assertNotNull(resource, path);
         return JsonParser.parseString(new String(resource, StandardCharsets.UTF_8)).getAsJsonObject().getAsJsonObject("animations");
+    }
+    private static JsonArray runtimeKeys(JsonObject document) {
+        for (var value : document.getAsJsonArray("animations")) {
+            JsonObject clip = value.getAsJsonObject();
+            if (!clip.get("name").getAsString().equals("authored")) continue;
+            for (var animator : clip.getAsJsonObject("animators").entrySet())
+                if (animator.getValue().getAsJsonObject().get("type").getAsString().equals("bone"))
+                    return animator.getValue().getAsJsonObject().getAsJsonArray("keyframes");
+        }
+        fail("Missing authored bone animator"); return new JsonArray();
     }
     private static JsonArray keys(JsonObject source) { return animation(source).getAsJsonObject("animators").getAsJsonObject("body").getAsJsonArray("keyframes"); }
     private static JsonObject point(String x, String y, String z) {

@@ -153,6 +153,7 @@ public final class NativeYsmFile {
             value.addProperty("lerp_mode", key.interpolationMode == 1 ? "step" : key.interpolationMode == 2 ? "catmullrom" : "linear");
             value.add("post", expressions(key.postData));
             if (key.hasPreData) value.add("pre", expressions(key.preData));
+            if (key.bbSynthetic) value.addProperty("mpa_bb_synthetic", true);
             frames.add(Float.toString(key.timestamp), value);
         }
         target.add(name, frames);

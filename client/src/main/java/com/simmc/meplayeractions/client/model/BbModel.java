@@ -96,8 +96,32 @@ public final class BbModel {
         boolean same(Point other) { return fingerprint.equals(other.fingerprint); }
     }
     private static double bounded(double value, double bound) { return Math.max(-bound, Math.min(bound, value)); }
-    private record Key(double time, Point pre, Point post, String interpolation) { }
-    private record Track(Key[] keys) {
+    private record Key(double time, Point pre, Point post, String interpolation, boolean synthetic) { }
+    private record Track(Key[] keys, int[] originalIndices) {
+        Track(Key[] keys) { this(keys, originalIndices(keys)); }
+        private static int[] originalIndices(Key[] keys) {
+            int count = 0;
+            for (Key key : keys) if (!key.synthetic) count++;
+            // Ordinary/native tracks retain their original O(1) neighbor path and allocation.
+            if (count == keys.length) return null;
+            if (count < 2 || keys[0].synthetic || keys[keys.length - 1].synthetic)
+                throw invalid("Synthetic BBModel samples require original segment endpoints");
+            int[] indices = new int[count]; int next = 0;
+            for (int i = 0; i < keys.length; i++) if (!keys[i].synthetic) indices[next++] = i;
+            return indices;
+        }
+        int previousOriginal(int index) {
+            if (originalIndices == null) return index - 1;
+            int at = Arrays.binarySearch(originalIndices, index);
+            if (at < 0) at = -at - 1;
+            return at > 0 ? originalIndices[at - 1] : -1;
+        }
+        int nextOriginal(int index) {
+            if (originalIndices == null) return index + 1;
+            int at = Arrays.binarySearch(originalIndices, index);
+            at = at < 0 ? -at - 1 : at + 1;
+            return at < originalIndices.length ? originalIndices[at] : keys.length;
+        }
         Vector3f sample(double time, boolean looping, Molang.Context context) {
             return sample(time, looping, context, defaultValue(keys[0].pre.channel));
         }
@@ -114,11 +138,17 @@ public final class BbModel {
             if (a.interpolation.equals("step")) return a.post.value(context, current);
             float t = (float) ((time - a.time) / (b.time - a.time));
             if (a.interpolation.equals("catmullrom") || b.interpolation.equals("catmullrom")) {
-                Vector3f previous = (a.pre.same(a.post) && lo > 0 ? keys[lo - 1].post : a.post).value(context, current);
-                Vector3f next = (b.pre.same(b.post) && hi + 1 < keys.length ? keys[hi + 1].pre : b.pre).value(context, current);
-                if (looping && keys.length >= 3) {
-                    if (lo == 0 && a.pre.same(a.post)) previous = keys[keys.length - 2].post.value(context, current);
-                    if (hi == keys.length - 1 && b.pre.same(b.post)) next = keys[1].pre.value(context, current);
+                int previousIndex = previousOriginal(lo), nextIndex = nextOriginal(hi);
+                // Bézier samples refine their own segment without becoming another original
+                // key's Catmull control point. Preserve the editor's sorted-key adjacency.
+                Vector3f previous = (a.pre.same(a.post) && previousIndex >= 0 ? keys[previousIndex].post : a.post).value(context, current);
+                Vector3f next = (b.pre.same(b.post) && nextIndex < keys.length ? keys[nextIndex].pre : b.pre).value(context, current);
+                int originalCount = originalIndices == null ? keys.length : originalIndices.length;
+                if (looping && originalCount >= 3) {
+                    int penultimate = originalIndices == null ? keys.length - 2 : originalIndices[originalCount - 2];
+                    int second = originalIndices == null ? 1 : originalIndices[1];
+                    if (lo == 0 && a.pre.same(a.post)) previous = keys[penultimate].post.value(context, current);
+                    if (hi == keys.length - 1 && b.pre.same(b.post)) next = keys[second].pre.value(context, current);
                 }
                 return catmull(previous, a.post.value(context, current), b.pre.value(context, current), next, t);
             }
@@ -1004,7 +1034,9 @@ public final class BbModel {
                         boolean injectedHead = serverYsmHeadQueries && channel == 1 && bones.get(index).name.equals("Head");
                         Point pre = point(object(points.get(0)), channel, injectedHead, clipLegacyAxes);
                         Point post = points.size() == 2 ? point(object(points.get(1)), channel, injectedHead, clipLegacyAxes) : pre;
-                        channels[channel].add(new Key(time, pre, post, interpolation));
+                        boolean synthetic = nativeFolder && editorAxes != 0 && bool(frame, "mpa_bb_synthetic", false);
+                        if (synthetic && !interpolation.equals("linear")) throw invalid("Synthetic BBModel samples must be linear");
+                        channels[channel].add(new Key(time, pre, post, interpolation, synthetic));
                     }
                     Track[] boneTracks = new Track[3];
                     for (int c = 0; c < 3; c++) if (!channels[c].isEmpty()) {

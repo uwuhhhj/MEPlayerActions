@@ -815,6 +815,7 @@ public class BBToRawConverter {
         for (int i = 1; i < samples; i++) {
             float percent = (float) i / samples;
             RawYsmModel.RawKeyframe sample = new RawYsmModel.RawKeyframe();
+            sample.bbSynthetic = !sourceRotationCompat;
             sample.timestamp = current.time + duration * percent;
             sample.interpolationMode = RawYsmModel.RawKeyframe.INTERPOLATION_LINEAR;
             sample.postData = sampleBezier(current, next, start, end, duration, percent, sourceRotationCompat);

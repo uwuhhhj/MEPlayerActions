@@ -138,6 +138,8 @@ public class RawYsmModel {
         public Object[] postData = new Object[3];
         public Object[] preData = new Object[3];
         public boolean hasPreData;
+        /** Host-only samples inserted between authored BBModel keys; never a binary field. */
+        public boolean bbSynthetic;
         public float[] bezierLeftValue;
         public float[] bezierRightValue;
         public float[] bezierLeftTime;

@@ -847,6 +847,8 @@ public final class YsmFolderModel {
                 if (post == null) throw invalid("YSM 关键帧缺少 pre/post");
                 if (key.has("pre")) points.add(point(channel, key.get("pre"), editorPrograms));
                 points.add(point(channel, post, editorPrograms)); frame.addProperty("interpolation", string(key, "lerp_mode", "linear"));
+                if (editorPrograms && key.has("mpa_bb_synthetic"))
+                    frame.addProperty("mpa_bb_synthetic", bool(key, "mpa_bb_synthetic", false));
             } else points.add(point(channel, source, editorPrograms));
             frame.add("data_points", points); return frame;
         }
