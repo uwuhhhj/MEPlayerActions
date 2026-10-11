@@ -1,6 +1,6 @@
 # MEPlayerActions
 
-Paper 玩家伪装与动画插件，配套可选的 Fabric 客户端模组。当前服务端与客户端均为 **0.6.0**，目标版本 **Minecraft 1.21.11／Java 21**。作者：SIMMC、Loliiiico。
+Paper 玩家伪装与动画插件，配套可选的 Fabric 客户端模组。当前服务端与客户端均为 **0.6.1**，目标版本 **Minecraft 1.21.11／Java 21**。作者：SIMMC、Loliiiico。
 
 同一个客户端提供三条独立路径。模型上传到服务器不等于创建服务器伪装：
 

@@ -1,6 +1,6 @@
 # MEPlayerActions 架构
 
-本文对应服务端和客户端 0.6.0。安装与命令见 [README](README.md)，开发流程见 [CONTRIBUTING](CONTRIBUTING.md)，消息字段与限制以 [协议](docs/CLIENT_PROTOCOL.md) 为准。
+本文对应服务端和客户端 0.6.1。安装与命令见 [README](README.md)，开发流程见 [CONTRIBUTING](CONTRIBUTING.md)，消息字段与限制以 [协议](docs/CLIENT_PROTOCOL.md) 为准。
 
 ## 职责
 

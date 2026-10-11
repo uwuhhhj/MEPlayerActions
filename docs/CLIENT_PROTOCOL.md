@@ -16,7 +16,7 @@ v3 是玩家模型资产、动画状态及观众渲染接管协议。客户端�
 
 客户端发送：
 ```json
-{"protocol":3,"type":"hello","clientVersion":"0.6.0","capabilities":["local_render","server_push_models","incremental_state","server_model_catalog","disguise_results"]}
+{"protocol":3,"type":"hello","clientVersion":"0.6.1","capabilities":["local_render","server_push_models","incremental_state","server_model_catalog","disguise_results"]}
 ```
 `capabilities` 必须含 `local_render`，还可声明 `server_push_models`、`resource_pack_models`、`incremental_state`／`server_timeline`、`server_model_catalog` 和 `disguise_results`；不允许重复，其他 capability 拒绝。客户端默认声明增量、模型目录与伪装结果能力，显式启用 `followServerTimeline` 时另声明 `server_timeline`。`clientVersion` 可省略（最多 64 字符）。hello 两次接受之间至少相隔一个单调时钟秒；这一时间戳属于玩家连接，未知协议结束会话或重新 hello 都不能重置。新 hello 清理已有绑定并恢复其 ME 可见性，不授予渲染权限。
 
@@ -54,7 +54,7 @@ state 必须额外包含 `motion` 对象：`features` 为服务器及玩家允�
 
 hello／hello_ack 双方确认 `server_model_catalog` 后，服务器主动发送 `server_model_catalog {revision,index,count,canDisguise,truncated,models:[{id,label}]}`。`revision` 为本会话递增正整数，`index` 从 0 开始，`count` 最多 4096；一片最多 512 条，总目录最多 4096 条。全部分片完成后才发布新目录；更高版本开始接收时暂停旧选择权限，重复片必须内容一致。无权限时发送单片空目录、`canDisguise:false`；`truncated` 表示目录达到上限。目录 ID 与下文模型 ID 规范相同，label 最多 256 字符。
 
-本适配器从已加载且符合 `models.allowed` 的模型生成共享目录，每 100 tick 刷新源缓存；会话沿既有分散发现周期检查更新和权限，默认在 20 TPS 下最坏约 7 秒。每会话每 tick 最多成功发送一片，受原字节预算限制；延后保留原片，不挤入关键控制队列。正在发送时先检查权限撤回，丢弃旧待发片。旧客户端未声明能力就不发送目录。
+本适配器从 ModelEngine 注册表的有效模型 ID 生成共享目录，每 100 tick 刷新源缓存；目录与伪装补全共用来源，不以 MPA 客户端资源或配置条目是否存在来筛选。会话沿既有分散发现周期检查更新和权限，默认在 20 TPS 下最坏约 7 秒。每会话每 tick 最多成功发送一片，受原字节预算限制；延后保留原片，不挤入关键控制队列。正在发送时先检查权限撤回，丢弃旧待发片。旧客户端未声明能力就不发送目录。
 
 目录仅授权选择固定命令 `/meplayeractions disguise <ID> [已验证的可选参数]`，参数来自本机按 ID 保存的 `scale`、`hide-self`、`show-self`、`view-distance`、`max-viewers`、`delay`、`effect`，不接受任意命令文本。客户端共享 500 ms 发送间隔，服务器仍检查真实命令权限与参数范围。目录不包含资源 token/hash，也不授权 `asset_request`；浏览仅复用已收到的本次会话资产。服务器确认伪装后沿下文 offer／ready／ACK 分发。目录接收、断线、重新握手与超时均不能继承旧会话的选择权限。
 

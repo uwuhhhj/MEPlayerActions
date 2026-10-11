@@ -67,9 +67,9 @@ finally { Pop-Location }
 python tools/package_current.py --help
 ```
 
-它读取已构建的两端 0.6.0 JAR、`build/validation-0.6.0/` 下的阶段报告与实际命令记录，校验后输出工作区 `dist/` 的 JAR、安装 ZIP、源码 ZIP、证据 ZIP 和构建 JSON。同名文件已存在时拒绝输出。工具不执行构建、测试或实机验收；参数、阶段顺序与证据结构见 [工具说明](tools/README.md)。
+它读取已构建的两端 0.6.1 JAR、阶段报告与实际命令记录，校验后输出工作区 `dist/` 的 JAR、安装 ZIP、源码 ZIP、证据 ZIP 和构建 JSON。同名文件已存在时拒绝输出。最终构建记录位于 `build/validation-0.6.1/`；本轮升版前的定向检查可用显式证据清单保留其实际版本、路径和范围，不冒充升版后重跑。工具不执行构建、测试或实机验收；参数、阶段顺序与证据结构见 [工具说明](tools/README.md)。
 
-脚本的版本及证据合同固定为 0.6.0。行为发布须同步 `pom.xml`、`client/build.gradle`、脚本版本合同和相应证据。源码交付排除服务端 `private-models/`、`private-fixture*` 和其他私有输入，完整保留正常 `src` 资源与公开示例。文档整理本身不必递增软件版本。[package_release.py](tools/package_release.py) 提供资源、许可和 ZIP 辅助校验；其 `full` / `interactions` 流程不作为当前打包入口。
+脚本的版本及最终构建合同固定为 0.6.1。行为发布须同步 `pom.xml`、`client/build.gradle`、脚本版本合同和相应证据。源码交付排除服务端 `private-models/`、`private-fixture*` 和其他私有输入，完整保留正常 `src` 资源与公开示例。文档整理本身不必递增软件版本。[package_release.py](tools/package_release.py) 提供资源、许可和 ZIP 辅助校验；其 `full` / `interactions` 流程不作为当前打包入口。
 
 打包前核对插件/模组描述、安装说明和第三方声明；打包后检查 ZIP 完整性、结构、版本、许可、内容与当前源码/JAR 一致性，继续修改后重新打包。`tools/prepare_models.py` 准备示例原模型和 ME 蓝图，`tools/build_client_resource_pack.py` 用于资源包兼容模式；主动推送部署不需要运行它们，文档整理不重写模型资产。提交、推送和发布按用户授权执行。
 

@@ -6,6 +6,7 @@
 
 | 版本 | 记录 |
 | --- | --- |
+| 0.6.1 | [统一模型解释、服务器资源状态与伪装入口](SERVER_CLIENT_0_6_1_MODEL_CONSISTENCY.md) |
 | 0.6.0 | [服务器资源保护、上传额度与全局诊断](SERVER_0_6_0_RESOURCE_PROTECTION.md) |
 | 0.5.1 | [上游运行时迁移、原版位置呈现与统一图库](CLIENT_0_5_1_UPSTREAM_GALLERY.md) |
 | 0.5.0 | [三条渲染路径、私人上传缓存与分享恢复](CLIENT_0_5_0_SHARING.md) |
