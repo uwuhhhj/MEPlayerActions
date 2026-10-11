@@ -119,6 +119,8 @@ public class LocalAppearanceScreen extends Screen {
     protected boolean nonLocalGalleryDirect(String directory,String id) {return true;}
     protected boolean nonLocalGalleryContains(String directory,String id) {return true;}
     protected String nonLocalGalleryParent(String directory) {return "";}
+    /** Special read-only destinations do not become server model directories or command targets. */
+    protected boolean openGalleryDestination(ModelGroup group) {return false;}
     protected String galleryFilterLabel() {return favoritesOnly?"收藏 · 全部来源":query.isBlank()?"":"搜索 · 全部来源";}
     protected String galleryGroupTooltip(ModelGroup group) {
         return group.label()+" · "+group.count()+" 个模型\n"+group.path()+"\n点击进入模型目录";
@@ -466,6 +468,7 @@ public class LocalAppearanceScreen extends Screen {
         browseGroup(group);return true;
     }
     private void browseGroup(ModelGroup group) {
+        if(openGalleryDestination(group))return;
         if(!localGallery()) {
             groupPages.put(groupPath(),page);serverGroupDirectory=group.path();query="";
             page=groupPages.getOrDefault(groupPath(),0);clearAndInit();return;
@@ -768,6 +771,10 @@ public class LocalAppearanceScreen extends Screen {
         activeView = false; rotating = false;clearGalleryPreviews();
     }
     protected void clearGalleryPreviews() {generation++;inFlight=0;previews.clear();preview.clear();drawnCards.clear();leftPreviewDrawn=false;}
+    protected final void showUploadedModelsOnly() {
+        uploadedOnly=true;groupSource=sourceFilter=page=0;groupDirectory="";
+        clearGalleryPreviews();refreshModels(false);
+    }
     @Override public void close() { client.setScreen(parent); }
     @Override public boolean shouldPause() { return false; }
 

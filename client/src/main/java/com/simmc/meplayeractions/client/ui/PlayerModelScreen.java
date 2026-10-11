@@ -26,6 +26,7 @@ import java.util.concurrent.CompletableFuture;
  */
 public final class PlayerModelScreen extends LocalAppearanceScreen {
     private static final Identifier SETTINGS_ICON=Identifier.of("meplayeractions","textures/gui/settings.png");
+    private static final String PRIVATE_CACHE_DESTINATION="private-share-cache/";
     private final Map<ButtonWidget,String> roles=new IdentityHashMap<>();
     private final Set<String> serverFavorites=new HashSet<>();
     private boolean clientTab,advanced,initializedServerPresent,initializedServerOffline;
@@ -42,6 +43,11 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
     public PlayerModelScreen(ClientRuntime runtime) {this(runtime,null);}
     public PlayerModelScreen(ClientRuntime runtime,Screen parent) {
         super(runtime,parent,Text.literal("玩家模型"));clientTab=!runtime.serverOwnModelPresent();
+    }
+    /** Owner upload management keeps the existing client-side cloud controls and permissions. */
+    public void showUploadedPrivateModels() {
+        clientTab=true;advanced=false;initializedServerPresent=runtime.serverOwnModelPresent();
+        resetGallery();showUploadedModelsOnly();
     }
 
     @Override protected void init() {
@@ -76,8 +82,16 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
                 .thenComparing(ClientRuntime.Action::id)).toList();
     }
     @Override protected List<ModelGroup> nonLocalGalleryFolders(List<ClientRuntime.Action> candidates,String directory) {
-        return ServerModelGalleryIndex.folders(candidates.stream().map(model->serverLocations.get(model.id())).filter(java.util.Objects::nonNull).toList(),directory)
-                .stream().map(folder->new ModelGroup(0,folder.path(),folder.label(),folder.count())).toList();
+        var folders=new java.util.ArrayList<>(ServerModelGalleryIndex.folders(candidates.stream().map(model->serverLocations.get(model.id())).filter(java.util.Objects::nonNull).toList(),directory)
+                .stream().map(folder->new ModelGroup(0,folder.path(),folder.label(),folder.count())).toList());
+        if(directory.isEmpty())folders.add(new ModelGroup(0,PRIVATE_CACHE_DESTINATION,"私人分享缓存",runtime.receivedPrivateModels().size()));
+        return List.copyOf(folders);
+    }
+    @Override protected boolean openGalleryDestination(ModelGroup group) {
+        if(!clientTab&&group.path().equals(PRIVATE_CACHE_DESTINATION)) {
+            client.setScreen(new PrivateSharedCacheScreen(runtime,this));return true;
+        }
+        return false;
     }
     @Override protected boolean nonLocalGalleryDirect(String directory,String id) {
         var location=serverLocations.get(id);return location!=null&&ServerModelGalleryIndex.direct(directory,location);
@@ -87,6 +101,7 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
     }
     @Override protected String nonLocalGalleryParent(String directory) {return ServerModelGalleryIndex.parent(directory);}
     @Override protected String galleryGroupTooltip(ModelGroup group) {
+        if(group.path().equals(PRIVATE_CACHE_DESTINATION))return "私人分享缓存\n查看本机已经收到的私人模型\n只预览，不创建服务器伪装\n本人上传在客户端云朵中管理";
         return clientTab?super.galleryGroupTooltip(group):ServerModelGalleryIndex.directoryLabel(group.path())+"\n"+group.count()+" 个模型\n点击进入目录，仅浏览不下载";
     }
     @Override protected CompletableFuture<LocalModelLibrary.Loaded> loadGalleryPreview(String id) {
