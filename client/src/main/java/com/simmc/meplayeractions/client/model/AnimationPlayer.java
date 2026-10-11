@@ -207,6 +207,7 @@ public final class AnimationPlayer {
         model.authorEvent("player_update", List.of(firstPerson), expressions);
         for (BbModel.Layer layer : incoming) if (!expressions.has("ctrl." + layer.animation())) expressions.query("ctrl." + layer.animation(), 1);
         expressions.query("ctrl.playing_extra_animation", incoming.stream().anyMatch(layer -> layer.layer().equals("manual")) ? 1 : 0);
+        advanceFunctionPhysics(serverTick);
         if (ysm != null) {
             applyLocalParameters(expressions,localParameters);
             if (!accessories.isEmpty()) {
@@ -277,10 +278,6 @@ public final class AnimationPlayer {
 
     private List<BbModel.Vertex> sampleYsm(double tick, List<BbModel.Layer> incoming, float yaw, float pitch,
                                                  Map<String,Double> accessories, Map<String,Double> localParameters) {
-        double delta = Double.isNaN(lastTick) ? 0 : Math.max(0, Math.min(.25, (tick - lastTick) / 20));
-        springs.values().forEach(spring -> spring.update(delta));
-        if (!Double.isNaN(lastTick) && lastTick>0 && tick>lastTick)
-            nativeSprings.values().forEach(spring -> spring.update((float)((tick-lastTick)/20)));
         lastTick = tick;
         BbModel.Pose combined = model.emptyPose(); readingPose = sampledPose;
         if (expressions.nativeYsm()) nativeProcessor.beginFrame();
@@ -343,6 +340,14 @@ public final class AnimationPlayer {
         if (!authoredLook[0]) model.applyLook(combined, yaw, pitch, headWeights);
         sampledPose = combined.copy(); readingPose = sampledPose;
         return model.vertices(combined);
+    }
+    /** Upstream PhysicsManager advances an instance once before sampling its author animation expressions. */
+    private void advanceFunctionPhysics(double tick) {
+        double delta = Double.isNaN(lastTick) ? 0 : Math.max(0, Math.min(.25, (tick - lastTick) / 20));
+        springs.values().forEach(spring -> spring.update(delta));
+        // Preserve the source's initial positive-tick guard and each native spring's own interval rules.
+        if (!Double.isNaN(lastTick) && lastTick > 0 && tick > lastTick)
+            nativeSprings.values().forEach(spring -> spring.update((float)((tick - lastTick) / 20)));
     }
     private static void addState(BbModel.Pose target, BbModel.Pose clip, double weight) {
         for (int i = 0; i < target.channels.length; i++) for (int c = 0; c < 3; c++) {
