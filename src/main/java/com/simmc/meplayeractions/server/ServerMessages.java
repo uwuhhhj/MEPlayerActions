@@ -36,8 +36,9 @@ public final class ServerMessages {
             }
             case "pending" -> lines.add("§e客户端资源正在准备或等待请求；ModelEngine 伪装照常显示。");
             case "missing" -> {
-                lines.add("§e未找到客户端资源；ModelEngine 伪装照常显示。");
-                lines.add("§7如需本地接管，可在 MPA models/ 中提供同名的完整模型资源。");
+                lines.add("§eMPA models/ 未发布此模型；ModelEngine 伪装照常显示。");
+                lines.add("§7不会下载 ME 蓝图或内置文件；本地接管不可用。");
+                lines.add("§7如需本地接管，由管理员在 MPA models/ 放入同名完整原文件，再重载 MPA。");
             }
             case "invalid" -> {
                 lines.add("§c客户端资源无效；ModelEngine 伪装照常显示。");

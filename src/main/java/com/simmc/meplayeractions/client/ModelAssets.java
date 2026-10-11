@@ -3,7 +3,6 @@ package com.simmc.meplayeractions.client;
 import com.simmc.meplayeractions.MEPlayerActionsPlugin;
 import com.simmc.meplayeractions.config.ModelComplexityLimits;
 import com.simmc.meplayeractions.protection.ResourceProtection;
-import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.ByteArrayOutputStream;
@@ -18,6 +17,7 @@ import java.util.Map;
 import java.util.*;
 import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.regex.Pattern;
 import java.util.zip.GZIPOutputStream;
 
@@ -26,8 +26,7 @@ final class ModelAssets {
     static final int MAX_RAW_BYTES = 8 * 1024 * 1024;
     static final int MAX_COMPRESSED_BYTES = 4 * 1024 * 1024;
     private static final Pattern MODEL_ID = Pattern.compile("[a-z0-9_-]{1,64}");
-    private final Path ownModels, engineBlueprints;
-    private final Resources resources;
+    private final Path ownModels;
     private final Consumer<Runnable> prepare;
     private final Consumer<String> warning;
     private final LinkedHashMap<String, Cached> cache = new LinkedHashMap<>(16, .75f, true);
@@ -40,7 +39,7 @@ final class ModelAssets {
     private long lastWarning = Long.MIN_VALUE, suppressedWarnings;
 
     ModelAssets(JavaPlugin plugin) {
-        this(plugin.getDataFolder().toPath().resolve("models"), engineBlueprints(plugin), plugin::getResource,
+        this(plugin.getDataFolder().toPath().resolve("models"),
                 task -> { throw new java.util.concurrent.RejectedExecutionException("No bounded resource executor"); }, plugin.getLogger()::warning);
         if (plugin instanceof MEPlayerActionsPlugin actions) {
             protection = actions.resources(); complexity = protection.complexityLimits();
@@ -54,24 +53,22 @@ final class ModelAssets {
     }
 
     /** Keeps the actual filesystem/packing path testable without constructing a Bukkit plugin. */
-    ModelAssets(Path ownModels, Path engineBlueprints, Resources resources, Consumer<Runnable> prepare,
-                Consumer<String> warning) {
+    ModelAssets(Path ownModels, Consumer<Runnable> prepare, Consumer<String> warning) {
         this.ownModels = java.util.Objects.requireNonNull(ownModels);
-        this.engineBlueprints = engineBlueprints;
-        this.resources = java.util.Objects.requireNonNull(resources);
         this.prepare = java.util.Objects.requireNonNull(prepare);
         this.warning = java.util.Objects.requireNonNull(warning);
+    }
+
+    /** Legacy fixture signature. Neither JAR resources nor ME blueprints authorize delivery. */
+    ModelAssets(Path ownModels, Path ignoredEngineBlueprints, Resources ignoredResources, Consumer<Runnable> prepare,
+                Consumer<String> warning) {
+        this(ownModels, prepare, warning);
     }
     ModelAssets(Path ownModels, Path engineBlueprints, Resources resources, Consumer<Runnable> prepare,
                 Consumer<String> warning, ModelComplexityLimits complexity, int maxModels, long maxBytes) {
         this(ownModels,engineBlueprints,resources,prepare,warning); this.complexity=Objects.requireNonNull(complexity);
         if(maxModels<1||maxBytes<1)throw new IllegalArgumentException("Invalid asset cache limit");
         this.maxModels=maxModels;this.maxBytes=maxBytes;
-    }
-
-    private static Path engineBlueprints(JavaPlugin plugin) {
-        Plugin engine = plugin.getServer().getPluginManager().getPlugin("ModelEngine");
-        return engine == null ? null : engine.getDataFolder().toPath().resolve("blueprints");
     }
 
     Optional<Asset> get(String modelId) {
@@ -83,7 +80,7 @@ final class ModelAssets {
             if(known!=null)remove(modelId);
             misses++;
             if(cache.size()>=maxModels&&!evict(null))return Optional.empty();
-            pending = new Cached(new Status("pending", "正在准备客户端资产（OWN → JAR → ME）", "lookup"), Optional.empty());
+            pending = new Cached(new Status("pending", "正在检查 MEPlayerActions models/ 中明确提供的客户端资源", "own"), Optional.empty());
             cache.put(modelId,pending);
         }
         if(protection!=null) {
@@ -107,11 +104,20 @@ final class ModelAssets {
         if (!validId(modelId)) return new Status("invalid", "模型 ID 格式无效", "none");
         Cached current = cache.get(modelId);
         return current == null && cache.size()>=maxModels ? new Status("asset_queue_full","客户端资产缓存已达到上限","lookup")
-                : current == null ? new Status("pending", "尚未请求客户端资产准备（OWN → JAR → ME）", "lookup") : current.status;
+                : current == null ? new Status("pending", "尚未请求 MEPlayerActions models/ 客户端资产准备", "own") : current.status;
     }
 
     /** An old worker's identity cannot replace a new preparation after reload. */
     synchronized void invalidate() { for(String id:List.copyOf(cache.keySet()))remove(id); }
+    /** A complete directory snapshot can revoke published assets without discarding other diagnostics. */
+    synchronized void revokeUnpublished(Predicate<String> unpublished) {
+        Objects.requireNonNull(unpublished);
+        var revoked = cache.entrySet().stream()
+                .filter(entry -> entry.getValue().status.state.equals("pending")
+                        || entry.getValue().status.state.equals("ready") && entry.getValue().asset.isPresent())
+                .map(Map.Entry::getKey).filter(unpublished).toList();
+        for (String id : revoked) remove(id);
+    }
     record Metrics(int models,int uniqueHashes,long bytes,long hits,long misses,long peakBytes){}
     synchronized Metrics metrics(){return new Metrics(cache.size(),contentReferences.size(),cachedBytes,hits,misses,peakBytes);}
     private synchronized int transferPinsCount(){return transferPins.size();}
@@ -173,7 +179,7 @@ final class ModelAssets {
             cache.put(id,result);
             warn=!result.status.state.equals("ready");
             if(warn&&protection!=null) {
-                boolean transientFailure=!Set.of("missing","invalid","model_complexity").contains(result.status.state);
+                boolean transientFailure=!Set.of("missing","invalid","ambiguous","model_complexity").contains(result.status.state);
                 long now=System.nanoTime();
                 if(transientFailure||lastWarning!=Long.MIN_VALUE&&now-lastWarning<30_000_000_000L){suppressedWarnings++;warn=false;}
                 else {lastWarning=now;summarized=suppressedWarnings;suppressedWarnings=0;}
@@ -199,51 +205,14 @@ final class ModelAssets {
     }
 
     private Cached load(String id) {
-        String source = "own";
         try {
             interrupted();
-            Path own = ownModels.resolve(id + ".bbmodel");
-            if (Files.isRegularFile(own)) return ready("own", read(id, own));
-            source = "jar";
-            try (InputStream resource = resources.open("models/" + id + ".bbmodel")) {
-                if (resource != null) return ready("jar", prepared(id, readBounded(resource)));
-            }
-            source = "modelengine";
-            if (engineBlueprints != null) {
-                Path blueprints = engineBlueprints;
-                if (Files.isDirectory(blueprints)) {
-                    try (var paths = Files.walk(blueprints, 16)) {
-                        // Stable paths make duplicate identifiers diagnosable and reproducible.
-                        var boundedPaths=paths.limit(16_385).toList();
-                        if(boundedPaths.size()>16_384)return unavailable("model_complexity",source,"服务器模型目录超过遍历条目预算");
-                        var candidates = boundedPaths.stream().filter(p -> Files.isRegularFile(p)
-                                && p.getFileName().toString().endsWith(".bbmodel")).limit(4097).sorted().toList();
-                        if(candidates.size()>4096)return unavailable("model_complexity",source,"服务器模型目录超过扫描文件预算");
-                        for (Path path : candidates) {
-                            interrupted();
-                            if (path.getFileName().toString().equals(id + ".bbmodel")) return ready("modelengine", read(id, path));
-                        }
-                        long lookupBytes=0;
-                        for (Path path : candidates) {
-                            interrupted();long size=Files.size(path);
-                            if (size > MAX_RAW_BYTES) continue;
-                            if((lookupBytes+=size)>64L*1024*1024)return unavailable("model_complexity",source,"服务器模型标识查找超过读取预算");
-                            try {
-                                byte[] raw;try(InputStream input=Files.newInputStream(path)){raw=readBounded(input);}
-                                var json = PrivateModelBundle.parseJson(raw,MAX_RAW_BYTES);
-                                if (json.isJsonObject() && json.getAsJsonObject().has("model_identifier")
-                                        && id.equals(json.getAsJsonObject().get("model_identifier").getAsString())) {
-                                    return ready("modelengine", prepared(id, raw));
-                                }
-                            } catch (IOException | RuntimeException malformedOtherModel) { interrupted(); /* Other malformed blueprints cannot disable this asset. */ }
-                        }
-                    }
-                }
-            }
-            return unavailable("missing", "none", "OWN 模型目录、JAR 内置资源及 ME blueprints 均未找到此模型");
+            var selected = ExplicitModelFiles.select(ownModels, id);
+            return selected.found() ? ready("own", read(id, selected.path()))
+                    : unavailable(selected.state(), "own", selected.reason());
         } catch (IOException | RuntimeException exception) {
             String code=exception.getMessage()!=null&&exception.getMessage().startsWith("model_complexity:")?"model_complexity":"invalid";
-            return unavailable(code, source, "选定来源的模型资产无效或无法读取：" + detail(exception));
+            return unavailable(code, "own", "MEPlayerActions models/ 中的模型资产无效或无法读取：" + detail(exception));
         }
     }
 
@@ -275,8 +244,10 @@ final class ModelAssets {
     }
 
     private Asset read(String id, Path path) throws IOException {
+        ExplicitModelFiles.validateSelected(ownModels, path);
         if (Files.size(path) > MAX_RAW_BYTES) throw new IOException("bbmodel exceeds 8 MiB");
-        try (InputStream input = Files.newInputStream(path)) { return prepared(id, readBounded(input)); }
+        try (InputStream input = Files.newInputStream(path, java.nio.file.StandardOpenOption.READ,
+                java.nio.file.LinkOption.NOFOLLOW_LINKS)) { return prepared(id, readBounded(input)); }
     }
     private Asset prepared(String id,byte[] raw)throws IOException {
         String hash=PrivateModelBundle.hash(raw);

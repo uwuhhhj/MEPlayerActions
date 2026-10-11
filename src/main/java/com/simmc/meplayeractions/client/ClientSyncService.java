@@ -46,6 +46,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     private final ConnectionLimits limits = new ConnectionLimits();
     private final PrivateModelSyncService privateModels;
     private ResourceProtection protection;
+    private ServerModelFolders modelFolders;
     private ServerModelCatalog modelCatalog = new ServerModelCatalog(List::of);
     private boolean configuredEnabled = true, running;
     private int maxPayload = 16000, requestCooldownTicks = 4;
@@ -65,7 +66,9 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         actionRequests = Objects.requireNonNull(requests); this.assets = Objects.requireNonNull(assets);
         privateModels = new PrivateModelSyncService(plugin, this::readOwnerIds, limits);
     }
-    public void modelCatalog(Supplier<List<String>> choices) { modelCatalog = new ServerModelCatalog(choices); }
+    public void modelCatalog(Supplier<List<String>> choices) {
+        modelCatalog = new ServerModelCatalog(choices, () -> modelFolders == null ? null : modelFolders.snapshot());
+    }
     public void snapshotSources(Supplier<Set<UUID>> ownerIds, Function<UUID, StateSnapshot> snapshot) { snapshotCache.configure(ownerIds, snapshot); }
     public void configurePerformance(PerformanceSettings performance) {
         Objects.requireNonNull(performance); audienceRefreshTicks = performance.audienceRefreshTicks(); validationTicks = performance.validationTicks();
@@ -73,6 +76,9 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     }
     public void configureResources(ResourceProtection runtime) {
         protection = Objects.requireNonNull(runtime); limits.configure(runtime.settings().network());
+        if (modelFolders != null) modelFolders.close();
+        modelFolders = new ServerModelFolders(plugin, runtime,
+                snapshot -> assets.revokeUnpublished(id -> Boolean.FALSE.equals(snapshot.forModel(id).clientResource())));
         limits.assetFactor(runtime::throttleFactor);
         for (String metric : List.of("connections", "transfers", "transfers.limit", "waiting", "waiting.limit", "queuedBytes", "queuedBytes.limit",
                 "queuedBytes.peak", "uploadBytes", "downloadBytes", "uploadBytesPerSecond", "downloadBytesPerSecond", "uploadBytesPerSecond.limit", "downloadBytesPerSecond.limit", "rejected", "deferred",
@@ -173,6 +179,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         }
     }
     @Override public void close() {
+        if (modelFolders != null) modelFolders.close();
         privateModels.close();
         if (maintenanceTask != null) { maintenanceTask.cancel(); maintenanceTask = null; }
         clearSessions("plugin_stopping"); assets.invalidate(); running = false; var messenger = plugin.getServer().getMessenger();
@@ -522,6 +529,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     }
     private void maintainSessions() {
         if (!configuredEnabled || sessions.isEmpty()) return; long tick = currentTick();
+        if (modelFolders != null) modelFolders.refresh(tick);
         if (tick % HEARTBEAT_TICKS == 0) limits.pruneOffline(id -> { Player viewer = Bukkit.getPlayer(id); return viewer != null && viewer.isOnline(); });
         List<Session> ordered = new ArrayList<>(sessions.values());
         Collections.rotate(ordered, -(viewerRotation++ % ordered.size()));
@@ -574,6 +582,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     }
     private void updateCatalog(Player viewer, Session session) {
         if (!session.catalog || !session.helloAcknowledged) return;
+        if (modelFolders != null) modelFolders.refresh(currentTick());
         modelCatalog.refresh(currentTick());
         ServerModelCatalog.Plan plan = modelCatalog.plan(catalogPermitted(viewer), maxPayload);
         if (session.catalogPlan == plan) return;
@@ -838,10 +847,12 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         String hash = snapshot.localRenderable() ? assets.get(snapshot.modelId()).map(ModelAssets.Asset::hash).orElse("") : "";
         ModelAssets.Status status = assets.status(snapshot.modelId()); Player owner = Bukkit.getPlayer(snapshot.owner());
         int food = owner == null ? 20 : owner.getFoodLevel();
+        // ME's forced visibility is an outgoing metadata override, not the player's actual invisibility.
+        boolean sourceInvisible = owner != null && owner.isInvisible();
         StateSignature signature = new StateSignature(snapshot.instance(), snapshot.modelId(), hash, snapshot.sequence(), snapshot.world(),
                 snapshot.layers(), snapshot.motion(), snapshot.accessories(), snapshot.scale(), snapshot.hidePlayer(), snapshot.showSelf(),
-                snapshot.animations(), status.state(), status.reason(), status.source(), food);
-        StateMetadata result = new StateMetadata(snapshot, new BoundState(snapshot.instance(), snapshot.modelId(), hash), signature, status, food);
+                snapshot.animations(), status.state(), status.reason(), status.source(), food, sourceInvisible);
+        StateMetadata result = new StateMetadata(snapshot, new BoundState(snapshot.instance(), snapshot.modelId(), hash), signature, status, food, sourceInvisible);
         stateMetadata.put(snapshot.owner(), result); return result;
     }
     private StatePacket statePacket(StateSnapshot snapshot, StateMetadata metadata) {
@@ -858,6 +869,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         state.addProperty("bodyYaw", snapshot.bodyYaw()); state.addProperty("headYaw", snapshot.headYaw()); state.addProperty("headPitch", snapshot.headPitch());
         state.addProperty("scale", snapshot.scale()); state.addProperty("hidePlayer", snapshot.hidePlayer()); state.addProperty("showSelf", snapshot.showSelf());
         state.addProperty("foodLevel", metadata.food());
+        state.addProperty("sourceInvisible", metadata.sourceInvisible());
         state.add("accessories", accessoriesJson(snapshot.accessories()));
         state.add("motion", motionJson(snapshot.motion()));
         JsonArray layers = new JsonArray();
@@ -1143,9 +1155,9 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     private record BoundState(UUID instance, String modelId, String hash) {}
     private record StateSignature(UUID instance, String modelId, String hash, long sequence, UUID world, List<LayerState> layers,
             MotionState motion, Map<String, Double> accessories, double scale, boolean hide, boolean show, List<AnimationInfo> animations,
-            String assetState, String assetReason, String assetSource, int food) {}
+            String assetState, String assetReason, String assetSource, int food, boolean sourceInvisible) {}
     private record StatePacket(StateSnapshot snapshot, BoundState binding, StateSignature signature, byte[] full, byte[] delta, List<AnimationInfo> publishedMenu) {}
-    private record StateMetadata(StateSnapshot snapshot, BoundState binding, StateSignature signature, ModelAssets.Status status, int food) {}
+    private record StateMetadata(StateSnapshot snapshot, BoundState binding, StateSignature signature, ModelAssets.Status status, int food, boolean sourceInvisible) {}
     private record PendingState(StatePacket packet, boolean menu) {}
     private record PendingReady(RenderLeases.Binding binding, long since) {}
     public static final class DisguiseRequest {

@@ -20,6 +20,34 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ClientSyncLifecyclePerformanceTest {
     @TempDir Path temporary;
+    @Test void actualInvisibilityChangesReachOwnerAndViewerWithoutRestartingTheDisguise() throws Exception {
+        try (Scene scene = new Scene(temporary)) {
+            Person owner = scene.person(true), viewer = scene.person(false); owner.localRenderable = true;
+            Files.writeString(temporary.resolve("fixture.bbmodel"), "{\"elements\":[],\"outliner\":[],\"textures\":[],\"animations\":[]}");
+            scene.assets.get("fixture"); assertTrue(scene.assets.get("fixture").isPresent());
+            scene.hello(owner, true, false); scene.hello(viewer, true, false);
+            for (Person recipient : List.of(owner, viewer)) {
+                assertFalse(recipient.last("state").get("sourceInvisible").getAsBoolean());
+                recipient.messages.clear();
+            }
+            owner.invisible = true; scene.tick += 20; scene.maintain();
+            for (Person recipient : List.of(owner, viewer)) {
+                JsonObject state = recipient.last("state");
+                assertTrue(state.get("sourceInvisible").getAsBoolean());
+                assertEquals(owner.instance.toString(), state.get("instance").getAsString());
+                assertEquals(owner.sequence, state.get("sequence").getAsLong());
+                assertEquals(0, recipient.count("unbind"));
+                recipient.messages.clear();
+            }
+            scene.tick += 20; scene.maintain();
+            assertEquals(0, owner.count("state")); assertEquals(0, viewer.count("state"));
+            owner.invisible = false; scene.tick += 20; scene.maintain();
+            for (Person recipient : List.of(owner, viewer)) {
+                assertFalse(recipient.last("state").get("sourceInvisible").getAsBoolean());
+                assertEquals(0, recipient.count("unbind"));
+            }
+        }
+    }
     @Test void preparationCompletionPublishesResourceSourceWithoutCreatingATakeoverLease() throws Exception {
         var work = new ArrayDeque<Runnable>();
         try (Scene scene = new Scene(temporary, work::add)) {
@@ -30,7 +58,7 @@ class ClientSyncLifecyclePerformanceTest {
             scene.hello(viewer, true, false);
             JsonObject preparing = viewer.last("state");
             assertEquals("pending", preparing.get("assetStatus").getAsString());
-            assertEquals("lookup", preparing.get("assetSource").getAsString());
+            assertEquals("own", preparing.get("assetSource").getAsString());
             assertEquals("", preparing.get("assetHash").getAsString());
             assertEquals(1, preparing.getAsJsonArray("animations").size());
             assertEquals(1, work.size());
@@ -52,19 +80,28 @@ class ClientSyncLifecyclePerformanceTest {
     @Test void missingResourcesKeepServerOwnershipAndActionsWithoutClaimingLocalTakeover() throws Exception {
         try (Scene scene = new Scene(temporary)) {
             Person owner = scene.person(true), viewer = scene.person(false); owner.localRenderable = true;
+            AtomicInteger renderCalls = new AtomicInteger();
+            scene.service.rendering((watcher, id, instance, enabled) -> { renderCalls.incrementAndGet(); return true; });
             scene.hello(viewer, true, false);
             JsonObject state = viewer.last("state");
             assertEquals(owner.instance.toString(), state.get("instance").getAsString());
             assertEquals("fixture", state.get("modelId").getAsString());
             assertEquals("missing", state.get("assetStatus").getAsString());
-            assertEquals("none", state.get("assetSource").getAsString());
+            assertEquals("own", state.get("assetSource").getAsString());
             assertEquals("", state.get("assetHash").getAsString());
-            assertTrue(state.get("assetReason").getAsString().contains("均未找到"));
+            assertTrue(state.get("assetReason").getAsString().contains("未提供此模型"));
             assertEquals("idle", state.getAsJsonArray("animations").get(0).getAsJsonObject().get("id").getAsString());
             assertEquals(0, viewer.count("render_ack")); assertEquals(0, viewer.count("asset_offer"));
             Object session = ((Map<?, ?>) field(scene.service, "sessions")).get(viewer.id);
             assertEquals(0, ((RenderLeases) field(session, "leases")).size());
             assertEquals(1, ((Map<?, ?>) field(session, "bindings")).size());
+            JsonObject staleCache = new JsonObject();
+            staleCache.addProperty("owner", owner.id.toString()); staleCache.addProperty("instance", owner.instance.toString());
+            staleCache.addProperty("hash", "a".repeat(64));
+            scene.send(viewer, "render_ready", staleCache);
+            assertEquals("render_not_authorized", viewer.last("error").get("code").getAsString());
+            assertEquals(0, renderCalls.get()); assertEquals(0, viewer.count("render_ack"));
+            assertEquals(0, ((RenderLeases) field(session, "leases")).size());
         }
     }
     @Test void invalidOwnResourceReportsItsActualSourceWithoutClaimingAMissingFileOrTakeover() throws Exception {
@@ -423,11 +460,12 @@ class ClientSyncLifecyclePerformanceTest {
     }
     private static final class Person {
         final UUID id; UUID instance = UUID.randomUUID(); final Player player; final List<JsonObject> messages = new ArrayList<>();
-        double x; long sequence = 1; int lastBytes; boolean localRenderable, showSelf = true; List<ClientSyncService.AnimationInfo> animations = List.of(new ClientSyncService.AnimationInfo("idle", "Idle"));
+        double x; long sequence = 1; int lastBytes; boolean localRenderable, showSelf = true, invisible; List<ClientSyncService.AnimationInfo> animations = List.of(new ClientSyncService.AnimationInfo("idle", "Idle"));
         Person(UUID id, World world) {
             this.id = id;
             player = proxy(Player.class, (instance, method, args) -> switch (method.getName()) {
                 case "getUniqueId" -> id; case "isOnline", "canSee" -> true; case "getWorld" -> world; case "getLocation" -> new Location(world, x, 64, 0); case "getFoodLevel" -> 20;
+                case "isInvisible" -> invisible;
                 case "sendPluginMessage" -> { lastBytes = ((byte[]) args[2]).length; messages.add(JsonParser.parseString(new String((byte[]) args[2], StandardCharsets.UTF_8)).getAsJsonObject()); yield null; }
                 default -> objectMethod(instance, method, args);
             });

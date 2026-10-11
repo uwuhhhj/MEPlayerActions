@@ -23,6 +23,14 @@ class ServerMessagesTest {
         assertTrue(text.contains("可复用本地有效缓存"));
         assertFalse(text.contains("已确认接管"));
     }
+    @Test void missingPublicationExplainsExplicitResourcePolicyWithoutBlockingMeDisguise() {
+        String text = String.join("\n", ServerMessages.modelResource("azriel", "missing", "own", "not published", true));
+        assertTrue(text.contains("MPA models/ 未发布"));
+        assertTrue(text.contains("不会下载 ME 蓝图或内置文件"));
+        assertTrue(text.contains("ModelEngine 伪装照常显示"));
+        assertTrue(text.contains("由管理员"));
+        assertTrue(text.contains("再重载 MPA"));
+    }
     @Test void missingPendingAndInvalidResourcesExplainMeRenderingContinues() {
         for (String state : List.of("pending", "missing", "invalid", "memory_limit")) {
             String text = String.join("\n", ServerMessages.modelResource("dragon", state, "none", "详细原因", true));

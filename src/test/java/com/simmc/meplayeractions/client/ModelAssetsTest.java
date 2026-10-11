@@ -46,7 +46,7 @@ class ModelAssetsTest {
         assertTrue(fixture.work.isEmpty());assertEquals(0,fixture.resourceReads.get());assertTrue(fixture.warnings.isEmpty());
     }
 
-    @Test void asynchronousPreparationSelectsOwnBeforeJarBeforeEngineWithoutWritingModels() throws Exception {
+    @Test void asynchronousPreparationOnlyOffersExplicitOwnModelsAndNeverReadsJarOrEngine() throws Exception {
         var own=new Fixture(temporary.resolve("own"));byte[] ownRaw=raw("demo","OWN");
         Files.write(own.own.resolve("demo.bbmodel"),ownRaw);own.resources.put("models/demo.bbmodel",raw("demo","JAR"));
         Files.write(own.engine.resolve("demo.bbmodel"),raw("demo","ME"));
@@ -54,39 +54,64 @@ class ModelAssetsTest {
         assertEquals(ModelAssets.pack("demo",ownRaw).hash(),own.assets.get("demo").orElseThrow().hash());assertArrayEquals(ownRaw,Files.readAllBytes(own.own.resolve("demo.bbmodel")));
         var jar=new Fixture(temporary.resolve("jar"));byte[] jarRaw=raw("demo","JAR");
         jar.resources.put("models/demo.bbmodel",jarRaw);Files.write(jar.engine.resolve("demo.bbmodel"),raw("demo","ME"));
-        prepare(jar,"demo");assertEquals("jar",jar.assets.status("demo").source());assertEquals(ModelAssets.pack("demo",jarRaw).hash(),jar.assets.get("demo").orElseThrow().hash());
+        prepare(jar,"demo");assertEquals("own",jar.assets.status("demo").source());assertEquals("missing",jar.assets.status("demo").state());
+        assertTrue(jar.assets.get("demo").isEmpty());assertEquals(0,jar.resourceReads.get());
         assertFalse(Files.exists(jar.own.resolve("demo.bbmodel")),"A read must not silently extract/overwrite a model");
         var engine=new Fixture(temporary.resolve("engine"));byte[] engineRaw=raw("demo","ME");Files.write(engine.engine.resolve("demo.bbmodel"),engineRaw);
-        prepare(engine,"demo");assertEquals("modelengine",engine.assets.status("demo").source());assertEquals(ModelAssets.pack("demo",engineRaw).hash(),engine.assets.get("demo").orElseThrow().hash());
+        prepare(engine,"demo");assertEquals("own",engine.assets.status("demo").source());assertEquals("missing",engine.assets.status("demo").state());
+        assertTrue(engine.assets.get("demo").isEmpty());assertEquals(0,engine.resourceReads.get());
         assertFalse(Files.exists(engine.own.resolve("demo.bbmodel")));
     }
 
     @Test void missingAndInvalidAreTerminalUntilInvalidationAndWarnOnlyOnce() throws Exception {
         var missing=new Fixture(temporary.resolve("missing"));prepare(missing,"demo");assertEquals("missing",missing.assets.status("demo").state());
-        assertEquals("none",missing.assets.status("demo").source());assertEquals(1,missing.warnings.size());
+        assertEquals("own",missing.assets.status("demo").source());assertEquals(1,missing.warnings.size());
         for(int i=0;i<20;i++) { assertTrue(missing.assets.get("demo").isEmpty());assertEquals("missing",missing.assets.status("demo").state()); }
         assertTrue(missing.work.isEmpty());assertEquals(1,missing.warnings.size());
         Files.write(missing.own.resolve("demo.bbmodel"),raw("demo","new"));assertTrue(missing.assets.get("demo").isEmpty());
         missing.assets.invalidate();prepare(missing,"demo");assertEquals("ready",missing.assets.status("demo").state());assertEquals(1,missing.warnings.size());
         var invalid=new Fixture(temporary.resolve("invalid"));Files.writeString(invalid.own.resolve("demo.bbmodel"),"{}");
+        Files.write(Files.createDirectories(invalid.own.resolve("nested")).resolve("demo.bbmodel"),raw("demo","valid nested model"));
         invalid.resources.put("models/demo.bbmodel",raw("demo","valid fallback"));prepare(invalid,"demo");
         assertEquals("invalid",invalid.assets.status("demo").state());assertEquals("own",invalid.assets.status("demo").source());assertEquals(0,invalid.resourceReads.get());
         for(int i=0;i<20;i++) assertTrue(invalid.assets.get("demo").isEmpty());
         assertEquals(1,invalid.warnings.size());assertTrue(invalid.work.isEmpty());
     }
 
-    @Test void engineLookupRetainsFilenamePriorityThenStableIdentifierFallback() throws Exception {
-        var fixture=new Fixture(temporary.resolve("filename"));Path nested=Files.createDirectories(fixture.engine.resolve("nested"));
-        byte[] filename=raw("different_id","file name winner");Files.write(nested.resolve("demo.bbmodel"),filename);
-        Files.write(fixture.engine.resolve("a-other.bbmodel"),raw("demo","identifier fallback"));
+    @Test void explicitRootFileWinsOverNestedDuplicatesWithoutReadingUnrelatedFiles() throws Exception {
+        var fixture=new Fixture(temporary.resolve("root-priority"));
+        Files.write(Files.createDirectories(fixture.own.resolve("a")).resolve("demo.bbmodel"),raw("demo","nested a"));
+        Files.write(Files.createDirectories(fixture.own.resolve("b")).resolve("demo.bbmodel"),raw("demo","nested b"));
+        Files.writeString(fixture.own.resolve("unrelated.bbmodel"),"{broken");
+        byte[] root=raw("different_id","explicit filename winner");Files.write(fixture.own.resolve("demo.bbmodel"),root);
+        prepare(fixture,"demo");assertEquals("own",fixture.assets.status("demo").source());
+        assertEquals(ModelAssets.pack("demo",root).hash(),fixture.assets.get("demo").orElseThrow().hash());
+    }
+
+    @Test void uniqueNestedModelUsesFilenameButNeverGrantsJsonIdentifierAliases() throws Exception {
+        var fixture=new Fixture(temporary.resolve("nested"));Path nested=Files.createDirectories(fixture.own.resolve("folder/deeper"));
+        byte[] filename=raw("other_alias","explicit filename");Files.write(nested.resolve("demo.bbmodel"),filename);
+        Files.write(fixture.own.resolve("unrelated.bbmodel"),raw("wanted","unregistered alias"));
         prepare(fixture,"demo");assertEquals(ModelAssets.pack("demo",filename).hash(),fixture.assets.get("demo").orElseThrow().hash());
-        var fallback=new Fixture(temporary.resolve("identifier"));Files.writeString(fallback.engine.resolve("a-broken.bbmodel"),"{broken");
-        byte[] identified=raw("demo","identifier fallback");Files.write(fallback.engine.resolve("z-any-name.bbmodel"),identified);
-        prepare(fallback,"demo");assertEquals("ready",fallback.assets.status("demo").state());assertEquals(ModelAssets.pack("demo",identified).hash(),fallback.assets.get("demo").orElseThrow().hash());
+        prepare(fixture,"other_alias");assertEquals("missing",fixture.assets.status("other_alias").state());
+        prepare(fixture,"wanted");assertEquals("missing",fixture.assets.status("wanted").state());
+        assertEquals(0,fixture.resourceReads.get());
+    }
+
+    @Test void duplicateNestedFilenamesAreAmbiguousUntilExplicitRootSelectionAndReload() throws Exception {
+        var fixture=new Fixture(temporary.resolve("ambiguous"));
+        Files.write(Files.createDirectories(fixture.own.resolve("a")).resolve("demo.bbmodel"),raw("demo","a"));
+        Files.write(Files.createDirectories(fixture.own.resolve("b")).resolve("demo.bbmodel"),raw("demo","b"));
+        prepare(fixture,"demo");assertEquals("ambiguous",fixture.assets.status("demo").state());
+        assertEquals("own",fixture.assets.status("demo").source());assertTrue(fixture.assets.get("demo").isEmpty());
+        assertTrue(fixture.assets.status("demo").reason().contains("多个子文件夹"));assertEquals(0,fixture.resourceReads.get());
+        byte[] selected=raw("demo","selected root");Files.write(fixture.own.resolve("demo.bbmodel"),selected);
+        assertTrue(fixture.assets.get("demo").isEmpty());fixture.assets.invalidate();prepare(fixture,"demo");
+        assertEquals(ModelAssets.pack("demo",selected).hash(),fixture.assets.get("demo").orElseThrow().hash());
     }
 
     @Test void concurrentGetsQueueOnePreparationAndNeverAdvertiseAPendingHash() throws Exception {
-        var fixture=new Fixture(temporary.resolve("concurrent"));fixture.resources.put("models/demo.bbmodel",raw("demo","concurrent"));
+        var fixture=new Fixture(temporary.resolve("concurrent"));Files.write(fixture.own.resolve("demo.bbmodel"),raw("demo","concurrent"));
         try(var callers=Executors.newFixedThreadPool(8)) {
             List<Callable<Optional<ModelAssets.Asset>>> work=new ArrayList<>();for(int i=0;i<32;i++)work.add(()->fixture.assets.get("demo"));
             for(var result:callers.invokeAll(work))assertTrue(result.get().isEmpty());
@@ -104,6 +129,53 @@ class ModelAssetsTest {
         assertEquals("pending",fixture.assets.status("other").state());assertTrue(fixture.assets.status("other").reason().contains("尚未请求"));assertTrue(fixture.warnings.isEmpty());
     }
 
+    @Test void removedPublishedFileCannotBeOfferedFromTheOldReadyCache() throws Exception {
+        var fixture=new Fixture(temporary.resolve("revoked-ready"));
+        Files.write(fixture.own.resolve("demo.bbmodel"),raw("demo","published"));prepare(fixture,"demo");
+        assertTrue(fixture.assets.get("demo").isPresent());Files.delete(fixture.own.resolve("demo.bbmodel"));
+        fixture.assets.revokeUnpublished(id->id.equals("demo"));
+        assertEquals(0,fixture.assets.metrics().uniqueHashes());assertEquals(0,fixture.assets.metrics().bytes());
+        assertTrue(fixture.assets.get("demo").isEmpty());fixture.run();
+        assertEquals("missing",fixture.assets.status("demo").state());assertTrue(fixture.assets.get("demo").isEmpty());
+        var diagnosis=fixture.assets.status("demo");fixture.assets.revokeUnpublished(id->true);
+        assertSame(diagnosis,fixture.assets.status("demo"),"Negative diagnostics do not need invalidation");
+        assertTrue(fixture.work.isEmpty());
+    }
+
+    @Test void unknownOrStillPublishedSnapshotKeepsTheSameReadyAsset() throws Exception {
+        var fixture=new Fixture(temporary.resolve("retained-ready"));
+        Files.write(fixture.own.resolve("demo.bbmodel"),raw("demo","published"));prepare(fixture,"demo");
+        var asset=fixture.assets.get("demo").orElseThrow();long bytes=fixture.assets.metrics().bytes();
+        fixture.assets.revokeUnpublished(id->false);
+        assertSame(asset,fixture.assets.get("demo").orElseThrow());assertEquals(bytes,fixture.assets.metrics().bytes());
+        assertEquals("ready",fixture.assets.status("demo").state());assertTrue(fixture.work.isEmpty());
+    }
+
+    @Test void revokedPendingWorkerCannotPublishIntoAReplacementRequest() throws Exception {
+        var fixture=new Fixture(temporary.resolve("revoked-pending"));
+        Files.write(fixture.own.resolve("demo.bbmodel"),raw("demo","previous"));
+        fixture.assets.get("demo");Runnable previous=fixture.work.remove();
+        fixture.assets.revokeUnpublished(id->id.equals("demo"));
+        fixture.assets.get("demo");assertEquals(1,fixture.work.size());
+        previous.run();assertEquals("pending",fixture.assets.status("demo").state());
+        assertEquals(0,fixture.assets.metrics().uniqueHashes());assertTrue(fixture.warnings.isEmpty());
+        Files.write(fixture.own.resolve("demo.bbmodel"),raw("demo","replacement"));fixture.run();
+        assertEquals("ready",fixture.assets.status("demo").state());
+        assertEquals(ModelAssets.pack("demo",raw("demo","replacement")).hash(),fixture.assets.get("demo").orElseThrow().hash());
+    }
+
+    @Test void revocationPreservesTransferPinsUntilTheLastTransferReleases() throws Exception {
+        var fixture=new Fixture(temporary.resolve("revoked-pinned"));
+        Files.write(fixture.own.resolve("demo.bbmodel"),raw("demo","published"));prepare(fixture,"demo");
+        var asset=fixture.assets.get("demo").orElseThrow();assertTrue(fixture.assets.retain(asset));assertTrue(fixture.assets.retain(asset));
+        long bytes=fixture.assets.metrics().bytes();assertTrue(bytes>0);
+        fixture.assets.revokeUnpublished(id->id.equals("demo"));
+        assertEquals(0,fixture.assets.metrics().models());assertEquals(1,fixture.assets.metrics().uniqueHashes());
+        assertEquals(bytes,fixture.assets.metrics().bytes());
+        fixture.assets.release(asset);assertEquals(1,fixture.assets.metrics().uniqueHashes());assertEquals(bytes,fixture.assets.metrics().bytes());
+        fixture.assets.release(asset);assertEquals(0,fixture.assets.metrics().uniqueHashes());assertEquals(0,fixture.assets.metrics().bytes());
+    }
+
     @Test void rejectedAsyncSchedulingIsVisibleInvalidAndDoesNotRemainPending() throws Exception {
         var warnings=new ArrayList<String>();var assets=new ModelAssets(temporary.resolve("own"),null,name->null,
                 task->{throw new RejectedExecutionException("plugin stopped");},warnings::add);
@@ -111,19 +183,17 @@ class ModelAssetsTest {
         assertTrue(assets.status("demo").reason().contains("无法安排"));assertTrue(assets.get("demo").isEmpty());assertEquals(1,warnings.size());
     }
 
-    @Test void ioAndSchedulingDiagnosticsNeverExposePrivatePathsOrExceptionControlCharacters() {
+    @Test void ioAndSchedulingDiagnosticsNeverExposePrivatePathsOrExceptionControlCharacters() throws Exception {
         String privateMessage="C:\\private-server\\accounts\\credentials.json\r\npassword=private-secret";
-        for (IOException failure : List.of(new IOException(privateMessage),new AccessDeniedException(privateMessage))) {
-            var work=new ArrayDeque<Runnable>();var warnings=new ArrayList<String>();
-            var assets=new ModelAssets(temporary.resolve("absent-own"),null,name->{throw failure;},work::add,warnings::add);
-            assets.get("demo");work.remove().run();var status=assets.status("demo");
-            assertEquals("invalid",status.state());assertEquals("jar",status.source());
-            assertTrue(status.reason().contains(failure.getClass().getSimpleName()));
-            assertFalse(status.reason().contains("private"));assertFalse(status.reason().contains("credentials"));
-            assertFalse(status.reason().codePoints().anyMatch(Character::isISOControl));
-            assertEquals(1,warnings.size());assertFalse(warnings.getFirst().contains("private"));
-            assertFalse(warnings.getFirst().codePoints().anyMatch(Character::isISOControl));
-        }
+        var work=new ArrayDeque<Runnable>();var ioWarnings=new ArrayList<String>();
+        Path privateRoot=Files.createDirectories(temporary.resolve("private-server/accounts"));Files.writeString(privateRoot.resolve("demo.bbmodel"),"{}");
+        var assets=new ModelAssets(privateRoot,null,name->{throw new IOException(privateMessage);},work::add,ioWarnings::add);
+        assets.get("demo");work.remove().run();var status=assets.status("demo");
+        assertEquals("invalid",status.state());assertEquals("own",status.source());
+        assertFalse(status.reason().contains("private"));assertFalse(status.reason().contains("credentials"));
+        assertFalse(status.reason().codePoints().anyMatch(Character::isISOControl));
+        assertEquals(1,ioWarnings.size());assertFalse(ioWarnings.getFirst().contains("private"));
+        assertFalse(ioWarnings.getFirst().codePoints().anyMatch(Character::isISOControl));
         var warnings=new ArrayList<String>();var rejected=new ModelAssets(temporary.resolve("absent-own"),null,name->null,
                 task->{throw new RejectedExecutionException(privateMessage);},warnings::add);
         rejected.get("demo");assertTrue(rejected.status("demo").reason().contains("RejectedExecutionException"));
@@ -132,7 +202,8 @@ class ModelAssetsTest {
 
     @Test void encodedChunksAreImmutableAndHashSharingDoesNotMergeModelIdentity() throws Exception {
         var work=new ArrayDeque<Runnable>();byte[] raw=raw("source","same immutable asset");
-        var assets=new ModelAssets(temporary.resolve("absent"),null,name->new ByteArrayInputStream(raw),work::add,ignored->{},
+        Path own=Files.createDirectories(temporary.resolve("shared"));Files.write(own.resolve("first.bbmodel"),raw);Files.write(own.resolve("second.bbmodel"),raw);
+        var assets=new ModelAssets(own,null,name->{throw new AssertionError("JAR resources are not delivery authorization");},work::add,ignored->{},
                 ModelComplexityLimits.defaults(),4,1_000_000);
         assets.get("first");work.remove().run();var first=assets.get("first").orElseThrow();
         assets.get("second");work.remove().run();var second=assets.get("second").orElseThrow();
@@ -151,13 +222,16 @@ class ModelAssetsTest {
 
     @Test void pendingWorkAndPreparedAssetsRespectCacheCountAndMemoryBudgets() throws Exception {
         var work=new ArrayDeque<Runnable>();var warnings=new ArrayList<String>();
-        var assets=new ModelAssets(temporary.resolve("absent"),null,name->new ByteArrayInputStream(raw("source",name)),work::add,warnings::add,
+        Path own=Files.createDirectories(temporary.resolve("budget"));
+        for(String id:List.of("first","second","third"))Files.write(own.resolve(id+".bbmodel"),raw("source",id));
+        var assets=new ModelAssets(own,null,name->{throw new AssertionError("JAR resources are not delivery authorization");},work::add,warnings::add,
                 ModelComplexityLimits.defaults(),2,1_000_000);
         assets.get("first");assets.get("second");assertTrue(assets.get("third").isEmpty());
         assertEquals(2,work.size());assertEquals("asset_queue_full",assets.status("third").state());
         work.remove().run();work.remove().run();assertEquals(2,assets.metrics().models());
         assets.get("third");assertEquals(1,work.size());work.remove().run();assertEquals(2,assets.metrics().models());
-        var tiny=new ModelAssets(temporary.resolve("tiny"),null,name->new ByteArrayInputStream(raw("source",name)),work::add,warnings::add,
+        Path tinyRoot=Files.createDirectories(temporary.resolve("tiny"));Files.write(tinyRoot.resolve("demo.bbmodel"),raw("source","tiny"));
+        var tiny=new ModelAssets(tinyRoot,null,name->{throw new AssertionError("JAR resources are not delivery authorization");},work::add,warnings::add,
                 ModelComplexityLimits.defaults(),2,1);
         tiny.get("demo");work.remove().run();assertEquals("asset_too_large",tiny.status("demo").state());
         assertEquals(0,tiny.metrics().bytes());assertTrue(tiny.get("demo").isEmpty());assertTrue(work.isEmpty());
@@ -167,7 +241,8 @@ class ModelAssetsTest {
         var work=new ArrayDeque<Runnable>();
         byte[] excessive="{\"elements\":[],\"outliner\":[{\"name\":\"root\",\"children\":[{\"name\":\"child\",\"children\":[]}]}],\"textures\":[],\"animations\":[]}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
         var limits=new ModelComplexityLimits(1,1024,65536,32768,2097152,200000,256,8388608,16777216);
-        var assets=new ModelAssets(temporary.resolve("absent"),null,name->new ByteArrayInputStream(excessive),work::add,ignored->{},limits,2,1_000_000);
+        Path own=Files.createDirectories(temporary.resolve("complexity"));Files.write(own.resolve("demo.bbmodel"),excessive);
+        var assets=new ModelAssets(own,null,name->{throw new AssertionError("JAR resources are not delivery authorization");},work::add,ignored->{},limits,2,1_000_000);
         assets.get("demo");work.remove().run();assertEquals("model_complexity",assets.status("demo").state());
         assertTrue(assets.get("demo").isEmpty());assertEquals(0,assets.metrics().bytes());
     }
