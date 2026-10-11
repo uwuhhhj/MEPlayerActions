@@ -51,6 +51,14 @@ sourceSets.test.resources {
     include '*.bbmodel'
 }
 
+// Same-named numeric blueprints are separate fixtures from full server runtime exports.
+tasks.named('processTestResources') {
+    from('../examples/blueprints') {
+        include 'ysm_01_jk.bbmodel', 'ysm_02_jk.bbmodel'
+        into 'numeric-blueprints'
+    }
+}
+
 test {
     useJUnitPlatform()
     maxHeapSize = '1G'

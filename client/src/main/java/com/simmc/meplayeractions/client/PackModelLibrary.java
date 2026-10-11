@@ -1,7 +1,7 @@
 package com.simmc.meplayeractions.client;
 
 import com.google.gson.*;
-import com.simmc.meplayeractions.client.model.BbModel;
+import com.simmc.meplayeractions.client.model.BbModelAsset;
 import com.simmc.meplayeractions.client.network.AssetTransfer;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -63,7 +63,8 @@ public final class PackModelLibrary {
             if (matches != textures.size()) throw new IOException("Invalid pack texture token encoding");
             byte[] raw = restored.toString().getBytes(StandardCharsets.UTF_8);
             if (raw.length > AssetTransfer.MAX_RAW || !AssetTransfer.hash(raw).equals(hash)) throw new IOException("资源包模型完整性校验失败");
-            return new LocalModelLibrary.Loaded(hash, BbModel.parse(raw));
+            var decoded = BbModelAsset.read(raw);
+            return new LocalModelLibrary.Loaded(hash, decoded.model(), decoded.previewAnimation(), decoded.profile());
         } catch (IllegalArgumentException | IllegalStateException | NullPointerException e) {
             throw new IOException("Invalid model resource pack", e);
         }

@@ -1,6 +1,6 @@
 package com.simmc.meplayeractions.client.network;
 
-import com.simmc.meplayeractions.client.model.BbModel;
+import com.simmc.meplayeractions.client.model.BbModelAsset;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -19,7 +19,7 @@ public final class ServerCachedModelCatalog {
     private final Map<String,Validation> validated = new LinkedHashMap<>();
 
     public ServerCachedModelCatalog(ServerModelCache cache) { this(cache, bytes -> {
-        try { BbModel.parse(bytes); return true; } catch (Exception rejected) { return false; }
+        try { BbModelAsset.read(bytes); return true; } catch (Exception rejected) { return false; }
     }); }
     ServerCachedModelCatalog(ServerModelCache cache, Predicate<byte[]> parser) {
         this.cache=Objects.requireNonNull(cache);this.parser=Objects.requireNonNull(parser);

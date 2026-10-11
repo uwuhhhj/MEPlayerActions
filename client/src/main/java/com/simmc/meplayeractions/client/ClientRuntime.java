@@ -2,6 +2,7 @@ package com.simmc.meplayeractions.client;
 
 import com.google.gson.*;
 import com.simmc.meplayeractions.client.model.BbModel;
+import com.simmc.meplayeractions.client.model.BbModelAsset;
 import com.simmc.meplayeractions.client.model.BbModel.Layer;
 import com.simmc.meplayeractions.client.model.BuiltinYsmModels;
 import com.simmc.meplayeractions.client.model.YsmModelProfile;
@@ -60,6 +61,9 @@ public final class ClientRuntime {
     private long localExtraSequence;
     private long lastRoamingFlush;
     private final Map<String,BbModel> assets=new LinkedHashMap<>(16,0.75f,true);
+    // Decoding semantics belong to the installed asset, independently of its binding/transport source.
+    // Entries share the assets map's 16-model lifetime and contain no original transfer bytes.
+    private final Map<String,BbModelAsset.Decoded> assetMetadata=new HashMap<>();
     private final Set<String> packAssets=new HashSet<>();
     private final Set<String> serverAssets=new HashSet<>();
     private final Map<String,String> serverModelAssets=new HashMap<>();
@@ -185,7 +189,7 @@ public final class ClientRuntime {
         closeModelEffects();
         VanillaYsmQueries.reset();
         releaseBindings();abortTransfers();connected=false;acknowledged=false;
-        loading.clear(); failedAssets.clear(); assets.clear(); packAssets.clear(); serverAssets.clear(); serverModelAssets.clear(); clock.reset();
+        loading.clear(); failedAssets.clear(); assets.clear(); assetMetadata.clear(); packAssets.clear(); serverAssets.clear(); serverModelAssets.clear(); clock.reset();
         pushNegotiated=false;unsupportedHandshake=false;serverAssetMode="";serverCapabilities=List.of();
         stateProtocol.reset();serverModelCatalog.reset();serverDisguiseRequest.reset();
         lastHello=0;lastHeartbeat=0;lastReceived=0;previewId="";previewHash="";previewManual="";previewPose="";
@@ -523,15 +527,15 @@ public final class ClientRuntime {
         String hash=identity.hash();long epoch=generation;
         BbModel prepared=assets.get(hash);
         if(prepared!=null && ModelRenderer.has(hash)) {
-            completePush(offer,prepared,true,epoch);return;
+            completePush(offer,assetMetadata.getOrDefault(hash,new BbModelAsset.Decoded(prepared,"",YsmModelProfile.empty())),true,epoch);return;
         }
         loading.add(hash);pushState(hash,"正在校验服务器模型缓存","");
         try {decoder.execute(()->{
-            BbModel model=null;
+            BbModelAsset.Decoded model=null;
             try {
                 var cached=serverModelCache.readValidated(hash);
-                if(cached.isPresent())model=BbModel.parse(cached.get());
-            } catch(RuntimeException corrupt) {
+                if(cached.isPresent())model=BbModelAsset.read(cached.get());
+            } catch(IOException | RuntimeException corrupt) {
                 MEPlayerActionsClient.LOGGER.debug("Server model cache parse rejected {}",hash.substring(0,12),corrupt);
             }
             var result=model;
@@ -544,9 +548,10 @@ public final class ClientRuntime {
             });
         });} catch(RejectedExecutionException busy) {rejectPush(offer,"服务器模型缓存校验队列已满");}
     }
-    private void completePush(ServerPushAuthorization.Offer offer,BbModel model,boolean cached,long epoch) {
+    private void completePush(ServerPushAuthorization.Offer offer,BbModelAsset.Decoded decoded,boolean cached,long epoch) {
         if(!currentPush(offer,epoch))return;
         String hash=offer.identity().hash();pushState(hash,"准备服务器模型渲染","");
+        BbModel model=decoded.model();
         install(hash,model);
         boolean supported=bindings.values().stream().filter(binding->binding.hash.equals(hash)).anyMatch(binding->!binding.unsupported);
         if(!assets.containsKey(hash) || !ModelRenderer.has(hash) || !supported) {
@@ -557,6 +562,7 @@ public final class ClientRuntime {
             if(!assetStatus(offer,"cached")){rejectPush(offer,"无法确认已校验的服务器模型缓存");return;}
             pushCacheHits++;
         } else pushTransfersCompleted++;
+        assetMetadata.put(hash,decoded);
         serverAssets.add(hash);serverModelAssets.put(offer.identity().modelId(),hash);
         if(cached)rememberCachedServerModel(offer.identity().modelId(),hash);
         pushState(hash,"等待服务器渲染确认","");pushAuthorization.remove(offer);
@@ -578,7 +584,7 @@ public final class ClientRuntime {
         // Invalidate only resource/private preview callbacks; do not discard in-flight push grants.
         previewRequest++;previewPending=false;localAppearanceRequest++;localAppearancePending=false;failedAssets.clear();
         Set<String> refresh=new HashSet<>(packAssets);refresh.removeAll(serverAssets);
-        refresh.forEach(assets::remove);packAssets.clear();
+        refresh.forEach(hash->{assets.remove(hash);assetMetadata.remove(hash);});packAssets.clear();
         if(refresh.contains(previewHash)){previewHash="";previewId="";}
         return refresh;
     }
@@ -607,7 +613,14 @@ public final class ClientRuntime {
     }
     public YsmModelProfile modelProfile(UUID owner){
         if(localAppearanceActive()&&owner.equals(client.player.getUuid()))return localSelf.profile;
-        Binding remote=privateBindings.get(owner);return privateUsable(owner)?remote.profile:YsmModelProfile.empty();
+        Binding remote=privateBindings.get(owner);if(privateUsable(owner))return remote.profile;
+        Binding server=bindings.get(owner);
+        if(server!=null)return installedProfile(server.hash);
+        return client.player!=null && owner.equals(client.player.getUuid())?installedProfile(previewHash):YsmModelProfile.empty();
+    }
+    private YsmModelProfile installedProfile(String hash){
+        BbModelAsset.Decoded metadata=assetMetadata.get(hash);
+        return metadata==null?YsmModelProfile.empty():metadata.profile();
     }
     public String appearanceModelId(UUID owner){
         if(localAppearanceActive()&&owner.equals(client.player.getUuid()))return localSelf.modelId;
@@ -801,7 +814,7 @@ public final class ClientRuntime {
         loading.add(hash);pushState(hash,"正在校验下载模型","");
         try {decoder.execute(()->{
             try {
-                byte[] raw=transfer.finish();BbModel model=BbModel.parse(raw);
+                byte[] raw=transfer.finish();BbModelAsset.Decoded model=BbModelAsset.read(raw);
                 client.execute(()->{
                     if(!currentPush(offer,epoch))return;
                     completePush(offer,model,false,epoch);
@@ -845,7 +858,7 @@ public final class ClientRuntime {
         while(iterator.hasNext()) {
             String hash=iterator.next().getKey();
             if(active.contains(hash))continue;
-            iterator.remove();packAssets.remove(hash);serverAssets.remove(hash);
+            iterator.remove();assetMetadata.remove(hash);packAssets.remove(hash);serverAssets.remove(hash);
             serverModelAssets.values().removeIf(hash::equals);ModelRenderer.release(hash);return true;
         }
         return false;
@@ -1091,10 +1104,10 @@ public final class ClientRuntime {
         Binding own=bindings.get(client.player.getUuid());
         if(usable(own,System.nanoTime())) {
             BbModel model=assets.get(own.hash);
-            return model==null?null:new GuiPreviewAppearance(own.modelId,own.instance,own.hash,model,YsmModelProfile.empty());
+            return model==null?null:new GuiPreviewAppearance(own.modelId,own.instance,own.hash,model,installedProfile(own.hash));
         }
         if(own==null && !previewId.isEmpty() && assets.containsKey(previewHash) && ModelRenderer.has(previewHash))
-            return new GuiPreviewAppearance(previewId,"preview:"+previewId,previewHash,assets.get(previewHash),YsmModelProfile.empty());
+            return new GuiPreviewAppearance(previewId,"preview:"+previewId,previewHash,assets.get(previewHash),installedProfile(previewHash));
         return null;
     }
     public GuiPreviewInput guiPreviewInput() {
@@ -1286,7 +1299,8 @@ public final class ClientRuntime {
         String hash=current==null?serverModelAssets.get(id):current.hash;
         if(hash==null || !ServerPreviewIdentity.mayShow(id,currentId,currentHash,hash) || !serverAssets.contains(hash)
                 || !assets.containsKey(hash) || !ModelRenderer.has(hash))return null;
-        return new LocalModelLibrary.Loaded(hash,assets.get(hash),"",current==null?YsmModelProfile.empty():current.profile);
+        BbModelAsset.Decoded metadata=assetMetadata.get(hash);
+        return new LocalModelLibrary.Loaded(hash,assets.get(hash),metadata==null?"":metadata.previewAnimation(),installedProfile(hash));
     }
     private ServerCachedModelCatalog.Model cachedServerPreviewMetadata(String id) {
         Binding own=client.player==null?null:bindings.get(client.player.getUuid());
@@ -1339,7 +1353,7 @@ public final class ClientRuntime {
             LocalModelLibrary.Loaded loaded=null;
             try {
                 byte[] raw=serverModelCache.readValidated(hash).orElse(null);
-                if(raw!=null)loaded=new LocalModelLibrary.Loaded(hash,BbModel.parse(raw));
+                if(raw!=null){var decoded=BbModelAsset.read(raw);loaded=new LocalModelLibrary.Loaded(hash,decoded.model(),decoded.previewAnimation(),decoded.profile());}
             }catch(Exception ignored){/* Invalid or removed files remain preview placeholders. */}
             LocalModelLibrary.Loaded result=loaded;
             client.execute(()->{
@@ -1739,6 +1753,7 @@ public final class ClientRuntime {
                 var loaded=packSource?loadPackModel(id,null):localModelLibrary.load(id,options.defaultBlueTexture);
                 BbModel model=loaded.model();String hash=loaded.hash();
                 client.execute(()->{if(epoch==generation && token==previewRequest && canUseLocalActions()){previewPending=false;if(packSource)packAssets.add(hash);install(hash,model);if(assets.containsKey(hash)){
+                    assetMetadata.put(hash,new BbModelAsset.Decoded(model,loaded.previewAnimation(),loaded.profile()));
                     previewId=id;previewHash=hash;previewManual="";previewStarted=client.world.getTime();notify("本地模型预览已开启，请切换第三人称；J 打开动作轮盘");}}});
             }catch(Exception exception){client.execute(()->{if(epoch==generation && token==previewRequest){previewPending=false;notify("预览失败："+exception.getMessage());}});}
         });
