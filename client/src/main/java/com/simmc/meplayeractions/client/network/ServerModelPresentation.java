@@ -19,10 +19,21 @@ public final class ServerModelPresentation {
     }
     public record Line(String text,int color) { }
     public record Display(List<Line> lines, Cloud cloud, int cloudColor, String placeholder, String tooltip) { }
+    /** Nullable publication keeps older servers and unfinished directory scans explicitly unknown. */
+    public record CatalogResource(Boolean published, String source, String folder) {
+        public CatalogResource {source=clean(source);folder=clean(folder);}
+        public static CatalogResource unknown() {return new CatalogResource(null,"unknown","");}
+    }
 
     public static Display describe(Facts facts) {
+        return describe(facts,CatalogResource.unknown());
+    }
+    public static Display describe(Facts facts,CatalogResource catalog) {
         var lines=new ArrayList<Line>();
-        boolean unavailable=!facts.serverStatus().isEmpty() && !List.of("ready","pending").contains(facts.serverStatus());
+        boolean bindingUnknown=facts.serverStatus().isEmpty() && !facts.active() && !facts.prepared() && !facts.loading();
+        boolean publicationMissing=facts.online() && bindingUnknown && Boolean.FALSE.equals(catalog.published());
+        boolean publicationPresent=facts.online() && bindingUnknown && Boolean.TRUE.equals(catalog.published());
+        boolean unavailable=publicationMissing || !facts.serverStatus().isEmpty() && !List.of("ready","pending").contains(facts.serverStatus());
         String source=sourceLabel(facts.source());
         if(!facts.online())lines.add(new Line("离线模式 · 本机缓存仅供预览",MUTED));
         else if(facts.requestPending())lines.add(new Line("服务器伪装：等待确认",WAITING));
@@ -38,11 +49,17 @@ public final class ServerModelPresentation {
             case "asset_too_large" -> "服务器资源：模型超过大小限制";
             case "memory_limit", "memory_budget_exceeded" -> "服务器资源：资产内存预算不足";
             case "asset_queue_full", "server_busy", "tps_protection" -> "服务器资源：准备暂被限流";
-            default -> !facts.serverStatus().isEmpty()?"服务器资源：当前不可用":facts.online()?"服务器资源：尚未确认":"服务器资源：离线，无法确认";
+            default -> !facts.serverStatus().isEmpty()?"服务器资源：当前不可用":publicationMissing?"服务器资源：MPA models 未发布客户端资源"
+                    :publicationPresent?"服务器资源：MPA models 已发布文件，等待校验":facts.online()?"服务器资源：尚未确认":"服务器资源：离线，无法确认";
         };
         lines.add(new Line(server,unavailable?ERROR: facts.serverStatus().equals("ready")?READY:WAITING));
-        if(facts.source().equals("own") && !facts.serverStatus().equals("invalid"))
-            lines.add(new Line("取自 plugins/MEPlayerActions/models 的 BBModel",NORMAL));
+        if(publicationMissing) {
+            lines.add(new Line("此模型仅支持服务器 ME 伪装",NORMAL));
+            lines.add(new Line("不会自动下载或本地接管；旧缓存仅供预览",MUTED));
+        }
+        else if(publicationPresent)lines.add(new Line("文件存在不等于已校验或已授权下载",MUTED));
+        if(facts.source().equals("own"))
+            lines.add(new Line(facts.serverStatus().equals("ready")?"取自 plugins/MEPlayerActions/models 的 BBModel":"客户端资源发布目录：plugins/MEPlayerActions/models",NORMAL));
         else if(facts.source().equals("jar"))
             lines.add(new Line("MPA models 目录未找到同名 BBModel，使用内置资源",MUTED));
         else if(facts.source().equals("modelengine")) {
@@ -64,7 +81,7 @@ public final class ServerModelPresentation {
         else if(unavailable) {resource="未能取得可接管资源";resourceColor=ERROR;}
         else if(facts.current() && facts.online()) {resource="等待服务器授权推送资源";resourceColor=WAITING;}
         else if(!facts.online()) {resource="本机尚无此模型缓存";resourceColor=MUTED;}
-        else {resource="尚未缓存 · 使用后服务器检查资源";resourceColor=MUTED;}
+        else {resource=publicationPresent?"尚未缓存 · 使用后校验已发布资源":"尚未缓存 · 使用后服务器检查资源";resourceColor=MUTED;}
         lines.add(new Line("客户端资源："+resource,resourceColor));
         if(facts.prepared() && !facts.resourceError().isEmpty() && !facts.resourceError().equals(facts.reason()))
             lines.add(new Line("接管／同步提示："+facts.resourceError(),ERROR));
@@ -72,6 +89,7 @@ public final class ServerModelPresentation {
         String takeover;
         int takeoverColor=MUTED;
         if(!facts.online())takeover="本地接管：离线，仅可预览";
+        else if(publicationMissing) {takeover="本地接管：不可用，仅服务器 ME 伪装";takeoverColor=ERROR;}
         else if(!facts.current())takeover="本地接管：尚未使用此服务器模型";
         else if(!facts.renderEnabled())takeover="本地接管：渲染已关闭，保持服务器显示";
         else if(unavailable) {takeover="本地接管：不可用，保持服务器显示";takeoverColor=ERROR;}
@@ -83,7 +101,7 @@ public final class ServerModelPresentation {
         lines.add(new Line(takeover,takeoverColor));
         if(facts.current() && !facts.renderEnabled())lines.add(new Line("设置 → 客户端渲染，可开启本地接管",NORMAL));
 
-        Cloud cloud=unavailable?Cloud.UNAVAILABLE: facts.loading()||facts.cacheLoading()?Cloud.LOADING
+        Cloud cloud=publicationMissing && facts.cached() && !facts.cacheFailed()?Cloud.CACHED:unavailable?Cloud.UNAVAILABLE: facts.loading()||facts.cacheLoading()?Cloud.LOADING
                 :facts.cacheFailed()?facts.prepared()?Cloud.PREPARED:Cloud.UNAVAILABLE: facts.cached()?Cloud.CACHED
                 :facts.prepared()?Cloud.PREPARED: !facts.resourceError().isEmpty()?Cloud.UNAVAILABLE
                 :facts.serverStatus().equals("ready")?Cloud.AVAILABLE:Cloud.UNKNOWN;

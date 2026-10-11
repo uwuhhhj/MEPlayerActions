@@ -33,6 +33,7 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
     private long initializedCatalogRevision=Long.MIN_VALUE;
     private Map<String,String> initializedServerPreviews=Map.of();
     private Map<String,String> serverLabels=Map.of();
+    private Map<String,ServerModelGalleryIndex.Entry> serverLocations=Map.of();
     private UsageSnapshot initializedUsage;
     private record UsageSnapshot(ClientRuntime.AppearanceSource source,String modelId,String hash,
                                  String pendingServer,String pendingLocal,String requestStatus,boolean canActivate,
@@ -63,7 +64,30 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
     @Override protected List<ClientRuntime.Action> galleryModels() {
         if(clientTab)return super.galleryModels();
         var models=runtime.serverCatalog();var labels=new LinkedHashMap<String,String>();
-        models.forEach(model->labels.put(model.id(),model.label()));serverLabels=Map.copyOf(labels);return models;
+        var current=new LinkedHashMap<String,ServerModelGalleryIndex.Entry>();
+        runtime.serverCatalogDirectory().forEach(model->current.put(model.id(),
+                new ServerModelGalleryIndex.Entry(model.id(),model.source(),model.folder(),false)));
+        models.forEach(model->{
+            labels.put(model.id(),model.label());
+            current.putIfAbsent(model.id(),new ServerModelGalleryIndex.Entry(model.id(),"unknown","",true));
+        });
+        serverLabels=Map.copyOf(labels);serverLocations=Map.copyOf(current);
+        return models.stream().sorted(java.util.Comparator.comparingInt((ClientRuntime.Action model)->ServerModelGalleryIndex.priority(current.get(model.id())))
+                .thenComparing(ClientRuntime.Action::id)).toList();
+    }
+    @Override protected List<ModelGroup> nonLocalGalleryFolders(List<ClientRuntime.Action> candidates,String directory) {
+        return ServerModelGalleryIndex.folders(candidates.stream().map(model->serverLocations.get(model.id())).filter(java.util.Objects::nonNull).toList(),directory)
+                .stream().map(folder->new ModelGroup(0,folder.path(),folder.label(),folder.count())).toList();
+    }
+    @Override protected boolean nonLocalGalleryDirect(String directory,String id) {
+        var location=serverLocations.get(id);return location!=null&&ServerModelGalleryIndex.direct(directory,location);
+    }
+    @Override protected boolean nonLocalGalleryContains(String directory,String id) {
+        var location=serverLocations.get(id);return location!=null&&ServerModelGalleryIndex.contains(directory,location);
+    }
+    @Override protected String nonLocalGalleryParent(String directory) {return ServerModelGalleryIndex.parent(directory);}
+    @Override protected String galleryGroupTooltip(ModelGroup group) {
+        return clientTab?super.galleryGroupTooltip(group):ServerModelGalleryIndex.directoryLabel(group.path())+"\n"+group.count()+" 个模型\n点击进入目录，仅浏览不下载";
     }
     @Override protected CompletableFuture<LocalModelLibrary.Loaded> loadGalleryPreview(String id) {
         return clientTab?super.loadGalleryPreview(id):CompletableFuture.completedFuture(runtime.serverModelForPreview(id));
@@ -72,7 +96,11 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
         if(clientTab)return super.galleryProfile(id);
         var loaded=runtime.serverModelForPreview(id);return loaded==null?YsmModelProfile.empty():loaded.profile();
     }
-    @Override protected String gallerySourceLabel(String id) {return clientTab?super.gallerySourceLabel(id):runtime.serverCachedPreviewOnly(id)?"本机缓存 · 仅预览":"服务器模型";}
+    @Override protected String gallerySourceLabel(String id) {
+        if(clientTab)return super.gallerySourceLabel(id);
+        var location=serverLocations.get(id);
+        return location==null?"服务器来源未分类":ServerModelGalleryIndex.location(location);
+    }
     @Override protected String galleryStatus() {
         if(clientTab)return super.galleryStatus();
         if(runtime.serverCatalogOfflineMode())return runtime.serverCatalogStatus()+" · 连接服务器后取得使用授权";
@@ -81,6 +109,12 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
     }
     @Override protected String galleryPreviewUnavailableText(String id) {
         return clientTab?super.galleryPreviewUnavailableText(id):runtime.serverModelPresentation(id).placeholder();
+    }
+    @Override protected String galleryCardPlaceholder(String id) {
+        if(clientTab)return super.galleryCardPlaceholder(id);
+        var location=serverLocations.get(id);
+        if(location==null)return "来源未分类";
+        return location.cachedOnly()?"本机缓存":switch(location.source()) {case "own"->"MPA 模型";case "modelengine"->"ME 伪装";default->"来源未分类";};
     }
     @Override protected boolean galleryCardCloudVisible() {return true;}
     @Override protected String galleryCardCloudTooltip(String id) {
@@ -299,7 +333,10 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
     }
 
     @Override protected void renderHeader(DrawContext context) {
-        context.drawCenteredTextWithShadow(textRenderer,title,width/2,titleY,0xfff3f0e0);
+        String suffix=galleryFilterLabel();
+        if(!clientTab && suffix.isEmpty() && !groupPath().isEmpty())suffix=ServerModelGalleryIndex.directoryLabel(groupPath());
+        String caption=title.getString()+(!clientTab&&!suffix.isEmpty()?" · "+suffix:"");
+        context.drawCenteredTextWithShadow(textRenderer,textRenderer.trimToWidth(caption,panelWidth),width/2,titleY,0xfff3f0e0);
     }
     @Override protected void renderAlternateContent(DrawContext context,float delta) {
         if(clientTab)renderSelectedPreview(context,delta);else renderServerPreview(context,delta);

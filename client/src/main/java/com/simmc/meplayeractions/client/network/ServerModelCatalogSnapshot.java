@@ -17,7 +17,14 @@ public final class ServerModelCatalogSnapshot {
     public static final String CAPABILITY = "server_model_catalog";
     public static final int MAX_MODELS = 4096;
     public static final long COMMAND_INTERVAL = 500_000_000L;
-    public record Model(String id, String label) { }
+    /** Source and folder describe command choices only, never permission to fetch a resource. */
+    public record Model(String id, String label, String source, String folder, Boolean clientResource) {
+        public Model(String id, String label) { this(id, label, "unknown", "", null); }
+        public Model(String id, String label, String source, String folder) { this(id, label, source, folder, null); }
+        public Model {
+            if (!validSource(source) || !validFolder(folder)) throw new IllegalArgumentException("Server model catalogue location");
+        }
+    }
 
     private record Chunk(long revision, int index, int count, boolean canDisguise,
                          boolean truncated, List<Model> models) { }
@@ -33,6 +40,7 @@ public final class ServerModelCatalogSnapshot {
         }
     }
     private List<Model> models = List.of();
+    private Map<String,Model> locations = Map.of();
     private Set<String> ids = Set.of();
     private long revision, displayRevision, lastCommand;
     private boolean canDisguise, truncated, commandSent;
@@ -40,7 +48,7 @@ public final class ServerModelCatalogSnapshot {
 
     /** A new handshake/disconnect discards both published names and unfinished old-session fragments. */
     public void reset() {
-        models = List.of(); ids = Set.of(); revision = 0;
+        models = List.of(); locations=Map.of(); ids = Set.of(); revision = 0;
         canDisguise = false; truncated = false; pending = null;
         commandSent = false; lastCommand = 0; displayRevision++;
     }
@@ -69,6 +77,8 @@ public final class ServerModelCatalogSnapshot {
         if (next.chunks.size() != next.count) return false;
         var complete = new ArrayList<Model>(next.ids.size());
         for (int index = 0; index < next.count; index++) complete.addAll(next.chunks.get(index));
+        var directory=new LinkedHashMap<String,Model>();complete.forEach(model->directory.put(model.id(),model));
+        locations=Map.copyOf(directory);
         models = List.copyOf(complete); ids = Set.copyOf(next.ids); revision = next.revision;
         canDisguise = next.canDisguise; truncated = next.truncated; pending = null; displayRevision++;
         return true;
@@ -89,7 +99,10 @@ public final class ServerModelCatalogSnapshot {
             JsonObject entry = value.getAsJsonObject();
             String id = WireJson.string(entry, "id", 64), label = WireJson.string(entry, "label", 256);
             if (!validId(id) || !ids.add(id)) throw new IllegalArgumentException("Server model catalogue ID");
-            models.add(new Model(id, label.isEmpty() ? id : label));
+            String source = entry.has("source") ? WireJson.string(entry, "source", 16) : "unknown";
+            String folder = entry.has("folder") ? WireJson.string(entry, "folder", 256) : "";
+            Boolean clientResource = entry.has("clientResource") ? WireJson.bool(entry, "clientResource") : null;
+            models.add(new Model(id, label.isEmpty() ? id : label, source, folder, clientResource));
         }
         if ((!canDisguise || models.isEmpty()) && (count != 1 || !models.isEmpty()))
             throw new IllegalArgumentException("Empty or unauthorized server model catalogue");
@@ -98,7 +111,19 @@ public final class ServerModelCatalogSnapshot {
     }
 
     public static boolean validId(String id) { return id != null && id.matches("[a-z0-9_-]{1,64}"); }
+    public static boolean validSource(String source) { return source != null && Set.of("own", "modelengine", "unknown").contains(source); }
+    /** A relative directory description, never a filesystem path to resolve or a command argument. */
+    public static boolean validFolder(String folder) {
+        if (folder == null || folder.length() > 256 || folder.indexOf('\\') >= 0 || folder.indexOf(':') >= 0
+                || folder.chars().anyMatch(Character::isISOControl)) return false;
+        if (folder.isEmpty()) return true;
+        String[] parts = folder.split("/", -1);
+        if (parts.length > 16) return false;
+        for (String part : parts) if (part.isEmpty() || part.equals(".") || part.equals("..")) return false;
+        return true;
+    }
     public List<Model> models() { return ready() ? models : List.of(); }
+    public Optional<Model> model(String id) {return ready()&&validId(id)?Optional.ofNullable(locations.get(id)):Optional.empty();}
     public long revision() { return revision; }
     /** Changes when reception starts or completes, so widgets cannot retain old authority while refreshing. */
     public long displayRevision() { return displayRevision; }

@@ -9,6 +9,59 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ServerModelCatalogSnapshotTest {
+    @Test void olderDirectoriesRetainUnknownLocationAndPublicationWithoutLosingCommandAuthority() {
+        var catalogue=authorized("legacy");var model=catalogue.models().getFirst();
+        assertEquals(new ServerModelCatalogSnapshot.Model("legacy","legacy"),model);
+        assertEquals("unknown",model.source());assertEquals("",model.folder());assertNull(model.clientResource());
+        assertEquals("meplayeractions disguise legacy",catalogue.command("legacy",true,0).orElseThrow());
+    }
+
+    @Test void directoryMetadataIsPreservedWithoutBecomingACommandOrDownloadRequest() {
+        var packet=chunk(1,0,1,true,false,"safe");var entry=packet.getAsJsonArray("models").get(0).getAsJsonObject();
+        entry.addProperty("source","own");entry.addProperty("folder","服装/冬季");entry.addProperty("clientResource",true);
+        var catalogue=new ServerModelCatalogSnapshot();assertTrue(catalogue.accept(packet));
+        assertEquals(new ServerModelCatalogSnapshot.Model("safe","safe","own","服装/冬季",true),catalogue.models().getFirst());
+        assertEquals(catalogue.models().getFirst(),catalogue.model("safe").orElseThrow());
+        assertTrue(catalogue.model("/服装/冬季").isEmpty());assertTrue(catalogue.model(null).isEmpty());
+        assertEquals("meplayeractions disguise safe",catalogue.command("safe",true,0).orElseThrow());
+    }
+
+    @Test void anExplicitMissingClientResourceStillAllowsTheRegisteredModelEngineDisguise() {
+        var packet=chunk(1,0,1,true,false,"me_only");var entry=packet.getAsJsonArray("models").get(0).getAsJsonObject();
+        entry.addProperty("source","modelengine");entry.addProperty("folder","boss");entry.addProperty("clientResource",false);
+        var catalogue=new ServerModelCatalogSnapshot();assertTrue(catalogue.accept(packet));
+        assertEquals(Boolean.FALSE,catalogue.models().getFirst().clientResource());
+        assertEquals("meplayeractions disguise me_only",catalogue.command("me_only",true,0).orElseThrow());
+    }
+
+    @Test void invalidDirectoryLocationsCannotReplaceAValidSnapshot() {
+        for(String folder:List.of("/absolute","C:/models","a\\b","a/../b","a/./b","a//b","trailing/","a\nmodel","x".repeat(257),"a/".repeat(16)+"a")) {
+            var catalogue=authorized("old");var packet=chunk(2,0,1,true,false,"new");
+            var entry=packet.getAsJsonArray("models").get(0).getAsJsonObject();entry.addProperty("source","own");entry.addProperty("folder",folder);
+            assertThrows(IllegalArgumentException.class,()->catalogue.accept(packet),folder);assertTrue(catalogue.contains("old"));
+        }
+        assertTrue(ServerModelCatalogSnapshot.validFolder("a/".repeat(15)+"a"));
+        assertTrue(ServerModelCatalogSnapshot.validFolder("folders/unclassified"));
+    }
+
+    @Test void invalidOptionalFieldTypesAndSourcesAreRejectedBeforePublication() {
+        for(String field:List.of("source","folder","clientResource")) {
+            var packet=chunk(1,0,1,true,false,"safe");var entry=packet.getAsJsonArray("models").get(0).getAsJsonObject();
+            entry.addProperty(field,123);assertThrows(IllegalArgumentException.class,()->new ServerModelCatalogSnapshot().accept(packet),field);
+        }
+        var packet=chunk(1,0,1,true,false,"safe");packet.getAsJsonArray("models").get(0).getAsJsonObject().addProperty("source","filesystem");
+        assertThrows(IllegalArgumentException.class,()->new ServerModelCatalogSnapshot().accept(packet));
+    }
+
+    @Test void repeatedFragmentsCannotChangeTheSourceFolderOrPublicationHint() {
+        var packet=chunk(1,0,2,true,false,"first");var entry=packet.getAsJsonArray("models").get(0).getAsJsonObject();
+        entry.addProperty("source","own");entry.addProperty("folder","one");entry.addProperty("clientResource",true);
+        var catalogue=new ServerModelCatalogSnapshot();assertFalse(catalogue.accept(packet));
+        var changed=packet.deepCopy();changed.getAsJsonArray("models").get(0).getAsJsonObject().addProperty("folder","two");
+        assertThrows(IllegalArgumentException.class,()->catalogue.accept(changed));
+        assertTrue(catalogue.accept(chunk(1,1,2,true,false,"last")));assertEquals("one",catalogue.models().getFirst().folder());
+    }
+
     @Test void fragmentsPublishInDirectoryOrderOnlyAfterTheWholeRevisionArrives() {
         var catalogue = new ServerModelCatalogSnapshot();
         assertFalse(catalogue.accept(chunk(1, 1, 2, true, false, "ysm_02_jk")));

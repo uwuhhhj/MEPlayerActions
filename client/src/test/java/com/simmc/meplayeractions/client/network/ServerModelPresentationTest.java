@@ -4,9 +4,62 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 class ServerModelPresentationTest {
+    @Test void ownSourceMissingOrPendingDoesNotClaimThatTheFileWasObtained() {
+        var fixture=new Fixture();fixture.source="own";
+        for(String status:List.of("missing","pending","invalid")) {
+            fixture.serverStatus=status;var display=fixture.display();
+            assertTrue(display.tooltip().contains("客户端资源发布目录：plugins/MEPlayerActions/models"));
+            assertFalse(display.tooltip().contains("取自 plugins/MEPlayerActions/models"));
+        }
+        fixture.serverStatus="ready";
+        assertTrue(fixture.display().tooltip().contains("取自 plugins/MEPlayerActions/models 的 BBModel"));
+    }
+    @Test void explicitNoPublicationExplainsMeOnlyWithoutPromisingAFutureAutomaticDownload() {
+        var fixture=new Fixture();var display=fixture.display(new ServerModelPresentation.CatalogResource(false,"modelengine","boss"));
+        assertEquals(ServerModelPresentation.Cloud.UNAVAILABLE,display.cloud());
+        assertTrue(display.tooltip().contains("MPA models 未发布客户端资源"));
+        assertTrue(display.tooltip().contains("仅支持服务器 ME 伪装"));
+        assertTrue(display.tooltip().contains("不会自动下载或本地接管"));
+        assertFalse(display.tooltip().contains("尚未确认"));assertFalse(display.tooltip().contains("等待服务器授权推送"));
+    }
+
+    @Test void historicalCacheRemainsAPreviewFactWhenTheCurrentServerPublishesNoResource() {
+        var fixture=new Fixture();fixture.cached=true;var display=fixture.display(new ServerModelPresentation.CatalogResource(false,"unknown",""));
+        assertEquals(ServerModelPresentation.Cloud.CACHED,display.cloud());
+        assertTrue(display.tooltip().contains("本机已有缓存"));
+        assertTrue(display.tooltip().contains("旧缓存仅供预览"));
+        assertTrue(display.tooltip().contains("本地接管：不可用，仅服务器 ME 伪装"));assertFalse(display.tooltip().contains("已启动"));
+    }
+
+    @Test void aPublishedFileStillNeedsValidationAndDoesNotGrantADownloadOrRenderLease() {
+        var fixture=new Fixture();var display=fixture.display(new ServerModelPresentation.CatalogResource(true,"own","服装"));
+        assertEquals(ServerModelPresentation.Cloud.UNKNOWN,display.cloud());
+        assertTrue(display.tooltip().contains("已发布文件，等待校验"));assertTrue(display.tooltip().contains("不等于已校验或已授权下载"));
+        assertFalse(display.tooltip().contains("已启动"));assertFalse(display.tooltip().contains("正在下载"));
+    }
+
+    @Test void aStaleDirectoryHintCannotOverrideTheCurrentBindingOrAcknowledgedRendering() {
+        var fixture=new Fixture();fixture.current=true;fixture.serverStatus="ready";fixture.prepared=true;fixture.active=true;
+        var stale=new ServerModelPresentation.CatalogResource(false,"modelengine","");
+        assertTrue(fixture.display(stale).tooltip().contains("服务器资源：已找到"));
+        assertTrue(fixture.display(stale).tooltip().contains("本地接管：已启动"));
+        assertFalse(fixture.display(stale).tooltip().contains("未发布客户端资源"));
+        fixture.serverStatus="";
+        assertTrue(fixture.display(stale).tooltip().contains("本地接管：已启动"));
+        assertFalse(fixture.display(stale).tooltip().contains("未发布客户端资源"));
+    }
+
+    @Test void offlineDirectoryHintsCannotDescribeTheCurrentServerAsAvailableOrMissing() {
+        var fixture=new Fixture();fixture.online=false;fixture.cached=true;
+        var display=fixture.display(new ServerModelPresentation.CatalogResource(false,"own",""));
+        assertTrue(display.tooltip().contains("离线，无法确认"));assertFalse(display.tooltip().contains("未发布客户端资源"));
+        assertEquals(ServerModelPresentation.Cloud.CACHED,display.cloud());
+    }
     @Test void anUnboundDirectoryEntryDoesNotPromiseADownloadOrInferServerAvailability() {
         var display=new Fixture().display();
         assertEquals(ServerModelPresentation.Cloud.UNKNOWN,display.cloud());
@@ -158,9 +211,12 @@ class ServerModelPresentationTest {
                 active,prepared,loading,cached,cacheLoading,cacheFailed;
         String serverStatus="",source="",reason="",resourceState="",resourceError="";
         ServerModelPresentation.Display display() {
+            return display(ServerModelPresentation.CatalogResource.unknown());
+        }
+        ServerModelPresentation.Display display(ServerModelPresentation.CatalogResource catalog) {
             return ServerModelPresentation.describe(new ServerModelPresentation.Facts(online,current,requestPending,renderEnabled,
                     serverSelfAllowed,selfVisible,active,prepared,loading,cached,cacheLoading,cacheFailed,
-                    serverStatus,source,reason,resourceState,resourceError));
+                    serverStatus,source,reason,resourceState,resourceError),catalog);
         }
     }
 }

@@ -334,12 +334,16 @@ public final class ModelRenderer {
                         && !NativePlayerPresentation.captured(binding.owner())) continue;
                 var presentation = NativePlayerPresentation.get(binding.owner());
                 var vanillaFrame = NativePlayerPresentation.entityFrame(binding.owner());
-                // OpenYSM's native body branch: hidden/invisible geometry is omitted, but glowing
-                // invisible players retain the source outline render type and native team color.
+                // OpenYSM's body visibility follows real player invisibility. ModelEngine can
+                // additionally mark the original copy invisible by packet, including the owner.
+                // Only an active server binding supplies that distinction; private models and
+                // older servers continue using the native frame. Never rewrite vanilla's state.
                 boolean requestedModel = activeRuntime.shouldShowModel(binding.owner());
-                boolean outlineOnly = nativeYsm && vanillaFrame != null && vanillaFrame.invisible()
-                        && vanillaFrame.outlineColor() != 0;
-                boolean showModel = requestedModel && (!nativeYsm || vanillaFrame == null || !vanillaFrame.invisible() || outlineOnly);
+                var visibility = NativeBodyVisibility.resolve(nativeYsm, requestedModel,
+                        vanillaFrame != null && vanillaFrame.invisible(), activeRuntime.modelSourceInvisible(binding.owner()),
+                        vanillaFrame == null ? 0 : vanillaFrame.outlineColor());
+                boolean outlineOnly = visibility.outlineOnly();
+                boolean showModel = visibility.visible();
                 int outlineColor = outlineOnly ? vanillaFrame.outlineColor() : 0;
                 if (vertices.isEmpty()) continue;
                 Matrix4f passenger = nativeYsm ? YsmComponentRenderer.passengerTransform(nativePlayer) : new Matrix4f();

@@ -12,6 +12,7 @@ import com.simmc.meplayeractions.expression.Molang;
 import com.simmc.meplayeractions.client.ui.ModelConfigSchema;
 import com.simmc.meplayeractions.client.network.*;
 import com.simmc.meplayeractions.client.render.ModelRenderer;
+import com.simmc.meplayeractions.client.render.NativeBodyVisibility;
 import com.simmc.meplayeractions.client.render.NativePlayerPresentation;
 import com.simmc.meplayeractions.client.effects.YsmModelEffects;
 import com.simmc.meplayeractions.client.effects.ModelEffectInstances;
@@ -385,6 +386,7 @@ public final class ClientRuntime {
         LocalMotionPolicy motion=LocalMotionPolicy.read(json.getAsJsonObject("motion"));
         Map<String,Double> accessories=readAccessoryState(json);
         boolean hide=WireJson.bool(json,"hidePlayer"),showSelf=WireJson.bool(json,"showSelf");
+        Boolean sourceInvisible=NativeBodyVisibility.readSourceInvisible(json);
         List<Layer> layers=new ArrayList<>();
         JsonArray array=json.getAsJsonArray("layers");if(array==null || array.size()>16) throw new IllegalArgumentException("Layers");
         Set<String> layerNames=new HashSet<>();
@@ -416,7 +418,7 @@ public final class ClientRuntime {
         binding.foodLevel=json.has("foodLevel")?(int)WireJson.integer(json,"foodLevel",0,20):20;
         binding.layerTimeline.add(tick,binding.layers);
         binding.motion=motion;binding.localServerLayers=binding.localClock.accept(tick,localTick,binding.layers);
-        binding.hidePlayer=hide;binding.showSelf=showSelf;binding.actions=List.copyOf(actions);binding.lastPacket=now;
+        binding.hidePlayer=hide;binding.showSelf=showSelf;binding.sourceInvisible=sourceInvisible;binding.actions=List.copyOf(actions);binding.lastPacket=now;
         binding.serverAssetStatus=json.has("assetStatus")?WireJson.string(json,"assetStatus",64):"";
         binding.serverAssetReason=json.has("assetReason")?WireJson.string(json,"assetReason",256):"";
         binding.serverAssetSource=json.has("assetSource")?WireJson.string(json,"assetSource",128):"";
@@ -1212,6 +1214,11 @@ public final class ClientRuntime {
         return binding==null && !previewId.isEmpty() && client.player!=null && owner.equals(client.player.getUuid()) && assets.containsKey(previewHash)
                 && ModelRenderer.has(previewHash) && options.hideVanillaPlayer;
     }
+    /** ME can hide the original copy by packet without changing the actual player's invisibility. */
+    public Boolean modelSourceInvisible(UUID owner) {
+        Binding binding=bindings.get(owner);
+        return usable(binding,System.nanoTime())?binding.sourceInvisible:null;
+    }
     /** UI reads the authoritative hide-player rule; draft server preferences cannot change this setting. */
     public boolean ownPlayerHideSetting() {
         if(!serverOwnModelPresent())return options.hideVanillaPlayer;
@@ -1273,6 +1280,10 @@ public final class ClientRuntime {
         for(var model:cachedServerCatalog)result.putIfAbsent(model.id(),new Action(model.id(),model.label()));
         return List.copyOf(result.values());
     }
+    /** Current-session directory labels do not grant downloads; older cached IDs keep a separate source. */
+    public List<ServerModelCatalogSnapshot.Model> serverCatalogDirectory() {
+        return serverCatalogReady() ? serverModelCatalog.models() : List.of();
+    }
     public long serverCatalogRevision() {return serverModelCatalog.displayRevision()+serverCacheCatalogRevision;}
     public boolean serverCatalogReady() {return serverBridgeReady() && stateProtocol.serverCatalog() && serverModelCatalog.ready();}
     public boolean serverCatalogOfflineMode() {return !serverBridgeReady();}
@@ -1325,13 +1336,16 @@ public final class ClientRuntime {
         var cached=cachedServerPreviewMetadata(id);
         if(cached!=null && !ServerModelPresentation.cacheMatchesCurrentResource(binding!=null,binding==null?"":binding.hash,cached.hash()))cached=null;
         boolean prepared=binding!=null && assets.containsKey(binding.hash) && ModelRenderer.has(binding.hash);
+        var directory=serverCatalogReady()?serverModelCatalog.model(id).orElse(null):null;
+        var publication=directory==null?ServerModelPresentation.CatalogResource.unknown()
+                :new ServerModelPresentation.CatalogResource(directory.clientResource(),directory.source(),directory.folder());
         return ServerModelPresentation.describe(new ServerModelPresentation.Facts(serverBridgeReady(),current,
                 !id.isEmpty()&&id.equals(pendingServerDisguiseModelId()),options.enabled,binding==null||binding.showSelf,options.showSelf,
                 binding!=null && usable(binding,System.nanoTime()),prepared,binding!=null&&loading.contains(binding.hash),
                 cached!=null,cached!=null&&cachedServerPreviewLoading.contains(cached.hash()),
                 cached!=null&&cachedServerPreviewErrors.containsKey(cached.hash()),binding==null?"":binding.serverAssetStatus,
                 binding==null?"":binding.serverAssetSource,binding==null?"":binding.serverAssetReason,
-                binding==null?"":binding.assetState,binding==null?"":binding.assetError));
+                binding==null?"":binding.assetState,binding==null?"":binding.assetError),publication);
     }
     /** Reuses prepared assets or asynchronously reads the local cache; no asset_request, ACK or binding is created. */
     public LocalModelLibrary.Loaded serverModelForPreview(String id) {
@@ -1560,6 +1574,7 @@ public final class ClientRuntime {
             values.put("assetState",binding.assetState);values.put("assetError",binding.assetError);
             values.put("serverAssetStatus",binding.serverAssetStatus);values.put("serverAssetReason",binding.serverAssetReason);
             values.put("serverAssetSource",binding.serverAssetSource);
+            values.put("sourceInvisible",binding.sourceInvisible==null?"unknown":binding.sourceInvisible);
             return Map.copyOf(values);
         }).toList());
         return Map.copyOf(result);
@@ -1815,6 +1830,7 @@ public final class ClientRuntime {
         LocalMotionPolicy motion;List<Layer> localServerLayers=List.of();
         YsmModelProfile profile=YsmModelProfile.empty();
         long sequence=-1,lastPacket,lastReady;boolean readySent,active,hidePlayer,unsupported,showSelf=true;float scale=1;
+        Boolean sourceInvisible;
         int foodLevel=20;
         String assetState="等待服务器模型",assetError="",serverAssetStatus="",serverAssetReason="",serverAssetSource="";
         Map<String,Double> accessories=Map.of();

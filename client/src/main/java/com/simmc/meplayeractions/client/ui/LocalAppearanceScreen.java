@@ -48,11 +48,12 @@ public class LocalAppearanceScreen extends Screen {
     private final Map<String, PreviewEntry> previews = new HashMap<>();
     private final List<ButtonWidget> gridWidgets = new ArrayList<>();
     private List<ClientRuntime.Action> models = List.of(), filtered = List.of(), visible = List.of();
-    private record ModelGroup(int source,String path,String label,int count) { }
+    protected record ModelGroup(int source,String path,String label,int count) { }
     private List<ModelGroup> filteredGroups=List.of(),visibleGroups=List.of();
     private final Map<String,Integer> groupPages=new HashMap<>();
     private int groupSource;
     private String groupDirectory="";
+    private String serverGroupDirectory="";
     private final GalleryPreviewSelection selection;
     private String query = "", message = "";
     private boolean favoritesOnly, uploadedOnly, activeView, rotating;
@@ -114,6 +115,14 @@ public class LocalAppearanceScreen extends Screen {
     protected String settingsButtonLabel(int buttonWidth) {return buttonWidth<65?"设置":"详情 / 设置";}
     protected boolean localGallery() {return true;}
     protected List<ClientRuntime.Action> galleryModels() {return runtime.localModels();}
+    protected List<ModelGroup> nonLocalGalleryFolders(List<ClientRuntime.Action> candidates,String directory) {return List.of();}
+    protected boolean nonLocalGalleryDirect(String directory,String id) {return true;}
+    protected boolean nonLocalGalleryContains(String directory,String id) {return true;}
+    protected String nonLocalGalleryParent(String directory) {return "";}
+    protected String galleryFilterLabel() {return favoritesOnly?"收藏 · 全部来源":query.isBlank()?"":"搜索 · 全部来源";}
+    protected String galleryGroupTooltip(ModelGroup group) {
+        return group.label()+" · "+group.count()+" 个模型\n"+group.path()+"\n点击进入模型目录";
+    }
     protected CompletableFuture<LocalModelLibrary.Loaded> loadGalleryPreview(String id) {
         return uploadedOnly&&!runtime.privateModelUploadState(id).uploaded()?CompletableFuture.completedFuture(null):runtime.loadLocalPreview(id);
     }
@@ -121,6 +130,7 @@ public class LocalAppearanceScreen extends Screen {
     protected String gallerySourceLabel(String id) {return uploadedOnly?"本人服务器存档":sourceLabel(id);}
     protected String galleryStatus() {return uploadedOnly?runtime.privateUploadCatalogStatus():runtime.localAppearanceStatus();}
     protected String galleryPreviewUnavailableText(String id) {return cloudModelHint(id).isEmpty()?"正在加载所选模型…":cloudModelHint(id);}
+    protected String galleryCardPlaceholder(String id) {return localGallery()?"加载中…":"服务端模型";}
     /** Both sources use the same corner affordance; server cards expose cache status instead of uploading. */
     protected boolean galleryCardCloudVisible() {return localGallery();}
     protected String galleryCardCloudTooltip(String id) {return uploadTooltip(id);}
@@ -159,7 +169,7 @@ public class LocalAppearanceScreen extends Screen {
     protected void refreshGalleryModels() {refreshModels(false);}
     protected void resetGallery() {
         clearGalleryPreviews();models=List.of();filtered=List.of();visible=List.of();
-        groupSource=sourceFilter=page=0;groupDirectory=query=message="";
+        groupSource=sourceFilter=page=0;groupDirectory=serverGroupDirectory=query=message="";
         favoritesOnly=uploadedOnly=false;groupPages.clear();selection.restore("");
     }
     protected void buildHeaderControls() { }
@@ -169,13 +179,13 @@ public class LocalAppearanceScreen extends Screen {
         if (models.isEmpty()) refreshModels(false);
 
         boolean searchFocused=search!=null && search.isFocused();
-        int toolsWidth=localGallery()?167:101;
+        int toolsWidth=localGallery()?167:123;
         search = new TextFieldWidget(textRenderer, right + 5, top + 5, Math.max(35, rightWidth - toolsWidth), 20, Text.literal("搜索模型"));
         search.setMaxLength(80); search.setPlaceholder(Text.literal("搜索名称 / ID")); search.setText(query);
         search.setChangedListener(value -> { query = value; page = 0; rebuildGrid(); });
         addDrawableChild(search);
         if(searchFocused)setInitialFocus(search);
-        int favoritesX=right+rightWidth-(localGallery()?157:91);
+        int favoritesX=right+rightWidth-(localGallery()?157:113);
         iconButton(favoritesOnly ? "★ 收藏" : "☆ 收藏", favoritesX, top + 5, 20, 0,0,() -> {
             favoritesOnly = !favoritesOnly; page = 0; clearAndInit();
         }, "只显示收藏的模型\n卡片右上角可收藏");
@@ -198,8 +208,13 @@ public class LocalAppearanceScreen extends Screen {
         button("刷新", right + rightWidth - 47, top + 5, 20, () -> {
             runtime.refreshLocalModelSources();refreshModels(true); page = 0; rebuildGrid(); message = "已刷新本地模型";
         }, "重新扫描模型与预览\n保留当前使用的外观");
-        } else iconButton("缓存目录",right+rightWidth-47,top+5,20,80,0,this::openServerCacheDirectory,
-                "打开本机服务器模型缓存\nconfig/meplayeractions/cache");
+        } else {
+            var up=iconButton("返回上级",right+rightWidth-69,top+5,20,0,32,this::navigateUp,
+                    serverGroupDirectory.isEmpty()?"选择来源文件夹浏览模型":"返回上一级模型目录");
+            up.active=!serverGroupDirectory.isEmpty();
+            iconButton("缓存目录",right+rightWidth-47,top+5,20,80,0,this::openServerCacheDirectory,
+                    "打开本机服务器模型缓存\nconfig/meplayeractions/cache");
+        }
         iconButton("使用教程",right+rightWidth-25,top+5,20,80,16,
                 ()->client.setScreen(new ModelHelpScreen(runtime,this,!localGallery())),localGallery()
                         ?"客户端模型教程\n导入、使用、上传分享与存档管理":"服务端模型教程\n伪装、外观设置与客户端接管");
@@ -357,6 +372,8 @@ public class LocalAppearanceScreen extends Screen {
                 runtime.uploadedPrivateModels().forEach(model->byId.putIfAbsent(model.modelId(),new ClientRuntime.Action(model.modelId(),model.modelId())));
                 models=List.copyOf(byId.values());
             }
+        } else while(!serverGroupDirectory.isEmpty() && models.stream().noneMatch(model->nonLocalGalleryContains(serverGroupDirectory,model.id()))) {
+            serverGroupDirectory=nonLocalGalleryParent(serverGroupDirectory);page=0;
         }
         selection.retain(models.stream().map(ClientRuntime.Action::id).toList());
     }
@@ -383,6 +400,10 @@ public class LocalAppearanceScreen extends Screen {
             for(var folder:ModelGalleryIndex.folders(filtered.stream().map(ClientRuntime.Action::id).toList(),groupPath()))
                 groups.add(new ModelGroup(groupSource,folder.path(),folder.label(),folder.count()));
             filtered=filtered.stream().filter(model->ModelGalleryIndex.direct(groupPath(),model.id())).toList();
+        }
+        if(!localGallery() && !favoritesOnly && needle.isEmpty()) {
+            groups.addAll(nonLocalGalleryFolders(filtered,serverGroupDirectory));
+            filtered=filtered.stream().filter(model->nonLocalGalleryDirect(serverGroupDirectory,model.id())).toList();
         }
         filteredGroups=List.copyOf(groups);
         page = Math.max(0, Math.min(page, pageCount() - 1));
@@ -426,23 +447,39 @@ public class LocalAppearanceScreen extends Screen {
     /** These accessors also let the GUI harness assert selection/filter/page behavior without applying models. */
     public String selectedModelId() { return selection.modelId(); }
     public List<String> visibleModelIds() { return visible.stream().map(ClientRuntime.Action::id).toList(); }
+    public List<String> visibleDirectoryPaths() {return visibleGroups.stream().map(ModelGroup::path).toList();}
     public int pageIndex() { return page; }
     public int pageCount() { return Math.max(1, (filtered.size()+filteredGroups.size() + Math.max(1, pageSize) - 1) / Math.max(1, pageSize)); }
     public void setSearchQuery(String value) { if (search != null) search.setText(value); else query = value; }
     public void setFavoritesOnly(boolean value) { favoritesOnly = value; page = 0; clearAndInit(); }
     public void goToPage(int index) { page = index; rebuildGrid();groupPages.put(groupPath(),page); }
-    public String groupPath() {return groupSource==0?"":ModelGalleryIndex.root(groupSource)+groupDirectory;}
+    public String groupPath() {return !localGallery()?serverGroupDirectory:groupSource==0?"":ModelGalleryIndex.root(groupSource)+groupDirectory;}
     public void browseGroup(int source) {
         if(source<1 || source>3 || models.stream().noneMatch(model->source(model.id())==source))return;
         groupPages.put(groupPath(),page);groupSource=source;groupDirectory="";sourceFilter=0;query="";
         page=groupPages.getOrDefault(groupPath(),0);clearAndInit();
     }
+    /** Only current directory cards can be opened; an arbitrary string never addresses a file or network resource. */
+    public boolean browseDirectory(String path) {
+        var group=filteredGroups.stream().filter(value->value.path().equals(path)).findFirst().orElse(null);
+        if(group==null)return false;
+        browseGroup(group);return true;
+    }
     private void browseGroup(ModelGroup group) {
+        if(!localGallery()) {
+            groupPages.put(groupPath(),page);serverGroupDirectory=group.path();query="";
+            page=groupPages.getOrDefault(groupPath(),0);clearAndInit();return;
+        }
         groupPages.put(groupPath(),page);groupSource=group.source();
         groupDirectory=group.path().substring(ModelGalleryIndex.root(groupSource).length());sourceFilter=0;query="";
         page=groupPages.getOrDefault(groupPath(),0);clearAndInit();
     }
     public void navigateUp() {
+        if(!localGallery()) {
+            if(serverGroupDirectory.isEmpty())return;
+            groupPages.put(groupPath(),page);serverGroupDirectory=nonLocalGalleryParent(serverGroupDirectory);query="";
+            page=groupPages.getOrDefault(groupPath(),0);clearAndInit();return;
+        }
         if(groupSource==0)return;
         groupPages.put(groupPath(),page);
         if(groupDirectory.isEmpty())groupSource=0;
@@ -739,7 +776,7 @@ public class LocalAppearanceScreen extends Screen {
         private final ModelGroup group;
         GroupCard(ModelGroup group,int x,int y,int w,int h) {
             super(x,y,w,h,net.minecraft.text.Text.literal(group.label()),button->browseGroup(group),DEFAULT_NARRATION_SUPPLIER);this.group=group;
-            setTooltip(ModelUiTooltip.of(textRenderer,LocalAppearanceScreen.this.width,group.label()+" · "+group.count()+" 个模型\n"+group.path()+"\n点击进入模型目录"));
+            setTooltip(ModelUiTooltip.of(textRenderer,LocalAppearanceScreen.this.width,galleryGroupTooltip(group)));
         }
         @Override protected void drawIcon(DrawContext context,int mouseX,int mouseY,float delta) {
             context.fill(getX(),getY(),getRight(),getBottom(),hovered?0xff394b62:0xff303d4e);
@@ -794,7 +831,7 @@ public class LocalAppearanceScreen extends Screen {
                 if (rendered) {drawnPreviewCount++;drawnCards.add(model.id());}
                 else clipped(context, "预览不可用", getX() + 5, getY() + imageHeight / 2, getWidth() - 10, 0xffffc685);
             } else clipped(context,!cloudModelHint(model.id()).isEmpty()?localSourceIds.contains(model.id())?"文件已改":"本地未找到"
-                    :entry!=null&&!entry.error.isEmpty()?"加载失败":localGallery()?"加载中…":"服务端模型",getX()+5,getY()+imageHeight/2,getWidth()-10,0xffc1cedc);
+                    :entry!=null&&!entry.error.isEmpty()?"加载失败":galleryCardPlaceholder(model.id()),getX()+5,getY()+imageHeight/2,getWidth()-10,0xffc1cedc);
             drawCardLabel(context, net.minecraft.text.Text.literal(runtime.options.showModelIds ? model.id() : getMessage().getString()),
                     getX(), getBottom(), 0xfff3f0e0, true);
             if(selection.modelId().equals(model.id()) || hovered || isFocused())context.drawStrokedRectangle(getX(), getY(), getWidth(), getHeight(), -790560);
