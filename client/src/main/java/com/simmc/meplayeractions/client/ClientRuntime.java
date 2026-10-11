@@ -651,9 +651,16 @@ public final class ClientRuntime {
                 || localModels().stream().noneMatch(model->model.id().equals(id)))return false;
         selectLocalModel(id);
         if(!canUseLocalAppearance() || !localAppearance().enabled() || !localAppearance().modelId().equals(id))return false;
-        options.showSelf=true;options.save();return setPrivateSyncEnabled(true);
+        options.showSelf=true;options.save();
+        if(!setPrivateSyncEnabled(true))return false;
+        privateModels.restartPublishing();return true;
     }
     public boolean privateSyncEnabled(){return options.privateSyncEnabled;}
+    public PrivateModelSyncClient.PublicationIdentity privatePublicationIdentity(){return privateModels.publicationIdentity();}
+    /** The confirmation must still describe this exact publication, even when the same file was shared again. */
+    public boolean stopPrivatePublication(PrivateModelSyncClient.PublicationIdentity expected){
+        return expected!=null&&expected.equals(privateModels.publicationIdentity())&&setPrivateSyncEnabled(false);
+    }
     public List<PrivateModelSyncClient.ReceivedModel> receivedPrivateModels(){return privateModels.receivedModels();}
     public boolean canShareLocalModel(){return privateSyncAvailable() && canActivateLocalAppearance();}
     public String privateSyncStatus(){

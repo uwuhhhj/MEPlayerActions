@@ -6,6 +6,8 @@ import com.google.gson.JsonParser;
 import com.simmc.meplayeractions.client.LocalModelLibrary;
 import com.simmc.meplayeractions.client.model.NativeModelBundle;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
@@ -109,6 +111,43 @@ class PrivateModelSyncClientTest {
             long now=NOW+attempt*3*SECOND;busy.receive(heartbeat(),now);busy.client.tick(now);busy.host.drain();busy.receive(rejected,now);
         }
         busy.receive(heartbeat(),NOW+30*SECOND);busy.client.tick(NOW+30*SECOND);busy.host.drain();assertEquals(3,busy.host.bundleReads);
+    }
+    @ParameterizedTest(name="{0} failure waits for explicit sharing retry")
+    @ValueSource(strings={"terminal","busy"})
+    void explicitRestartUnlocksTheSavedModelAfterFailureWithoutAcceptingTheOldGeneration(String mode) throws Exception {
+        Rig rig=new Rig();rig.acknowledgeCatalog();String id=rig.host.local.modelId();
+        rig.savedModels.put(id,savedEntry(id,rig.bundle,"bbmodel"));rig.catalog(true,NOW);rig.host.drain();
+        var savedDirectory=rig.client.uploadedModels();int sourceReads=rig.host.bundleReads;rig.host.explicitLocal=true;
+        int attempts=mode.equals("busy")?3:1;PrivateModelSyncClient.PublicationIdentity blocked=null;JsonObject oldCommit=null;
+        for(int i=0;i<attempts;i++) {
+            long now=NOW+i*3*SECOND;rig.receive(heartbeat(),now);rig.client.tick(now);rig.host.drain();
+            JsonObject offered=rig.host.sent("upload_offer").getLast();
+            blocked=new PrivateModelSyncClient.PublicationIdentity(id,UUID.fromString(offered.get("generation").getAsString()),offered.get("hash").getAsString());
+            assertNull(rig.client.publicationIdentity(),"Pending uploads cannot be presented as a confirmed share");
+            assertEquals(AssetTransfer.hash(rig.bundle),blocked.hash());
+            oldCommit=publicationNotice("upload_committed",rig.host.local.owner(),offered);
+            JsonObject failure=publicationNotice("error",rig.host.local.owner(),offered);
+            failure.addProperty("code",mode.equals("busy")?"asset_queue_full":"model_complexity_limit");
+            failure.addProperty("stage",mode.equals("busy")?"upload":"validation");failure.addProperty("retryable",mode.equals("busy"));failure.addProperty("retryAfter",2);
+            rig.receive(failure,now);assertFalse(rig.client.committed());assertNull(rig.client.publicationIdentity());
+        }
+        assertEquals(attempts,rig.host.sent("upload_offer").size());
+        assertEquals(PrivateModelSyncClient.UploadPhase.UPLOADED,rig.client.uploadState(id).phase(),"The saved badge is independent of the failed live publication");
+        long retry=NOW+30*SECOND;rig.receive(heartbeat(),retry);rig.client.tick(retry);rig.host.drain();
+        assertEquals(sourceReads+attempts,rig.host.bundleReads);assertEquals(attempts,rig.host.sent("upload_offer").size());
+        assertEquals(savedDirectory,rig.client.uploadedModels());assertTrue(rig.client.uploadedModelIds().contains(id));
+
+        rig.client.restartPublishing();assertEquals("已请求重新分享，等待本机模型准备",rig.client.status());
+        rig.client.tick(retry);assertNull(rig.client.publicationIdentity());
+        rig.host.drain();JsonObject current=rig.host.sent("upload_offer").getLast();
+        assertEquals(attempts+1,rig.host.sent("upload_offer").size());assertEquals(blocked.hash(),current.get("hash").getAsString());
+        assertNotEquals(blocked.generation().toString(),current.get("generation").getAsString());assertNull(rig.client.publicationIdentity());
+        rig.receive(oldCommit,retry);assertFalse(rig.client.committed());assertNull(rig.client.publicationIdentity());
+        assertEquals(savedDirectory,rig.client.uploadedModels());
+        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),current),retry);
+        assertTrue(rig.client.committed());var currentIdentity=rig.client.publicationIdentity();assertNotNull(currentIdentity);
+        assertEquals(blocked.hash(),currentIdentity.hash());assertNotEquals(blocked,currentIdentity);assertTrue(rig.client.uploadState(id).published());
+        assertEquals(savedDirectory,rig.client.uploadedModels());assertTrue(rig.host.sent("upload_chunk").isEmpty());assertTrue(rig.host.sent("upload_end").isEmpty());
     }
 
     @Test void serverFlightStateWorksWithCachedAssetsAndChangesWithoutReplacingTheRemoteOrExtraAction() throws Exception {
@@ -274,6 +313,43 @@ class PrivateModelSyncClientTest {
         rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),upload),NOW);rig.client.tick(NOW);
         assertTrue(rig.client.committed());assertTrue(rig.host.sent("upload_chunk").isEmpty());assertTrue(rig.host.sent("upload_end").isEmpty());
         assertEquals(0,rig.client.uploadedBytes());assertTrue(rig.client.status().contains("已分享"));assertTrue(rig.client.status().contains("复用服务器缓存"));
+    }
+
+    @Test void explicitSharingAgainReusesSavedMatchingBytesWithANewGenerationAndIgnoresThePreviousCommit() throws Exception {
+        Rig rig=new Rig();rig.acknowledgeCatalog();rig.host.explicitLocal=true;
+        String id=rig.host.local.modelId();rig.client.tick(NOW);rig.host.drain();JsonObject original=rig.host.sent("upload_offer").getLast();
+        JsonObject oldCommit=publicationNotice("upload_committed",rig.host.local.owner(),original);
+        rig.receive(oldCommit,NOW);rig.confirmSaved(id,original,NOW);
+        assertTrue(rig.client.committed());assertTrue(rig.client.uploadedModelIds().contains(id));
+        var originalIdentity=rig.client.publicationIdentity();assertNotNull(originalIdentity);
+        var savedDirectory=rig.client.uploadedModels();assertEquals(1,savedDirectory.size());
+        assertEquals(AssetTransfer.hash(rig.bundle),savedDirectory.getFirst().hash());
+
+        rig.host.explicitLocal=false;rig.client.stopPublishing();
+        for(int i=1;i<=3;i++){long now=NOW+i*SECOND/8;rig.receive(heartbeat(),now);rig.client.tick(now);rig.host.drain();}
+        assertEquals(1,rig.host.sent("upload_offer").size(),"Stopping sharing must not resume a server-saved model automatically");
+        assertFalse(rig.client.committed());assertEquals(savedDirectory,rig.client.uploadedModels());
+        assertNull(rig.client.publicationIdentity());
+        assertEquals(PrivateModelSyncClient.UploadPhase.UPLOADED,rig.client.uploadState(id).phase());assertFalse(rig.client.uploadState(id).published());
+
+        long again=NOW+SECOND/2;rig.host.explicitLocal=true;rig.client.tick(again);rig.host.drain();
+        JsonObject current=rig.host.sent("upload_offer").getLast();assertEquals(2,rig.host.sent("upload_offer").size());
+        assertNotEquals(original.get("generation"),current.get("generation"));assertEquals(original.get("hash"),current.get("hash"));
+        assertEquals(id,current.get("modelId").getAsString());assertFalse(rig.client.committed());
+        assertNull(rig.client.publicationIdentity());
+        rig.receive(oldCommit,again);assertFalse(rig.client.committed(),"A late previous-generation ACK cannot publish the new request");
+        assertEquals(PrivateModelSyncClient.UploadPhase.WAITING_APPROVAL,rig.client.uploadState(id).phase());
+        assertEquals(savedDirectory,rig.client.uploadedModels());assertTrue(rig.client.uploadedModelIds().contains(id));
+
+        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),current),again);
+        rig.receive(oldCommit,again);assertTrue(rig.client.committed());
+        var currentIdentity=rig.client.publicationIdentity();assertNotNull(currentIdentity);
+        assertEquals(originalIdentity.hash(),currentIdentity.hash());assertNotEquals(originalIdentity,currentIdentity);
+        assertEquals(original.get("generation").getAsString(),originalIdentity.generation().toString(),"A captured confirmation cannot mutate when the same source is published again");
+        assertEquals(PrivateModelSyncClient.UploadPhase.UPLOADED,rig.client.uploadState(id).phase());assertTrue(rig.client.uploadState(id).published());
+        assertEquals(savedDirectory,rig.client.uploadedModels());assertEquals(0,rig.client.uploadedBytes());
+        assertTrue(rig.host.sent("upload_chunk").isEmpty());assertTrue(rig.host.sent("upload_end").isEmpty());
+        assertTrue(rig.client.status().contains("复用服务器缓存"));
     }
 
     @Test void theLastPublishedAppearanceRetriesEveryTwoSecondsWithoutStartingTheActionAgain() throws Exception {
@@ -639,6 +715,25 @@ class PrivateModelSyncClientTest {
         rig.client.stopPublishing();rig.client.tick(expired+1);rig.host.drain();JsonObject replacement=rig.host.sent("upload_offer").getLast();assertNotEquals(original.get("generation"),replacement.get("generation"));
         rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),replacement),expired+1);rig.confirmSaved(id,replacement,expired+1);rig.receive(deleteReply(request),expired+2);
         assertTrue(rig.client.committed());assertTrue(rig.host.explicitLocal);assertTrue(rig.host.deleted.isEmpty());assertTrue(rig.client.uploadState(id).uploaded());assertEquals(1,rig.client.uploadedModels().size());
+    }
+    @Test void aLateDeleteAckInTheExplicitRestartBeforeBeginGapCannotCancelTheNewSharingIntent() throws Exception {
+        Rig rig=new Rig();rig.acknowledgeCatalog();rig.host.explicitLocal=true;String id=rig.host.local.modelId();
+        rig.client.tick(NOW);rig.host.drain();JsonObject original=rig.host.sent("upload_offer").getLast();
+        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),original),NOW);rig.confirmSaved(id,original,NOW);
+        assertTrue(rig.client.requestDeleteUploadedModel(id));rig.client.tick(NOW);JsonObject request=rig.host.sent("upload_delete").getLast();
+        long expired=NOW+90*SECOND;rig.receive(heartbeat(),expired);rig.client.tick(expired);
+        assertFalse(rig.client.deletingUploadedModel(id));assertTrue(rig.client.committed());assertTrue(rig.host.deleted.isEmpty());
+
+        rig.client.restartPublishing();assertNull(rig.client.publicationIdentity());assertFalse(rig.client.committed());
+        assertEquals(1,rig.host.sent("upload_offer").size(),"The new user intent exists before beginPublish runs");
+        rig.receive(deleteReply(request),expired+1);
+        assertTrue(rig.host.explicitLocal,"The old deletion receipt must not disable the newly requested sharing option");
+        assertTrue(rig.host.deleted.isEmpty());assertTrue(rig.client.uploadedModels().isEmpty(),"The actual old archive deletion still updates its directory receipt");
+        rig.client.tick(expired+2);rig.host.drain();JsonObject current=rig.host.sent("upload_offer").getLast();
+        assertEquals(2,rig.host.sent("upload_offer").size());assertNotEquals(original.get("generation"),current.get("generation"));assertEquals(original.get("hash"),current.get("hash"));
+        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),original),expired+2);assertFalse(rig.client.committed());
+        rig.receive(publicationNotice("upload_committed",rig.host.local.owner(),current),expired+2);
+        assertTrue(rig.client.committed());assertTrue(rig.host.explicitLocal);assertTrue(rig.host.deleted.isEmpty());
     }
     @Test void lateDeleteHistoryIsBoundedAndIsClearedWhenTheConnectionChanges() throws Exception {
         Rig rig=new Rig();rig.acknowledgeCatalog();String id=rig.host.local.modelId();rig.savedModels.put(id,savedEntry(id,rig.bundle,"bbmodel"));rig.catalog(true,NOW);rig.host.drain();

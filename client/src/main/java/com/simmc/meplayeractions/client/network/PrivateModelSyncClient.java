@@ -45,6 +45,8 @@ public final class PrivateModelSyncClient {
     public record Local(UUID owner, String modelId, JsonObject appearance, JsonObject extra) {
         public Local { appearance=appearance.deepCopy(); extra=extra.deepCopy(); }
     }
+    /** Exact confirmed publication identity; saved archives and pending uploads are independent. */
+    public record PublicationIdentity(String modelId, UUID generation, String hash) { }
     public enum UploadPhase { NOT_UPLOADED, BUILDING, WAITING_APPROVAL, UPLOADING, VALIDATING, PUBLISHED, UPLOADED, FAILED }
     public enum ReceivingPhase { CHECKING_CACHE, WAITING_DOWNLOAD, DOWNLOADING, DECODING, WAITING_ACK, ACTIVE, FAILED }
     /** A live, viewer-authorized offer. Its metadata never permits a server disguise command. */
@@ -142,6 +144,9 @@ public final class PrivateModelSyncClient {
     }
     public boolean available() { return acknowledged&&allowedUpload&&host.channelAvailable(); }
     public boolean committed() { return available()&&committed; }
+    public PublicationIdentity publicationIdentity() {
+        return ownGeneration==null||!committed()||!currentLocal()?null:new PublicationIdentity(sourceId,ownGeneration,ownHash);
+    }
     public boolean canView() { return acknowledged&&allowedView&&host.channelAvailable(); }
     public String status() {
         if(outgoing!=null&&publicationBytes>0&&uploadId!=null&&!uploadEndSent)
@@ -288,6 +293,20 @@ public final class PrivateModelSyncClient {
     }
     public void stopPublishing() {
         stopPublishing(true);
+    }
+    /** Explicit user retry only. Normal ticks retain the terminal and bounded automatic retry policy. */
+    public void restartPublishing() {
+        // Retire the old intent before clearing its generation: a delayed deletion ACK can arrive
+        // before the next tick has archived the newly requested publication.
+        publicationSerial++;
+        Set<String> failedSources=new HashSet<>(List.of(sourceId,retrySource,blockedSource));
+        Local local=host.local();if(local!=null)failedSources.add(local.modelId());
+        stopPublishing(true);
+        for(String id:failedSources) {
+            UploadState previous=sessionUploads.get(id);
+            if(previous!=null&&previous.phase()==UploadPhase.FAILED)sessionUploads.remove(id);
+        }
+        retryAfter=clockNow;status="已请求重新分享，等待本机模型准备";
     }
     private void stopPublishing(boolean resetRetries) {
         if(ownGeneration!=null) {

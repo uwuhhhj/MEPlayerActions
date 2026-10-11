@@ -200,7 +200,7 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
         int half=(panelWidth-6)/2,y=top-sourceOffset;
         int sourceHeight=compactLayout?18:24;
         roles.put(flatButton(clientTab?"客户端 ✓":"客户端",left,y,half,sourceHeight,()->switchSource(true),
-                "浏览客户端模型\n使用模型仅自己可见\n云朵按钮可上传分享",clientTab),"clientSource");
+                "浏览客户端模型\n未上传模型仅本机使用\n已上传且匹配的模型会恢复分享\n云朵管理上传与存档",clientTab),"clientSource");
         String serverLabel=runtime.serverCatalogOfflineMode()?clientTab?"服务端 · 离线":"服务端 · 离线 ✓":clientTab?"服务端":"服务端 ✓";
         roles.put(flatButton(serverLabel,left+half+6,y,panelWidth-half-6,sourceHeight,()->switchSource(false),
                 runtime.serverCatalogOfflineMode()?"离线模式\n浏览本机缓存并保存设置\n连接服务器后才能请求伪装":"浏览服务器可用模型\n点击使用后等待服务器确认",!clientTab),"serverSource");

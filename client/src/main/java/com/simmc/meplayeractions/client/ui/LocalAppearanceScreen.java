@@ -25,6 +25,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
@@ -76,6 +80,9 @@ public class LocalAppearanceScreen extends Screen {
     private TextFieldWidget search;
     protected ButtonWidget use, settings, favorite;
     private ButtonWidget upload;
+    private ThreadPoolExecutor savedShareChecker;
+    private String pendingSavedShare="";
+    private long savedShareRevision;
 
     public LocalAppearanceScreen(ClientRuntime runtime) { this(runtime, null); }
     public LocalAppearanceScreen(ClientRuntime runtime, Screen parent) {
@@ -126,7 +133,7 @@ public class LocalAppearanceScreen extends Screen {
         return group.label()+" · "+group.count()+" 个模型\n"+group.path()+"\n点击进入模型目录";
     }
     protected CompletableFuture<LocalModelLibrary.Loaded> loadGalleryPreview(String id) {
-        return uploadedOnly&&!runtime.privateModelUploadState(id).uploaded()?CompletableFuture.completedFuture(null):runtime.loadLocalPreview(id);
+        return uploadedOnly&&!runtime.uploadedPrivateModelIds().contains(id)?CompletableFuture.completedFuture(null):runtime.loadLocalPreview(id);
     }
     protected YsmModelProfile galleryProfile(String id) {return runtime.localModelProfile(id);}
     protected String gallerySourceLabel(String id) {return uploadedOnly?"本人服务器存档":sourceLabel(id);}
@@ -141,27 +148,45 @@ public class LocalAppearanceScreen extends Screen {
     }
     protected void drawGalleryCardCloud(DrawContext context,String id,int x,int y) {
         var state=runtime.privateModelUploadState(id);boolean saved=storedPrivateModel(id)!=null;
-        int tint=runtime.deletingUploadedPrivateModel(id)?0xffffd589:state.uploaded()?0xff8df2b5
+        int tint=runtime.deletingUploadedPrivateModel(id)||state.inProgress()?0xffffd589:runtime.uploadedPrivateModelIds().contains(id)?0xff8df2b5
                 :saved||state.inProgress()||state.published()?0xffffd589:canUploadModel(id)?0xfff3f0e0:0xff8a929c;
         CloudUploadIcon.draw(context,x,y,tint,saved||state.published());
     }
     protected boolean canUseGalleryModel(String id,LocalModelLibrary.Loaded loaded) {
-        return loaded!=null&&(!uploadedOnly||runtime.privateModelUploadState(id).uploaded());
+        return loaded!=null&&(!uploadedOnly||runtime.uploadedPrivateModelIds().contains(id));
     }
     protected String galleryUseTooltip() {return runtime.canActivateLocalAppearance()
             ? "使用所选模型，仅自己可见\n云朵按钮可上传分享" : "请先解除服务器伪装\n客户端与服务端外观不能同时使用";}
     protected GalleryModelUseState.State galleryUseState(String id,LocalModelLibrary.Loaded loaded) {
-        if(uploadedOnly&&!runtime.privateModelUploadState(id).uploaded())
+        if(!pendingSavedShare.isEmpty())return new GalleryModelUseState.State(
+                id.equals(pendingSavedShare)?GalleryModelUseState.Phase.WAITING:GalleryModelUseState.Phase.BLOCKED,
+                id.equals(pendingSavedShare)?"核对分享资源":"等待核对",false);
+        if(uploadedOnly&&!runtime.uploadedPrivateModelIds().contains(id))
             return new GalleryModelUseState.State(GalleryModelUseState.Phase.BLOCKED,"使用模型",false);
+        if(matchedSavedModel(id)!=null&&runtime.privateModelUploadState(id).inProgress())
+            return new GalleryModelUseState.State(GalleryModelUseState.Phase.WAITING,"正在恢复分享",false);
         boolean current=runtime.currentAppearanceSource()==ClientRuntime.AppearanceSource.CLIENT;
-        return GalleryModelUseState.local(id,loaded==null?"":loaded.hash(),current?runtime.currentAppearanceModelId():"",
+        var state=GalleryModelUseState.local(id,loaded==null?"":loaded.hash(),current?runtime.currentAppearanceModelId():"",
                 current?runtime.currentAppearanceAssetHash():"",runtime.pendingLocalAppearanceModelId(),
                 runtime.canActivateLocalAppearance(),canUseGalleryModel(id,loaded));
+        if(loaded!=null&&matchedSavedModel(id)!=null&&runtime.canShareLocalModel()&&(state.current()||state.canUse())) {
+            boolean published=runtime.privateModelUploadState(id).published();
+            return new GalleryModelUseState.State(state.phase(),state.current()?published?"当前分享":"恢复分享":"使用并分享",!state.current()||!published);
+        }
+        return state;
     }
     protected String galleryUseTooltip(GalleryModelUseState.State state) {
-        if(uploadedOnly&&!cloudModelHint(selection.modelId()).isEmpty())return "云端已保存\n"+cloudModelHint(selection.modelId()).replace("云端已保存 · ","")+"\n本机内容一致时才能使用\n云朵按钮可删除服务器资源";
+        if(!pendingSavedShare.isEmpty())return "正在核对已上传模型的本机完整资源\n校验完成后重新检查发布权限\n尚未恢复分享";
+        if(matchedSavedModel(selection.modelId())!=null&&runtime.privateModelUploadState(selection.modelId()).inProgress())
+            return "正在恢复此存档的私人分享\n本机内容已匹配\n"+runtime.privateModelUploadState(selection.modelId()).message();
+        if(uploadedOnly&&!cloudModelHint(selection.modelId()).isEmpty())return "云端已保存\n"+cloudModelHint(selection.modelId()).replace("云端已保存 · ","")+"\n本机内容一致时才能使用\n云朵按钮可管理存档与删除服务器资源";
+        if(matchedSavedModel(selection.modelId())!=null&&runtime.canShareLocalModel()) {
+            if(state.current()&&runtime.privateModelUploadState(selection.modelId()).published())return "当前正在分享此私人模型\n获准模组观看者可见\n云朵存档管理可结束分享\n本地外观与服务器存档保留";
+            return "使用此已上传模型并恢复多人分享\n点击时核对本机完整文件\n服务器缓存可免去重复传输\n获准的模组观看者可见\n不创建服务器伪装";
+        }
         if(state.current())return "当前正在使用此模型\n选择其他模型可切换";
         if(state.waiting())return localGallery()?"正在加载所选模型\n请等待加载完成":"请求已发送\n等待服务器确认伪装";
+        if(localGallery())return galleryUseTooltip()+"\n未确认匹配存档或没有发布权限时，仅本机使用";
         return galleryUseTooltip();
     }
     protected String galleryBrowsingMessage() {return "预览中，点击使用模型才应用";}
@@ -170,6 +195,7 @@ public class LocalAppearanceScreen extends Screen {
     protected void setGalleryMessage(String value) {message=value;}
     protected void refreshGalleryModels() {refreshModels(false);}
     protected void resetGallery() {
+        cancelSavedShareCheck();
         clearGalleryPreviews();models=List.of();filtered=List.of();visible=List.of();
         groupSource=sourceFilter=page=0;groupDirectory=serverGroupDirectory=query=message="";
         favoritesOnly=uploadedOnly=false;groupPages.clear();selection.restore("");
@@ -294,22 +320,27 @@ public class LocalAppearanceScreen extends Screen {
                 &&!runtime.privateModelUploadState(id).inProgress();
     }
     private boolean canUseCloudAction(String id) {
-        if(id.isEmpty()||runtime.deletingUploadedPrivateModel(id))return false;
+        if(id.isEmpty()||!pendingSavedShare.isEmpty()||runtime.deletingUploadedPrivateModel(id))return false;
         if(storedPrivateModel(id)!=null)return runtime.privateUploadCatalogReady();
         return runtime.privateModelUploadState(id).published()||canUploadModel(id);
     }
     private PrivateUploadCatalogSnapshot.Model storedPrivateModel(String id) {
         return runtime.uploadedPrivateModels().stream().filter(model->model.modelId().equals(id)).findFirst().orElse(null);
     }
+    private PrivateUploadCatalogSnapshot.Model matchedSavedModel(String id) {
+        if(!runtime.privateUploadCatalogReady()||runtime.deletingUploadedPrivateModel(id))return null;
+        var expected=storedPrivateModel(id);
+        return expected!=null&&runtime.uploadedPrivateModelIds().contains(id)?expected:null;
+    }
     private String cloudModelHint(String id) {
-        if(!uploadedOnly||storedPrivateModel(id)==null||runtime.privateModelUploadState(id).uploaded())return "";
+        if(!uploadedOnly||storedPrivateModel(id)==null||runtime.uploadedPrivateModelIds().contains(id))return "";
         if(!runtime.privateUploadCatalogReady())return "云端已保存 · 正在核对本机文件";
         return localSourceIds.contains(id)?"云端已保存 · 本机文件内容不同":"云端已保存 · 本机未找到模型";
     }
     private String uploadTooltip(String id) {
         if(runtime.deletingUploadedPrivateModel(id))return "删除中\n等待服务器确认\n本地文件将保留";
-        if(storedPrivateModel(id)!=null)return "服务器已保存\n点击删除这个模型的服务器存档\n包含该模型的已保存旧版本\n会结束相关私人分享\n本地文件将保留\n"
-                +(runtime.privateModelUploadState(id).uploaded()?"本机内容一致":localSourceIds.contains(id)?"本机文件内容不同":"本机未找到模型")
+        if(storedPrivateModel(id)!=null)return "服务器已保存\n点击管理：再次分享、结束分享或删除\n再次分享需要本机完整内容一致\n删除会结束相关分享，本地文件保留\n"
+                +(runtime.uploadedPrivateModelIds().contains(id)?"本机内容一致":!runtime.privateUploadCatalogReady()?"正在核对本机内容":localSourceIds.contains(id)?"本机文件内容不同":"本机未找到模型")
                 +(runtime.privateUploadDeleteStatus(id).isEmpty()?"":"\n"+runtime.privateUploadDeleteStatus(id));
         if(runtime.privateModelUploadState(id).published())return "已分享，尚未确认服务器保存\n点击结束私人分享\n保留本地文件与服务器缓存";
         if(!runtime.canActivateLocalAppearance())return "请先解除服务器伪装\n私人模型上传与服务器伪装不能同时使用";
@@ -324,28 +355,18 @@ public class LocalAppearanceScreen extends Screen {
         if(!canUseCloudAction(id)){message=uploadTooltip(id);return;}
         var expected=storedPrivateModel(id);
         if(expected!=null) {
-            client.setScreen(new ConfirmScreen(confirmed->{
-                if(confirmed) {
-                    if(runtime.requestDeleteUploadedPrivateModel(expected)) {
-                        observedDeleteId=id;observedDeleteStatus=runtime.privateUploadDeleteStatus(id);message="删除请求已提交，等待服务器确认";
-                    } else {
-                        message=runtime.privateUploadDeleteStatus(id);
-                        if(message.isEmpty())message="当前无法删除服务器资源，请稍后重试";
-                    }
-                }
-                client.setScreen(this);
-            },Text.literal("删除服务器模型？"),Text.literal("删除 "+label(id)+" 的服务器存档及已保存旧版本。\n相关私人分享会结束，本地模型文件保留。"),
-                    Text.literal("删除服务器资源"),Text.literal("取消")));
+            client.setScreen(new PrivateUploadManagementScreen(runtime,this,expected,label(id),status->message=status,
+                    ()->{observedDeleteId=id;observedDeleteStatus=runtime.privateUploadDeleteStatus(id);}));
             return;
         }
         var shared=runtime.privateModelUploadState(id);
         if(shared.published()) {
+            var publication=runtime.privatePublicationIdentity();
+            if(publication==null||!publication.modelId().equals(id)){message="私人分享已变化，请重新选择";return;}
             client.setScreen(new ConfirmScreen(confirmed->{
                 if(confirmed) {
-                    var current=runtime.privateModelUploadState(id);
-                    if(!current.published() || !current.hash().equals(shared.hash()))message="私人分享已变化，请返回后重新确认";
-                    else if(runtime.setPrivateSyncEnabled(false))message="已结束私人分享，本地模型与服务器缓存保留";
-                    else message="未能结束私人分享，请重试";
+                    message=runtime.stopPrivatePublication(publication)?"已结束私人分享，本地模型与服务器缓存保留"
+                            :"私人分享已变化或结束，请重新确认；当前分享未改动";
                 }
                 client.setScreen(this);
             },Text.literal("结束私人分享？"),Text.literal("其他玩家将不再显示你的私人模型。\n本地模型文件和已保存的服务器缓存保留。"),Text.literal("结束分享"),Text.literal("取消")));
@@ -527,7 +548,9 @@ public class LocalAppearanceScreen extends Screen {
     }
     public boolean browseModel(String id) {
         if (models.stream().noneMatch(model -> model.id().equals(id))) return false;
-        selection.browse(id); message = galleryBrowsingMessage(); yaw = 0; pitch = -8;
+        boolean cancelled=!pendingSavedShare.isEmpty()&&!pendingSavedShare.equals(id);
+        if(cancelled)cancelSavedShareCheck();
+        selection.browse(id); message = cancelled?"已取消原模型的分享核对，当前仅预览":galleryBrowsingMessage(); yaw = 0; pitch = -8;
         var entry = previews.get(id);
         if (entry != null && entry.loaded != null) preview.restart(key(id, entry.loaded), ModelPreview.Context.SELECTED);
         rebuildGrid(); return true;
@@ -538,11 +561,40 @@ public class LocalAppearanceScreen extends Screen {
         var entry = previews.get(selection.modelId());
         if (entry == null || entry.loaded == null) { message = "请等待模型预览加载完成"; return; }
         if(!galleryUseState(selection.modelId(),entry.loaded).canUse())return;
+        var saved=matchedSavedModel(selection.modelId());
+        if(saved!=null&&runtime.canShareLocalModel()) {restoreSavedShare(saved);return;}
         runtime.setPrivateSyncEnabled(false);
         runtime.selectLocalModel(selection.modelId());
         runtime.options.showSelf = true; runtime.options.save();
         message = "";
         updateSelectionButtons();
+    }
+    private void restoreSavedShare(PrivateUploadCatalogSnapshot.Model expected) {
+        if(savedShareChecker==null)savedShareChecker=new ThreadPoolExecutor(1,1,0,TimeUnit.MILLISECONDS,new ArrayBlockingQueue<>(1),runnable->{
+            var thread=new Thread(runnable,"MPA-gallery-reshare-check");thread.setDaemon(true);return thread;
+        },new ThreadPoolExecutor.AbortPolicy());
+        pendingSavedShare=expected.modelId();long revision=++savedShareRevision;
+        message="正在核对已上传模型，尚未恢复分享";updateSelectionButtons();
+        CompletableFuture<Boolean> checked;
+        try {checked=CompletableFuture.supplyAsync(()->{
+            try{return PrivateUploadSourceCheck.matches(runtime.localModelDirectory(),expected);}
+            catch(java.io.IOException|RuntimeException failure){throw new CompletionException(failure);}
+        },savedShareChecker);}catch(RejectedExecutionException busy){pendingSavedShare="";message="本机校验任务繁忙，请稍后重试";updateSelectionButtons();return;}
+        checked.whenComplete((matches,error)->client.execute(()->{
+            if(!activeView||revision!=savedShareRevision)return;
+            pendingSavedShare="";
+            if(!selection.modelId().equals(expected.modelId()))message="分享核对已取消：当前已选择其他模型";
+            else if(error!=null||!Boolean.TRUE.equals(matches))message="未恢复分享：本机完整资源已缺失或与服务器存档不同，请检查文件并刷新";
+            else if(!localGallery()||!expected.equals(matchedSavedModel(expected.modelId()))||!runtime.canShareLocalModel()||!runtime.canActivateLocalAppearance())
+                message="未恢复分享：服务器存档、权限或当前伪装已变化，请重新选择";
+            else if(runtime.uploadAndShareLocalModel(expected.modelId()))message="已请求恢复私人分享，等待服务器确认";
+            else message="当前无法恢复分享："+runtime.privateSyncStatus();
+            updateSelectionButtons();
+        }));
+    }
+    private void cancelSavedShareCheck() {
+        savedShareRevision++;pendingSavedShare="";
+        if(savedShareChecker!=null){savedShareChecker.shutdownNow();savedShareChecker=null;}
     }
 
     protected void updateSelectionButtons() {
@@ -551,7 +603,7 @@ public class LocalAppearanceScreen extends Screen {
         var state=galleryUseState(selection.modelId(),entry==null?null:entry.loaded);
         use.active=state.canUse();use.setMessage(Text.literal(state.buttonLabel()));
         use.setTooltip(ModelUiTooltip.of(textRenderer,LocalAppearanceScreen.this.width,galleryUseTooltip(state)));
-        if(settings!=null){settings.active=!selection.modelId().isEmpty()&&(!uploadedOnly||runtime.privateModelUploadState(selection.modelId()).uploaded());settings.setTooltip(ModelUiTooltip.of(textRenderer,LocalAppearanceScreen.this.width,
+        if(settings!=null){settings.active=!selection.modelId().isEmpty()&&(!uploadedOnly||runtime.uploadedPrivateModelIds().contains(selection.modelId()));settings.setTooltip(ModelUiTooltip.of(textRenderer,LocalAppearanceScreen.this.width,
                 settings.active?"查看模型详情\n设置缩放、位置与作者配置":"无法配置此服务器存档\n需要本机存在相同内容的模型"));}
         if(favorite!=null) {
             favorite.active=!selection.modelId().isEmpty();
@@ -692,7 +744,10 @@ public class LocalAppearanceScreen extends Screen {
         leftPreviewId=id;leftPreviewKey=id+":"+appearance.assetHash();leftPreviewHash=appearance.assetHash();
         leftPreviewInstance=appearance.instance();leftPreviewSource="runtime-current";
         clipped(context, label(id), left + 6, top + 6, previewWidth - 12, 0xfff3f6ff);
-        clipped(context, "当前使用", left + 6, top + 17, previewWidth - 12, 0xff92b9df);
+        boolean savedPrivate=localGallery()&&matchedSavedModel(id)!=null;
+        var uploadState=runtime.privateModelUploadState(id);
+        String currentStatus=savedPrivate?uploadState.published()?"当前分享":uploadState.inProgress()?"当前本地使用 · 正在恢复分享":"当前本地使用 · 分享未开启":"当前使用";
+        clipped(context,currentStatus, left + 6, top + 17, previewWidth - 12, 0xff92b9df);
         var entry = previews.get(id);
         boolean sameAsset = entry != null && entry.loaded != null
                 && entry.loaded.hash().equals(appearance.assetHash())
@@ -711,7 +766,8 @@ public class LocalAppearanceScreen extends Screen {
         leftPreviewId = id; leftPreviewSource = "selected-preview";
         clipped(context, label(id), left + 6, top + 6, previewWidth - 12, 0xfff3f6ff);
         var state=galleryUseState(id,entry==null?null:entry.loaded);
-        String status=!cloudModelHint(id).isEmpty()?"云端存档 · 本机内容不匹配":state.current()?"当前使用":state.waiting()?"正在加载所选模型":runtime.canActivateLocalAppearance()
+        String status=!cloudModelHint(id).isEmpty()?"云端存档 · 本机内容不匹配":state.current()?state.buttonLabel().equals("当前分享")?"当前分享":state.buttonLabel().equals("恢复分享")?"当前本地使用 · 分享未开启":"当前使用"
+                :state.waiting()?id.equals(pendingSavedShare)?"正在核对分享资源":matchedSavedModel(id)!=null&&runtime.privateModelUploadState(id).inProgress()?"正在恢复私人分享":"正在加载所选模型":runtime.canActivateLocalAppearance()
                 ?"预览 · 点击使用模型应用":"仅预览 · 请先解除服务器伪装";
         clipped(context,status,left+6,top+17,previewWidth-12,0xff92b9df);
         if (entry == null || entry.loaded == null) {
@@ -768,7 +824,7 @@ public class LocalAppearanceScreen extends Screen {
         return super.mouseScrolled(mouseX,mouseY,horizontal,vertical);
     }
     @Override public void removed() {
-        activeView = false; rotating = false;clearGalleryPreviews();
+        activeView = false; rotating = false;cancelSavedShareCheck();clearGalleryPreviews();
     }
     protected void clearGalleryPreviews() {generation++;inFlight=0;previews.clear();preview.clear();drawnCards.clear();leftPreviewDrawn=false;}
     protected final void showUploadedModelsOnly() {
