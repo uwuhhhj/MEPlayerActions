@@ -534,6 +534,7 @@ def main() -> None:
                      "首次安装可使用包内默认 config.yml；升级保留自己的配置，新 performance 与 resource-protection 字段缺失时自动采用默认值，勿直接覆盖整份配置。"
                      "客户端需 Minecraft 1.21.11 / Fabric / Java 21；服务器 ModelEngine 与 GSit 为可选接入。"
                      "仅私人分享无需 ModelEngine 或服务器资源包。使用服务器伪装时，示例蓝图由 ModelEngine 导入并生成原版资源，CraftEngine 继续负责原有资源包合并与下发。\n\n"
+                     "客户端接管只下发管理员明确放入 plugins/MEPlayerActions/models/ 的同名完整 BBModel；不会自动回退内置文件或 ME 蓝图。需要两套示例的客户端接管时，可主动复制 examples/models/ 原文件到该目录；没有原文件仍可服务器伪装。\n\n"
                      "三条路径分别为本地私人外观、服务器中继的私人模型分享、服务器模型伪装。私人模型默认仅自己可见，多人共享需玩家明确开启及服务器协商、上传/观看权限；分享不创建 ME 伪装，未安装模组的玩家仍看见原版角色。服务器伪装与私人模型互斥；解除服务器伪装后须显式重新使用私人模型。服务器 private-models/ 属于私人运行时数据，不随源码或安装包分发。\n\n"
                      f"两端分阶段定向单元检查最后结果保守去重共 {tests['distinct_targeted_cases']} 个显示名身份通过；"
                      f"原报告共记录 {tests['raw_reported_testcases']} 项执行（含阶段重跑与参数化重名），详见证据；编译与包内容校验通过。"

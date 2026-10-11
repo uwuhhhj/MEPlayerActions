@@ -44,7 +44,9 @@ state 必须额外包含 `motion` 对象：`features` 为服务器及玩家允�
 
 非空 `assetHash` 表示服务器允许客户端准备这份实例的资产，空值表示保持后端显示，不允许 render_ready。当前 ModelEngine 适配器只有本插件创建、实体没有外来模型且有可分发资产的实例提供非空值；接管原生 ME、外来模型共存或资产失败时 hash 为空。state 还提供 `assetStatus`（pending/ready/missing/invalid，或不允许接管时的 server-only）、`assetReason` 和 `assetSource` 诊断；它们不授予渲染权限，原因不包含服务器私有文件路径。
 
-`assetSource` 的 `own`、`jar`、`modelengine` 分别表示 MPA models 目录、插件内置资源、ModelEngine 蓝图，`lookup` 表示仍在准备，`none` 表示各来源均未找到。准备结果改变时，即使实例与动画序列不变，也更新 state；不会因资源可用而自动授予接管租约。客户端图库将这些诊断与本机缓存、下载／校验、纹理准备及实际 ACK 租约分开显示；未绑定目录项的资源不能凭名称或旧缓存推断。
+当前服务端 `assetSource` 为 `own`：仅检查 MPA models 中显式发布的文件，准备、缺失和无效状态也沿用此来源。`jar`、`modelengine`、`lookup`、`none` 仅为旧服务端诊断兼容，不代表当前版本仍从内置资源或 ME 蓝图下载。准备结果改变时，即使实例与动画序列不变，也更新 state；不会因资源可用而自动授予接管租约。客户端图库将这些诊断与本机缓存、下载／校验、纹理准备及实际 ACK 租约分开显示；未绑定目录项的资源不能凭名称或旧缓存推断。
+
+可选 `sourceInvisible` 是服务器真实玩家的隐身状态，区别于 ME 为隐藏原版外观而发出的实体元数据标记。仅获准且有效的服务器接管绑定使用它决定原生模型身体可见性；保留真实隐身、发光轮廓与本人显隐设置。缺省时沿用原版渲染状态，本地／私人模型不使用此覆盖。
 
 `state.accessories` 是原模型持久附件状态，仅可包含有限的 `a`、`b` 数字，范围 0–1，对应 `variable.roaming.a/b`。服务器按当前伪装实例同步，模型切换或解除后重置。客户端在时间脚本执行后、几何采样前应用它，避免新观众或离开可视范围后回来时重放动作造成重复切换。物理变量仍由各观看者按本地实体运动计算。该字段缺省为空对象，本地预览自行执行附件脚本。
 
@@ -54,7 +56,11 @@ state 必须额外包含 `motion` 对象：`features` 为服务器及玩家允�
 
 hello／hello_ack 双方确认 `server_model_catalog` 后，服务器主动发送 `server_model_catalog {revision,index,count,canDisguise,truncated,models:[{id,label}]}`。`revision` 为本会话递增正整数，`index` 从 0 开始，`count` 最多 4096；一片最多 512 条，总目录最多 4096 条。全部分片完成后才发布新目录；更高版本开始接收时暂停旧选择权限，重复片必须内容一致。无权限时发送单片空目录、`canDisguise:false`；`truncated` 表示目录达到上限。目录 ID 与下文模型 ID 规范相同，label 最多 256 字符。
 
+条目可附带展示字段 `source:"own"|"modelengine"|"unknown"`、`folder` 和 `clientResource`。`folder` 是来源根目录下的相对父目录，用 `/` 分隔，最多 256 字符、16 层；禁止绝对路径、`.`／`..`、反斜杠、冒号、控制字符及格式颜色码。空值表示根文件，在 UI 归入“未分类”。`own` 优先显示 MPA 显式发布目录；ME 目录仅用于分类。`clientResource:true` 表示存在唯一显式 MPA 文件，仍须实际校验与 offer；`false` 表示本次完整目录扫描未找到唯一发布文件；省略表示尚未确定。旧服务端省略字段时保持未知，不推断为不可用。当前绑定的资源状态优先于异步目录提示。
+
 本适配器从 ModelEngine 注册表的有效模型 ID 生成共享目录，每 100 tick 刷新源缓存；目录与伪装补全共用来源，不以 MPA 客户端资源或配置条目是否存在来筛选。会话沿既有分散发现周期检查更新和权限，默认在 20 TPS 下最坏约 7 秒。每会话每 tick 最多成功发送一片，受原字节预算限制；延后保留原片，不挤入关键控制队列。正在发送时先检查权限撤回，丢弃旧待发片。旧客户端未声明能力就不发送目录。
+
+分类由共享有界后台任务按文件名扫描 MPA／ME 目录，不读取模型正文，不随观看者数量重复遍历。扫描失败或预算不足时展示未知，目录可继续选择合法 ME 伪装。分类变化使用新的目录 revision；无相应发布文件仍不会下发或接管。
 
 目录仅授权选择固定命令 `/meplayeractions disguise <ID> [已验证的可选参数]`，参数来自本机按 ID 保存的 `scale`、`hide-self`、`show-self`、`view-distance`、`max-viewers`、`delay`、`effect`，不接受任意命令文本。客户端共享 500 ms 发送间隔，服务器仍检查真实命令权限与参数范围。目录不包含资源 token/hash，也不授权 `asset_request`；浏览仅复用已收到的本次会话资产。服务器确认伪装后沿下文 offer／ready／ACK 分发。目录接收、断线、重新握手与超时均不能继承旧会话的选择权限。
 
@@ -72,7 +78,7 @@ hello／hello_ack 双方确认 `server_model_catalog` 后，服务器主动发�
 
 所有模式保持相同的 `state.modelId`、`state.assetHash` 和 ready/ack/heartbeat 语义。hash 是**原始完整 .bbmodel JSON 字节** SHA-256 小写 64 位十六进制，不是 ZIP、PNG 或 GZIP hash。协议模型 ID 为 1–64 位小写英文、数字、`_`、`-`。
 
-当前资产查找顺序为 `plugins/MEPlayerActions/models/<id>.bbmodel` → 服务端 JAR 的 `models/<id>.bbmodel` → ME `blueprints/` 内匹配文件名，再匹配 `model_identifier`。安装 ZIP 的示例不自动部署为最高优先级覆盖。ME 数值蓝图不能恢复已烘焙掉的表达式和物理；模型放置与升级覆盖检查见 [模型部署](MODEL_DELIVERY.md)。
+客户端接管资产仅选取管理员明确放入 `plugins/MEPlayerActions/models/` 的 `<id>.bbmodel`：根目录直接同名优先，否则接受唯一同名子目录文件，多个子目录同名拒绝。缺失、歧义或无效时不回退插件内置资源或 ME `blueprints/`，不生成可下载 offer；有效 ME 服务器伪装继续显示。安装 ZIP 不自动发布原模型，具体放置见 [模型部署](MODEL_DELIVERY.md)。
 
 主动推送会话不接受 `asset_request`，返回 `asset_server_push_mode`。客户端观察到 hash 不等于获准接收任意资产；服务器先根据当前可见绑定发 offer：
 

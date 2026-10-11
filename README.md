@@ -19,8 +19,8 @@ Paper 玩家伪装与动画插件，配套可选的 Fabric 客户端模组。当
 | 客户端本地模型／服务器伪装接管 | Minecraft 1.21.11、Java 21、Fabric Loader ≥ 0.18.4、Fabric API ≥ 0.140.2 |
 
 1. 关闭游戏或服务器，替换对应安装包内的 JAR：客户端放入 `mods/`，服务端放入 `plugins/`，避免同时加载两个版本。升级保留已有配置、私人模型和自定义蓝图。
-2. 服务器伪装首次安装时，将安装包的 `plugins/ModelEngine/blueprints/meplayeractions/` 一并部署。两套示例的完整原模型已内置于服务端 JAR，无需另复制到 MPA 的 `models/` 目录。
-3. 执行 `/meg reload models` 加载 ME 模型，并沿用原有 ModelEngine／CraftEngine 的资源包生成、合并与下发流程。客户端默认由 MPA 主动推送原模型接管，不需要额外合并工具或 MPA 资源包索引。
+2. 服务器伪装首次安装时，将安装包的 `plugins/ModelEngine/blueprints/meplayeractions/` 一并部署。需要客户端接管的模型，由管理员将完整原文件明确放入 `plugins/MEPlayerActions/models/`；两套示例可从安装包的 `examples/models/` 复制。
+3. 执行 `/meg reload models` 加载 ME 模型，并沿用原有 ModelEngine／CraftEngine 的资源包生成、合并与下发流程。MPA 只推送管理员明确发布的原模型，不自动下载 ME 蓝图或内置资源；没有 MPA 原文件时仍可服务器伪装。不需要额外合并工具或 MPA 资源包索引。
 4. 仅私人分享时，启用 `client-sync.private-models.enabled`，授予发布者 `mact.private.upload`、观看者 `mact.private.view`；发布者再主动开启分享。开关与两项权限默认关闭，OP 也需显式授权。私人资源使用独立有界缓存，不放进 ME 蓝图目录。
 
 真实坐下／爬行指令另需可选的 [GSit](https://github.com/Gecolay/GSit)；原生爬行、床睡眠和载具动画无需 GSit。自定义模型来源、服务器配置和部署排查见 [模型同步与部署](docs/MODEL_DELIVERY.md)。
