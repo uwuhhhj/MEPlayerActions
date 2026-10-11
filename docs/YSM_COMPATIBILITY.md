@@ -49,6 +49,8 @@
 
 BBModel 静态骨骼和 locator 旋转使用 Blockbench 项目坐标。固定 Sparkle 转换器把项目 X／Y 旋转当作 Bedrock 几何反转；BBModel 专用适配层恢复作者初始角度，并按 ZYX 合成。依据为 [Blockbench 4.10.4 项目预览](https://github.com/JannisX11/blockbench/blob/v4.10.4/js/outliner/outliner.js#L575) 与 [Bedrock 导出](https://github.com/JannisX11/blockbench/blob/v4.10.4/js/io/formats/bedrock.js#L816)；[5.0 格式迁移](https://github.com/JannisX11/blockbench/blob/v5.0.0/js/io/formats/bbmodel.js#L67)只迁移动画通道，不反转静态骨骼。这项适配仅作用于作者 BBModel 导入，原生二进制／文件夹 YSM 与已转换资产保持各自格式规则。入口见 [NativeBbModelBasis](../client/src/main/java/com/simmc/meplayeractions/client/model/NativeBbModelBasis.java)。
 
+BBModel 六个 cube 面按 [Blockbench 面坐标](https://github.com/JannisX11/blockbench/blob/v4.10.0/lib/three_custom.js#L1-L46)及 [UV／面旋转](https://github.com/JannisX11/blockbench/blob/v4.10.0/js/outliner/cube.js#L1194-L1220)绑定贴图角点，顶点绕序与外向法线一致。保留作者反向 UV 端点和 90° 面旋转；缺失、空贴图或禁用面不补画。这项规则共用于本人、其他观看者、私人分享和缓存预览，不为本人另设镜像规则。转换结果在内存中生成，更新客户端后重启即可重新解释已有原始缓存，无需删除模型或重新上传。
+
 作者 BBModel 动画按原文件版本保留通道语义：4.x 的位置 X、旋转 X／Y 反号，5.x 保持各轴正值，均按项目 ZYX 合成。版本标记随作者动画、别名与第一人称副本保留，在表达式求值后适配，不重写作者 Molang 程序；生成动作预设与原生 YSM 不使用这个标记。数值 Bézier 的时间／值挂柄按关键帧端点偏移解释，双数据点保留前／后顺序。依据为 [4.10 动画预览](https://github.com/JannisX11/blockbench/blob/v4.10.4/js/animations/timeline_animators.js#L331)、[5.0 动画预览](https://github.com/JannisX11/blockbench/blob/v5.0.0/js/animations/timeline_animators.js#L369)和 [Bézier 挂柄](https://github.com/JannisX11/blockbench/blob/v5.0.0/js/animations/keyframe.js#L209)。入口见 [NativeBbModelAnimations](../client/src/main/java/com/simmc/meplayeractions/client/model/NativeBbModelAnimations.java)。
 
 ## 来源执行语义
@@ -69,7 +71,7 @@ BBModel 静态骨骼和 locator 旋转使用 Blockbench 项目坐标。固定 Sp
 | 输入与分享预算 | 本地 YSM 输入／展开／转换分别限 64 MiB；独立 BBModel 源文件 8 MiB，目录内声明的 PNG 伴随资源及转换后资产分别限 64 MiB。私人原始归档与展开限 8 MiB，原生 BBModel 派生资产另限 64 MiB，协商可降低；超出分享预算可继续本地使用。文件数、像素、几何与脚本亦受预算约束 |
 | 原生时间线 | 单事件最多 256 段／32 KiB UTF-8，保留作者顺序；普通 BBModel 及声音／粒子事件限 32 项 |
 | geometry 与曲线 | 多项 geometry 沿固定来源选择第一项；公开原生 YSM 的 Bézier 路径沿来源回退为线性，`blend_via_shortest_path` 的读取不表示执行。Sparkle 独立 BBModel 的数值曲线烘焙为另一条路径 |
-| BBModel 来源限制 | 控制器引用不额外将 UUID 重写为动画名称，不消费条目任意额外 blend 字段；非法条件取 `0`，缺省／空条件使用默认值。根级无父组的独立元素按来源可能无法绑定骨骼。非 YSM 的 BBModel ZIP、Figura 与 Bedrock 包自动识别未接入选择入口 |
+| BBModel 来源限制 | 控制器引用不额外将 UUID 重写为动画名称，不消费条目任意额外 blend 字段；非法条件取 `0`，缺省／空条件使用默认值。根级无父组的独立元素按来源可能无法绑定骨骼，组的 `export=false` 尚未筛除几何。多张贴图作为换肤列表，不支持按面同时使用不同材质。非 YSM 的 BBModel ZIP、Figura 与 Bedrock 包自动识别未接入选择入口 |
 | CPU 材质行为 | 保留 `all_cutout` 元数据；固定来源 CPU 绘制不消费 `cube.cullable`，不将其解释成 alpha cutout 或 GPU 管线 |
 | AVIF 与 WebP | 未内置 AVIF 解码器：必需 AVIF 材质报错，可选 AVIF 作者头像用占位图；WebP 使用首个完整图像帧 |
 | 路径与密钥 | 拒绝链接、目录外资源、非自包含或需额外服务端密钥的 `.ysm` 缓存，不绕过授权 |

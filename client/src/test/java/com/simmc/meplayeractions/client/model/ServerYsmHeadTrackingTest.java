@@ -64,7 +64,7 @@ class ServerYsmHeadTrackingTest {
             "ysm_01_jk, 60", "ysm_02_jk, 60"
     })
     void originalHairSpringReceivesSourcePitchAndCounteractsTheHead(String id, float pitch) throws Exception {
-        BbModel model = BbModel.parse(source(id));
+        BbModel model = BbModelAsset.read(source(id)).model();
         AnimationPlayer viewed = new AnimationPlayer(model), neutral = new AnimationPlayer(model);
         for (int tick = 0; tick <= 120; tick++) {
             viewed.sample(tick, IDLE, 0, pitch); neutral.sample(tick, IDLE, 0, 0);
@@ -87,7 +87,7 @@ class ServerYsmHeadTrackingTest {
     @ParameterizedTest
     @ValueSource(strings = {"ysm_01_jk", "ysm_02_jk"})
     void observingTwoOwnersDoesNotShareTheirHairSpringState(String id) throws Exception {
-        BbModel sharedAsset = BbModel.parse(source(id));
+        BbModel sharedAsset = BbModelAsset.read(source(id)).model();
         AnimationPlayer lookingUp = new AnimationPlayer(sharedAsset), lookingDown = new AnimationPlayer(sharedAsset);
         for (int tick = 0; tick <= 120; tick++) {
             lookingUp.sample(tick, IDLE, 0, -60);

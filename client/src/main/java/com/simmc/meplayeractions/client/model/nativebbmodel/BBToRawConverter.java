@@ -406,6 +406,10 @@ public class BBToRawConverter {
 
         for (String dir : new String[]{"north", "south", "east", "west", "up", "down"}) {
             BBElement.BBFace bbFace = element.cube_faces == null ? null : element.cube_faces.get(dir);
+            // Blockbench removes a face with a null texture from its index buffer. Missing or
+            // explicitly disabled author faces must not acquire an invented full-texture surface.
+            // https://github.com/JannisX11/blockbench/blob/v4.10.0/js/outliner/cube.js#L1049-L1069
+            if (bbFace == null || bbFace.texture == null || !bbFace.enabled) continue;
             RawYsmModel.RawFace face = createFace(inflatedFrom, size, dir, bbFace, texW, texH);
             if (hasNonzeroRotation) {
                 // calculateFaceVertices 输出块单位(像素/16)，origin 同样换算后绕其旋转
@@ -417,9 +421,7 @@ public class BBToRawConverter {
                 for (int i = 0; i < 4; i++) {
                     face.positions[i] = rotateAroundOrigin(face.positions[i], originBlock, elementRotation);
                 }
-                // 法线不能重算叉积：calculateFaceVertices 顶点顺序配合 computeNormal 得
-                // 向内法线（north 面叉积 +Z 而正确是 -Z）。应旋转 createFace 的原始外向法线
-                // （纯方向旋转，平移不影响方向，绕原点即可）。
+                // Preserve the authored outward normal through the same cube rotation.
                 face.normal = rotateAroundOrigin(face.normal, new float[3], elementRotation);
             }
             cube.faces.add(face);
@@ -591,8 +593,11 @@ public class BBToRawConverter {
             u1 = 0; v1 = 0; u2 = 1; v2 = 1;
         }
 
-        face.u = new float[]{u1, u2, u2, u1};
-        face.v = new float[]{v1, v1, v2, v2};
+        // Vertices follow editor texture TL, BL, BR, TR; this is an outward quad.
+        // Texture V remains the PNG/Minecraft top-origin coordinate, unlike THREE's 1-V.
+        // https://github.com/JannisX11/blockbench/blob/v4.10.0/js/outliner/cube.js#L1194-L1220
+        face.u = new float[]{u1, u1, u2, u2};
+        face.v = new float[]{v1, v2, v2, v1};
 
         if (bbFace != null && bbFace.rotation != 0) {
             rotateUv(face, bbFace.rotation);
@@ -614,6 +619,9 @@ public class BBToRawConverter {
     }
 
     private static float[][] calculateFaceVertices(float[] from, float[] size, String direction) {
+        // Blockbench BoxGeometry.setShape uses TL, TR, BL, BR. Emit TL, BL, BR, TR
+        // to retain its exact UV attachment while matching outward quad winding.
+        // https://github.com/JannisX11/blockbench/blob/v4.10.0/lib/three_custom.js#L1-L46
         // bbmodel 鐢ㄥ儚绱狅紝YSM 娓叉煋绔潰椤剁偣鐢ㄦ柟鍧楀崟浣嶏紙=鍍忕礌/16锛屽弬瑙?YSMFolderDeserializer.bakeFaceToRaw
         float x = from[0] / 16f;
         float y = from[1] / 16f;
@@ -625,27 +633,27 @@ public class BBToRawConverter {
         switch (direction) {
             case "north":
                 return new float[][]{
-                        {x, y, z}, {x + w, y, z}, {x + w, y + h, z}, {x, y + h, z}
+                        {x + w, y + h, z}, {x + w, y, z}, {x, y, z}, {x, y + h, z}
                 };
             case "south":
                 return new float[][]{
-                        {x + w, y, z + d}, {x, y, z + d}, {x, y + h, z + d}, {x + w, y + h, z + d}
+                        {x, y + h, z + d}, {x, y, z + d}, {x + w, y, z + d}, {x + w, y + h, z + d}
                 };
             case "east":
                 return new float[][]{
-                        {x + w, y, z}, {x + w, y, z + d}, {x + w, y + h, z + d}, {x + w, y + h, z}
+                        {x + w, y + h, z + d}, {x + w, y, z + d}, {x + w, y, z}, {x + w, y + h, z}
                 };
             case "west":
                 return new float[][]{
-                        {x, y, z + d}, {x, y, z}, {x, y + h, z}, {x, y + h, z + d}
+                        {x, y + h, z}, {x, y, z}, {x, y, z + d}, {x, y + h, z + d}
                 };
             case "up":
                 return new float[][]{
-                        {x, y + h, z}, {x + w, y + h, z}, {x + w, y + h, z + d}, {x, y + h, z + d}
+                        {x, y + h, z}, {x, y + h, z + d}, {x + w, y + h, z + d}, {x + w, y + h, z}
                 };
             case "down":
                 return new float[][]{
-                        {x, y, z + d}, {x + w, y, z + d}, {x + w, y, z}, {x, y, z}
+                        {x, y, z + d}, {x, y, z}, {x + w, y, z}, {x + w, y, z + d}
                 };
             default:
                 return new float[4][3];

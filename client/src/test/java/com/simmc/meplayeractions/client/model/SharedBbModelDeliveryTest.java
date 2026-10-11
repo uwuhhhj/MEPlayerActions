@@ -62,6 +62,22 @@ class SharedBbModelDeliveryTest {
         assertTrue(decoded.model().hasBone("RightHandLocator"));
     }
 
+    @Test void commonAssetReaderRetainsEditorFaceCornersThroughNativeRuntimeBaking() throws Exception {
+        var vertices = BbModelAsset.read(bytes(author())).model().basisVertices();
+        // Official north face: texture TL, BL, BR, TR at (+X,+Y,-Z),
+        // (+X,-Y,-Z), (-X,-Y,-Z), (-X,+Y,-Z). A nonzero bone pivot
+        // must not change either the authored position or its texture corner.
+        assertEquals(4, vertices.size(), "Missing faces must not acquire geometry during either conversion step");
+        float[][] expected = {{1,2,0,0,0}, {1,0,0,0,1}, {0,0,0,1,1}, {0,2,0,1,0}};
+        for (int i = 0; i < expected.length; i++) {
+            var vertex = vertices.get(i);
+            assertArrayEquals(new float[]{expected[i][0]/16, expected[i][1]/16, expected[i][2]/16,
+                            expected[i][3], expected[i][4], 0,0,-1},
+                    new float[]{vertex.x(),vertex.y(),vertex.z(),vertex.u(),vertex.v(),
+                            vertex.nx(),vertex.ny(),vertex.nz()}, 1e-6f);
+        }
+    }
+
     @Test void missingExternalTextureDoesNotBecomeAnOfflineUsableServerAsset() throws Exception {
         JsonObject source = author();
         JsonObject texture = source.getAsJsonArray("textures").get(0).getAsJsonObject();
