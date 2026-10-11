@@ -1,7 +1,8 @@
-"""Package server/client 0.6.0 after saved targeted checks and final builds.
+"""Package server/client 0.6.1 after saved targeted checks and final builds.
 
 This helper does not run a build, a test, Minecraft, or the old runtime release gate.
-Both sides must be freshly built. No previous release proof or private model input is reused.
+Both sides must be freshly built. Earlier stages of this work may be explicitly retained
+with their original version, without claiming they were rerun for the final version.
 Existing dist artifacts are never replaced. The version and evidence contract
 must match the release being built.
 """
@@ -24,9 +25,10 @@ import zipfile
 
 PROJECT = Path(__file__).resolve().parents[1]
 CLIENT = PROJECT / "client"
-VERSION = "0.6.0"
+VERSION = "0.6.1"
 SERVER_VERSION = VERSION
 VALIDATION = PROJECT / "build" / f"validation-{VERSION}"
+EVIDENCE_VERSIONS = {VERSION, "0.6.0"}
 REFERENCE_REVISION = "0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85"
 REFERENCE = PROJECT.parent / "ModelEngine玩家动作研究/sources/OpenYSM-Updated"
 SPEC = importlib.util.spec_from_file_location("mpa_release_helpers", PROJECT / "tools/package_release.py")
@@ -240,7 +242,38 @@ def validate_cc0(archive: zipfile.ZipFile, reference: Path) -> dict:
             "fixed_git_tree_content_preserved": True}
 
 
-def test_evidence(stage_order: list[str] | None) -> tuple[dict, dict[str, bytes]]:
+def evidence_stages(stage_order: list[str] | None, manifest_path: Path | None = None) -> tuple[list[dict], bytes | None]:
+    if manifest_path is not None:
+        require(not stage_order, "Manifest defines its own complete stage order")
+        raw = manifest_path.read_bytes()
+        manifest = json.loads(raw.decode("utf-8-sig"))
+        require(isinstance(manifest, dict) and manifest.get("release_version") == VERSION,
+                "Evidence manifest must identify the current release")
+        declared = manifest.get("stages")
+        require(isinstance(declared, list) and bool(declared), "Evidence manifest needs actual targeted stages")
+        result, identities, directories = [], set(), set()
+        for stage in declared:
+            require(isinstance(stage, dict) and stage.get("version") in EVIDENCE_VERSIONS,
+                    "Evidence stage version is outside this release's accepted current-work scope")
+            value, version = stage.get("directory"), stage["version"]
+            require(isinstance(value, str) and bool(value.strip()), "Evidence stage directory required")
+            directory = Path(value)
+            if not directory.is_absolute():
+                directory = PROJECT / directory
+            directory = directory.resolve()
+            require(directory.is_dir() and directory.parent.name == f"validation-{version}",
+                    f"Evidence directory must retain its original validation-{version} root: {value}")
+            identity = f"{version}/{directory.name}"
+            require(identity not in identities and directory not in directories, "Evidence manifest repeats a stage")
+            reason = stage.get("reason", "")
+            require(isinstance(reason, str) and (version == VERSION or bool(reason.strip())),
+                    "Earlier current-work stage needs an explicit preservation reason")
+            side = stage.get("side", "")
+            require(side in {"", "client", "server", "integration"}, "Evidence stage side must be client/server/integration")
+            identities.add(identity); directories.add(directory)
+            result.append({"directory": directory, "stage": identity, "version": version,
+                           "reason": reason, "side": side, "archive": f"stages/{identity}"})
+        return result, raw
     require(VALIDATION.is_dir(), f"Current validation directory missing: {VALIDATION}")
     directories = [path for path in VALIDATION.iterdir() if path.is_dir()
                    and ((path / "stage.json").is_file() or list(path.rglob("TEST-*.xml")))]
@@ -252,19 +285,30 @@ def test_evidence(stage_order: list[str] | None) -> tuple[dict, dict[str, bytes]
     if stage_order:
         require(len(stage_order) == len(set(stage_order)) and set(stage_order) == {path.name for path in directories}, "Explicit stage order must include each saved stage exactly once")
         directories = [VALIDATION / name for name in stage_order]
+    return [{"directory": path, "stage": path.name, "version": VERSION, "reason": "", "archive": path.name}
+            for path in directories], None
+
+
+def test_evidence(stage_order: list[str] | None, manifest_path: Path | None = None) -> tuple[dict, dict[str, bytes]]:
+    selections, manifest_raw = evidence_stages(stage_order, manifest_path)
     latest = {}
     stages = []
     evidence = {}
-    for directory in directories:
-        side = "server" if directory.name.startswith("server") else "client" if directory.name.startswith("client") else ""
-        require(bool(side) or directory.name.startswith("integration"), f"Stage name needs client/server/integration prefix: {directory.name}")
+    for selection in selections:
+        directory, stage_id = selection["directory"], selection["stage"]
+        declared_side = selection.get("side", "")
+        side = declared_side if declared_side in {"client", "server"} else "server" if directory.name.startswith("server") else "client" if directory.name.startswith("client") else ""
+        require(bool(side) or declared_side == "integration" or directory.name.startswith("integration"), f"Stage needs a client/server/integration identity: {directory.name}")
         metadata = directory / "stage.json"
         require(metadata.is_file(), f"Current stage command proof missing: {directory.name}/stage.json")
         stage_proof = json.loads(metadata.read_text(encoding="utf-8-sig"))
-        require(isinstance(stage_proof, dict) and stage_proof.get("version") == VERSION,
-                f"Stage proof is not for current {VERSION}: {directory.name}")
+        require(isinstance(stage_proof, dict) and stage_proof.get("version") == selection["version"],
+                f"Stage proof version does not match its original identity: {stage_id}")
         commands = recorded_commands(stage_proof, f"Stage {directory.name}")
+        require(all(not record.get("side") or not side or record["side"] == side for record in commands),
+                f"Stage command side differs from its evidence identity: {stage_id}")
         suites = []
+        outcomes = {}
         reports = sorted(directory.rglob("TEST-*.xml"))
         require(reports or any(command["exit_code"] != 0 for command in commands),
                 f"Successful test stage is missing reports: {directory.name}")
@@ -273,7 +317,7 @@ def test_evidence(stage_order: list[str] | None) -> tuple[dict, dict[str, bytes]
             if not report_side:
                 prefix = path.relative_to(directory).parts[0]
                 report_side = "server" if prefix.startswith("server") else "client" if prefix.startswith("client") else ""
-            require(bool(report_side), f"Integration report must be under server/ or client/: {path.relative_to(VALIDATION)}")
+            require(bool(report_side), f"Integration report must be under server/ or client/: {path.relative_to(directory)}")
             root = ET.parse(path).getroot()
             roots = [root] if root.tag == "testsuite" else root.findall("testsuite")
             require(bool(roots), f"Unknown test report structure: {path}")
@@ -292,32 +336,51 @@ def test_evidence(stage_order: list[str] | None) -> tuple[dict, dict[str, bytes]
                     passed = all(case.find(name) is None for name in ["failure", "error", "skipped"])
                     original_name = case.attrib["name"]
                     original_key = (report_side, suite.attrib["name"], original_name)
-                    record = {"stage": directory.name, "passed": passed, "original_test_name": original_name}
-                    latest[original_key] = record
-            evidence[path.relative_to(VALIDATION).as_posix()] = path.read_bytes()
-        evidence[metadata.relative_to(VALIDATION).as_posix()] = metadata.read_bytes()
-        stages.append({"stage": directory.name, "side": side or "integration", "commands": commands,
+                    record = outcomes.setdefault(original_key, {"stage": stage_id, "passed": True,
+                            "original_test_name": original_name, "occurrences": 0})
+                    record["passed"] = record["passed"] and passed
+                    record["occurrences"] += 1
+            evidence[selection["archive"] + "/" + path.relative_to(directory).as_posix()] = path.read_bytes()
+        for key, record in outcomes.items():
+            previous = latest.get(key)
+            # Parameterized display names can repeat across methods. A smaller later
+            # selection cannot prove every earlier ambiguous failing method was fixed.
+            if previous and not previous["passed"] and previous["occurrences"] > record["occurrences"]:
+                record["passed"] = False
+                record["unresolved_ambiguous_previous_stage"] = previous["stage"]
+                record["occurrences"] = previous["occurrences"]
+            latest[key] = record
+        evidence[selection["archive"] + "/stage.json"] = metadata.read_bytes()
+        stages.append({"stage": stage_id, "side": side or "integration", "version": selection["version"],
+                       "source_directory": str(directory), "preservation_reason": selection["reason"], "commands": commands,
                        "commands_all_succeeded": all(command["exit_code"] == 0 for command in commands), "suites": suites})
     require({key[0] for key in latest} == {"client", "server"}, "Both current client/server targeted stages are required")
     failed = [dict(side=key[0], suite=key[1], name=key[2], **value) for key, value in latest.items() if not value["passed"]]
     require(not failed, f"Latest targeted outcomes must all pass: {failed}")
     summary = {"profile": "new-and-affected-targeted-unit-and-compile-package", "full_suite_run": False,
                "in_game_verified": False, "old_game_matrix_reused_as_fresh": False,
-               "previous_version_test_evidence_reused": False,
+               "previous_version_test_evidence_reused": any(stage["version"] != VERSION for stage in stages),
+               "evidence_versions": sorted({stage["version"] for stage in stages}),
+               "counting_rule": "Conservative distinct side/suite/display-name identities; repeated names are ANDed within each stage",
+               "raw_reported_testcases": sum(suite["tests"] for stage in stages for suite in stage["suites"]),
                "distinct_targeted_cases": len(latest), "all_latest_outcomes_pass": True,
                "failed_command_attempts": sum(command["exit_code"] != 0 for stage in stages for command in stage["commands"]),
                "earlier_report_failures": sum(suite["failures"] for stage in stages for suite in stage["suites"]),
                "earlier_report_errors": sum(suite["errors"] for stage in stages for suite in stage["suites"]),
                "counts_by_side": {side: sum(key[0] == side for key in latest) for side in ["client", "server"]},
-               "stage_order": [directory.name for directory in directories], "stages": stages,
+               "stage_order": [selection["stage"] for selection in selections], "stages": stages,
                "latest_cases": [dict(side=key[0], suite=key[1], name=key[2], **value) for key, value in sorted(latest.items())]}
     evidence["summary.json"] = (json.dumps(summary, ensure_ascii=False, indent=2) + "\n").encode()
+    if manifest_raw is not None:
+        evidence["evidence-manifest.json"] = manifest_raw
     evidence["fixtures/tools/package_current.py"] = Path(__file__).read_bytes()
     evidence["fixtures/tools/package_release.py"] = (PROJECT / "tools/package_release.py").read_bytes()
     evidence["README.md"] = (f"本包保存 {VERSION} 两端本轮新增与受影响的定向单元检查与打包证据。"
                              "summary.json 按 side/suite/name 取最后结果，早期失败命令、真实退出码及报告原样保留；"
                              "打包要求每个已报告用例的最后结果通过，以及两端最终构建成功，不声称所有早期尝试都通过；"
-                             "不复用之前版本的检查数字或真实私人模型输入。"
+                             "各阶段保留实际执行版本与原始 XML；升级前的本轮检查不冒充新版重跑。"
+                             "参数化重名用例只作保守去重统计，raw_reported_testcases 保留原报告数量（含重跑）。"
+                             "不复用旧游戏矩阵或真实私人模型输入。"
                              "未复跑完整旧矩阵，未运行 Minecraft 或服务器实机复验；"
                              "没有 TPS、帧率或网络场景性能实测证明。"
                              "JAR、资源、许可和 ZIP 完整性检查不能代替实机验证。\n").encode()
@@ -416,23 +479,32 @@ def build_commands() -> dict:
     return proof
 
 
+def output_paths(server: Path, client: Path, suffix: str = "") -> dict[str, Path]:
+    require(isinstance(suffix, str) and (not suffix or re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", suffix)),
+            "Artifact suffix must be a short lowercase filename token")
+    token = "-" + suffix if suffix else ""
+    return {"server_jar": DIST / f"{server.stem}{token}.jar", "client_jar": DIST / f"{client.stem}{token}.jar",
+            "server_install": DIST / f"MEPlayerActions-{VERSION}{token}-install.zip",
+            "client_install": DIST / f"MEPlayerActions-Client-{VERSION}{token}-install.zip",
+            "source": DIST / f"MEPlayerActions-{VERSION}{token}-source.zip",
+            "tests": DIST / f"MEPlayerActions-{VERSION}{token}-tests.zip",
+            "build_report": DIST / f"MEPlayerActions-{VERSION}{token}-build.json"}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--reference", type=Path, default=REFERENCE)
     parser.add_argument("--gradle-cache", type=Path, default=Path(os.environ.get("GRADLE_USER_HOME", str(Path.home() / ".gradle"))) / "caches")
     parser.add_argument("--stage-order", nargs="+")
+    parser.add_argument("--evidence-manifest", type=Path, help="Ordered current-work stages with their original versions; cannot be combined with --stage-order")
+    parser.add_argument("--artifact-suffix", default="", help="Fresh filename suffix; existing deliveries are never replaced")
     args = parser.parse_args()
     server_version = ET.parse(PROJECT / "pom.xml").findtext("m:version", namespaces=RELEASE.NAMESPACE)
     client_version = re.search(r"(?m)^version = '([^']+)'", (CLIENT / "build.gradle").read_text(encoding="utf-8")).group(1)
     require(server_version == client_version == VERSION, f"Current two-sided versions must be {VERSION}")
     server = PROJECT / "target" / f"MEPlayerActions-{VERSION}.jar"
     client = CLIENT / "build/libs" / f"MEPlayerActions-Client-{VERSION}.jar"
-    outputs = {"server_jar": DIST / server.name, "client_jar": DIST / client.name,
-               "server_install": DIST / f"MEPlayerActions-{VERSION}-install.zip",
-               "client_install": DIST / f"MEPlayerActions-Client-{VERSION}-install.zip",
-               "source": DIST / f"MEPlayerActions-{VERSION}-source.zip",
-               "tests": DIST / f"MEPlayerActions-{VERSION}-tests.zip",
-               "build_report": DIST / f"MEPlayerActions-{VERSION}-build.json"}
+    outputs = output_paths(server, client, args.artifact_suffix)
     require(not any(path.exists() for path in outputs.values()), "Preserve old deliveries: an output path already exists")
     server_inputs = [PROJECT / "pom.xml", *files(PROJECT / "src/main"), *sorted((PROJECT / "examples/models").glob("*.bbmodel"))]
     client_inputs = [CLIENT / name for name in ["build.gradle", "settings.gradle", "gradle.properties", "gradle/wrapper/gradle-wrapper.properties"]]
@@ -445,7 +517,7 @@ def main() -> None:
     command_proof = build_commands()
     server_proof = validate_server(server)
     client_proof = validate_client(client, args.gradle_cache, args.reference)
-    tests, evidence = test_evidence(args.stage_order)
+    tests, evidence = test_evidence(args.stage_order, args.evidence_manifest)
     sources = source_entries()
     server_install = {f"plugins/{server.name}": server.read_bytes(),
                       "plugins/MEPlayerActions/config.yml": (PROJECT / "src/main/resources/config.yml").read_bytes(), **docs_entries()}
@@ -463,15 +535,16 @@ def main() -> None:
                      "客户端需 Minecraft 1.21.11 / Fabric / Java 21；服务器 ModelEngine 与 GSit 为可选接入。"
                      "仅私人分享无需 ModelEngine 或服务器资源包。使用服务器伪装时，示例蓝图由 ModelEngine 导入并生成原版资源，CraftEngine 继续负责原有资源包合并与下发。\n\n"
                      "三条路径分别为本地私人外观、服务器中继的私人模型分享、服务器模型伪装。私人模型默认仅自己可见，多人共享需玩家明确开启及服务器协商、上传/观看权限；分享不创建 ME 伪装，未安装模组的玩家仍看见原版角色。服务器伪装与私人模型互斥；解除服务器伪装后须显式重新使用私人模型。服务器 private-models/ 属于私人运行时数据，不随源码或安装包分发。\n\n"
-                     f"两端分阶段定向单元检查最后结果共 {tests['distinct_targeted_cases']} 项通过；编译与包内容校验通过。"
+                     f"两端分阶段定向单元检查最后结果保守去重共 {tests['distinct_targeted_cases']} 个显示名身份通过；"
+                     f"原报告共记录 {tests['raw_reported_testcases']} 项执行（含阶段重跑与参数化重名），详见证据；编译与包内容校验通过。"
                      "本轮未运行完整旧矩阵或游戏/服务器实机复验；未实测 TPS、帧率或网络性能，画面与多人行为由用户测试。交付包不包含私人模型、源数据或用户配置。"
-                     f"完整当前源码见 MEPlayerActions-{VERSION}-source.zip，证据见同版本 tests.zip/build.json。\n").encode("utf-8")
+                     f"完整当前源码见 {outputs['source'].name}，证据见 {outputs['tests'].name} / {outputs['build_report'].name}。\n").encode("utf-8")
     server_install["INSTALL.md"] = client_install["INSTALL.md"] = delivery_note
     installer_links(server_install)
     installer_links(client_install)
     report = {"plugin": "MEPlayerActions", "server_version": VERSION, "client_version": VERSION,
               "release_scope": "server-and-client", "new_server_artifacts_created": True,
-              "previous_version_test_evidence_reused": False, "performance_benchmark_run": False,
+              "previous_version_test_evidence_reused": tests["previous_version_test_evidence_reused"], "performance_benchmark_run": False,
               "validation_profile": tests["profile"], "in_game_verified": False, "in_game_omitted_at_user_request": True,
               "full_suite_run": False, "old_game_matrix_reused_as_fresh": False,
               "tests": tests, "build_commands": command_proof,
