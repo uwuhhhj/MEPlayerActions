@@ -258,6 +258,7 @@ custom-actions:
 
 # 原始动画的菜单中文名称；旧配置未写时仍使用内置汉化。
 # custom-actions.<动作>.label 优先于这里的名称，可为自定义动画增加条目。
+# 未提供名称的动作显示原始动画 ID，轮盘和播放提示均不依赖客户端下载模型。
 menu:
   animation-labels:
     idle: 站立待机

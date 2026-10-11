@@ -169,14 +169,17 @@ public final class Settings {
             int maxTicks = section.getInt(prefix + "max-duration-ticks", maxManualTicks);
             if (maxTicks < 1 || maxTicks > maxManualTicks) throw new IllegalArgumentException("自定义动作持续时间超出 manual.max-duration-ticks");
             String key = id(name);
-            actions.put(key, new CustomAction(key, section.getString(prefix + "label", animationLabel(clip)), clip, loop,
+            String label = section.getString(prefix + "label", animationLabel(clip));
+            if (label.isBlank()) label = animationLabel(clip);
+            actions.put(key, new CustomAction(key, label, clip, loop,
                     speed, section.getString(prefix + "permission", "mact.use"), maxTicks));
         }
         customActions = Collections.unmodifiableMap(actions);
     }
 
     public static Settings load(FileConfiguration c) { return new Settings(c); }
-    public String animationLabel(String clip) { return animationLabels.getOrDefault(clip, "自定义动作"); }
+    /** A missing translation preserves the author's executable ID, so distinct clips remain distinguishable. */
+    public String animationLabel(String clip) { return animationLabels.getOrDefault(clip, clip); }
     public String actionLabel(String action) {
         return customActions.containsKey(action) ? customActions.get(action).label() : animationLabel(action);
     }

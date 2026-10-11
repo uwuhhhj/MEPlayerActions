@@ -7,6 +7,7 @@ import com.simmc.meplayeractions.action.ActionController;
 import com.simmc.meplayeractions.action.DisguiseOptions;
 import com.simmc.meplayeractions.action.SyncFeature;
 import com.simmc.meplayeractions.client.ClientSyncService;
+import com.simmc.meplayeractions.config.AnimationLabels;
 import com.simmc.meplayeractions.config.Settings;
 import com.simmc.meplayeractions.gameplay.GameplayBackend;
 import com.simmc.meplayeractions.gameplay.PaperEffectPort;
@@ -142,14 +143,14 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
                 }
                 case "models" -> message(player, "已加载且允许的模型：" + String.join(", ", controller.models()));
                 case "animations" -> message(player, "当前模型动画：" + String.join("，", controller.animations(player)
-                        .stream().map(clip -> settings.animationLabel(clip) + " (" + clip + ")").toList()));
+                        .stream().map(clip -> AnimationLabels.displayWithId(clip, settings.animationLabel(clip))).toList()));
                 case "menu" -> menu.open(player, 0);
                 case "play" -> {
                     if (args.length < 2) throw new IllegalArgumentException("用法：/meplayeractions play <动作> [速度] [ONCE|LOOP|HOLD]");
                     Double speed = args.length > 2 ? Double.valueOf(args[2]) : null;
                     LoopMode loop = args.length > 3 ? LoopMode.valueOf(args[3].toUpperCase(Locale.ROOT)) : null;
                     controller.play(player, Settings.id(args[1]), speed, loop);
-                    message(player, "播放：" + settings.actionLabel(args[1]) + " (" + args[1] + ")");
+                    message(player, "播放：" + AnimationLabels.displayWithId(args[1], settings.actionLabel(args[1])));
                 }
                 case "stop" -> { controller.stop(player); message(player, "手动动作已停止。"); }
                 case "reset" -> {

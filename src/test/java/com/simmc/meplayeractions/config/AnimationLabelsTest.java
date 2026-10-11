@@ -31,7 +31,7 @@ class AnimationLabelsTest {
         var settings = Settings.load(c);
         assertEquals("安静站立", settings.animationLabel("idle")); assertEquals("安静站立", settings.actionLabel("greeting"));
         assertEquals("招手问好", settings.actionLabel("wave")); assertEquals("自定义舞蹈", settings.animationLabel("custom_clip"));
-        assertEquals("自定义动作", settings.animationLabel("unknown_clip"));
+        assertEquals("unknown_clip", settings.animationLabel("unknown_clip"));
         c.set("menu.animation-labels.idle", " "); assertThrows(IllegalArgumentException.class, () -> Settings.load(c));
     }
 }

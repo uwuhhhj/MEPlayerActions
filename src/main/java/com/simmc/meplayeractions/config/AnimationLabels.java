@@ -6,6 +6,10 @@ import static java.util.Map.entry;
 /** Built-in labels remain available when an administrator keeps an older config.yml. */
 public final class AnimationLabels {
     private AnimationLabels() {}
+    /** Keep a named action identifiable while avoiding the fallback form "ID (ID)". */
+    public static String displayWithId(String id, String label) {
+        return id.equals(label) ? id : label + " (" + id + ")";
+    }
     public static final Map<String, String> DEFAULTS = Map.ofEntries(
             entry("idle", "站立待机"), entry("walk", "行走"), entry("run", "奔跑"),
             entry("death", "死亡"), entry("jump", "跳跃"), entry("player_jump", "完整跳跃"), entry("fall", "坠落"),
