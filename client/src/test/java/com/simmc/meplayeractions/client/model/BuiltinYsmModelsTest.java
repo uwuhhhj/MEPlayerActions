@@ -3,112 +3,173 @@ package com.simmc.meplayeractions.client.model;
 import com.simmc.meplayeractions.client.LocalAppearanceSettings;
 import com.simmc.meplayeractions.client.LocalModelLibrary;
 import com.simmc.meplayeractions.client.network.AssetTransfer;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
+
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
 import static org.junit.jupiter.api.Assertions.*;
 
-class BuiltinYsmModelsTest {
-    @TempDir Path temporary;
+class BuiltinYsmModelsTest
+{
+    @TempDir
+    Path temporary;
     private static final String WINE_ROOT = "/assets/meplayeractions/builtin/wine_fox/";
 
-    @Test void catalogKeepsOfficialWineFoxDefaultsAndAddsTheTwoOriginalPlayerSkinModels() throws Exception {
+    @Test
+    void catalogKeepsOfficialWineFoxDefaultsAndAddsTheTwoOriginalPlayerSkinModels() throws Exception
+    {
         assertEquals(List.of("openysm_default", "wine_fox_01_taisho_maid", "wine_fox_02_new_year",
                 "wine_fox_03_astronaut", "openysm_alex", "openysm_steve"), BuiltinYsmModels.ids());
-        var library = new LocalModelLibrary(temporary.resolve("models"));
+        LocalModelLibrary library = new LocalModelLibrary(this.temporary.resolve("models"));
         assertEquals(BuiltinYsmModels.ids(), library.models().stream().map(LocalModelLibrary.Entry::id).toList());
-        for (var model : BuiltinYsmModels.models()) {
+        for (BuiltinYsmModels.Model model : BuiltinYsmModels.models())
+        {
             assertTrue(LocalAppearanceSettings.isValidModelId(model.id()));
             assertFalse(model.label().isBlank());
         }
-        assertEquals(new LocalAppearanceSettings(false, "openysm_default", 1, 0, 0, 0), LocalAppearanceSettings.defaults());
+        assertEquals(new LocalAppearanceSettings(false, "openysm_default", 1, 0, 0, 0),
+                LocalAppearanceSettings.defaults());
         assertEquals(AssetTransfer.hash(YsmFolderModel.bundledDefault()), library.load("openysm_default").hash());
-        for (String id : List.of("ysm_01_jk", "ysm_02_jk", "wine_fox_04_student", "wine_fox/01_taisho_maid", "../01_taisho_maid"))
+        for (String id : List.of("ysm_01_jk", "ysm_02_jk", "wine_fox_04_student", "wine_fox/01_taisho_maid",
+                "../01_taisho_maid"))
+
+        {
             assertThrows(IOException.class, () -> YsmFolderModel.bundledWithProfile(id, null), id);
+        }
+
     }
 
-    @Test void taishoMaidDecodesRealGeometryAnimationsComponentsSkinsAndSounds() throws Exception {
-        var loaded = decode(BuiltinYsmModels.TAISHO_MAID_ID, "Wine Fox（酒狐）", 490, 57, 36, 8, 10);
-        assertEquals(List.of("skin", "skin_white"), loaded.profile().textures().stream().map(YsmModelProfile.TextureChoice::id).toList());
+    @Test
+    void taishoMaidDecodesRealGeometryAnimationsComponentsSkinsAndSounds() throws Exception
+    {
+        LocalModelLibrary.Loaded loaded = decode(BuiltinYsmModels.TAISHO_MAID_ID, "Wine Fox（酒狐）", 490, 57, 36, 8, 10);
+        assertEquals(List.of("skin", "skin_white"),
+                loaded.profile().textures().stream().map(YsmModelProfile.TextureChoice::id).toList());
         assertEquals(List.of("car_idle", "car_run", "get_down", "otoko_wa_tsurai_yo", "zufolo_impazzito"),
                 loaded.profile().soundResources().keySet().stream().toList());
-        assertEquals("fp.arm", loaded.profile().components().stream().filter(component -> component.kind().equals("fp_arm"))
-                .findFirst().orElseThrow().model().controllerFamily());
-        var white = new LocalModelLibrary(temporary.resolve("models")).load(BuiltinYsmModels.TAISHO_MAID_ID, "skin_white");
+        assertEquals("fp.arm",
+                loaded.profile().components().stream().filter(component -> component.kind().equals("fp_arm"))
+                        .findFirst().orElseThrow().model().controllerFamily());
+        LocalModelLibrary.Loaded white = new LocalModelLibrary(this.temporary.resolve("models"))
+                .load(BuiltinYsmModels.TAISHO_MAID_ID, "skin_white");
         assertEquals("skin_white", white.profile().selectedTexture());
-        assertNotEquals(loaded.hash(), white.hash()); assertEquals(loaded.model().cubeCount(), white.model().cubeCount());
+        assertNotEquals(loaded.hash(), white.hash());
+        assertEquals(loaded.model().cubeCount(), white.model().cubeCount());
         assertEquals("Get Down", loaded.profile().extraAnimations().get("extra3"));
     }
 
-    @Test void newYearDecodesItsOwnAuthoredPlayerAndLegacyArrow() throws Exception {
-        var loaded = decode(BuiltinYsmModels.NEW_YEAR_ID, "New Year Wine Fox（新春酒狐）", 342, 48, 14, 3, 2);
+    @Test
+    void newYearDecodesItsOwnAuthoredPlayerAndLegacyArrow() throws Exception
+    {
+        LocalModelLibrary.Loaded loaded = decode(BuiltinYsmModels.NEW_YEAR_ID, "New Year Wine Fox（新春酒狐）", 342, 48, 14,
+                3, 2);
         assertEquals("是的", loaded.profile().extraAnimations().get("extra3"));
         assertTrue(loaded.profile().soundResources().isEmpty());
-        var arrow = arrow(loaded);
-        assertFalse(arrow.model().animations().isEmpty(), "The manifest explicitly references this original arrow animation");
+        YsmModelProfile.Component arrow = arrow(loaded);
+        assertFalse(arrow.model().animations().isEmpty(),
+                "The manifest explicitly references this original arrow animation");
     }
 
-    @Test void astronautDecodesArmAssemblyAndKeepsBlankAuthorActionLabels() throws Exception {
-        var loaded = decode(BuiltinYsmModels.ASTRONAUT_ID, "宇航员酒狐", 552, 108, 20, 3, 4);
-        assertTrue(loaded.model().animations().containsAll(List.of("hold_mainhand:sword", "hold_offhand:shield", "swing:sword")));
+    @Test
+    void astronautDecodesArmAssemblyAndKeepsBlankAuthorActionLabels() throws Exception
+    {
+        LocalModelLibrary.Loaded loaded = decode(BuiltinYsmModels.ASTRONAUT_ID, "宇航员酒狐", 552, 108, 20, 3, 4);
+        assertTrue(loaded.model().animations()
+                .containsAll(List.of("hold_mainhand:sword", "hold_offhand:shield", "swing:sword")));
         assertTrue(loaded.profile().extraAnimations().values().stream().allMatch(String::isEmpty));
         assertFalse(loaded.profile().properties().get("free").getAsBoolean());
-        assertTrue(arrow(loaded).model().animations().isEmpty(), "Unreferenced arrow animation files must not be invented as manifest references");
+        assertTrue(arrow(loaded).model().animations().isEmpty(),
+                "Unreferenced arrow animation files must not be invented as manifest references");
     }
 
     private LocalModelLibrary.Loaded decode(String id, String name, int cubes, int clips, int armCubes,
-                                            int componentCount, int authors) throws Exception {
-        var loaded = new LocalModelLibrary(temporary.resolve("models")).load(id);
-        assertEquals(cubes, loaded.model().cubeCount(), id); assertEquals(clips, loaded.model().animations().size(), id);
-        assertTrue(loaded.profile().isYsm()); assertEquals("gui", loaded.previewAnimation());
+            int componentCount, int authors) throws Exception
+    {
+        LocalModelLibrary.Loaded loaded = new LocalModelLibrary(this.temporary.resolve("models")).load(id);
+        assertEquals(cubes, loaded.model().cubeCount(), id);
+        assertEquals(clips, loaded.model().animations().size(), id);
+        assertTrue(loaded.profile().isYsm());
+        assertEquals("gui", loaded.previewAnimation());
         assertEquals(360, loaded.model().animationLengthTicks("gui"));
         assertEquals(65535, loaded.model().animationFormatVersion());
-        for (String clip : loaded.model().animations()) assertTrue(loaded.model().animationFromPrimaryAssembly(clip), id + "/" + clip);
+        for (String clip : loaded.model().animations())
+        {
+            assertTrue(loaded.model().animationFromPrimaryAssembly(clip), id + "/" + clip);
+        }
+
         assertEquals(name, loaded.profile().metadata().get("name").getAsString());
-        assertEquals("CC BY-NC-SA 4.0", loaded.profile().metadata().getAsJsonObject("license").get("type").getAsString());
+        assertEquals("CC BY-NC-SA 4.0",
+                loaded.profile().metadata().getAsJsonObject("license").get("type").getAsString());
         assertEquals(authors, loaded.profile().metadata().getAsJsonArray("authors").size());
         assertFalse(loaded.profile().languages().getAsJsonObject("en_us").isEmpty());
         assertFalse(loaded.profile().languages().getAsJsonObject("zh_cn").isEmpty());
-        assertEquals(8, loaded.profile().extraAnimations().size(), "These original manifests declare eight slots; labels can be blank");
+        assertEquals(8, loaded.profile().extraAnimations().size(),
+                "These original manifests declare eight slots; labels can be blank");
         assertEquals(componentCount, loaded.profile().components().size(), id);
-        assertEquals(armCubes, loaded.profile().components().stream().filter(component -> component.kind().equals("arm"))
-                .findFirst().orElseThrow().model().cubeCount());
+        assertEquals(armCubes, loaded.profile().components().stream()
+                .filter(component -> component.kind().equals("arm")).findFirst().orElseThrow().model().cubeCount());
         assertEquals(53, arrow(loaded).model().cubeCount());
-        for (var component : loaded.profile().components()) assertEquals(65535, component.model().animationFormatVersion());
-        var vertices = new AnimationPlayer(loaded.model()).sample(6, List.of(new BbModel.Layer("gui", "gui", 0, 1, "LOOP", 0, 0)), 0, 0, Map.of());
+        for (YsmModelProfile.Component component : loaded.profile().components())
+        {
+            assertEquals(65535, component.model().animationFormatVersion());
+        }
+
+        List<BbModel.Vertex> vertices = new AnimationPlayer(loaded.model()).sample(6,
+                List.of(new BbModel.Layer("gui", "gui", 0, 1, "LOOP", 0, 0)), 0, 0, Map.of());
         assertFalse(vertices.isEmpty(), id);
-        assertTrue(vertices.stream().allMatch(vertex -> Float.isFinite(vertex.x()) && Float.isFinite(vertex.y()) && Float.isFinite(vertex.z())), id);
+        assertTrue(vertices.stream().allMatch(
+                vertex -> Float.isFinite(vertex.x()) && Float.isFinite(vertex.y()) && Float.isFinite(vertex.z())), id);
         return loaded;
     }
 
-    private static YsmModelProfile.Component arrow(LocalModelLibrary.Loaded loaded) {
-        var arrow = loaded.profile().components().stream().filter(component -> component.id().equals("minecraft:arrow")).findFirst().orElseThrow();
-        assertEquals("projectile", arrow.kind()); assertEquals(List.of("minecraft:arrow"), arrow.matches());
+    private static YsmModelProfile.Component arrow(LocalModelLibrary.Loaded loaded)
+    {
+        YsmModelProfile.Component arrow = loaded.profile().components().stream()
+                .filter(component -> component.id().equals("minecraft:arrow")).findFirst().orElseThrow();
+        assertEquals("projectile", arrow.kind());
+        assertEquals(List.of("minecraft:arrow"), arrow.matches());
         return arrow;
     }
 
-    @Test void allSeventySevenOriginalResourceFilesRemainByteExactAtThePinnedRevision() throws Exception {
-        Map<String, Integer> counts = new LinkedHashMap<>(); long bytes = 0;
-        for (String line : UPSTREAM_FILES.strip().split("\n")) {
-            String[] fields = line.split("\t"); assertEquals(4, fields.length);
-            var model = BuiltinYsmModels.find(fields[0]).orElseThrow();
-            try (var resource = BuiltinYsmModels.class.getResourceAsStream(model.resourceRoot() + fields[1])) {
-                assertNotNull(resource, line); byte[] raw = resource.readAllBytes();
+    @Test
+    void allSeventySevenOriginalResourceFilesRemainByteExactAtThePinnedRevision() throws Exception
+    {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        long bytes = 0;
+        for (String line : UPSTREAM_FILES.strip().split("\n"))
+        {
+            String[] fields = line.split("\t");
+            assertEquals(4, fields.length);
+            BuiltinYsmModels.Model model = BuiltinYsmModels.find(fields[0]).orElseThrow();
+            try (InputStream resource = BuiltinYsmModels.class.getResourceAsStream(model.resourceRoot() + fields[1]))
+            {
+                assertNotNull(resource, line);
+                byte[] raw = resource.readAllBytes();
                 assertEquals(Integer.parseInt(fields[3]), raw.length, line);
-                assertEquals(fields[2], HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(raw)), line);
-                counts.merge(fields[0], 1, Integer::sum); bytes += raw.length;
+                assertEquals(fields[2], HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(raw)),
+                        line);
+                counts.merge(fields[0], 1, Integer::sum);
+                bytes += raw.length;
             }
         }
-        assertEquals(Map.of(BuiltinYsmModels.TAISHO_MAID_ID, 43, BuiltinYsmModels.NEW_YEAR_ID, 15, BuiltinYsmModels.ASTRONAUT_ID, 19), counts);
+        assertEquals(Map.of(BuiltinYsmModels.TAISHO_MAID_ID, 43, BuiltinYsmModels.NEW_YEAR_ID, 15,
+                BuiltinYsmModels.ASTRONAUT_ID, 19), counts);
         assertEquals(4_973_579, bytes);
-        try (var license = BuiltinYsmModels.class.getResourceAsStream(WINE_ROOT + "LICENSE.CC-BY-NC-SA-4.0.txt")) {
-            assertNotNull(license); byte[] raw = license.readAllBytes(); assertEquals(20_852, raw.length);
+        try (InputStream license = BuiltinYsmModels.class
+                .getResourceAsStream(WINE_ROOT + "LICENSE.CC-BY-NC-SA-4.0.txt"))
+        {
+            assertNotNull(license);
+            byte[] raw = license.readAllBytes();
+            assertEquals(20_852, raw.length);
             assertEquals("329d5952cc9edbeb8310d68327f4684f7fd0ccc76f27aedc2fa6563e27ae34a4",
                     HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(raw)));
         }

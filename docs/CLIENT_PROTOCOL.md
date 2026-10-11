@@ -16,7 +16,7 @@ v3 是玩家模型资产、动画状态及观众渲染接管协议。客户端�
 
 客户端发送：
 ```json
-{"protocol":3,"type":"hello","clientVersion":"0.6.1","capabilities":["local_render","server_push_models","incremental_state","server_model_catalog","disguise_results"]}
+{"protocol":3,"type":"hello","clientVersion":"0.6.2","capabilities":["local_render","server_push_models","incremental_state","server_model_catalog","disguise_results"]}
 ```
 `capabilities` 必须含 `local_render`，还可声明 `server_push_models`、`resource_pack_models`、`incremental_state`／`server_timeline`、`server_model_catalog` 和 `disguise_results`；不允许重复，其他 capability 拒绝。客户端默认声明增量、模型目录与伪装结果能力，显式启用 `followServerTimeline` 时另声明 `server_timeline`。`clientVersion` 可省略（最多 64 字符）。hello 两次接受之间至少相隔一个单调时钟秒；这一时间戳属于玩家连接，未知协议结束会话或重新 hello 都不能重置。新 hello 清理已有绑定并恢复其 ME 可见性，不授予渲染权限。
 

@@ -1,40 +1,54 @@
 package com.simmc.meplayeractions.client.ui;
 
 import com.simmc.meplayeractions.client.model.BuiltinYsmModels;
+
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class GalleryPreviewSelectionTest {
-    @Test void clickingNewYearPreviewsItWhileTaishoRemainsTheCurrentAppearance() {
+class GalleryPreviewSelectionTest
+{
+    @Test
+    void clickingNewYearPreviewsItWhileTaishoRemainsTheCurrentAppearance()
+    {
         String currentId = BuiltinYsmModels.TAISHO_MAID_ID;
-        var selection = new GalleryPreviewSelection(currentId);
+        GalleryPreviewSelection selection = new GalleryPreviewSelection(currentId);
         assertEquals(new GalleryPreviewSelection.Target(GalleryPreviewSelection.Source.CURRENT, currentId),
                 selection.target(currentId, "taisho", "taisho"));
 
         selection.browse(BuiltinYsmModels.NEW_YEAR_ID);
-        assertEquals(new GalleryPreviewSelection.Target(GalleryPreviewSelection.Source.SELECTED, BuiltinYsmModels.NEW_YEAR_ID),
+        assertEquals(
+                new GalleryPreviewSelection.Target(GalleryPreviewSelection.Source.SELECTED,
+                        BuiltinYsmModels.NEW_YEAR_ID),
                 selection.target(currentId, "taisho", "new-year"),
                 "The browsing draft must win over the enabled world model");
     }
 
-    @Test void unloadedOrFailedSelectionNeverFallsBackToTheOldEnabledModel() {
-        var selection = new GalleryPreviewSelection(BuiltinYsmModels.TAISHO_MAID_ID);
+    @Test
+    void unloadedOrFailedSelectionNeverFallsBackToTheOldEnabledModel()
+    {
+        GalleryPreviewSelection selection = new GalleryPreviewSelection(BuiltinYsmModels.TAISHO_MAID_ID);
         selection.browse(BuiltinYsmModels.NEW_YEAR_ID);
-        assertEquals(new GalleryPreviewSelection.Target(GalleryPreviewSelection.Source.SELECTED, BuiltinYsmModels.NEW_YEAR_ID),
+        assertEquals(
+                new GalleryPreviewSelection.Target(GalleryPreviewSelection.Source.SELECTED,
+                        BuiltinYsmModels.NEW_YEAR_ID),
                 selection.target(BuiltinYsmModels.TAISHO_MAID_ID, "taisho", null));
-        assertEquals(new GalleryPreviewSelection.Target(GalleryPreviewSelection.Source.SELECTED, BuiltinYsmModels.NEW_YEAR_ID),
+        assertEquals(
+                new GalleryPreviewSelection.Target(GalleryPreviewSelection.Source.SELECTED,
+                        BuiltinYsmModels.NEW_YEAR_ID),
                 selection.target("", "", null), "A disabled world appearance does not prevent browsing");
     }
 
-    @Test void olderAsyncCompletionCannotRestartANewerOrReselectedPreview() {
-        var selection = new GalleryPreviewSelection(BuiltinYsmModels.TAISHO_MAID_ID);
+    @Test
+    void olderAsyncCompletionCannotRestartANewerOrReselectedPreview()
+    {
+        GalleryPreviewSelection selection = new GalleryPreviewSelection(BuiltinYsmModels.TAISHO_MAID_ID);
         selection.browse(BuiltinYsmModels.NEW_YEAR_ID);
-        var first = selection.request(BuiltinYsmModels.NEW_YEAR_ID);
+        GalleryPreviewSelection.Request first = selection.request(BuiltinYsmModels.NEW_YEAR_ID);
         selection.browse(BuiltinYsmModels.ASTRONAUT_ID);
-        var second = selection.request(BuiltinYsmModels.ASTRONAUT_ID);
+        GalleryPreviewSelection.Request second = selection.request(BuiltinYsmModels.ASTRONAUT_ID);
         assertFalse(selection.isSelectedRequest(first));
         assertTrue(selection.isSelectedRequest(second));
         selection.browse(BuiltinYsmModels.NEW_YEAR_ID);
@@ -43,8 +57,10 @@ class GalleryPreviewSelectionTest {
         assertTrue(selection.isSelectedRequest(selection.request(BuiltinYsmModels.NEW_YEAR_ID)));
     }
 
-    @Test void currentLabelRequiresTheAppliedContentHashRatherThanOnlyTheSameModelId() {
-        var selection = new GalleryPreviewSelection(BuiltinYsmModels.NEW_YEAR_ID);
+    @Test
+    void currentLabelRequiresTheAppliedContentHashRatherThanOnlyTheSameModelId()
+    {
+        GalleryPreviewSelection selection = new GalleryPreviewSelection(BuiltinYsmModels.NEW_YEAR_ID);
         selection.browse(BuiltinYsmModels.NEW_YEAR_ID);
         assertEquals(GalleryPreviewSelection.Source.SELECTED,
                 selection.target(BuiltinYsmModels.NEW_YEAR_ID, "old-content", "edited-content").source());
@@ -53,17 +69,23 @@ class GalleryPreviewSelectionTest {
                 "Only the world binding's exact loaded asset is labelled current");
     }
 
-    @Test void savedDefaultIsNotDisplayedAsEnabledBeforeAnyCardWasBrowsed() {
-        var selection = new GalleryPreviewSelection(BuiltinYsmModels.DEFAULT_ID);
+    @Test
+    void savedDefaultIsNotDisplayedAsEnabledBeforeAnyCardWasBrowsed()
+    {
+        GalleryPreviewSelection selection = new GalleryPreviewSelection(BuiltinYsmModels.DEFAULT_ID);
         assertEquals(GalleryPreviewSelection.Source.VANILLA, selection.target("", "", "default").source());
-        assertEquals(new GalleryPreviewSelection.Target(GalleryPreviewSelection.Source.CURRENT, BuiltinYsmModels.TAISHO_MAID_ID),
+        assertEquals(
+                new GalleryPreviewSelection.Target(GalleryPreviewSelection.Source.CURRENT,
+                        BuiltinYsmModels.TAISHO_MAID_ID),
                 selection.target(BuiltinYsmModels.TAISHO_MAID_ID, "taisho", "default"));
     }
 
-    @Test void removingTheSelectedModelDiscardsItsAsyncTokenWithoutApplyingTheFallback() {
-        var selection = new GalleryPreviewSelection(BuiltinYsmModels.NEW_YEAR_ID);
+    @Test
+    void removingTheSelectedModelDiscardsItsAsyncTokenWithoutApplyingTheFallback()
+    {
+        GalleryPreviewSelection selection = new GalleryPreviewSelection(BuiltinYsmModels.NEW_YEAR_ID);
         selection.browse(BuiltinYsmModels.NEW_YEAR_ID);
-        var removed = selection.request(BuiltinYsmModels.NEW_YEAR_ID);
+        GalleryPreviewSelection.Request removed = selection.request(BuiltinYsmModels.NEW_YEAR_ID);
         selection.retain(List.of(BuiltinYsmModels.DEFAULT_ID));
         assertEquals(BuiltinYsmModels.DEFAULT_ID, selection.modelId());
         assertFalse(selection.isSelectedRequest(removed));

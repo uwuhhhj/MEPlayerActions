@@ -12,12 +12,17 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /** Hides only native equipment in the extracted state; body and hand items remain independent. */
 @Mixin(PlayerEntityRenderer.class)
-public abstract class PlayerEquipmentVisibilityMixin {
-    @Inject(method = "updateRenderState(Lnet/minecraft/entity/PlayerLikeEntity;Lnet/minecraft/client/render/entity/state/PlayerEntityRenderState;F)V",
-            at = @At("TAIL"))
+public abstract class PlayerEquipmentVisibilityMixin
+{
+    @Inject(method = "updateRenderState(Lnet/minecraft/entity/PlayerLikeEntity;Lnet/minecraft/client/render/entity/state/PlayerEntityRenderState;F)V", at = @At("TAIL"))
     private void meplayeractions$hideNativeEquipment(PlayerLikeEntity entity, PlayerEntityRenderState state,
-            float tickDelta, CallbackInfo ci) {
-        if (!ModelRenderer.shouldHideVanillaLayers(entity.getUuid())) return;
+            float tickDelta, CallbackInfo ci)
+    {
+        if (!ModelRenderer.shouldHideVanillaLayers(entity.getUuid()))
+        {
+            return;
+        }
+
         // Minecraft's armor/elytra features consume these copied stacks, not the live inventory.
         state.equippedHeadStack = ItemStack.EMPTY;
         state.equippedChestStack = ItemStack.EMPTY;

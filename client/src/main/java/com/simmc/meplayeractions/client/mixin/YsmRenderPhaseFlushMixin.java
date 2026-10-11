@@ -14,17 +14,24 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 
 /** Flush only the two YSM phases so buffered render layers cannot reverse the author's order. */
 @Mixin(RenderDispatcher.class)
-public abstract class YsmRenderPhaseFlushMixin {
-    @Shadow @Final private VertexConsumerProvider.Immediate vertexConsumers;
-    @Shadow @Final private OutlineVertexConsumerProvider outlineVertexConsumers;
+public abstract class YsmRenderPhaseFlushMixin
+{
+    @Shadow
+    @Final
+    private VertexConsumerProvider.Immediate vertexConsumers;
+    @Shadow
+    @Final
+    private OutlineVertexConsumerProvider outlineVertexConsumers;
 
-    @Redirect(method = "render", at = @At(value = "INVOKE",
-            target = "Lnet/minecraft/client/render/command/LayeredCustomCommandRenderer;render(Lnet/minecraft/client/render/command/BatchingRenderCommandQueue;)V"))
-    private void meplayeractions$flushAuthorPhase(LayeredCustomCommandRenderer renderer, BatchingRenderCommandQueue queue) {
+    @Redirect(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/render/command/LayeredCustomCommandRenderer;render(Lnet/minecraft/client/render/command/BatchingRenderCommandQueue;)V"))
+    private void meplayeractions$flushAuthorPhase(LayeredCustomCommandRenderer renderer,
+            BatchingRenderCommandQueue queue)
+    {
         renderer.render(queue);
-        if (NativeRenderPhases.requiresFlush(queue)) {
-            vertexConsumers.draw();
-            outlineVertexConsumers.draw();
+        if (NativeRenderPhases.requiresFlush(queue))
+        {
+            this.vertexConsumers.draw();
+            this.outlineVertexConsumers.draw();
         }
     }
 }

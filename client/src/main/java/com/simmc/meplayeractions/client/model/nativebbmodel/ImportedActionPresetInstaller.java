@@ -20,19 +20,24 @@ import java.util.UUID;
  *
  * <p>全部使用 {@code putIfAbsent}，不覆盖模型自带动画。
  */
-public final class ImportedActionPresetInstaller {
+public final class ImportedActionPresetInstaller
+{
 
-    private ImportedActionPresetInstaller() {
+    private ImportedActionPresetInstaller()
+    {
     }
 
-    public static void ensureVanillaFallbackAnimations(RawYsmModel raw) {
+    public static void ensureVanillaFallbackAnimations(RawYsmModel raw)
+    {
         RawYsmModel.RawGeometry geometry = raw.mainEntity.mainModel;
-        if (geometry == null || geometry.bones == null || geometry.bones.isEmpty()) {
+        if (geometry == null || geometry.bones == null || geometry.bones.isEmpty())
+        {
             return;
         }
 
         RawYsmModel.RawAnimationFile animFile = raw.mainEntity.animationFiles.get("animation-main");
-        if (animFile == null) {
+        if (animFile == null)
+        {
             animFile = new RawYsmModel.RawAnimationFile();
             animFile.animType = 1;
             animFile.fileHash = UUID.randomUUID().toString();
@@ -53,11 +58,14 @@ public final class ImportedActionPresetInstaller {
         animFile.animations.putIfAbsent("sleep", createVanillaFallbackAnimation("sleep", bones, 8f, 8f));
     }
 
-    private static Map<String, String> collectNormalizedBoneNames(RawYsmModel.RawGeometry geometry) {
+    private static Map<String, String> collectNormalizedBoneNames(RawYsmModel.RawGeometry geometry)
+    {
         Map<String, String> out = new HashMap<>();
-        for (RawYsmModel.RawBone bone : geometry.bones) {
+        for (RawYsmModel.RawBone bone : geometry.bones)
+        {
             String normalized = BbImportHost.normalizeBoneName(bone.name);
-            if (!normalized.isEmpty()) {
+            if (!normalized.isEmpty())
+            {
                 out.putIfAbsent(normalized, bone.name);
             }
         }
@@ -65,22 +73,33 @@ public final class ImportedActionPresetInstaller {
     }
 
     private static RawYsmModel.RawAnimation createVanillaFallbackAnimation(String name, Map<String, String> bones,
-                                                                         float armAmplitude, float legAmplitude) {
+            float armAmplitude, float legAmplitude)
+    {
         RawYsmModel.RawAnimation anim = new RawYsmModel.RawAnimation();
         anim.name = name;
         anim.length = 1.0f;
         anim.loopMode = 1;
-        addFallbackBoneAnimation(anim, firstBone(bones, "leftarm", "leftupperarm", "leftshoulder", "leftuparm", "leftbicep", "armleft"), swingExpression(armAmplitude, false));
-        addFallbackBoneAnimation(anim, firstBone(bones, "rightarm", "rightupperarm", "rightshoulder", "rightuparm", "rightbicep", "armright"), swingExpression(armAmplitude, true));
-        addFallbackBoneAnimation(anim, firstBone(bones, "leftleg", "leftupperleg", "leftthigh", "leftupleg", "legleft"), swingExpression(legAmplitude, true));
-        addFallbackBoneAnimation(anim, firstBone(bones, "rightleg", "rightupperleg", "rightthigh", "rightupleg", "legright"), swingExpression(legAmplitude, false));
+        addFallbackBoneAnimation(anim,
+                firstBone(bones, "leftarm", "leftupperarm", "leftshoulder", "leftuparm", "leftbicep", "armleft"),
+                swingExpression(armAmplitude, false));
+        addFallbackBoneAnimation(anim,
+                firstBone(bones, "rightarm", "rightupperarm", "rightshoulder", "rightuparm", "rightbicep", "armright"),
+                swingExpression(armAmplitude, true));
+        addFallbackBoneAnimation(anim, firstBone(bones, "leftleg", "leftupperleg", "leftthigh", "leftupleg", "legleft"),
+                swingExpression(legAmplitude, true));
+        addFallbackBoneAnimation(anim,
+                firstBone(bones, "rightleg", "rightupperleg", "rightthigh", "rightupleg", "legright"),
+                swingExpression(legAmplitude, false));
         return anim;
     }
 
-    private static String firstBone(Map<String, String> bones, String... candidates) {
-        for (String candidate : candidates) {
+    private static String firstBone(Map<String, String> bones, String... candidates)
+    {
+        for (String candidate : candidates)
+        {
             String bone = bones.get(candidate);
-            if (bone != null) {
+            if (bone != null)
+            {
                 return bone;
             }
         }
@@ -89,49 +108,70 @@ public final class ImportedActionPresetInstaller {
 
     // 受击抖动：四肢快速小幅度高频摆动，配合 PLAY_ONCE 播放一次。
     private static RawYsmModel.RawAnimation createFallbackShakeAnimation(String name, Map<String, String> bones,
-                                                                        float armAmplitude, float legAmplitude) {
+            float armAmplitude, float legAmplitude)
+    {
         RawYsmModel.RawAnimation anim = new RawYsmModel.RawAnimation();
         anim.name = name;
         anim.length = 1.0f;
         anim.loopMode = 0; // once
-        addFallbackBoneAnimation(anim, firstBone(bones, "leftarm", "leftupperarm", "leftshoulder", "leftuparm", "leftbicep", "armleft"), shakeExpression(armAmplitude, false));
-        addFallbackBoneAnimation(anim, firstBone(bones, "rightarm", "rightupperarm", "rightshoulder", "rightuparm", "rightbicep", "armright"), shakeExpression(armAmplitude, true));
-        addFallbackBoneAnimation(anim, firstBone(bones, "leftleg", "leftupperleg", "leftthigh", "leftupleg", "legleft"), shakeExpression(legAmplitude, true));
-        addFallbackBoneAnimation(anim, firstBone(bones, "rightleg", "rightupperleg", "rightthigh", "rightupleg", "legright"), shakeExpression(legAmplitude, false));
+        addFallbackBoneAnimation(anim,
+                firstBone(bones, "leftarm", "leftupperarm", "leftshoulder", "leftuparm", "leftbicep", "armleft"),
+                shakeExpression(armAmplitude, false));
+        addFallbackBoneAnimation(anim,
+                firstBone(bones, "rightarm", "rightupperarm", "rightshoulder", "rightuparm", "rightbicep", "armright"),
+                shakeExpression(armAmplitude, true));
+        addFallbackBoneAnimation(anim, firstBone(bones, "leftleg", "leftupperleg", "leftthigh", "leftupleg", "legleft"),
+                shakeExpression(legAmplitude, true));
+        addFallbackBoneAnimation(anim,
+                firstBone(bones, "rightleg", "rightupperleg", "rightthigh", "rightupleg", "legright"),
+                shakeExpression(legAmplitude, false));
         return anim;
     }
 
     // 固定姿态（如死亡前倾）：绕 X 固定角度，播放一次后保持。
     private static RawYsmModel.RawAnimation createFallbackPoseAnimation(String name, Map<String, String> bones,
-                                                                       float armXRot, float legXRot) {
+            float armXRot, float legXRot)
+    {
         RawYsmModel.RawAnimation anim = new RawYsmModel.RawAnimation();
         anim.name = name;
         anim.length = 1.0f;
         anim.loopMode = 0; // once
-        addFallbackBoneAnimation(anim, firstBone(bones, "leftarm", "leftupperarm", "leftshoulder", "leftuparm", "leftbicep", "armleft"), armXRot);
-        addFallbackBoneAnimation(anim, firstBone(bones, "rightarm", "rightupperarm", "rightshoulder", "rightuparm", "rightbicep", "armright"), armXRot);
-        addFallbackBoneAnimation(anim, firstBone(bones, "leftleg", "leftupperleg", "leftthigh", "leftupleg", "legleft"), legXRot);
-        addFallbackBoneAnimation(anim, firstBone(bones, "rightleg", "rightupperleg", "rightthigh", "rightupleg", "legright"), legXRot);
+        addFallbackBoneAnimation(anim,
+                firstBone(bones, "leftarm", "leftupperarm", "leftshoulder", "leftuparm", "leftbicep", "armleft"),
+                armXRot);
+        addFallbackBoneAnimation(anim,
+                firstBone(bones, "rightarm", "rightupperarm", "rightshoulder", "rightuparm", "rightbicep", "armright"),
+                armXRot);
+        addFallbackBoneAnimation(anim, firstBone(bones, "leftleg", "leftupperleg", "leftthigh", "leftupleg", "legleft"),
+                legXRot);
+        addFallbackBoneAnimation(anim,
+                firstBone(bones, "rightleg", "rightupperleg", "rightthigh", "rightupleg", "legright"), legXRot);
         return anim;
     }
 
-    private static String swingExpression(float amplitude, boolean oppositePhase) {
-        if (amplitude == 0f) {
+    private static String swingExpression(float amplitude, boolean oppositePhase)
+    {
+        if (amplitude == 0f)
+        {
             return "0";
         }
         return "math.cos(query.anim_time * 360" + (oppositePhase ? " + 180" : "") + ") * " + amplitude;
     }
 
     // 受击抖动：更高频（4 倍速）的小幅摆动。
-    private static String shakeExpression(float amplitude, boolean oppositePhase) {
-        if (amplitude == 0f) {
+    private static String shakeExpression(float amplitude, boolean oppositePhase)
+    {
+        if (amplitude == 0f)
+        {
             return "0";
         }
         return "math.cos(query.anim_time * 1440" + (oppositePhase ? " + 180" : "") + ") * " + amplitude;
     }
 
-    private static void addFallbackBoneAnimation(RawYsmModel.RawAnimation anim, String boneName, Object xRotation) {
-        if (boneName == null) {
+    private static void addFallbackBoneAnimation(RawYsmModel.RawAnimation anim, String boneName, Object xRotation)
+    {
+        if (boneName == null)
+        {
             return;
         }
         RawYsmModel.RawBoneAnimation boneAnim = new RawYsmModel.RawBoneAnimation();
@@ -139,7 +179,8 @@ public final class ImportedActionPresetInstaller {
         RawYsmModel.RawKeyframe keyframe = new RawYsmModel.RawKeyframe();
         keyframe.timestamp = 0.0f;
         keyframe.interpolationMode = RawYsmModel.RawKeyframe.INTERPOLATION_LINEAR;
-        keyframe.postData = new Object[]{xRotation, 0f, 0f};
+        keyframe.postData = new Object[]
+        { xRotation, 0f, 0f };
         boneAnim.rotation.add(keyframe);
         anim.boneAnimations.add(boneAnim);
     }

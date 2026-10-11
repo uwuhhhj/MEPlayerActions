@@ -4,7 +4,8 @@ import java.util.List;
 import java.util.Optional;
 
 /** Fixed private client choices; IDs and resource roots never name server-distributed packs. */
-public final class BuiltinYsmModels {
+public final class BuiltinYsmModels
+{
     public static final String DEFAULT_ID = "openysm_default";
     public static final String TAISHO_MAID_ID = "wine_fox_01_taisho_maid";
     public static final String NEW_YEAR_ID = "wine_fox_02_new_year";
@@ -24,21 +25,53 @@ public final class BuiltinYsmModels {
             new Model(STEVE_ID, "Steve · 玩家皮肤", ROOT + "misc/2_steve/", List.of(), List.of()));
     private static final List<String> IDS = MODELS.stream().map(Model::id).toList();
 
-    private BuiltinYsmModels() { }
+    private BuiltinYsmModels()
+    {
+    }
 
-    public record Model(String id, String label, String resourceRoot, List<String> languages, List<String> sounds) {
-        public Model { languages = List.copyOf(languages); sounds = List.copyOf(sounds); }
+    public record Model(String id, String label, String resourceRoot, List<String> languages, List<String> sounds)
+    {
+        public Model
+        {
+            languages = List.copyOf(languages);
+            sounds = List.copyOf(sounds);
+        }
     }
 
     /** Exact trusted builtin source mapping; imported models cannot impersonate these skin rules. */
-    public static String logicalSourceId(String id) {
-        if (ALEX_ID.equals(id)) return "misc/1_alex";
-        if (STEVE_ID.equals(id)) return "misc/2_steve";
+    public static String logicalSourceId(String id)
+    {
+        if (ALEX_ID.equals(id))
+        {
+            return "misc/1_alex";
+        }
+
+        if (STEVE_ID.equals(id))
+        {
+            return "misc/2_steve";
+        }
+
         return id;
     }
-    public static List<Model> models() { return MODELS; }
+
+    public static List<Model> models()
+    {
+        return MODELS;
+    }
+
     /** Exact accepted IDs, including the existing default first for saved-choice compatibility. */
-    public static List<String> ids() { return IDS; }
-    public static boolean contains(String id) { return id != null && IDS.contains(id); }
-    public static Optional<Model> find(String id) { return MODELS.stream().filter(model -> model.id().equals(id)).findFirst(); }
+    public static List<String> ids()
+    {
+        return IDS;
+    }
+
+    public static boolean contains(String id)
+    {
+        return id != null && IDS.contains(id);
+    }
+
+    public static Optional<Model> find(String id)
+    {
+        return MODELS.stream().filter(model -> model.id().equals(id)).findFirst();
+    }
 }

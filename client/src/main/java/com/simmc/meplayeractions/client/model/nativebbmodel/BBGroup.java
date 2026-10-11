@@ -15,7 +15,8 @@ import java.util.List;
  * （name/origin/rotation 等）来自这里，按 {@link #uuid} 与 outliner 节点关联。
  * 这是 Figura/Blockbench 5 "free" 格式的常见写法。</p>
  */
-public class BBGroup {
+public class BBGroup
+{
     public String uuid = "";
     public String name = "";
     public boolean visibility = true;
@@ -35,9 +36,12 @@ public class BBGroup {
     /** 旧 schema：直接列子 element/group 的 uuid。新 schema 走 outliner 树，此字段通常空。 */
     public List<String> children = new ArrayList<>();
 
-    public BBGroup() {}
+    public BBGroup()
+    {
+    }
 
-    public BBGroup(String uuid, String name) {
+    public BBGroup(String uuid, String name)
+    {
         this.uuid = uuid;
         this.name = name;
     }

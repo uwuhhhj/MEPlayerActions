@@ -13,7 +13,8 @@ import java.util.Map;
  *
  * <p>所有元素平铺在 {@link BBModelFile#elements} 数组里，通过 outliner 树用 UUID 字符串引用。</p>
  */
-public class BBElement {
+public class BBElement
+{
     public String uuid = "";
     public String type = "cube";
     public String name = "";
@@ -50,13 +51,16 @@ public class BBElement {
     public boolean render_order = false;
 
     /** mesh 顶点。bbmodel 里既可能是裸 [x,y,z]，也可能是 {position, visible}。 */
-    public static class BBMeshVertex {
+    public static class BBMeshVertex
+    {
         public float[] position = new float[3];
-        public boolean[] visible = new boolean[]{true, true, true};
+        public boolean[] visible = new boolean[]
+        { true, true, true };
     }
 
     /** mesh 面，N 边形。 */
-    public static class BBMeshFace {
+    public static class BBMeshFace
+    {
         /** 引用到 element.vertices 的 key（字符串）。 */
         public String[] vertices = new String[0];
         /** vertexKey -> [u, v]（Blockbench 像素坐标，未归一化）。 */
@@ -66,7 +70,8 @@ public class BBElement {
     }
 
     /** cube 单面。 */
-    public static class BBFace {
+    public static class BBFace
+    {
         /** [x1, y1, x2, y2] 像素坐标（基于 resolution.width/height，未归一化）。 */
         public float[] uv = new float[4];
         /** 引用 texture 的 id 或 uuid。 */

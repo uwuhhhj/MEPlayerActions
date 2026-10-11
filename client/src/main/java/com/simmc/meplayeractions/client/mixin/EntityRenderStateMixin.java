@@ -1,21 +1,57 @@
 package com.simmc.meplayeractions.client.mixin;
 
-import com.simmc.meplayeractions.client.render.HiddenPlayerRenderState;
 import com.simmc.meplayeractions.client.render.ComponentRenderState;
+import com.simmc.meplayeractions.client.render.HiddenPlayerRenderState;
+
 import net.minecraft.client.render.entity.state.EntityRenderState;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 
-@Mixin(EntityRenderState.class)
-public abstract class EntityRenderStateMixin implements HiddenPlayerRenderState, ComponentRenderState {
-    @Unique private boolean meplayeractions$hidden;
-    @Unique private java.util.UUID meplayeractions$entityUuid;
-    @Unique private float meplayeractions$tickDelta;
+import java.util.UUID;
 
-    @Override public boolean meplayeractions$isHidden() { return meplayeractions$hidden; }
-    @Override public void meplayeractions$setHidden(boolean hidden) { meplayeractions$hidden = hidden; }
-    @Override public java.util.UUID meplayeractions$entityUuid() { return meplayeractions$entityUuid; }
-    @Override public void meplayeractions$entityUuid(java.util.UUID uuid) { meplayeractions$entityUuid = uuid; }
-    @Override public float meplayeractions$tickDelta() { return meplayeractions$tickDelta; }
-    @Override public void meplayeractions$tickDelta(float tickDelta) { meplayeractions$tickDelta = tickDelta; }
+@Mixin(EntityRenderState.class)
+public abstract class EntityRenderStateMixin implements HiddenPlayerRenderState, ComponentRenderState
+{
+    @Unique
+    private boolean meplayeractions$hidden;
+    @Unique
+    private UUID meplayeractions$entityUuid;
+    @Unique
+    private float meplayeractions$tickDelta;
+
+    @Override
+    public boolean meplayeractions$isHidden()
+    {
+        return this.meplayeractions$hidden;
+    }
+
+    @Override
+    public void meplayeractions$setHidden(boolean hidden)
+    {
+        this.meplayeractions$hidden = hidden;
+    }
+
+    @Override
+    public UUID meplayeractions$entityUuid()
+    {
+        return this.meplayeractions$entityUuid;
+    }
+
+    @Override
+    public void meplayeractions$entityUuid(UUID uuid)
+    {
+        this.meplayeractions$entityUuid = uuid;
+    }
+
+    @Override
+    public float meplayeractions$tickDelta()
+    {
+        return this.meplayeractions$tickDelta;
+    }
+
+    @Override
+    public void meplayeractions$tickDelta(float tickDelta)
+    {
+        this.meplayeractions$tickDelta = tickDelta;
+    }
 }

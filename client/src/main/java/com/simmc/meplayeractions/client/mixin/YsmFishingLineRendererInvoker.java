@@ -8,10 +8,12 @@ import org.spongepowered.asm.mixin.gen.Invoker;
 
 /** Reuse the native 1.21.11 fishing-line geometry after replacing only the bobber model. */
 @Mixin(FishingBobberEntityRenderer.class)
-public interface YsmFishingLineRendererInvoker {
+public interface YsmFishingLineRendererInvoker
+{
     @Invoker("renderFishingLine")
     static void meplayeractions$renderFishingLine(float x, float y, float z, VertexConsumer vertices,
-                                                   MatrixStack.Entry entry, float start, float end, float width) {
+            MatrixStack.Entry entry, float start, float end, float width)
+    {
         throw new AssertionError("Mixin invoker not applied");
     }
 }

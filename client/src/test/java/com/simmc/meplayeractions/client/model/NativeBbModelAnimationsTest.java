@@ -1,9 +1,18 @@
 package com.simmc.meplayeractions.client.model;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.simmc.meplayeractions.client.model.nativeysm.RawYsmModel;
 import com.simmc.meplayeractions.expression.Molang;
+
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Stream;
+
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
@@ -13,18 +22,16 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
-import java.nio.charset.StandardCharsets;
-import java.util.List;
-import java.util.Map;
-import java.util.stream.Stream;
-
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Authored channels follow official editor axes after evaluation; native and preset channels keep their source semantics. */
-class NativeBbModelAnimationsTest {
+class NativeBbModelAnimationsTest
+{
     @ParameterizedTest
-    @ValueSource(strings = {"4.10", "5.0"})
-    void numericMultiAxisRotationPositionAndScaleUseTheOfficialZyxEditorPose(String version) throws Exception {
+    @ValueSource(strings =
+    { "4.10", "5.0" })
+    void numericMultiAxisRotationPositionAndScaleUseTheOfficialZyxEditorPose(String version) throws Exception
+    {
         JsonObject source = source(version);
         source.getAsJsonArray("outliner").get(0).getAsJsonObject().add("rotation", numbers(13, 27, -9));
         keys(source).add(frame("rotation", 0, "linear", "23", "-41", "57"));
@@ -32,49 +39,61 @@ class NativeBbModelAnimationsTest {
         keys(source).add(frame("scale", 0, "linear", "1.2", ".8", "1.5"));
         BbModel model = imported(source);
         int sign = version.startsWith("4") ? -1 : 1;
-        Matrix4f expected = new Matrix4f().translate(sign * 5 / 16f, -3 / 16f, 7 / 16f)
-                .rotateZ(radians(-9 + 57)).rotateY(radians(27 + sign * -41)).rotateX(radians(13 + sign * 23))
-                .scale(1.2f, .8f, 1.5f);
-        assertArrayEquals(expected.get(new float[16]), model.boneTransforms(sample(model, 0, context())).get("Body").get(new float[16]), 1e-5f);
+        Matrix4f expected = new Matrix4f().translate(sign * 5 / 16f, -3 / 16f, 7 / 16f).rotateZ(radians(-9 + 57))
+                .rotateY(radians(27 + sign * -41)).rotateX(radians(13 + sign * 23)).scale(1.2f, .8f, 1.5f);
+        assertArrayEquals(expected.get(new float[16]),
+                model.boneTransforms(sample(model, 0, context())).get("Body").get(new float[16]), 1e-5f);
     }
 
     @ParameterizedTest
     @MethodSource("completePrograms")
-    void wholeProgramsIncludingAssignmentsNestedReturnsAndCommentsKeepTheirResultAndSideEffects(String version, String expression)
-            throws Exception {
+    void wholeProgramsIncludingAssignmentsNestedReturnsAndCommentsKeepTheirResultAndSideEffects(String version,
+            String expression) throws Exception
+    {
         JsonObject source = source(version);
         keys(source).add(frame("rotation", 0, "linear", expression, "-41", "math.sin(90)*57"));
         byte[] bytes = source.toString().getBytes(StandardCharsets.UTF_8);
-        var imported = NativeBbModel.read(bytes, Map.of("model.bbmodel", bytes), null);
+        YsmFolderModel.Imported imported = NativeBbModel.read(bytes, Map.of("model.bbmodel", bytes), null);
         BbModel model = BbModel.parseLocal(imported.raw());
-        Molang.Context context = context(); context.query("q.flag", 1);
+        Molang.Context context = context();
+        context.query("q.flag", 1);
         int sign = version.startsWith("4") ? -1 : 1;
         Vector3f rotation = sample(model, 0, context).channels[model.boneIndex("Body")][1];
         assertEquals(sign * 23, rotation.x, 1e-5);
         assertEquals(sign * -41, rotation.y, 1e-5);
         assertEquals(57, rotation.z, 1e-5);
-        if (expression.contains("v.turn")) assertEquals(23d, context.variables().get("variable.turn"));
+        if (expression.contains("v.turn"))
+        {
+            assertEquals(23d, context.variables().get("variable.turn"));
+        }
+
         JsonObject authored = authoredAnimations(imported).getAsJsonObject("authored");
-        assertEquals(expression, authored.getAsJsonObject("bones").getAsJsonObject("Body")
-                .getAsJsonObject("rotation").getAsJsonObject("0.0").getAsJsonArray("post").get(0).getAsString(),
+        assertEquals(expression,
+                authored.getAsJsonObject("bones").getAsJsonObject("Body").getAsJsonObject("rotation")
+                        .getAsJsonObject("0.0").getAsJsonArray("post").get(0).getAsString(),
                 "Host adaptation must not rewrite an author program");
     }
 
-    static Stream<Arguments> completePrograms() {
+    static Stream<Arguments> completePrograms()
+    {
         List<String> programs = List.of("q.flag ? 23 : -7", "v.turn=23; v.turn;", "v.turn=23; RETURN v.turn;",
                 "return (q.flag ? { return 23; } : -7);", "q.flag ? { return 23; } : { return -7; };",
                 "/* return -100; */ q.flag ? 23 : -7", "// return -100;\n{v.turn=23; v.turn;}");
-        return Stream.of("4.10", "5.0").flatMap(version -> programs.stream().map(program -> Arguments.of(version, program)));
+        return Stream.of("4.10", "5.0")
+                .flatMap(version -> programs.stream().map(program -> Arguments.of(version, program)));
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"4.10", "5.0"})
-    void previousPositionThisUsesTheSameAxesInClipAndNativeQueueEvaluation(String version) throws Exception {
+    @ValueSource(strings =
+    { "4.10", "5.0" })
+    void previousPositionThisUsesTheSameAxesInClipAndNativeQueueEvaluation(String version) throws Exception
+    {
         JsonObject source = source(version);
         keys(source).add(frame("position", 0, "linear", "this+1", "this+2", "this+3"));
         BbModel model = imported(source);
         int bone = model.boneIndex("Body");
-        BbModel.Pose previous = model.emptyPose(); previous.channels[bone][0] = new Vector3f(8, -4, 2);
+        BbModel.Pose previous = model.emptyPose();
+        previous.channels[bone][0] = new Vector3f(8, -4, 2);
         Vector3f expected = new Vector3f(version.startsWith("4") ? 7 : 9, -2, 5);
         assertEquals(expected, model.evaluateClip("authored", 5, "HOLD", context(), previous).pose().channels[bone][0]);
         assertEquals(expected, model.evaluateNativeChannel("authored", 5, "HOLD", false, bone, 0, context(), previous));
@@ -83,7 +102,8 @@ class NativeBbModelAnimationsTest {
     }
 
     @Test
-    void officialFourToFiveKeyframeMigrationProducesTheSameFinalPose() throws Exception {
+    void officialFourToFiveKeyframeMigrationProducesTheSameFinalPose() throws Exception
+    {
         JsonObject old = source("4.10"), modern = source("5.0");
         keys(old).add(frame("rotation", 0, "linear", "23", "-41", "57"));
         keys(old).add(frame("position", 0, "linear", "math.sin(30)*10", "-3", "7"));
@@ -95,42 +115,53 @@ class NativeBbModelAnimationsTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"4.10,bezier,linear,0,0,-15", "5.0,bezier,linear,0,0,15",
-            "4.10,bezier,linear,6,-4,-15.75", "5.0,bezier,linear,6,-4,15.75",
-            "4.10,linear,bezier,6,-4,-15.75", "5.0,linear,bezier,6,-4,15.75",
-            "4.10,step,bezier,6,-4,-10", "5.0,step,bezier,6,-4,10",
-            "4.10,bezier,catmullrom,6,-4,-15", "5.0,bezier,catmullrom,6,-4,15",
-            "4.10,catmullrom,bezier,6,-4,-15", "5.0,catmullrom,bezier,6,-4,15"})
-    void bezierUsesEndpointOffsetsSignedSecondsAndOfficialInterpolationPriority(String version, String outgoing, String incoming,
-                                                                                float rightValue, float leftValue, float expected)
-            throws Exception {
+    @CsvSource(
+    { "4.10,bezier,linear,0,0,-15", "5.0,bezier,linear,0,0,15", "4.10,bezier,linear,6,-4,-15.75",
+            "5.0,bezier,linear,6,-4,15.75", "4.10,linear,bezier,6,-4,-15.75", "5.0,linear,bezier,6,-4,15.75",
+            "4.10,step,bezier,6,-4,-10", "5.0,step,bezier,6,-4,10", "4.10,bezier,catmullrom,6,-4,-15",
+            "5.0,bezier,catmullrom,6,-4,15", "4.10,catmullrom,bezier,6,-4,-15", "5.0,catmullrom,bezier,6,-4,15" })
+    void bezierUsesEndpointOffsetsSignedSecondsAndOfficialInterpolationPriority(String version, String outgoing,
+            String incoming, float rightValue, float leftValue, float expected) throws Exception
+    {
         JsonObject source = source(version);
         JsonObject start = frame("position", 0, outgoing, "10", "0", "0");
         JsonObject end = frame("position", 2, incoming, "20", "0", "0");
-        start.add("bezier_right_time", numbers(1, 1, 1)); start.add("bezier_right_value", numbers(rightValue, 0, 0));
-        end.add("bezier_left_time", numbers(-1, -1, -1)); end.add("bezier_left_value", numbers(leftValue, 0, 0));
-        keys(source).add(start); keys(source).add(end);
+        start.add("bezier_right_time", numbers(1, 1, 1));
+        start.add("bezier_right_value", numbers(rightValue, 0, 0));
+        end.add("bezier_left_time", numbers(-1, -1, -1));
+        end.add("bezier_left_value", numbers(leftValue, 0, 0));
+        keys(source).add(start);
+        keys(source).add(end);
         BbModel model = imported(source);
         assertEquals(expected, sample(model, 20, context()).channels[model.boneIndex("Body")][0].x, 1e-4);
     }
 
     @Test
-    void migratedBezierEndpointsAndValueOffsetsAreEquivalentInFourAndFive() throws Exception {
+    void migratedBezierEndpointsAndValueOffsetsAreEquivalentInFourAndFive() throws Exception
+    {
         JsonObject old = bezierSource("4.10", 10, 20, 6, -4), modern = bezierSource("5.0", -10, -20, -6, 4);
         BbModel first = imported(old), second = imported(modern);
-        for (double tick : new double[]{0, 5, 10, 20, 30, 35, 40})
+        for (double tick : new double[]
+        { 0, 5, 10, 20, 30, 35, 40 })
+
+        {
             assertEquals(sample(first, tick, context()).channels[first.boneIndex("Body")][0].x,
                     sample(second, tick, context()).channels[second.boneIndex("Body")][0].x, 1e-4);
+        }
+
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"4.10", "5.0"})
-    void firstDualDataPointIsBeforeTheKeyAndTheLastIsAfterIt(String version) throws Exception {
+    @ValueSource(strings =
+    { "4.10", "5.0" })
+    void firstDualDataPointIsBeforeTheKeyAndTheLastIsAfterIt(String version) throws Exception
+    {
         JsonObject source = source(version);
         keys(source).add(frame("position", 0, "linear", "0", "0", "0"));
         JsonObject jump = frame("position", 1, "linear", "10", "0", "0");
         jump.getAsJsonArray("data_points").add(point("20", "0", "0"));
-        keys(source).add(jump); keys(source).add(frame("position", 2, "linear", "30", "0", "0"));
+        keys(source).add(jump);
+        keys(source).add(frame("position", 2, "linear", "30", "0", "0"));
         BbModel model = imported(source);
         int sign = version.startsWith("4") ? -1 : 1;
         assertEquals(sign * 9.99, sample(model, 19.98, context()).channels[model.boneIndex("Body")][0].x, 1e-4);
@@ -139,72 +170,98 @@ class NativeBbModelAnimationsTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"ysm_01_jk", "ysm_02_jk"})
-    void publishedNumericBlueprintWalkUsesTheSameAuthorMotionAsItsEditorReader(String id) throws Exception {
+    @ValueSource(strings =
+    { "ysm_01_jk", "ysm_02_jk" })
+    void publishedNumericBlueprintWalkUsesTheSameAuthorMotionAsItsEditorReader(String id) throws Exception
+    {
         byte[] bytes;
-        try (var stream = getClass().getResourceAsStream("/numeric-blueprints/" + id + ".bbmodel")) {
-            assertNotNull(stream); bytes = stream.readAllBytes();
+        try (InputStream stream = getClass().getResourceAsStream("/numeric-blueprints/" + id + ".bbmodel"))
+        {
+            assertNotNull(stream);
+            bytes = stream.readAllBytes();
         }
         BbModel editor = BbModel.parse(bytes), decoded = BbModelAsset.read(bytes).model();
         assertTrue(editor.animations().contains("walk"));
-        for (double tick : new double[]{0, 1, 4, 8, 12, 19}) {
-            var expected = editor.boneTransforms(editor.evaluateClip("walk", tick, "LOOP", new Molang.Context()).pose());
-            var actual = decoded.boneTransforms(decoded.evaluateClip("walk", tick, "LOOP", context()).pose());
+        for (double tick : new double[]
+        { 0, 1, 4, 8, 12, 19 })
+        {
+            Map<String, Matrix4f> expected = editor
+                    .boneTransforms(editor.evaluateClip("walk", tick, "LOOP", new Molang.Context()).pose());
+            Map<String, Matrix4f> actual = decoded
+                    .boneTransforms(decoded.evaluateClip("walk", tick, "LOOP", context()).pose());
             for (String bone : expected.keySet())
+
+            {
                 assertArrayEquals(expected.get(bone).get(new float[16]), actual.get(bone).get(new float[16]), 1e-4f,
                         id + "/walk tick " + tick + "/" + bone);
+            }
+
         }
     }
 
     @Test
-    void authoredAliasesInheritTheirAxesWhileBuiltinPresetsAndTrueNativeAnimationsRemainUnmarked() throws Exception {
+    void authoredAliasesInheritTheirAxesWhileBuiltinPresetsAndTrueNativeAnimationsRemainUnmarked() throws Exception
+    {
         JsonObject source = source("5.0");
         animation(source).addProperty("name", "hold_mainhand:spear");
         keys(source).add(frame("rotation", 0, "linear", "23", "0", "0"));
-        var decoded = NativeBbModel.read(source.toString().getBytes(StandardCharsets.UTF_8),
+        YsmFolderModel.Imported decoded = NativeBbModel.read(source.toString().getBytes(StandardCharsets.UTF_8),
                 Map.of("model.bbmodel", source.toString().getBytes(StandardCharsets.UTF_8)), null);
         JsonObject animations = authoredAnimations(decoded);
         assertEquals(5, animations.getAsJsonObject("hold_mainhand:spear").get("mpa_bb_editor_axes").getAsInt());
         assertEquals(5, animations.getAsJsonObject("hold_mainhand:lance").get("mpa_bb_editor_axes").getAsInt());
         assertFalse(animations.getAsJsonObject("idle").has("mpa_bb_editor_axes"));
 
-        var nativeModel = NativeYsmFileTest.model();
-        var file = new com.simmc.meplayeractions.client.model.nativeysm.RawYsmModel.RawAnimationFile();
-        var clip = new com.simmc.meplayeractions.client.model.nativeysm.RawYsmModel.RawAnimation(); clip.name = "authored"; clip.length = 2;
-        var track = new com.simmc.meplayeractions.client.model.nativeysm.RawYsmModel.RawBoneAnimation(); track.boneName = "ysmGlowEyes";
-        var key = new com.simmc.meplayeractions.client.model.nativeysm.RawYsmModel.RawKeyframe(); key.postData = new Object[]{23, 0, 0};
-        track.rotation.add(key); clip.boneAnimations.add(track); file.animations.put(clip.name, clip); nativeModel.mainEntity.animationFiles.put("main", file);
+        RawYsmModel nativeModel = NativeYsmFileTest.model();
+        RawYsmModel.RawAnimationFile file = new RawYsmModel.RawAnimationFile();
+        RawYsmModel.RawAnimation clip = new RawYsmModel.RawAnimation();
+        clip.name = "authored";
+        clip.length = 2;
+        RawYsmModel.RawBoneAnimation track = new RawYsmModel.RawBoneAnimation();
+        track.boneName = "ysmGlowEyes";
+        RawYsmModel.RawKeyframe key = new RawYsmModel.RawKeyframe();
+        key.postData = new Object[]
+        { 23, 0, 0 };
+        track.rotation.add(key);
+        clip.boneAnimations.add(track);
+        file.animations.put(clip.name, clip);
+        nativeModel.mainEntity.animationFiles.put("main", file);
         BbModel preserved = BbModel.parseLocal(NativeYsmFile.importModel(nativeModel, null).raw());
         assertEquals(-23, sample(preserved, 0, context()).channels[preserved.boneIndex("ysmGlowEyes")][1].x, 1e-5);
     }
 
     @ParameterizedTest
-    @CsvSource({"4.10,false,false,0.5,0.625", "5.0,false,false,0.5,-0.625",
-            "4.10,true,false,0.5,6.875", "5.0,true,false,0.5,-6.875",
-            "4.10,false,true,2.5,-55.625", "5.0,false,true,2.5,55.625",
-            "4.10,true,true,2.5,-55", "5.0,true,true,2.5,55"})
+    @CsvSource(
+    { "4.10,false,false,0.5,0.625", "5.0,false,false,0.5,-0.625", "4.10,true,false,0.5,6.875",
+            "5.0,true,false,0.5,-6.875", "4.10,false,true,2.5,-55.625", "5.0,false,true,2.5,55.625",
+            "4.10,true,true,2.5,-55", "5.0,true,true,2.5,55" })
     void mixedBezierSamplesPreserveOriginalCatmullNeighborsIncludingLoopBoundaries(String version, boolean looping,
-                                                                                boolean tail, double seconds, double expected)
-            throws Exception {
+            boolean tail, double seconds, double expected) throws Exception
+    {
         JsonObject source = source(version);
         animation(source).addProperty("length", 3);
         animation(source).addProperty("loop", looping ? "loop" : "hold");
-        String[] interpolation = tail ? new String[]{"linear", "bezier", "linear", "catmullrom"}
-                : new String[]{"catmullrom", "linear", "bezier", "linear"};
-        String[] value = {"0", "10", "100", "0"};
-        for (int i = 0; i < 4; i++) {
+        String[] interpolation = tail ? new String[]
+        { "linear", "bezier", "linear", "catmullrom" } : new String[]
+        { "catmullrom", "linear", "bezier", "linear" };
+        String[] value =
+        { "0", "10", "100", "0" };
+        for (int i = 0; i < 4; i++)
+        {
             JsonObject key = frame("position", i, interpolation[i], value[i], "0", "0");
             key.add("bezier_left_time", numbers(-.5f, -.5f, -.5f));
             key.add("bezier_right_time", numbers(.5f, .5f, .5f));
-            key.add("bezier_left_value", numbers(0, 0, 0)); key.add("bezier_right_value", numbers(0, 0, 0));
+            key.add("bezier_left_value", numbers(0, 0, 0));
+            key.add("bezier_right_value", numbers(0, 0, 0));
             keys(source).add(key);
         }
         byte[] bytes = source.toString().getBytes(StandardCharsets.UTF_8);
-        var decoded = NativeBbModel.read(bytes, Map.of("model.bbmodel", bytes), null);
+        YsmFolderModel.Imported decoded = NativeBbModel.read(bytes, Map.of("model.bbmodel", bytes), null);
         JsonObject frames = authoredAnimations(decoded).getAsJsonObject("authored").getAsJsonObject("bones")
                 .getAsJsonObject("Body").getAsJsonObject("position");
         assertTrue(frames.size() > 4, "The regression must include baked Bézier samples");
-        for (var entry : frames.entrySet()) {
+        for (Map.Entry<String, JsonElement> entry : frames.entrySet())
+        {
             boolean originalTime = Double.parseDouble(entry.getKey()) == Math.floor(Double.parseDouble(entry.getKey()));
             assertEquals(!originalTime, entry.getValue().getAsJsonObject().has("mpa_bb_synthetic"));
         }
@@ -217,73 +274,163 @@ class NativeBbModelAnimationsTest {
     }
 
     @Test
-    void authoredSyntheticSamplesRequireLinearInterpolationAndOriginalEndpoints() throws Exception {
+    void authoredSyntheticSamplesRequireLinearInterpolationAndOriginalEndpoints() throws Exception
+    {
         JsonObject source = bezierSource("5.0", 10, 20, 6, -4);
         byte[] bytes = source.toString().getBytes(StandardCharsets.UTF_8);
-        var imported = NativeBbModel.read(bytes, Map.of("model.bbmodel", bytes), null);
-        JsonObject linear = JsonParser.parseString(new String(imported.raw(), StandardCharsets.UTF_8)).getAsJsonObject();
+        YsmFolderModel.Imported imported = NativeBbModel.read(bytes, Map.of("model.bbmodel", bytes), null);
+        JsonObject linear = JsonParser.parseString(new String(imported.raw(), StandardCharsets.UTF_8))
+                .getAsJsonObject();
         JsonArray frames = runtimeKeys(linear);
         JsonObject synthetic = null;
-        for (var frame : frames) if (frame.getAsJsonObject().has("mpa_bb_synthetic")) {
-            synthetic = frame.getAsJsonObject(); break;
+        for (JsonElement frame : frames)
+        {
+            if (frame.getAsJsonObject().has("mpa_bb_synthetic"))
+            {
+                synthetic = frame.getAsJsonObject();
+                break;
+            }
         }
+
         assertNotNull(synthetic);
         synthetic.addProperty("interpolation", "catmullrom");
-        assertThrows(IllegalArgumentException.class, () -> BbModel.parseLocal(linear.toString().getBytes(StandardCharsets.UTF_8)));
+        assertThrows(IllegalArgumentException.class,
+                () -> BbModel.parseLocal(linear.toString().getBytes(StandardCharsets.UTF_8)));
 
-        JsonObject endpoint = JsonParser.parseString(new String(imported.raw(), StandardCharsets.UTF_8)).getAsJsonObject();
+        JsonObject endpoint = JsonParser.parseString(new String(imported.raw(), StandardCharsets.UTF_8))
+                .getAsJsonObject();
         runtimeKeys(endpoint).get(0).getAsJsonObject().addProperty("mpa_bb_synthetic", true);
-        assertThrows(IllegalArgumentException.class, () -> BbModel.parseLocal(endpoint.toString().getBytes(StandardCharsets.UTF_8)));
+        assertThrows(IllegalArgumentException.class,
+                () -> BbModel.parseLocal(endpoint.toString().getBytes(StandardCharsets.UTF_8)));
     }
 
-    private static JsonObject bezierSource(String version, float from, float to, float right, float left) throws Exception {
+    private static JsonObject bezierSource(String version, float from, float to, float right, float left)
+            throws Exception
+    {
         JsonObject source = source(version);
         JsonObject start = frame("position", 0, "bezier", Float.toString(from), "0", "0");
         JsonObject end = frame("position", 2, "linear", Float.toString(to), "0", "0");
-        start.add("bezier_right_time", numbers(1, 1, 1)); start.add("bezier_right_value", numbers(right, 0, 0));
-        end.add("bezier_left_time", numbers(-1, -1, -1)); end.add("bezier_left_value", numbers(left, 0, 0));
-        keys(source).add(start); keys(source).add(end);
+        start.add("bezier_right_time", numbers(1, 1, 1));
+        start.add("bezier_right_value", numbers(right, 0, 0));
+        end.add("bezier_left_time", numbers(-1, -1, -1));
+        end.add("bezier_left_value", numbers(left, 0, 0));
+        keys(source).add(start);
+        keys(source).add(end);
         return source;
     }
 
-    private static JsonObject source(String version) throws Exception {
+    private static JsonObject source(String version) throws Exception
+    {
         JsonObject source = NativeBbModelTest.source();
-        source.add("meta", JsonParser.parseString("{\"format_version\":\"" + version + "\",\"model_format\":\"bedrock\"}"));
-        JsonArray elements = new JsonArray(); elements.add(source.getAsJsonArray("elements").get(0).deepCopy()); source.add("elements", elements);
-        source.remove("groups"); source.remove("animation_controllers");
-        source.add("outliner", JsonParser.parseString("[{\"uuid\":\"body\",\"name\":\"Body\",\"origin\":[0,0,0],\"children\":[\"cube\"]}]"));
-        source.add("animations", JsonParser.parseString("[{\"name\":\"authored\",\"length\":2,\"loop\":\"hold\",\"animators\":{\"body\":{\"name\":\"Body\",\"type\":\"bone\",\"keyframes\":[]}}}]"));
+        source.add("meta",
+                JsonParser.parseString("{\"format_version\":\"" + version + "\",\"model_format\":\"bedrock\"}"));
+        JsonArray elements = new JsonArray();
+        elements.add(source.getAsJsonArray("elements").get(0).deepCopy());
+        source.add("elements", elements);
+        source.remove("groups");
+        source.remove("animation_controllers");
+        source.add("outliner", JsonParser
+                .parseString("[{\"uuid\":\"body\",\"name\":\"Body\",\"origin\":[0,0,0],\"children\":[\"cube\"]}]"));
+        source.add("animations", JsonParser.parseString(
+                "[{\"name\":\"authored\",\"length\":2,\"loop\":\"hold\",\"animators\":{\"body\":{\"name\":\"Body\",\"type\":\"bone\",\"keyframes\":[]}}}]"));
         return source;
     }
 
-    private static JsonObject animation(JsonObject source) { return source.getAsJsonArray("animations").get(0).getAsJsonObject(); }
-    private static JsonObject authoredAnimations(YsmFolderModel.Imported imported) {
+    private static JsonObject animation(JsonObject source)
+    {
+        return source.getAsJsonArray("animations").get(0).getAsJsonObject();
+    }
+
+    private static JsonObject authoredAnimations(YsmFolderModel.Imported imported)
+    {
         String path = imported.profile().animationFiles().get("main");
         byte[] resource = imported.sourceFiles().get(path);
         assertNotNull(resource, path);
-        return JsonParser.parseString(new String(resource, StandardCharsets.UTF_8)).getAsJsonObject().getAsJsonObject("animations");
+        return JsonParser.parseString(new String(resource, StandardCharsets.UTF_8)).getAsJsonObject()
+                .getAsJsonObject("animations");
     }
-    private static JsonArray runtimeKeys(JsonObject document) {
-        for (var value : document.getAsJsonArray("animations")) {
+
+    private static JsonArray runtimeKeys(JsonObject document)
+    {
+        for (JsonElement value : document.getAsJsonArray("animations"))
+        {
             JsonObject clip = value.getAsJsonObject();
-            if (!clip.get("name").getAsString().equals("authored")) continue;
-            for (var animator : clip.getAsJsonObject("animators").entrySet())
+            if (!clip.get("name").getAsString().equals("authored"))
+            {
+                continue;
+            }
+
+            for (Map.Entry<String, JsonElement> animator : clip.getAsJsonObject("animators").entrySet())
+
+            {
                 if (animator.getValue().getAsJsonObject().get("type").getAsString().equals("bone"))
+
+                {
                     return animator.getValue().getAsJsonObject().getAsJsonArray("keyframes");
+                }
+
+            }
+
         }
-        fail("Missing authored bone animator"); return new JsonArray();
+        fail("Missing authored bone animator");
+        return new JsonArray();
     }
-    private static JsonArray keys(JsonObject source) { return animation(source).getAsJsonObject("animators").getAsJsonObject("body").getAsJsonArray("keyframes"); }
-    private static JsonObject point(String x, String y, String z) {
-        JsonObject point = new JsonObject(); point.addProperty("x", x); point.addProperty("y", y); point.addProperty("z", z); return point;
+
+    private static JsonArray keys(JsonObject source)
+    {
+        return animation(source).getAsJsonObject("animators").getAsJsonObject("body").getAsJsonArray("keyframes");
     }
-    private static JsonObject frame(String channel, float time, String interpolation, String x, String y, String z) {
-        JsonObject frame = new JsonObject(); frame.addProperty("channel", channel); frame.addProperty("time", time); frame.addProperty("interpolation", interpolation);
-        JsonArray points = new JsonArray(); points.add(point(x, y, z)); frame.add("data_points", points); return frame;
+
+    private static JsonObject point(String x, String y, String z)
+    {
+        JsonObject point = new JsonObject();
+        point.addProperty("x", x);
+        point.addProperty("y", y);
+        point.addProperty("z", z);
+        return point;
     }
-    private static JsonArray numbers(float... values) { JsonArray result = new JsonArray(); for (float value : values) result.add(value); return result; }
-    private static float radians(float degrees) { return (float) Math.toRadians(degrees); }
-    private static Molang.Context context() { var result = new Molang.Context(); result.enableNativeYsm(); return result; }
-    private static BbModel imported(JsonObject source) throws Exception { return BbModelAsset.read(source.toString().getBytes(StandardCharsets.UTF_8)).model(); }
-    private static BbModel.Pose sample(BbModel model, double ticks, Molang.Context context) { return model.evaluateClip("authored", ticks, "HOLD", context).pose(); }
+
+    private static JsonObject frame(String channel, float time, String interpolation, String x, String y, String z)
+    {
+        JsonObject frame = new JsonObject();
+        frame.addProperty("channel", channel);
+        frame.addProperty("time", time);
+        frame.addProperty("interpolation", interpolation);
+        JsonArray points = new JsonArray();
+        points.add(point(x, y, z));
+        frame.add("data_points", points);
+        return frame;
+    }
+
+    private static JsonArray numbers(float... values)
+    {
+        JsonArray result = new JsonArray();
+        for (float value : values)
+        {
+            result.add(value);
+        }
+        return result;
+    }
+
+    private static float radians(float degrees)
+    {
+        return (float) Math.toRadians(degrees);
+    }
+
+    private static Molang.Context context()
+    {
+        Molang.Context result = new Molang.Context();
+        result.enableNativeYsm();
+        return result;
+    }
+
+    private static BbModel imported(JsonObject source) throws Exception
+    {
+        return BbModelAsset.read(source.toString().getBytes(StandardCharsets.UTF_8)).model();
+    }
+
+    private static BbModel.Pose sample(BbModel model, double ticks, Molang.Context context)
+    {
+        return model.evaluateClip("authored", ticks, "HOLD", context).pose();
+    }
 }

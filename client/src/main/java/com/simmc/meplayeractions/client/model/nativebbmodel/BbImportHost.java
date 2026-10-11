@@ -9,18 +9,31 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /** MPA logging bridge; the normalization method is copied from upstream GeometryBaker. */
-final class BbImportHost {
+final class BbImportHost
+{
     static final Logger LOGGER = LoggerFactory.getLogger("MEPlayerActions/BBModel");
-    private BbImportHost() { }
-    static boolean animationDebugLog() { return LOGGER.isDebugEnabled(); }
-    public static String normalizeBoneName(String name) {
-        if (name == null || name.isEmpty()) {
+
+    private BbImportHost()
+    {
+    }
+
+    static boolean animationDebugLog()
+    {
+        return LOGGER.isDebugEnabled();
+    }
+
+    public static String normalizeBoneName(String name)
+    {
+        if (name == null || name.isEmpty())
+        {
             return "";
         }
         StringBuilder out = new StringBuilder(name.length());
-        for (int i = 0; i < name.length(); i++) {
+        for (int i = 0; i < name.length(); i++)
+        {
             char c = Character.toLowerCase(name.charAt(i));
-            if (Character.isLetterOrDigit(c)) {
+            if (Character.isLetterOrDigit(c))
+            {
                 out.append(c);
             }
         }

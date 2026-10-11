@@ -9,8 +9,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class YsmRuntimeTemplateTest {
-    private static JsonObject model() {
+class YsmRuntimeTemplateTest
+{
+    private static JsonObject model()
+    {
         return JsonParser.parseString("""
                 {"animations":[
                   {"name":"parallel1","animators":{"init":{"name":"events","type":"effect","keyframes":[
@@ -28,24 +30,36 @@ class YsmRuntimeTemplateTest {
                 """).getAsJsonObject();
     }
 
-    @Test void eachDistinctScriptAndAxisIsCompiledOnceAndInstancesReuseTheImmutableTemplate() {
-        var source = model(); var compiles = new AtomicInteger();
-        var template = YsmRuntime.Template.compile(source, text -> { compiles.incrementAndGet(); return Molang.compile(text); });
+    @Test
+    void eachDistinctScriptAndAxisIsCompiledOnceAndInstancesReuseTheImmutableTemplate()
+    {
+        JsonObject source = model();
+        AtomicInteger compiles = new AtomicInteger();
+        YsmRuntime.Template template = YsmRuntime.Template.compile(source, text ->
+        {
+            compiles.incrementAndGet();
+            return Molang.compile(text);
+        });
         assertEquals(4, compiles.get(), "Repeated initialization and pre/post axes share Programs");
-        var program = template.expression("variable.spring + variable.event");
+        Molang.Program program = template.expression("variable.spring + variable.event");
         assertSame(program, template.expression("variable.spring + variable.event"));
         source.add("animations", JsonParser.parseString("[]"));
-        var first = new YsmRuntime(template, 1); var second = new YsmRuntime(template, 2);
-        first.update(0, Map.of(), Map.of("idle", .6)); second.update(0, Map.of(), Map.of("idle", 0d));
+        YsmRuntime first = new YsmRuntime(template, 1);
+        YsmRuntime second = new YsmRuntime(template, 2);
+        first.update(0, Map.of(), Map.of("idle", .6));
+        second.update(0, Map.of(), Map.of("idle", 0d));
         assertEquals(1d, first.snapshot().variables().get("variable.event"));
         assertEquals(0d, second.snapshot().variables().get("variable.event"));
         assertEquals(4, compiles.get(), "Creating/evaluating instances must not compile or reread mutated JSON");
         assertThrows(UnsupportedOperationException.class, () -> program.references().add("variable.external"));
     }
 
-    @Test void physicsAccumulatorVariablesEventTimesAndResetAreIndependentBetweenInstances() {
-        var template = YsmRuntime.Template.compile(model());
-        var first = new YsmRuntime(template, 1); var second = new YsmRuntime(template, 2);
+    @Test
+    void physicsAccumulatorVariablesEventTimesAndResetAreIndependentBetweenInstances()
+    {
+        YsmRuntime.Template template = YsmRuntime.Template.compile(model());
+        YsmRuntime first = new YsmRuntime(template, 1);
+        YsmRuntime second = new YsmRuntime(template, 2);
         first.update(0, Map.of("query.ground_speed", 1d), Map.of("idle", 0d));
         second.update(0, Map.of("query.ground_speed", 2d), Map.of("idle", 0d));
         first.update(1, Map.of("query.ground_speed", 1d), Map.of("idle", .6));
@@ -59,7 +73,8 @@ class YsmRuntimeTemplateTest {
         assertEquals(10d, first.snapshot().variables().get("variable.spring"));
         assertEquals(20d, second.snapshot().variables().get("variable.spring"));
         assertEquals(1d, second.snapshot().variables().get("variable.event"));
-        first.reset(); first.update(2, Map.of(), Map.of("idle", 0d));
+        first.reset();
+        first.update(2, Map.of(), Map.of("idle", 0d));
         second.update(3, Map.of("query.ground_speed", 2d), Map.of("idle", .8));
         assertEquals(0d, first.snapshot().variables().get("variable.spring"));
         assertEquals(0d, first.snapshot().variables().get("variable.event"));

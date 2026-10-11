@@ -8,29 +8,40 @@ package com.simmc.meplayeractions.client.model.nativeysm;
 import java.nio.ByteBuffer;
 import java.security.InvalidKeyException;
 
-public class XChaCha20 extends ChaCha20Base {
+public class XChaCha20 extends ChaCha20Base
+{
 
-    public XChaCha20(byte[] key, byte[] nonce, int rounds) throws InvalidKeyException {
-        if (key.length != 32) throw new InvalidKeyException("Key must be 32 bytes");
-        if (nonce.length != 24) throw new IllegalArgumentException("Nonce must be 24 bytes");
+    public XChaCha20(byte[] key, byte[] nonce, int rounds) throws InvalidKeyException
+    {
+        if (key.length != 32)
+        {
+            throw new InvalidKeyException("Key must be 32 bytes");
+        }
 
-        this.rounds = rounds;
+        if (nonce.length != 24)
+        {
+            throw new IllegalArgumentException("Nonce must be 24 bytes");
+        }
+
+        super.rounds = rounds;
         keySetup(key, nonce);
     }
 
-    private void keySetup(byte[] keyBytes, byte[] nonceBytes) {
+    private void keySetup(byte[] keyBytes, byte[] nonceBytes)
+    {
         int[] key = toIntArray(keyBytes);
         int[] nonce = toIntArray(nonceBytes);
-        int[] subkey = hChaCha20(key, nonce, this.rounds);
-        System.arraycopy(SIGMA, 0, this.state, 0, 4);
-        System.arraycopy(subkey, 0, this.state, 4, 8);
-        this.state[12] = 0;
-        this.state[13] = 0;
-        this.state[14] = nonce[4];
-        this.state[15] = nonce[5];
+        int[] subkey = hChaCha20(key, nonce, super.rounds);
+        System.arraycopy(SIGMA, 0, super.state, 0, 4);
+        System.arraycopy(subkey, 0, super.state, 4, 8);
+        super.state[12] = 0;
+        super.state[13] = 0;
+        super.state[14] = nonce[4];
+        super.state[15] = nonce[5];
     }
 
-    private static int[] hChaCha20(int[] key, int[] nonce, int rounds) {
+    private static int[] hChaCha20(int[] key, int[] nonce, int rounds)
+    {
         int[] x = new int[16];
         System.arraycopy(SIGMA, 0, x, 0, 4);
         System.arraycopy(key, 0, x, 4, 8);
@@ -41,26 +52,31 @@ public class XChaCha20 extends ChaCha20Base {
 
         shuffleState(x, rounds);
 
-        return new int[]{x[0], x[1], x[2], x[3], x[12], x[13], x[14], x[15]};
+        return new int[]
+        { x[0], x[1], x[2], x[3], x[12], x[13], x[14], x[15] };
     }
 
-    public byte[] processBytes(byte[] in, int offset, int length) {
+    public byte[] processBytes(byte[] in, int offset, int length)
+    {
         byte[] out = new byte[length];
         processBytes(in, offset, out, 0, length);
         return out;
     }
 
-    public void processBytes(byte[] in, int inOff, byte[] out, int outOff, int length) {
+    public void processBytes(byte[] in, int inOff, byte[] out, int outOff, int length)
+    {
         int inIdx = inOff;
         int outIdx = outOff;
         int len = length;
-        byte[] ks = keystreamBuf;
+        byte[] ks = super.keystreamBuf;
 
-        while (len > 0) {
+        while (len > 0)
+        {
             processBlock(ks);
             int blockLen = Math.min(64, len);
 
-            for (int i = 0; i < blockLen; i++) {
+            for (int i = 0; i < blockLen; i++)
+            {
                 out[outIdx + i] = (byte) (in[inIdx + i] ^ ks[i]);
             }
             incrementCounter();
@@ -70,22 +86,28 @@ public class XChaCha20 extends ChaCha20Base {
         }
     }
 
-    public int updateStateYSM(long hash) {
+    public int updateStateYSM(long hash)
+    {
         int hashMod = (int) Long.remainderUnsigned(hash, 3);
-        this.rounds = 10 * hashMod + 10;
+        super.rounds = 10 * hashMod + 10;
         int lo = (int) (hash & 0xFFFFFFFFL);
         int hi = (int) ((hash >>> 32) & 0xFFFFFFFFL);
-        for (int i = 4; i < 16; ++i) {
-            if (i % 2 == 0) {
-                this.state[i] ^= lo;
-            } else {
-                this.state[i] ^= hi;
+        for (int i = 4; i < 16; ++i)
+        {
+            if (i % 2 == 0)
+            {
+                super.state[i] ^= lo;
+            }
+            else
+            {
+                super.state[i] ^= hi;
             }
         }
         return (int) (((hash & 0x3FL) | 0x40L) << 6);
     }
 
-    public static byte[] decryptYSM(byte[] data, byte[] key, byte[] iv, long seed) throws InvalidKeyException {
+    public static byte[] decryptYSM(byte[] data, byte[] key, byte[] iv, long seed) throws InvalidKeyException
+    {
         byte[] keyIv = new byte[56];
         System.arraycopy(key, 0, keyIv, 0, 32);
         System.arraycopy(iv, 0, keyIv, 32, 24);
@@ -101,15 +123,18 @@ public class XChaCha20 extends ChaCha20Base {
 
         ByteBuffer result = ByteBuffer.allocate(data.length);
 
-        while (blockPointer < data.length) {
-            if (blockPointer + nextRoundSize > data.length) {
+        while (blockPointer < data.length)
+        {
+            if (blockPointer + nextRoundSize > data.length)
+            {
                 nextRoundSize = data.length - blockPointer;
             }
 
             byte[] decChunk = ctx.processBytes(data, blockPointer, nextRoundSize);
             blockPointer += nextRoundSize;
             result.put(decChunk);
-            if (blockPointer < data.length) {
+            if (blockPointer < data.length)
+            {
                 long resHash = cityHash.hash64WithSeed(decChunk, seed);
                 nextRoundSize = ctx.updateStateYSM(resHash);
             }

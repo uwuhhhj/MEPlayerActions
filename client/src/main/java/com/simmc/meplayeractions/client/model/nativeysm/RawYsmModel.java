@@ -7,7 +7,8 @@ package com.simmc.meplayeractions.client.model.nativeysm;
 
 import java.util.*;
 
-public class RawYsmModel {
+public class RawYsmModel
+{
     public String modelId;
     public int formatVersion;
     public RawMetadata metadata = new RawMetadata();
@@ -20,7 +21,8 @@ public class RawYsmModel {
     public Map<String, RawLanguageFile> languageFiles = new LinkedHashMap<>(); // locale -> key/value
     public RawFooter footer = new RawFooter();
 
-    public static class RawMainEntity {
+    public static class RawMainEntity
+    {
         public RawGeometry mainModel;
         public RawGeometry armModel;
         public Map<String, RawTexture> textures = new LinkedHashMap<>();
@@ -28,14 +30,16 @@ public class RawYsmModel {
         public List<RawAnimationControllerFile> animationControllerFiles = new ArrayList<>();
     }
 
-    public static class RawAnimationControllerFile {
+    public static class RawAnimationControllerFile
+    {
         public String name;
         public String hash;
         public int legacyUnknownInt;
         public Map<String, RawAnimationController> controllers = new LinkedHashMap<>();
     }
 
-    public static class RawSubEntity {
+    public static class RawSubEntity
+    {
         public String identifier;
         public String[] matchIds;
         public RawGeometry model;
@@ -44,7 +48,8 @@ public class RawYsmModel {
         public List<RawAnimationControllerFile> animationControllerFiles = new ArrayList<>();
     }
 
-    public static class RawGeometry {
+    public static class RawGeometry
+    {
         public int modelType; // 1=main, 2=arm, 3=arrow
         public String identifier = "";
         public String sha256 = "";
@@ -62,7 +67,8 @@ public class RawYsmModel {
         public List<RawBone> bones = new ArrayList<>();
     }
 
-    public static class RawBone {
+    public static class RawBone
+    {
         public String name;
         public String parentName;
         public float[] pivot = new float[3];
@@ -71,20 +77,23 @@ public class RawYsmModel {
         public List<RawCube> cubes = new ArrayList<>();
     }
 
-    public static class RawCube {
+    public static class RawCube
+    {
         public List<RawFace> faces = new ArrayList<>();
         // 作用暫時不明確，且通常為0
         public int unkInt1, unkInt2, unkInt3;
     }
 
-    public static class RawFace {
+    public static class RawFace
+    {
         public float[] normal = new float[3];
         public float[][] positions = new float[4][3]; //4 個頂點的 xyz 座標
         public float[] u = new float[4];
         public float[] v = new float[4];
     }
 
-    public static class RawAnimationFile {
+    public static class RawAnimationFile
+    {
         // 1 - main -> animation-main
         // 2 - arm -> animation-arm
         // 3 - extra -> animation-extra
@@ -103,7 +112,8 @@ public class RawYsmModel {
         public Map<String, RawAnimation> animations = new LinkedHashMap<>();
     }
 
-    public static class RawAnimation {
+    public static class RawAnimation
+    {
         public String name;
         /** Host-only authored BBModel axes: 4/5, or 0 for unchanged native/preset semantics; never a binary field. */
         public int bbEditorAxes;
@@ -120,14 +130,16 @@ public class RawYsmModel {
         public List<RawSoundEffect> soundEffects = new ArrayList<>();
     }
 
-    public static class RawBoneAnimation {
+    public static class RawBoneAnimation
+    {
         public String boneName;
         public List<RawKeyframe> rotation = new ArrayList<>();
         public List<RawKeyframe> position = new ArrayList<>();
         public List<RawKeyframe> scale = new ArrayList<>();
     }
 
-    public static class RawKeyframe {
+    public static class RawKeyframe
+    {
         public static final int INTERPOLATION_LINEAR = 0;
         public static final int INTERPOLATION_STEP = 1;
         public static final int INTERPOLATION_CATMULLROM = 2;
@@ -147,17 +159,20 @@ public class RawYsmModel {
         public boolean bezierLinked;
     }
 
-    public static class RawTimelineEvent {
+    public static class RawTimelineEvent
+    {
         public float timestamp;
         public List<String> events = new ArrayList<>();
     }
 
-    public static class RawSoundEffect {
+    public static class RawSoundEffect
+    {
         public String effectName;
         public float timestamp;
     }
 
-    public static class RawTexture {
+    public static class RawTexture
+    {
         public String name;
         public String hash;
         public int width;
@@ -173,7 +188,8 @@ public class RawYsmModel {
         public int unknownFlag;
         public List<SubTexture> subTextures = new ArrayList<>();
 
-        public static class SubTexture {
+        public static class SubTexture
+        {
             public String hash;
             // 1=法線貼圖，2=高光貼圖
             public int specularType;
@@ -189,14 +205,16 @@ public class RawYsmModel {
         }
     }
 
-    public static class RawAnimationController {
+    public static class RawAnimationController
+    {
         public String animationName;
         public String initialState;
 
         public List<RawControllerState> states = new ArrayList<>();
     }
 
-    public static class RawControllerState {
+    public static class RawControllerState
+    {
         public String name;
         public Map<String, String> animations = new LinkedHashMap<>();
         public Map<String, String> transitions = new LinkedHashMap<>();
@@ -208,7 +226,8 @@ public class RawYsmModel {
         public Map<Float, Float> blendTransitions = new LinkedHashMap<>();
     }
 
-    public static class RawMetadata {
+    public static class RawMetadata
+    {
         public String name = "";
         public String tips = "";
         public String licenseType = "";
@@ -217,7 +236,8 @@ public class RawYsmModel {
         public Map<String, String> links = new LinkedHashMap<>();
         public List<RawImage> extraAvatars = new ArrayList<>();
 
-        public static class Author {
+        public static class Author
+        {
             public String name = "";
             public String role = "";
             public String comment = "";
@@ -227,7 +247,8 @@ public class RawYsmModel {
         }
     }
 
-    public static class RawImage {
+    public static class RawImage
+    {
         public String name;
         public byte[] data;
         public int width;
@@ -238,7 +259,8 @@ public class RawYsmModel {
         public int unknownFlag;
     }
 
-    public static class RawProperties {
+    public static class RawProperties
+    {
         public String sha256 = "";
         public float widthScale = 0.7f;
         public float heightScale = 0.7f;
@@ -262,19 +284,22 @@ public class RawYsmModel {
         public List<ExtraAnimationButton> extraAnimationButtons = new ArrayList<>();
     }
 
-    public static class ExtraAnimationClassify {
+    public static class ExtraAnimationClassify
+    {
         public String id;
         public Map<String, String> extras = new LinkedHashMap<>();
     }
 
-    public static class ExtraAnimationButton {
+    public static class ExtraAnimationButton
+    {
         public String id;
         public String name;
         public String description;
         public List<ConfigForm> forms = new ArrayList<>();
     }
 
-    public static class ConfigForm {
+    public static class ConfigForm
+    {
         public String type; // checkbox, radio, range
         public String title;
         public String description;
@@ -283,28 +308,40 @@ public class RawYsmModel {
         public Map<String, String> labels = new LinkedHashMap<>();
     }
 
-
-    public static class RawDataFile {
+    public static class RawDataFile
+    {
         public String hash = "";
         public byte[] data;
-        public RawDataFile() {}
-        public RawDataFile(String hash, byte[] data) {
+
+        public RawDataFile()
+        {
+        }
+
+        public RawDataFile(String hash, byte[] data)
+        {
             this.hash = hash;
             this.data = data;
         }
     }
 
-    public static class RawLanguageFile {
+    public static class RawLanguageFile
+    {
         public String hash = "";
         public Map<String, String> data = new LinkedHashMap<>();
-        public RawLanguageFile() {}
-        public RawLanguageFile(String hash, Map<String, String> data) {
+
+        public RawLanguageFile()
+        {
+        }
+
+        public RawLanguageFile(String hash, Map<String, String> data)
+        {
             this.hash = hash;
             this.data = data;
         }
     }
 
-    public static class RawFooter {
+    public static class RawFooter
+    {
         public int version = 65535;
         public int unkInt1 = 1;// 通常为1
         public String rand = "";

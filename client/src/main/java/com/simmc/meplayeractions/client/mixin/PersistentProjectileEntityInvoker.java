@@ -6,6 +6,8 @@ import org.spongepowered.asm.mixin.gen.Invoker;
 
 /** Read the native tracked embedded state, which is independent of Entity.isOnGround(). */
 @Mixin(PersistentProjectileEntity.class)
-public interface PersistentProjectileEntityInvoker {
-    @Invoker("isInGround") boolean meplayeractions$isInGround();
+public interface PersistentProjectileEntityInvoker
+{
+    @Invoker("isInGround")
+    boolean meplayeractions$isInGround();
 }

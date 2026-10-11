@@ -6,6 +6,8 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Invoker;
 
 @Mixin(ThrownItemEntity.class)
-public interface YsmThrownItemQueryInvoker {
-    @Invoker("getDefaultItem") Item mpa$defaultItem();
+public interface YsmThrownItemQueryInvoker
+{
+    @Invoker("getDefaultItem")
+    Item mpa$defaultItem();
 }

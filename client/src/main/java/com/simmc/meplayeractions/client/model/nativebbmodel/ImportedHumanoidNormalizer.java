@@ -16,9 +16,11 @@ import com.simmc.meplayeractions.client.model.nativeysm.RawYsmModel;
  *
  * <p>{@link #putImportedRouletteDefaults} 使用 {@code putIfAbsent}，不会覆盖模型自带的轮盘配置。
  */
-public final class ImportedHumanoidNormalizer {
+public final class ImportedHumanoidNormalizer
+{
 
-    private ImportedHumanoidNormalizer() {
+    private ImportedHumanoidNormalizer()
+    {
     }
 
     /** 导入模型的统一玩家缩放。 */
@@ -32,15 +34,16 @@ public final class ImportedHumanoidNormalizer {
     // key = animation name (played by index), value = display label (fallback when the
     // model has no localized "properties.extra_animation.<key>" entry).
     // Kept in sync with the bbmodel emote preset (builtin/bbmodel/animations/extra.animation.json).
-    private static final String[][] IMPORTED_ROULETTE_ENTRIES = {
-            {"extra0", "Wave"},
-            {"extra1", "Sit"},
-            {"extra2", "Cheer"},
-            {"extra3", "Point"}
-    };
+    private static final String[][] IMPORTED_ROULETTE_ENTRIES =
+    {
+            { "extra0", "Wave" },
+            { "extra1", "Sit" },
+            { "extra2", "Cheer" },
+            { "extra3", "Point" } };
 
     /** 写入导入来源标记、footer 版本与统一玩家缩放。 */
-    public static void applyImportedPlayerDefaults(RawYsmModel raw) {
+    public static void applyImportedPlayerDefaults(RawYsmModel raw)
+    {
         raw.properties.widthScale = IMPORTED_PLAYER_SCALE;
         raw.properties.heightScale = IMPORTED_PLAYER_SCALE;
         raw.footer.version = IMPORT_FOOTER_VERSION;
@@ -52,11 +55,14 @@ public final class ImportedHumanoidNormalizer {
      * 给导入模型补默认表情轮盘，使其内置 bbmodel 表情可通过轮盘 / 热键触发。
      * 使用 {@code putIfAbsent}，保留模型作者自带的条目。
      */
-    public static void putImportedRouletteDefaults(RawYsmModel raw) {
-        if (raw.properties == null || raw.properties.extraAnimations == null) {
+    public static void putImportedRouletteDefaults(RawYsmModel raw)
+    {
+        if (raw.properties == null || raw.properties.extraAnimations == null)
+        {
             return;
         }
-        for (String[] entry : IMPORTED_ROULETTE_ENTRIES) {
+        for (String[] entry : IMPORTED_ROULETTE_ENTRIES)
+        {
             raw.properties.extraAnimations.putIfAbsent(entry[0], entry[1]);
         }
     }

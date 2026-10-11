@@ -18,38 +18,64 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import java.util.HashMap;
 
 /** Exercises the real wire decoder without a Bukkit server or invented player permissions. */
-class ClientSyncServiceTest {
+class ClientSyncServiceTest
+{
     private static final Method DECODER = decoderMethod();
-    @Test void disguiseResultCapabilityIsOptionalStrictAndHelloOnly() throws IOException {
-        Object capable = decode("{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\",\"disguise_results\"]}");
+
+    @Test
+    void disguiseResultCapabilityIsOptionalStrictAndHelloOnly() throws IOException
+    {
+        Object capable = decode(
+                "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\",\"disguise_results\"]}");
         assertEquals(true, field(capable, "disguiseResults"));
         Object plain = decode("{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\"]}");
         assertEquals(false, field(plain, "disguiseResults"));
-        assertRejected("{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\",\"disguise_results\",\"disguise_results\"]}");
-        assertRejected("{\"protocol\":3,\"type\":\"request\",\"action\":\"stop\",\"capabilities\":[\"disguise_results\"]}");
-        assertRejected("{\"protocol\":3,\"type\":\"disguise_result\",\"requestId\":\"00000000-0000-0000-0000-000000000012\",\"success\":true}");
+        assertRejected(
+                "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\",\"disguise_results\",\"disguise_results\"]}");
+        assertRejected(
+                "{\"protocol\":3,\"type\":\"request\",\"action\":\"stop\",\"capabilities\":[\"disguise_results\"]}");
+        assertRejected(
+                "{\"protocol\":3,\"type\":\"disguise_result\",\"requestId\":\"00000000-0000-0000-0000-000000000012\",\"success\":true}");
     }
-    @Test void acceptsPushOnlyOrPushPlusResourcePackCapabilitiesWithoutWeakeningHello() throws IOException {
+
+    @Test
+    void acceptsPushOnlyOrPushPlusResourcePackCapabilitiesWithoutWeakeningHello() throws IOException
+    {
         for (String capabilities : List.of("\"local_render\",\"server_push_models\"",
-                "\"local_render\",\"resource_pack_models\",\"server_push_models\"")) {
+                "\"local_render\",\"resource_pack_models\",\"server_push_models\""))
+        {
             Object decoded = decode("{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[" + capabilities + "]}");
             assertEquals(true, field(decoded, "pushModels"));
         }
         assertRejected("{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"server_push_models\"]}");
-        assertRejected("{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\",\"server_push_models\",\"server_push_models\"]}");
+        assertRejected(
+                "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\",\"server_push_models\",\"server_push_models\"]}");
     }
-    @Test void acceptsOnlyTypedTokenFeedbackWithoutClientSelectedModelIds() throws IOException {
+
+    @Test
+    void acceptsOnlyTypedTokenFeedbackWithoutClientSelectedModelIds() throws IOException
+    {
         String offerId = "00000000-0000-0000-0000-000000000011", hash = "b".repeat(64);
-        for (String status : List.of("cached", "missing", "rejected")) {
+        for (String status : List.of("cached", "missing", "rejected"))
+        {
             Object decoded = decode("{\"protocol\":3,\"type\":\"asset_status\",\"offerId\":\"" + offerId
                     + "\",\"hash\":\"" + hash + "\",\"status\":\"" + status + "\"}");
-            assertEquals(UUID.fromString(offerId), field(decoded, "offerId")); assertEquals(hash, field(decoded, "hash"));
-            assertEquals(status, field(decoded, "assetStatus")); assertEquals("", field(decoded, "modelId"));
+            assertEquals(UUID.fromString(offerId), field(decoded, "offerId"));
+            assertEquals(hash, field(decoded, "hash"));
+            assertEquals(status, field(decoded, "assetStatus"));
+            assertEquals("", field(decoded, "modelId"));
         }
     }
-    @Test void feedbackRejectsInventedFieldsDuplicateKeysBadTokensAndUnknownStatuses() {
+
+    @Test
+    void feedbackRejectsInventedFieldsDuplicateKeysBadTokensAndUnknownStatuses()
+    {
         String base = "{\"protocol\":3,\"type\":\"asset_status\",\"offerId\":\"00000000-0000-0000-0000-000000000011\",\"hash\":\""
                 + "b".repeat(64) + "\",\"status\":\"missing\"}";
         for (String invalid : List.of(base.replace("00000000-0000-0000-0000-000000000011", "0-0-0-0-11"),
@@ -57,59 +83,102 @@ class ClientSyncServiceTest {
                 base.replace("b".repeat(64), "B".repeat(64)), base.replace(",\"status\":\"missing\"", ""),
                 base.replace("}", ",\"modelId\":\"ysm_02_jk\"}"),
                 base.replace("}", ",\"owner\":\"00000000-0000-0000-0000-000000000001\"}"),
-                base.replace("}", ",\"status\":\"missing\"}"),
-                base.replace("asset_status", "snapshot_request"))) assertRejected(invalid);
+                base.replace("}", ",\"status\":\"missing\"}"), base.replace("asset_status", "snapshot_request")))
+        {
+            assertRejected(invalid);
+        }
+
     }
-    @Test void longMenuLabelsAreBoundedWithoutSplittingSurrogatePairs() {
+
+    @Test
+    void longMenuLabelsAreBoundedWithoutSplittingSurrogatePairs()
+    {
         assertEquals("中文", ClientSyncService.truncateLabel("中文"));
         String emoji = "🦊".repeat(65);
         assertEquals("🦊".repeat(64), ClientSyncService.truncateLabel(emoji));
-        assertEquals(64, ClientSyncService.truncateLabel(emoji).codePointCount(0, ClientSyncService.truncateLabel(emoji).length()));
+        assertEquals(64, ClientSyncService.truncateLabel(emoji).codePointCount(0,
+                ClientSyncService.truncateLabel(emoji).length()));
     }
-    @Test void menuLabelsRemoveControlCharactersBeforeCountingUnicodeCodePoints() {
+
+    @Test
+    void menuLabelsRemoveControlCharactersBeforeCountingUnicodeCodePoints()
+    {
         String label = "\n\t趴下\r\u0000" + "🦊\t".repeat(65);
         String safe = ClientSyncService.truncateLabel(label);
         assertEquals("趴下" + "🦊".repeat(62), safe);
         assertEquals(64, safe.codePointCount(0, safe.length()));
         assertTrue(safe.codePoints().noneMatch(Character::isISOControl));
     }
-    @Test void smallPayloadDropsMenuDirectoryButKeepsTransformAndLayersOrRejectsOversizedState() {
-        var state = com.google.gson.JsonParser.parseString("{\"protocol\":3,\"type\":\"state\",\"owner\":\"00000000-0000-0000-0000-000000000001\",\"instance\":\"00000000-0000-0000-0000-000000000002\",\"modelId\":\"ysm_01_jk\",\"assetHash\":\"" + "a".repeat(64)
-                + "\",\"sequence\":12,\"serverTick\":12345,\"world\":\"00000000-0000-0000-0000-000000000003\",\"x\":1,\"y\":64,\"z\":2,\"bodyYaw\":90,\"headYaw\":100,\"headPitch\":10,\"scale\":1.5,\"hidePlayer\":true,\"showSelf\":true,\"layers\":[{\"layer\":\"posture\",\"animation\":\"crawl_idle\",\"startedAtTick\":12340,\"speed\":1,\"loop\":\"LOOP\",\"inTicks\":2,\"outTicks\":2}],\"animations\":[]}").getAsJsonObject();
-        var menu = new com.google.gson.JsonArray();
-        for (int i = 0; i < 29; i++) { var entry = new com.google.gson.JsonObject(); entry.addProperty("id", "anim_" + i); entry.addProperty("label", "中文动作".repeat(16)); menu.add(entry); }
-        state.add("accessories",ClientSyncService.accessoriesJson(Map.of("a",1d,"b",1d)));
-        state.add("animations", menu); assertTrue(ClientSyncService.fitStatePacket(state, 1024));
-        assertEquals(0, state.getAsJsonArray("animations").size()); assertEquals(1, state.getAsJsonArray("layers").size());
-        assertEquals(1,state.getAsJsonObject("accessories").get("a").getAsDouble());
+
+    @Test
+    void smallPayloadDropsMenuDirectoryButKeepsTransformAndLayersOrRejectsOversizedState()
+    {
+        JsonObject state = JsonParser.parseString(
+                "{\"protocol\":3,\"type\":\"state\",\"owner\":\"00000000-0000-0000-0000-000000000001\",\"instance\":\"00000000-0000-0000-0000-000000000002\",\"modelId\":\"ysm_01_jk\",\"assetHash\":\""
+                        + "a".repeat(64)
+                        + "\",\"sequence\":12,\"serverTick\":12345,\"world\":\"00000000-0000-0000-0000-000000000003\",\"x\":1,\"y\":64,\"z\":2,\"bodyYaw\":90,\"headYaw\":100,\"headPitch\":10,\"scale\":1.5,\"hidePlayer\":true,\"showSelf\":true,\"layers\":[{\"layer\":\"posture\",\"animation\":\"crawl_idle\",\"startedAtTick\":12340,\"speed\":1,\"loop\":\"LOOP\",\"inTicks\":2,\"outTicks\":2}],\"animations\":[]}")
+                .getAsJsonObject();
+        JsonArray menu = new JsonArray();
+        for (int i = 0; i < 29; i++)
+        {
+            JsonObject entry = new JsonObject();
+            entry.addProperty("id", "anim_" + i);
+            entry.addProperty("label", "中文动作".repeat(16));
+            menu.add(entry);
+        }
+        state.add("accessories", ClientSyncService.accessoriesJson(Map.of("a", 1d, "b", 1d)));
+        state.add("animations", menu);
+        assertTrue(ClientSyncService.fitStatePacket(state, 1024));
+        assertEquals(0, state.getAsJsonArray("animations").size());
+        assertEquals(1, state.getAsJsonArray("layers").size());
+        assertEquals(1, state.getAsJsonObject("accessories").get("a").getAsDouble());
         assertEquals(64, state.get("y").getAsInt());
-        for (int i = 0; i < 8; i++) state.getAsJsonArray("layers").add(state.getAsJsonArray("layers").get(0).deepCopy());
+        for (int i = 0; i < 8; i++)
+        {
+            state.getAsJsonArray("layers").add(state.getAsJsonArray("layers").get(0).deepCopy());
+        }
+
         assertTrue(!ClientSyncService.fitStatePacket(state, 1024));
     }
-    @Test void accessorySnapshotsAreImmutableFiniteAndContainOnlyTheTwoSourceFlags() {
-        var source=new java.util.HashMap<>(Map.of("a",1d,"b",0d));var snapshot=accessorySnapshot(source);
-        source.put("a",0d);assertEquals(1,snapshot.accessories().get("a"));
-        assertThrows(UnsupportedOperationException.class,()->snapshot.accessories().put("b",1d));
-        var wire=ClientSyncService.accessoriesJson(snapshot.accessories());
-        assertEquals(2,wire.size());assertEquals(1,wire.get("a").getAsDouble());assertEquals(0,wire.get("b").getAsDouble());
-        assertEquals(0,ClientSyncService.accessoriesJson(accessorySnapshot(Map.of()).accessories()).size());
-        for(var invalid:List.of(Map.of("a",Double.NaN,"b",0d),Map.of("a",Double.POSITIVE_INFINITY,"b",0d),
-                Map.of("a",-1d,"b",0d),Map.of("a",0d,"b",2d),Map.of("a",1d),Map.of("a",1d,"b",1d,"l1_p0",25d)))
-            assertThrows(IllegalArgumentException.class,()->accessorySnapshot(invalid));
+
+    @Test
+    void accessorySnapshotsAreImmutableFiniteAndContainOnlyTheTwoSourceFlags()
+    {
+        HashMap<String, Double> source = new HashMap<>(Map.of("a", 1d, "b", 0d));
+        ClientSyncService.StateSnapshot snapshot = accessorySnapshot(source);
+        source.put("a", 0d);
+        assertEquals(1, snapshot.accessories().get("a"));
+        assertThrows(UnsupportedOperationException.class, () -> snapshot.accessories().put("b", 1d));
+        JsonObject wire = ClientSyncService.accessoriesJson(snapshot.accessories());
+        assertEquals(2, wire.size());
+        assertEquals(1, wire.get("a").getAsDouble());
+        assertEquals(0, wire.get("b").getAsDouble());
+        assertEquals(0, ClientSyncService.accessoriesJson(accessorySnapshot(Map.of()).accessories()).size());
+        for (Map<String, Double> invalid : List.of(Map.of("a", Double.NaN, "b", 0d),
+                Map.of("a", Double.POSITIVE_INFINITY, "b", 0d), Map.of("a", -1d, "b", 0d), Map.of("a", 0d, "b", 2d),
+                Map.of("a", 1d), Map.of("a", 1d, "b", 1d, "l1_p0", 25d)))
+
+        {
+            assertThrows(IllegalArgumentException.class, () -> accessorySnapshot(invalid));
+        }
+
     }
-    private static ClientSyncService.StateSnapshot accessorySnapshot(Map<String,Double> accessories) {
-        var motion=new ClientSyncService.MotionState(List.of(),List.of(),17,6,.025,true,true,false,"","","",0,0,0,0);
-        return new ClientSyncService.StateSnapshot(UUID.randomUUID(),UUID.randomUUID(),"ysm_01_jk",1,100,List.of(),
-                UUID.randomUUID(),0,64,0,0,0,0,1,true,true,List.of(),true,motion,accessories);
+
+    private static ClientSyncService.StateSnapshot accessorySnapshot(Map<String, Double> accessories)
+    {
+        ClientSyncService.MotionState motion = new ClientSyncService.MotionState(List.of(), List.of(), 17, 6, .025,
+                true, true, false, "", "", "", 0, 0, 0, 0);
+        return new ClientSyncService.StateSnapshot(UUID.randomUUID(), UUID.randomUUID(), "ysm_01_jk", 1, 100, List.of(),
+                UUID.randomUUID(), 0, 64, 0, 0, 0, 0, 1, true, true, List.of(), true, motion, accessories);
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {
-            "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\"]}",
+    @ValueSource(strings =
+    { "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\"]}",
             "{\"protocol\":3,\"type\":\"hello\",\"clientVersion\":\"0.1.0\",\"capabilities\":[\"local_render\"]}",
-            "{\"capabilities\":[\"local_render\"],\"type\":\"hello\",\"protocol\":3}"
-    })
-    void acceptsHelloWithRequiredLocalRenderCapability(String json) throws IOException {
+            "{\"capabilities\":[\"local_render\"],\"type\":\"hello\",\"protocol\":3}" })
+    void acceptsHelloWithRequiredLocalRenderCapability(String json) throws IOException
+    {
         Object decoded = decode(json);
         assertEquals(3, field(decoded, "protocol"));
         assertEquals("hello", field(decoded, "type"));
@@ -117,11 +186,11 @@ class ClientSyncServiceTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {
-            "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\",\"resource_pack_models\"]}",
-            "{\"capabilities\":[\"resource_pack_models\",\"local_render\"],\"clientVersion\":\"0.4.0\",\"type\":\"hello\",\"protocol\":3}"
-    })
-    void acceptsResourcePackModeOnlyAsExplicitHelloCapability(String json) throws IOException {
+    @ValueSource(strings =
+    { "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\",\"resource_pack_models\"]}",
+            "{\"capabilities\":[\"resource_pack_models\",\"local_render\"],\"clientVersion\":\"0.4.0\",\"type\":\"hello\",\"protocol\":3}" })
+    void acceptsResourcePackModeOnlyAsExplicitHelloCapability(String json) throws IOException
+    {
         Object decoded = decode(json);
         assertEquals(3, field(decoded, "protocol"));
         assertEquals("hello", field(decoded, "type"));
@@ -129,21 +198,23 @@ class ClientSyncServiceTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {
-            "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"resource_pack_models\"]}",
+    @ValueSource(strings =
+    { "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"resource_pack_models\"]}",
             "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\",\"resource_pack_models\",\"resource_pack_models\"]}",
             "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\",\"resource_pack_models\",\"arbitrary_engine\"]}",
             "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\",\"resource_pack_models\"],\"assetMode\":\"resource-pack\"}",
-            "{\"protocol\":3,\"type\":\"snapshot_request\",\"capabilities\":[\"resource_pack_models\"]}"
-    })
-    void resourcePackExtensionRetainsStrictCapabilityAndMessageFieldValidation(String json) {
+            "{\"protocol\":3,\"type\":\"snapshot_request\",\"capabilities\":[\"resource_pack_models\"]}" })
+    void resourcePackExtensionRetainsStrictCapabilityAndMessageFieldValidation(String json)
+    {
         assertRejected(json);
     }
 
     @ParameterizedTest
-    @CsvSource(value = {"play|crouch_walk", "play|pack:wave-01/test.anim", "stop|", "sit|", "crawl|", "reset|"},
-            delimiter = '|', nullValues = "")
-    void acceptsOnlySupportedSelfActionRequests(String action, String argument) throws IOException {
+    @CsvSource(value =
+    { "play|crouch_walk", "play|pack:wave-01/test.anim", "stop|", "sit|", "crawl|",
+            "reset|" }, delimiter = '|', nullValues = "")
+    void acceptsOnlySupportedSelfActionRequests(String action, String argument) throws IOException
+    {
         String expectedArgument = argument == null ? "" : argument;
         String json = "{\"protocol\":3,\"type\":\"request\",\"action\":\"" + action + "\""
                 + (argument == null ? "" : ",\"argument\":\"" + argument + "\"") + "}";
@@ -154,171 +225,219 @@ class ClientSyncServiceTest {
     }
 
     @Test
-    void acceptsSnapshotRequestWithoutInventingAnAction() throws IOException {
+    void acceptsSnapshotRequestWithoutInventingAnAction() throws IOException
+    {
         Object decoded = decode("{\"protocol\":3,\"type\":\"snapshot_request\"}");
         assertEquals("snapshot_request", field(decoded, "type"));
         assertEquals("", field(decoded, "action"));
         assertEquals("", field(decoded, "argument"));
     }
-    @Test void acceptsExactAssetAndReadyKeysAndBoundedHeartbeatBindings() throws IOException {
-        String hash = "a".repeat(64), owner = "00000000-0000-0000-0000-000000000001", instance = "00000000-0000-0000-0000-000000000002";
-        Object asset = decode("{\"protocol\":3,\"type\":\"asset_request\",\"modelId\":\"ysm_01_jk\",\"hash\":\"" + hash + "\"}");
-        assertEquals(hash, field(asset, "hash")); assertEquals("ysm_01_jk", field(asset, "modelId"));
+
+    @Test
+    void acceptsExactAssetAndReadyKeysAndBoundedHeartbeatBindings() throws IOException
+    {
+        String hash = "a".repeat(64), owner = "00000000-0000-0000-0000-000000000001",
+                instance = "00000000-0000-0000-0000-000000000002";
+        Object asset = decode(
+                "{\"protocol\":3,\"type\":\"asset_request\",\"modelId\":\"ysm_01_jk\",\"hash\":\"" + hash + "\"}");
+        assertEquals(hash, field(asset, "hash"));
+        assertEquals("ysm_01_jk", field(asset, "modelId"));
         String binding = "\"owner\":\"" + owner + "\",\"instance\":\"" + instance + "\",\"hash\":\"" + hash + "\"";
-        for (String type : new String[]{"render_ready", "render_failed"}) {
-            Object ready = decode("{\"protocol\":3,\"type\":\"" + type + "\"," + binding + "}"); assertEquals(type, field(ready, "type"));
+        for (String type : new String[]
+        { "render_ready", "render_failed" })
+        {
+            Object ready = decode("{\"protocol\":3,\"type\":\"" + type + "\"," + binding + "}");
+            assertEquals(type, field(ready, "type"));
         }
-        assertEquals("render_heartbeat", field(decode("{\"protocol\":3,\"type\":\"render_heartbeat\",\"bindings\":[{" + binding + "}]}"), "type"));
-        assertEquals("render_heartbeat", field(decode("{\"protocol\":3,\"type\":\"render_heartbeat\",\"bindings\":[]}"), "type"));
+        assertEquals("render_heartbeat", field(
+                decode("{\"protocol\":3,\"type\":\"render_heartbeat\",\"bindings\":[{" + binding + "}]}"), "type"));
+        assertEquals("render_heartbeat",
+                field(decode("{\"protocol\":3,\"type\":\"render_heartbeat\",\"bindings\":[]}"), "type"));
     }
-    @Test void rejectsAssetPathTraversalMalformedHashesAndExcessiveOrDuplicateReadyBindings() {
-        String hash = "a".repeat(64), owner = "00000000-0000-0000-0000-000000000001", instance = "00000000-0000-0000-0000-000000000002";
-        assertRejected("{\"protocol\":3,\"type\":\"asset_request\",\"modelId\":\"../private\",\"hash\":\"" + hash + "\"}");
-        assertRejected("{\"protocol\":3,\"type\":\"asset_request\",\"modelId\":\"ysm_01_jk\",\"hash\":\"" + hash.toUpperCase() + "\"}");
+
+    @Test
+    void rejectsAssetPathTraversalMalformedHashesAndExcessiveOrDuplicateReadyBindings()
+    {
+        String hash = "a".repeat(64), owner = "00000000-0000-0000-0000-000000000001",
+                instance = "00000000-0000-0000-0000-000000000002";
+        assertRejected(
+                "{\"protocol\":3,\"type\":\"asset_request\",\"modelId\":\"../private\",\"hash\":\"" + hash + "\"}");
+        assertRejected("{\"protocol\":3,\"type\":\"asset_request\",\"modelId\":\"ysm_01_jk\",\"hash\":\""
+                + hash.toUpperCase() + "\"}");
         assertRejected("{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[]}");
         String binding = "{\"owner\":\"" + owner + "\",\"instance\":\"" + instance + "\",\"hash\":\"" + hash + "\"}";
         assertRejected("{\"protocol\":3,\"type\":\"render_heartbeat\",\"bindings\":[" + binding + "," + binding + "]}");
-        assertRejected("{\"protocol\":3,\"type\":\"render_ready\",\"owner\":\"0-0-0-0-1\",\"instance\":\"" + instance + "\",\"hash\":\"" + hash + "\"}");
-        assertRejected("{\"protocol\":3,\"type\":\"render_ready\",\"owner\":\"" + owner + "\",\"instance\":\"" + instance + "\",\"hash\":\"" + hash + "\",\"action\":\"play\"}");
+        assertRejected("{\"protocol\":3,\"type\":\"render_ready\",\"owner\":\"0-0-0-0-1\",\"instance\":\"" + instance
+                + "\",\"hash\":\"" + hash + "\"}");
+        assertRejected("{\"protocol\":3,\"type\":\"render_ready\",\"owner\":\"" + owner + "\",\"instance\":\""
+                + instance + "\",\"hash\":\"" + hash + "\",\"action\":\"play\"}");
         StringBuilder many = new StringBuilder("{\"protocol\":3,\"type\":\"render_heartbeat\",\"bindings\":[");
-        for (int i = 0; i < 65; i++) {
-            if (i > 0) many.append(',');
-            many.append(binding.replace(owner, new java.util.UUID(0, i + 1).toString()));
+        for (int i = 0; i < 65; i++)
+        {
+            if (i > 0)
+            {
+                many.append(',');
+            }
+
+            many.append(binding.replace(owner, new UUID(0, i + 1).toString()));
         }
         assertRejected(many.append("]}").toString());
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {
-            "{\"protocol\":3,\"type\":\"hello\",\"protocol\":3}",
-            "{\"protocol\":3,\"type\":\"hello\",\"type\":\"request\"}",
-            "{\"protocol\":3,\"type\":\"request\",\"action\":\"sit\",\"action\":\"crawl\"}"
-    })
-    void rejectsDuplicateFieldsEvenWhenValuesAgree(String json) {
+    @ValueSource(strings =
+    { "{\"protocol\":3,\"type\":\"hello\",\"protocol\":3}", "{\"protocol\":3,\"type\":\"hello\",\"type\":\"request\"}",
+            "{\"protocol\":3,\"type\":\"request\",\"action\":\"sit\",\"action\":\"crawl\"}" })
+    void rejectsDuplicateFieldsEvenWhenValuesAgree(String json)
+    {
         assertRejected(json);
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {
-            "{\"protocol\":3,\"type\":\"request\",\"action\":\"sit\",\"owner\":\"00000000-0000-0000-0000-000000000001\"}",
+    @ValueSource(strings =
+    { "{\"protocol\":3,\"type\":\"request\",\"action\":\"sit\",\"owner\":\"00000000-0000-0000-0000-000000000001\"}",
             "{\"protocol\":3,\"type\":\"request\",\"action\":\"sit\",\"target\":\"00000000-0000-0000-0000-000000000001\"}",
             "{\"protocol\":3,\"type\":\"request\",\"action\":\"op\",\"argument\":\"Player\"}",
-            "{\"protocol\":3,\"type\":\"request\",\"action\":\"fly\"}",
-            "{\"protocol\":3,\"type\":\"render_ready\"}",
+            "{\"protocol\":3,\"type\":\"request\",\"action\":\"fly\"}", "{\"protocol\":3,\"type\":\"render_ready\"}",
             "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"render_ready\"]}",
             "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[\"local_render\",\"local_render\"]}",
             "{\"protocol\":3,\"type\":\"hello\",\"argument\":\"wave\"}",
             "{\"protocol\":3,\"type\":\"snapshot_request\",\"action\":\"stop\"}",
-            "{\"protocol\":3,\"type\":\"hello\",\"command\":\"op Player\"}"
-    })
-    void rejectsTargetsUnknownActionsCapabilitiesAndFields(String json) {
+            "{\"protocol\":3,\"type\":\"hello\",\"command\":\"op Player\"}" })
+    void rejectsTargetsUnknownActionsCapabilitiesAndFields(String json)
+    {
         assertRejected(json);
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {
-            "{\"protocol\":3,\"type\":\"hello\",}",
-            "{protocol:1,type:'hello'}",
-            "{\"protocol\":3,\"type\":'hello'}",
-            "{\"protocol\":3,/*comment*/\"type\":\"hello\"}",
-            "{\"protocol\":3,\"type\":\"hello\"} {}",
-            "{\"protocol\":3,\"type\":\"hello\"} garbage",
-            "{\"protocol\":01,\"type\":\"hello\"}"
-    })
-    void rejectsLenientOrTrailingJson(String json) {
+    @ValueSource(strings =
+    { "{\"protocol\":3,\"type\":\"hello\",}", "{protocol:1,type:'hello'}", "{\"protocol\":3,\"type\":'hello'}",
+            "{\"protocol\":3,/*comment*/\"type\":\"hello\"}", "{\"protocol\":3,\"type\":\"hello\"} {}",
+            "{\"protocol\":3,\"type\":\"hello\"} garbage", "{\"protocol\":01,\"type\":\"hello\"}" })
+    void rejectsLenientOrTrailingJson(String json)
+    {
         assertRejected(json);
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {
-            "null", "[]", "\"hello\"", "{\"type\":\"hello\"}",
-            "{\"protocol\":3,\"type\":null}",
+    @ValueSource(strings =
+    { "null", "[]", "\"hello\"", "{\"type\":\"hello\"}", "{\"protocol\":3,\"type\":null}",
             "{\"protocol\":3,\"type\":\"hello\",\"clientVersion\":{\"name\":\"client\"}}",
             "{\"protocol\":3,\"type\":\"hello\",\"clientVersion\":[[\"client\"]]}",
             "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":[[\"local_render\"]]}",
             "{\"protocol\":3,\"type\":\"hello\",\"capabilities\":{\"local_render\":true}}",
             "{\"protocol\":3,\"type\":\"request\",\"action\":[\"sit\"]}",
             "{\"protocol\":3,\"type\":\"request\",\"action\":\"play\",\"argument\":12}",
-            "{\"protocol\":3,\"type\":\"request\",\"action\":\"play\",\"argument\":null}"
-    })
-    void rejectsMissingFieldsNullAndNestedOrCoercedTypes(String json) {
+            "{\"protocol\":3,\"type\":\"request\",\"action\":\"play\",\"argument\":null}" })
+    void rejectsMissingFieldsNullAndNestedOrCoercedTypes(String json)
+    {
         assertRejected(json);
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"true", "\"1\"", "null", "1.1", "1e-1", "2147483648", "999999999999", "1000000000000"})
-    void rejectsNonIntegerOrOverflowingProtocolValues(String protocol) {
+    @ValueSource(strings =
+    { "true", "\"1\"", "null", "1.1", "1e-1", "2147483648", "999999999999", "1000000000000" })
+    void rejectsNonIntegerOrOverflowingProtocolValues(String protocol)
+    {
         assertRejected("{\"protocol\":" + protocol + ",\"type\":\"hello\"}");
     }
 
     @ParameterizedTest
     @MethodSource("invalidActionArguments")
-    void rejectsMissingUnsafeOrOversizeAnimationArguments(String json) {
+    void rejectsMissingUnsafeOrOversizeAnimationArguments(String json)
+    {
         assertRejected(json);
     }
 
-    private static Stream<String> invalidActionArguments() {
-        return Stream.of(
-                "{\"protocol\":3,\"type\":\"request\",\"action\":\"play\"}",
+    private static Stream<String> invalidActionArguments()
+    {
+        return Stream.of("{\"protocol\":3,\"type\":\"request\",\"action\":\"play\"}",
                 "{\"protocol\":3,\"type\":\"request\",\"action\":\"play\",\"argument\":\"\"}",
                 "{\"protocol\":3,\"type\":\"request\",\"action\":\"play\",\"argument\":\"wave;op Player\"}",
                 "{\"protocol\":3,\"type\":\"request\",\"action\":\"play\",\"argument\":\"wave\\u0000\"}",
                 "{\"protocol\":3,\"type\":\"request\",\"action\":\"play\",\"argument\":\"" + "a".repeat(129) + "\"}",
                 "{\"protocol\":3,\"type\":\"request\",\"action\":\"sit\",\"argument\":\"Player\"}",
-                "{\"protocol\":3,\"type\":\"hello\",\"clientVersion\":\"" + "v".repeat(65) + "\"}"
-        );
+                "{\"protocol\":3,\"type\":\"hello\",\"clientVersion\":\"" + "v".repeat(65) + "\"}");
     }
 
     @ParameterizedTest
     @MethodSource("malformedUtf8")
-    void rejectsMalformedUtf8InsteadOfReplacingBytes(byte[] payload) {
+    void rejectsMalformedUtf8InsteadOfReplacingBytes(byte[] payload)
+    {
         assertThrows(IOException.class, () -> decode(payload));
     }
 
-    private static Stream<byte[]> malformedUtf8() {
-        return Stream.of(new byte[]{(byte) 0xc3, 0x28}, new byte[]{(byte) 0x80},
-                new byte[]{(byte) 0xe2, (byte) 0x82});
+    private static Stream<byte[]> malformedUtf8()
+    {
+        return Stream.of(new byte[]
+        { (byte) 0xc3, 0x28 }, new byte[]
+        { (byte) 0x80 }, new byte[]
+        { (byte) 0xe2, (byte) 0x82 });
     }
 
-    private static void assertRejected(String json) {
+    private static void assertRejected(String json)
+    {
         Exception exception = assertThrows(Exception.class, () -> decode(json));
         assertTrue(exception instanceof IOException || exception instanceof IllegalArgumentException
                 || exception instanceof IllegalStateException, () -> "Unexpected failure: " + exception);
     }
 
-    private static Object decode(String json) throws IOException {
+    private static Object decode(String json) throws IOException
+    {
         return decode(json.getBytes(StandardCharsets.UTF_8));
     }
 
-    private static Object decode(byte[] payload) throws IOException {
-        try {
+    private static Object decode(byte[] payload) throws IOException
+    {
+        try
+        {
             return DECODER.invoke(null, (Object) payload);
-        } catch (InvocationTargetException exception) {
+        }
+        catch (InvocationTargetException exception)
+        {
             Throwable cause = exception.getCause();
-            if (cause instanceof IOException io) throw io;
-            if (cause instanceof RuntimeException runtime) throw runtime;
+            if (cause instanceof IOException io)
+            {
+                throw io;
+            }
+
+            if (cause instanceof RuntimeException runtime)
+            {
+                throw runtime;
+            }
+
             throw new AssertionError("Unexpected decoder failure", cause);
-        } catch (ReflectiveOperationException exception) {
+        }
+        catch (ReflectiveOperationException exception)
+        {
             throw new AssertionError("Cannot invoke protocol decoder", exception);
         }
     }
 
-    private static Method decoderMethod() {
-        try {
+    private static Method decoderMethod()
+    {
+        try
+        {
             Method method = ClientSyncService.class.getDeclaredMethod("decode", byte[].class);
             method.setAccessible(true);
             return method;
-        } catch (ReflectiveOperationException exception) {
+        }
+        catch (ReflectiveOperationException exception)
+        {
             throw new ExceptionInInitializerError(exception);
         }
     }
 
-    private static Object field(Object decoded, String name) {
-        try {
+    private static Object field(Object decoded, String name)
+    {
+        try
+        {
             Method accessor = decoded.getClass().getDeclaredMethod(name);
             accessor.setAccessible(true);
             return accessor.invoke(decoded);
-        } catch (ReflectiveOperationException exception) {
+        }
+        catch (ReflectiveOperationException exception)
+        {
             throw new AssertionError("Cannot inspect decoded field " + name, exception);
         }
     }

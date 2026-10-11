@@ -13,11 +13,22 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /** Port of Sparkle's AbstractArrowEntityMixin: capture once at the real owner assignment. */
 @Mixin(PersistentProjectileEntity.class)
-public abstract class YsmArrowOwnerMixin implements YsmArrowFiringItem {
-    @Unique private String mpa$ownerItem = "";
-    @Override public String mpa$firingItemId() { return mpa$ownerItem; }
-    @Inject(method="setOwner",at=@At("RETURN"))
-    private void mpa$captureFiringItem(Entity owner,CallbackInfo callback) {
-        mpa$ownerItem=owner instanceof LivingEntity living?Registries.ITEM.getId(living.getMainHandStack().getItem()).toString():"";
+public abstract class YsmArrowOwnerMixin implements YsmArrowFiringItem
+{
+    @Unique
+    private String mpa$ownerItem = "";
+
+    @Override
+    public String mpa$firingItemId()
+    {
+        return this.mpa$ownerItem;
+    }
+
+    @Inject(method = "setOwner", at = @At("RETURN"))
+    private void mpa$captureFiringItem(Entity owner, CallbackInfo callback)
+    {
+        this.mpa$ownerItem = owner instanceof LivingEntity living
+                ? Registries.ITEM.getId(living.getMainHandStack().getItem()).toString()
+                : "";
     }
 }

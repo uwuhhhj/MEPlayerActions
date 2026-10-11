@@ -10,8 +10,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class YsmModelTemplatesTest {
-    private static JsonObject model() {
+class YsmModelTemplatesTest
+{
+    private static JsonObject model()
+    {
         return JsonParser.parseString("""
                 {"mpa_runtime":true,"animations":[{"name":"idle","animators":{
                   "00000000-0000-0000-0000-000000000001":{"name":"body","type":"bone","keyframes":[
@@ -20,15 +22,28 @@ class YsmModelTemplatesTest {
                 """).getAsJsonObject();
     }
 
-    @Test void repeatedModelDoesOneSourceReadAndParseAndRetainsOnlyImmutableCompiledData() {
-        var loads = new AtomicInteger(); var raw = model();
-        var cache = new YsmModelTemplates(64, name -> { loads.incrementAndGet(); return raw; });
-        var template = cache.get("player").orElseThrow();
+    @Test
+    void repeatedModelDoesOneSourceReadAndParseAndRetainsOnlyImmutableCompiledData()
+    {
+        AtomicInteger loads = new AtomicInteger();
+        JsonObject raw = model();
+        YsmModelTemplates cache = new YsmModelTemplates(64, name ->
+        {
+            loads.incrementAndGet();
+            return raw;
+        });
+        YsmModelTemplates.Model template = cache.get("player").orElseThrow();
         raw.add("animations", JsonParser.parseString("[]"));
-        assertSame(template, cache.get("player").orElseThrow()); assertEquals(1, loads.get());
-        var clip = template.clips().getFirst(); var bone = clip.bones().getFirst(); var frame = bone.frames().getFirst();
-        assertEquals("idle", clip.name()); assertEquals(.125f, frame.time()); assertTrue(frame.discontinuous());
-        assertEquals("variable.scale", frame.pre().x()); assertEquals("variable.scale + 1", frame.post().x());
+        assertSame(template, cache.get("player").orElseThrow());
+        assertEquals(1, loads.get());
+        YsmModelTemplates.Clip clip = template.clips().getFirst();
+        YsmModelTemplates.Bone bone = clip.bones().getFirst();
+        YsmModelTemplates.Frame frame = bone.frames().getFirst();
+        assertEquals("idle", clip.name());
+        assertEquals(.125f, frame.time());
+        assertTrue(frame.discontinuous());
+        assertEquals("variable.scale", frame.pre().x());
+        assertEquals("variable.scale + 1", frame.post().x());
         assertEquals("1", frame.pre().y(), "Scale axis defaults are retained in the immutable descriptor");
         assertThrows(UnsupportedOperationException.class, () -> template.clips().clear());
         assertThrows(UnsupportedOperationException.class, () -> clip.bones().clear());
@@ -36,15 +51,24 @@ class YsmModelTemplatesTest {
         assertSame(template.runtime().expression(frame.pre().x()), template.runtime().expression(frame.pre().x()));
     }
 
-    @Test void absentAndOrdinaryModelsAreNegativeCachedAndLeastRecentlyUsedEntriesAreBounded() {
-        Map<String,Integer> loads = new HashMap<>();
-        var cache = new YsmModelTemplates(2, name -> {
+    @Test
+    void absentAndOrdinaryModelsAreNegativeCachedAndLeastRecentlyUsedEntriesAreBounded()
+    {
+        Map<String, Integer> loads = new HashMap<>();
+        YsmModelTemplates cache = new YsmModelTemplates(2, name ->
+        {
             loads.merge(name, 1, Integer::sum);
             return name.equals("absent") ? null : new JsonObject();
         });
-        assertTrue(cache.get("absent").isEmpty()); assertTrue(cache.get("ordinary").isEmpty());
-        cache.get("absent"); cache.get("ordinary"); assertEquals(Map.of("absent", 1, "ordinary", 1), loads);
-        cache.get("absent"); cache.get("third"); cache.get("ordinary");
-        assertEquals(1, loads.get("absent")); assertEquals(2, loads.get("ordinary"));
+        assertTrue(cache.get("absent").isEmpty());
+        assertTrue(cache.get("ordinary").isEmpty());
+        cache.get("absent");
+        cache.get("ordinary");
+        assertEquals(Map.of("absent", 1, "ordinary", 1), loads);
+        cache.get("absent");
+        cache.get("third");
+        cache.get("ordinary");
+        assertEquals(1, loads.get("absent"));
+        assertEquals(2, loads.get("ordinary"));
     }
 }

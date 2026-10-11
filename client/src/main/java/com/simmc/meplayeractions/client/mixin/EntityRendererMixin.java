@@ -14,10 +14,11 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(EntityRenderer.class)
-public abstract class EntityRendererMixin {
-    @Inject(method = "updateRenderState(Lnet/minecraft/entity/Entity;Lnet/minecraft/client/render/entity/state/EntityRenderState;F)V",
-            at = @At("TAIL"))
-    private void meplayeractions$captureHidden(Entity entity, EntityRenderState state, float tickDelta, CallbackInfo ci) {
+public abstract class EntityRendererMixin
+{
+    @Inject(method = "updateRenderState(Lnet/minecraft/entity/Entity;Lnet/minecraft/client/render/entity/state/EntityRenderState;F)V", at = @At("TAIL"))
+    private void meplayeractions$captureHidden(Entity entity, EntityRenderState state, float tickDelta, CallbackInfo ci)
+    {
         ((ComponentRenderState) state).meplayeractions$entityUuid(entity.getUuid());
         ((ComponentRenderState) state).meplayeractions$tickDelta(tickDelta);
         ((HiddenPlayerRenderState) state).meplayeractions$setHidden(entity instanceof PlayerEntity

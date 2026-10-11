@@ -13,7 +13,8 @@ import java.util.UUID;
  * Blockbench 集合
  * 用于组织和管理模型元素
  */
-public class BBCollection {
+public class BBCollection
+{
     public String uuid = "";
     public String name = "";
     public boolean isOpen = false;
@@ -23,9 +24,12 @@ public class BBCollection {
 
     public List<String> children = new ArrayList<>();
 
-    public BBCollection() {}
+    public BBCollection()
+    {
+    }
 
-    public BBCollection(String uuid, String name) {
+    public BBCollection(String uuid, String name)
+    {
         this.uuid = uuid;
         this.name = name;
     }

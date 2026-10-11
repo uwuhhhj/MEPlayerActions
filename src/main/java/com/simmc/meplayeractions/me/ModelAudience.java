@@ -13,18 +13,37 @@ import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 
 /** Owns a model tracking filter. Publish immutable snapshots on Paper's main thread. */
-public final class ModelAudience {
+public final class ModelAudience
+{
     /** Shared admission is independent of ME rendering and applies before publication. */
-    public interface Guard {
+    public interface Guard
+    {
         boolean discover();
+
         Set<UUID> admit(UUID owner, Collection<UUID> requested);
+
         void release(UUID owner);
-        default void worked(long nanos) { }
+
+        default void worked(long nanos)
+        {
+        }
     }
-    private static final Guard UNLIMITED = new Guard() {
-        public boolean discover() { return true; }
-        public Set<UUID> admit(UUID owner, Collection<UUID> requested) { return Set.copyOf(requested); }
-        public void release(UUID owner) { }
+
+    private static final Guard UNLIMITED = new Guard()
+    {
+        public boolean discover()
+        {
+            return true;
+        }
+
+        public Set<UUID> admit(UUID owner, Collection<UUID> requested)
+        {
+            return Set.copyOf(requested);
+        }
+
+        public void release(UUID owner)
+        {
+        }
     };
     private final DisguiseOptions options;
     private final Function<UUID, Player> lookup;
@@ -41,178 +60,350 @@ public final class ModelAudience {
     private long nextRefresh = Long.MIN_VALUE, nextValidation = Long.MIN_VALUE;
     private long lastUpdate = Long.MIN_VALUE;
 
-    public ModelAudience(DisguiseOptions options) { this(options, PerformanceSettings.defaults()); }
-    public ModelAudience(DisguiseOptions options, PerformanceSettings performance) {
+    public ModelAudience(DisguiseOptions options)
+    {
+        this(options, PerformanceSettings.defaults());
+    }
+
+    public ModelAudience(DisguiseOptions options, PerformanceSettings performance)
+    {
         this(options, Bukkit::getPlayer, () -> Integer.toUnsignedLong(Bukkit.getCurrentTick()), performance);
     }
-    public ModelAudience(DisguiseOptions options, PerformanceSettings performance, Guard guard) {
+
+    public ModelAudience(DisguiseOptions options, PerformanceSettings performance, Guard guard)
+    {
         this(options, Bukkit::getPlayer, () -> Integer.toUnsignedLong(Bukkit.getCurrentTick()), performance, guard);
     }
-    ModelAudience(DisguiseOptions options, Function<UUID, Player> lookup) {
+
+    ModelAudience(DisguiseOptions options, Function<UUID, Player> lookup)
+    {
         this(options, lookup, () -> Integer.toUnsignedLong(Bukkit.getCurrentTick()), PerformanceSettings.defaults());
     }
+
     ModelAudience(DisguiseOptions options, Function<UUID, Player> lookup, LongSupplier clock,
-                  PerformanceSettings performance) {
+            PerformanceSettings performance)
+    {
         this(options, lookup, clock, performance, UNLIMITED);
     }
+
     ModelAudience(DisguiseOptions options, Function<UUID, Player> lookup, LongSupplier clock,
-                  PerformanceSettings performance, Guard guard) {
-        this.options = options; this.lookup = lookup; this.clock = clock; this.performance = performance;
+            PerformanceSettings performance, Guard guard)
+    {
+        this.options = options;
+        this.lookup = lookup;
+        this.clock = clock;
+        this.performance = performance;
         this.guard = Objects.requireNonNull(guard);
     }
 
-    public boolean allows(UUID viewer) { return allowed.contains(viewer); }
-    private boolean renders(UUID viewer) { return allowed.contains(viewer) && !localRenderers.contains(viewer); }
+    public boolean allows(UUID viewer)
+    {
+        return this.allowed.contains(viewer);
+    }
+
+    private boolean renders(UUID viewer)
+    {
+        return this.allowed.contains(viewer) && !this.localRenderers.contains(viewer);
+    }
+
     /** A ready client retains its audience slot while only its ME display is suppressed. */
-    public boolean localRendering(UUID viewer, boolean enabled) {
-        Set<UUID> next = new HashSet<>(localRenderers);
+    public boolean localRendering(UUID viewer, boolean enabled)
+    {
+        Set<UUID> next = new HashSet<>(this.localRenderers);
         boolean changed = enabled ? next.add(viewer) : next.remove(viewer);
-        if (changed) {
-            localRenderers = Set.copyOf(next);
-            pairingsDirty = true;
-            if (tracked != null) tracked.markViewersDirty();
+        if (changed)
+        {
+            this.localRenderers = Set.copyOf(next);
+            this.pairingsDirty = true;
+            if (this.tracked != null)
+            {
+                this.tracked.markViewersDirty();
+            }
+
         }
         return changed;
     }
-    public int otherViewers(UUID owner) { return allowed.size() - (allowed.contains(owner) ? 1 : 0); }
-    public int viewers() { return allowed.size(); }
 
-    public boolean update(Player owner, TrackedEntity next) {
-        long started = System.nanoTime();
-        try { return updateTracked(owner, next); }
-        finally { guard.worked(System.nanoTime() - started); }
+    public int otherViewers(UUID owner)
+    {
+        return this.allowed.size() - (this.allowed.contains(owner) ? 1 : 0);
     }
 
-    private boolean updateTracked(Player owner, TrackedEntity next) {
+    public int viewers()
+    {
+        return this.allowed.size();
+    }
+
+    public boolean update(Player owner, TrackedEntity next)
+    {
+        long started = System.nanoTime();
+        try
+        {
+            return updateTracked(owner, next);
+        }
+        finally
+        {
+            this.guard.worked(System.nanoTime() - started);
+        }
+    }
+
+    private boolean updateTracked(Player owner, TrackedEntity next)
+    {
         Objects.requireNonNull(next, "ME 玩家跟踪接口不可用");
         // ME copies our predicate and forced pairings when TempTrackedEntity is replaced.
-        if (tracked == null) {
-            original = next.getPlayerPredicate();
-            Predicate<Player> before = original;
-            filter = viewer -> renders(viewer.getUniqueId()) && before.test(viewer);
-            next.setPlayerPredicate(filter);
-        } else if (next.getPlayerPredicate() != filter) {
+        if (this.tracked == null)
+        {
+            this.original = next.getPlayerPredicate();
+            Predicate<Player> before = this.original;
+            this.filter = viewer -> renders(viewer.getUniqueId()) && before.test(viewer);
+            next.setPlayerPredicate(this.filter);
+        }
+        else if (next.getPlayerPredicate() != this.filter)
+        {
             throw new IllegalStateException("ME 更换跟踪接口时未保留模型观众过滤器");
         }
-        if (next != tracked) pairingsDirty = true;
-        tracked = next;
-        long now = clock.getAsLong();
-        if (now < lastUpdate) nextRefresh = nextValidation = Long.MIN_VALUE;
-        lastUpdate = now;
-        Set<UUID> previous = allowed;
-        if (now >= nextRefresh && guard.discover()) {
+        if (next != this.tracked)
+        {
+            this.pairingsDirty = true;
+        }
+
+        this.tracked = next;
+        long now = this.clock.getAsLong();
+        if (now < this.lastUpdate)
+        {
+            this.nextRefresh = this.nextValidation = Long.MIN_VALUE;
+        }
+
+        this.lastUpdate = now;
+        Set<UUID> previous = this.allowed;
+        if (now >= this.nextRefresh && this.guard.discover())
+        {
             discover(owner, next);
-            nextRefresh = nextDeadline(now, owner.getUniqueId(), performance.audienceRefreshTicks());
-            nextValidation = now + performance.validationTicks();
-            pairingsDirty = true;
-        } else if (now >= nextValidation) {
+            this.nextRefresh = nextDeadline(now, owner.getUniqueId(), this.performance.audienceRefreshTicks());
+            this.nextValidation = now + this.performance.validationTicks();
+            this.pairingsDirty = true;
+        }
+        else if (now >= this.nextValidation)
+        {
             validate(owner, next);
-            nextValidation = now + performance.validationTicks();
-            pairingsDirty = true;
+            this.nextValidation = now + this.performance.validationTicks();
+            this.pairingsDirty = true;
         }
-        if (pairingsDirty) {
+        if (this.pairingsDirty)
+        {
             reconcile(owner, next);
-            pairingsDirty = false;
+            this.pairingsDirty = false;
         }
-        boolean changed = !previous.equals(allowed);
-        if (changed) next.markViewersDirty();
+        boolean changed = !previous.equals(this.allowed);
+        if (changed)
+        {
+            next.markViewersDirty();
+        }
+
         return changed;
     }
 
-    private void discover(Player owner, TrackedEntity next) {
+    private void discover(Player owner, TrackedEntity next)
+    {
         Location origin = owner.getLocation();
         Map<UUID, Player> candidates = new HashMap<>();
-        for (UUID id : originalTracking(next)) candidates.putIfAbsent(id, lookup.apply(id));
-        for (UUID id : suppressedPairings) candidates.putIfAbsent(id, lookup.apply(id));
+        for (UUID id : originalTracking(next))
+        {
+            candidates.putIfAbsent(id, this.lookup.apply(id));
+        }
+
+        for (UUID id : this.suppressedPairings)
+        {
+            candidates.putIfAbsent(id, this.lookup.apply(id));
+        }
+
         // Departed players need no restoration and must not accumulate for the
         // lifetime of a disguise that sees many different visitors.
-        suppressedPairings.removeIf(id -> candidates.get(id) == null || !candidates.get(id).isOnline());
+        this.suppressedPairings.removeIf(id -> candidates.get(id) == null || !candidates.get(id).isOnline());
         List<AudienceSelector.Candidate> eligible = new ArrayList<>();
-        for (Player viewer : candidates.values()) {
-            if (viewer == null || viewer.getUniqueId().equals(owner.getUniqueId()) || !eligible(owner, viewer)) continue;
-            eligible.add(new AudienceSelector.Candidate(viewer.getUniqueId(), origin.distanceSquared(viewer.getLocation())));
+        for (Player viewer : candidates.values())
+        {
+            if (viewer == null || viewer.getUniqueId().equals(owner.getUniqueId()) || !eligible(owner, viewer))
+            {
+                continue;
+            }
+
+            eligible.add(
+                    new AudienceSelector.Candidate(viewer.getUniqueId(), origin.distanceSquared(viewer.getLocation())));
         }
-        Set<UUID> selected = AudienceSelector.select(owner.getUniqueId(), options.showSelf(), options.viewDistance(), options.maxViewers(), eligible);
+        Set<UUID> selected = AudienceSelector.select(owner.getUniqueId(), this.options.showSelf(),
+                this.options.viewDistance(), this.options.maxViewers(), eligible);
         // Retain existing eligible slots first; admit new viewers nearest-first so
         // another model reaching a global cap cannot evict healthy relationships.
         List<UUID> requested = new ArrayList<>();
-        for (UUID id : allowed) if (selected.contains(id)) requested.add(id);
-        if (selected.contains(owner.getUniqueId()) && !requested.contains(owner.getUniqueId())) requested.add(owner.getUniqueId());
+        for (UUID id : this.allowed)
+        {
+            if (selected.contains(id))
+            {
+                requested.add(id);
+            }
+
+        }
+
+        if (selected.contains(owner.getUniqueId()) && !requested.contains(owner.getUniqueId()))
+        {
+            requested.add(owner.getUniqueId());
+        }
+
         Set<UUID> requestedIds = new HashSet<>(requested);
-        eligible.stream().filter(candidate -> selected.contains(candidate.id())).sorted(Comparator.comparingDouble(AudienceSelector.Candidate::distanceSquared)
-                .thenComparing(AudienceSelector.Candidate::id)).map(AudienceSelector.Candidate::id)
-                .filter(requestedIds::add).forEach(requested::add);
-        allowed = Set.copyOf(guard.admit(owner.getUniqueId(), requested));
+        eligible.stream().filter(candidate -> selected.contains(candidate.id()))
+                .sorted(Comparator.comparingDouble(AudienceSelector.Candidate::distanceSquared)
+                        .thenComparing(AudienceSelector.Candidate::id))
+                .map(AudienceSelector.Candidate::id).filter(requestedIds::add).forEach(requested::add);
+        this.allowed = Set.copyOf(this.guard.admit(owner.getUniqueId(), requested));
     }
 
-    private void validate(Player owner, TrackedEntity next) {
-        if (allowed.isEmpty()) { guard.admit(owner.getUniqueId(), List.of()); return; }
+    private void validate(Player owner, TrackedEntity next)
+    {
+        if (this.allowed.isEmpty())
+        {
+            this.guard.admit(owner.getUniqueId(), List.of());
+            return;
+        }
         // ME's UUID tracking snapshot is still read, but player lookup, vanish,
         // world and distance checks are bounded by already admitted viewers.
         Set<UUID> current = originalTracking(next);
         Set<UUID> retained = new HashSet<>();
         Location origin = owner.getLocation();
-        double distance = options.viewDistance() * options.viewDistance();
-        for (UUID id : allowed) {
-            if (id.equals(owner.getUniqueId())) { if (options.showSelf()) retained.add(id); continue; }
-            Player viewer = lookup.apply(id);
-            if (viewer != null && (current.contains(id) || suppressedPairings.contains(id)) && eligible(owner, viewer)
-                    && origin.distanceSquared(viewer.getLocation()) < distance) retained.add(id);
+        double distance = this.options.viewDistance() * this.options.viewDistance();
+        for (UUID id : this.allowed)
+        {
+            if (id.equals(owner.getUniqueId()))
+            {
+                if (this.options.showSelf())
+                {
+                    retained.add(id);
+                }
+                continue;
+            }
+            Player viewer = this.lookup.apply(id);
+            if (viewer != null && (current.contains(id) || this.suppressedPairings.contains(id))
+                    && eligible(owner, viewer) && origin.distanceSquared(viewer.getLocation()) < distance)
+            {
+                retained.add(id);
+            }
+
         }
-        allowed = Set.copyOf(guard.admit(owner.getUniqueId(), retained));
+        this.allowed = Set.copyOf(this.guard.admit(owner.getUniqueId(), retained));
     }
 
-    private boolean eligible(Player owner, Player viewer) {
-        return viewer.isOnline() && viewer.getWorld().equals(owner.getWorld()) && viewer.canSee(owner) && original.test(viewer);
+    private boolean eligible(Player owner, Player viewer)
+    {
+        return viewer.isOnline() && viewer.getWorld().equals(owner.getWorld()) && viewer.canSee(owner)
+                && this.original.test(viewer);
     }
 
-    private Set<UUID> originalTracking(TrackedEntity next) {
+    private Set<UUID> originalTracking(TrackedEntity next)
+    {
         // R4.1.1 updates tracking on Paper's main thread. Read a candidate snapshot
         // through the prior predicate, then restore ours before returning; this keeps
         // ME's forced-hidden viewers out of the cap while admitting new entrants.
         Predicate<Player> installed = next.getPlayerPredicate();
         Set<UUID> current;
-        try {
-            if (installed == filter) next.setPlayerPredicate(original);
+        try
+        {
+            if (installed == this.filter)
+            {
+                next.setPlayerPredicate(this.original);
+            }
+
             current = next.getTrackedPlayer();
-        } finally {
-            if (installed == filter) next.setPlayerPredicate(filter);
+        }
+        finally
+        {
+            if (installed == this.filter)
+            {
+                next.setPlayerPredicate(this.filter);
+            }
+
         }
         return current;
     }
 
-    static long nextDeadline(long now, UUID owner, int interval) {
+    static long nextDeadline(long now, UUID owner, int interval)
+    {
         long delay = Math.floorMod((long) owner.hashCode() - Math.floorMod(now, interval), interval);
         return now + (delay == 0 ? interval : delay);
     }
 
-    private void reconcile(Player owner, TrackedEntity next) {
+    private void reconcile(Player owner, TrackedEntity next)
+    {
         // ME's forced pairings bypass its player predicate. Temporarily remove only
         // disallowed pairings, retaining them for restoration when a slot opens/cleanup.
-        for (UUID id : List.copyOf(suppressedPairings)) if (renders(id)) {
-            next.addForcedPairing(id); suppressedPairings.remove(id);
+        for (UUID id : List.copyOf(this.suppressedPairings))
+        {
+            if (renders(id))
+            {
+                next.addForcedPairing(id);
+                this.suppressedPairings.remove(id);
+            }
         }
+
         Set<UUID> rendered = next.getTrackedPlayer();
-        for (UUID id : rendered) if (!renders(id)) {
-            next.removeForcedPairing(id);
-            if (id.equals(owner.getUniqueId()) && addedSelf) addedSelf = false;
-            else suppressedPairings.add(id);
+        for (UUID id : rendered)
+        {
+            if (!renders(id))
+            {
+                next.removeForcedPairing(id);
+                if (id.equals(owner.getUniqueId()) && this.addedSelf)
+                {
+                    this.addedSelf = false;
+                }
+
+                else
+                {
+                    this.suppressedPairings.add(id);
+                }
+
+            }
         }
-        if (options.showSelf() && renders(owner.getUniqueId()) && !rendered.contains(owner.getUniqueId())) {
-            next.addForcedPairing(owner.getUniqueId()); addedSelf = true;
+
+        if (this.options.showSelf() && renders(owner.getUniqueId()) && !rendered.contains(owner.getUniqueId()))
+        {
+            next.addForcedPairing(owner.getUniqueId());
+            this.addedSelf = true;
         }
     }
 
     /** Use the current data wrapper, which may differ from the initial temporary one. */
-    public void close(TrackedEntity current, UUID owner) {
-        if (current == null) current = tracked;
-        if (current == null) { guard.release(owner); return; }
-        if (current.getPlayerPredicate() == filter) current.setPlayerPredicate(original);
-        if (addedSelf) current.removeForcedPairing(owner);
-        for (UUID id : suppressedPairings) current.addForcedPairing(id);
+    public void close(TrackedEntity current, UUID owner)
+    {
+        if (current == null)
+        {
+            current = this.tracked;
+        }
+
+        if (current == null)
+        {
+            this.guard.release(owner);
+            return;
+        }
+        if (current.getPlayerPredicate() == this.filter)
+        {
+            current.setPlayerPredicate(this.original);
+        }
+
+        if (this.addedSelf)
+        {
+            current.removeForcedPairing(owner);
+        }
+
+        for (UUID id : this.suppressedPairings)
+        {
+            current.addForcedPairing(id);
+        }
+
         current.markViewersDirty();
-        suppressedPairings.clear(); addedSelf = false;
-        localRenderers = Set.of(); allowed = Set.of(); pairingsDirty = false;
-        guard.release(owner);
+        this.suppressedPairings.clear();
+        this.addedSelf = false;
+        this.localRenderers = Set.of();
+        this.allowed = Set.of();
+        this.pairingsDirty = false;
+        this.guard.release(owner);
     }
 }

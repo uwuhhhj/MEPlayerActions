@@ -26,11 +26,11 @@ class PackageEvidenceTest(unittest.TestCase):
         self.addCleanup(self.patched.stop)
         self.addCleanup(self.temporary.cleanup)
 
-    def stage(self, name, cases, exit_code=0, *, root=None, version=None, **counts):
+    def stage(self, name, cases, exit_code=0, *, root=None, version=None, mode="targeted-tests", **counts):
         directory = (root or self.validation) / name
         directory.mkdir(parents=True)
         metadata = {"version": version or PACKAGE.VERSION,
-                    "commands": [{"command": ["synthetic-fixture-check", name], "exit_code": exit_code}]}
+                    "commands": [{"command": ["synthetic-fixture-check", name], "exit_code": exit_code, "mode": mode}]}
         (directory / "stage.json").write_text(json.dumps(metadata), encoding="utf-8")
         if cases is not None:
             suite = ET.Element("testsuite", name="Fixture.Suite", tests=str(len(cases)),
@@ -147,18 +147,17 @@ class PackageEvidenceTest(unittest.TestCase):
         path.write_text(json.dumps(proof), encoding="utf-8")
         self.assertEqual(proof, PACKAGE.build_commands())
 
-    def test_explicit_current_work_manifest_preserves_the_original_version_and_report_bytes(self):
-        old = self.stage("client-fix", [("client_case", "")], root=self.validation / "validation-0.6.0", version="0.6.0")
-        new = self.stage("server-fix", [("server_case", "")], root=self.validation / f"validation-{PACKAGE.VERSION}")
-        manifest = self.manifest([self.declared(old, "0.6.0", "Affected checks completed in this work before the version bump"),
-                                  self.declared(new, PACKAGE.VERSION)])
+    def test_explicit_current_work_manifest_preserves_the_original_report_bytes(self):
+        client = self.stage("client-fix", [("client_case", "")], root=self.validation / f"validation-{PACKAGE.VERSION}")
+        server = self.stage("server-fix", [("server_case", "")], root=self.validation / f"validation-{PACKAGE.VERSION}")
+        manifest = self.manifest([self.declared(client, PACKAGE.VERSION), self.declared(server, PACKAGE.VERSION)])
         summary, evidence = PACKAGE.test_evidence(None, manifest)
         self.assertEqual(2, summary["distinct_targeted_cases"])
-        self.assertTrue(summary["previous_version_test_evidence_reused"])
-        self.assertEqual(["0.6.0", PACKAGE.VERSION], summary["evidence_versions"])
-        self.assertEqual("0.6.0", summary["stages"][0]["version"])
-        self.assertEqual((old / "stage.json").read_bytes(), evidence["stages/0.6.0/client-fix/stage.json"])
-        self.assertEqual((old / "TEST-Fixture.Suite.xml").read_bytes(), evidence["stages/0.6.0/client-fix/TEST-Fixture.Suite.xml"])
+        self.assertFalse(summary["previous_version_test_evidence_reused"])
+        self.assertEqual([PACKAGE.VERSION], summary["evidence_versions"])
+        self.assertEqual(PACKAGE.VERSION, summary["stages"][0]["version"])
+        self.assertEqual((client / "stage.json").read_bytes(), evidence[f"stages/{PACKAGE.VERSION}/client-fix/stage.json"])
+        self.assertEqual((client / "TEST-Fixture.Suite.xml").read_bytes(), evidence[f"stages/{PACKAGE.VERSION}/client-fix/TEST-Fixture.Suite.xml"])
         self.assertEqual(manifest.read_bytes(), evidence["evidence-manifest.json"])
 
     def test_manifest_cannot_relabel_old_stage_proof_as_current_version(self):
@@ -167,14 +166,39 @@ class PackageEvidenceTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "proof version does not match"):
             PACKAGE.test_evidence(None, manifest)
 
-    def test_preserved_earlier_stage_requires_a_reason_and_original_directory_identity(self):
+    def test_previous_version_evidence_is_rejected_even_with_a_preservation_reason(self):
         old = self.stage("client-fix", [("client_case", "")], root=self.validation / "validation-0.6.0", version="0.6.0")
-        manifest = self.manifest([self.declared(old, "0.6.0")])
-        with self.assertRaisesRegex(RuntimeError, "preservation reason"):
-            PACKAGE.test_evidence(None, manifest)
+        for reason in ["", "Affected checks completed before the version bump"]:
+            with self.subTest(reason=reason):
+                manifest = self.manifest([self.declared(old, "0.6.0", reason)])
+                with self.assertRaisesRegex(RuntimeError, "accepted current-work scope"):
+                    PACKAGE.test_evidence(None, manifest)
         manifest = self.manifest([self.declared(old, PACKAGE.VERSION)])
         with self.assertRaisesRegex(RuntimeError, "original validation"):
             PACKAGE.test_evidence(None, manifest)
+
+    def test_successful_full_unit_stages_on_both_sides_mark_the_full_suite(self):
+        self.stage("server-full", [("server_case", "")], mode="full-unit-tests")
+        self.stage("client-full", [("client_case", "")], mode="full-unit-tests")
+        summary, _ = PACKAGE.test_evidence(["server-full", "client-full"])
+        self.assertTrue(summary["full_suite_run"])
+        self.assertEqual("full-unit-and-compile-package", summary["profile"])
+
+    def test_one_full_side_and_one_targeted_side_do_not_mark_the_full_suite(self):
+        self.stage("server-full", [("server_case", "")], mode="full-unit-tests")
+        self.stage("client-targeted", [("client_case", "")])
+        summary, _ = PACKAGE.test_evidence(["server-full", "client-targeted"])
+        self.assertFalse(summary["full_suite_run"])
+        self.assertEqual("new-and-affected-targeted-unit-and-compile-package", summary["profile"])
+
+    def test_failed_full_stage_followed_by_a_targeted_fix_is_not_a_full_suite_pass(self):
+        self.stage("server-full", [("server_case", "")], mode="full-unit-tests")
+        self.stage("client-full-failed", [("client_case", "failure")], 1, mode="full-unit-tests")
+        self.stage("client-fixed", [("client_case", "")])
+        summary, _ = PACKAGE.test_evidence(["server-full", "client-full-failed", "client-fixed"])
+        self.assertFalse(summary["full_suite_run"])
+        self.assertEqual(1, summary["failed_command_attempts"])
+        self.assertEqual(1, summary["earlier_report_failures"])
 
     def test_manifest_cannot_import_arbitrary_previous_release_evidence(self):
         old = self.stage("client-fix", [("client_case", "")], root=self.validation / "validation-0.5.1", version="0.5.1")

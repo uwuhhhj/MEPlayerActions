@@ -1,8 +1,8 @@
-"""Package server/client 0.6.1 after saved targeted checks and final builds.
+"""Package server/client 0.6.2 after saved unit checks and final builds.
 
 This helper does not run a build, a test, Minecraft, or the old runtime release gate.
-Both sides must be freshly built. Earlier stages of this work may be explicitly retained
-with their original version, without claiming they were rerun for the final version.
+Both sides must be freshly built. All stages must belong to this release and retain
+their actual commands, outcomes and original reports, including failed attempts.
 Existing dist artifacts are never replaced. The version and evidence contract
 must match the release being built.
 """
@@ -25,10 +25,10 @@ import zipfile
 
 PROJECT = Path(__file__).resolve().parents[1]
 CLIENT = PROJECT / "client"
-VERSION = "0.6.1"
+VERSION = "0.6.2"
 SERVER_VERSION = VERSION
 VALIDATION = PROJECT / "build" / f"validation-{VERSION}"
-EVIDENCE_VERSIONS = {VERSION, "0.6.0"}
+EVIDENCE_VERSIONS = {VERSION}
 REFERENCE_REVISION = "0306e1fa3bbeaaf6fa8c1af89d87bb7a1c077b85"
 REFERENCE = PROJECT.parent / "ModelEngine玩家动作研究/sources/OpenYSM-Updated"
 SPEC = importlib.util.spec_from_file_location("mpa_release_helpers", PROJECT / "tools/package_release.py")
@@ -357,7 +357,11 @@ def test_evidence(stage_order: list[str] | None, manifest_path: Path | None = No
     require({key[0] for key in latest} == {"client", "server"}, "Both current client/server targeted stages are required")
     failed = [dict(side=key[0], suite=key[1], name=key[2], **value) for key, value in latest.items() if not value["passed"]]
     require(not failed, f"Latest targeted outcomes must all pass: {failed}")
-    summary = {"profile": "new-and-affected-targeted-unit-and-compile-package", "full_suite_run": False,
+    full_suite = all(any(stage["side"] == side and stage["commands_all_succeeded"]
+                         and any(command.get("mode") == "full-unit-tests" for command in stage["commands"])
+                         for stage in stages) for side in ["client", "server"])
+    summary = {"profile": "full-unit-and-compile-package" if full_suite else "new-and-affected-targeted-unit-and-compile-package",
+               "full_suite_run": full_suite,
                "in_game_verified": False, "old_game_matrix_reused_as_fresh": False,
                "previous_version_test_evidence_reused": any(stage["version"] != VERSION for stage in stages),
                "evidence_versions": sorted({stage["version"] for stage in stages}),
@@ -375,13 +379,13 @@ def test_evidence(stage_order: list[str] | None, manifest_path: Path | None = No
         evidence["evidence-manifest.json"] = manifest_raw
     evidence["fixtures/tools/package_current.py"] = Path(__file__).read_bytes()
     evidence["fixtures/tools/package_release.py"] = (PROJECT / "tools/package_release.py").read_bytes()
-    evidence["README.md"] = (f"本包保存 {VERSION} 两端本轮新增与受影响的定向单元检查与打包证据。"
+    evidence["README.md"] = (f"本包保存 {VERSION} 两端本轮单元检查与打包证据。"
                              "summary.json 按 side/suite/name 取最后结果，早期失败命令、真实退出码及报告原样保留；"
                              "打包要求每个已报告用例的最后结果通过，以及两端最终构建成功，不声称所有早期尝试都通过；"
-                             "各阶段保留实际执行版本与原始 XML；升级前的本轮检查不冒充新版重跑。"
+                             "各阶段保留本轮实际执行版本与原始 XML。"
                              "参数化重名用例只作保守去重统计，raw_reported_testcases 保留原报告数量（含重跑）。"
                              "不复用旧游戏矩阵或真实私人模型输入。"
-                             "未复跑完整旧矩阵，未运行 Minecraft 或服务器实机复验；"
+                             "单元检查范围见 summary.json 的 full_suite_run 与实际命令；未运行 Minecraft 或服务器实机复验；"
                              "没有 TPS、帧率或网络场景性能实测证明。"
                              "JAR、资源、许可和 ZIP 完整性检查不能代替实机验证。\n").encode()
     return summary, evidence
@@ -403,8 +407,10 @@ def source_entries() -> dict[str, bytes]:
             entries["MEPlayerActions/" + relative.as_posix()] = path.read_bytes()
     for path in PROJECT.iterdir():
         if path.is_file() and path.name in {"README.md", "CONTRIBUTING.md", "ARCHITECTURE.md", "THIRD_PARTY_NOTICES.md",
-                                          "pom.xml", ".gitignore", ".gitattributes"}:
+                                          "pom.xml", "AGENTS.md", ".gitignore", ".gitattributes"}:
             entries["MEPlayerActions/" + path.name] = path.read_bytes()
+    require("MEPlayerActions/AGENTS.md" in entries, "Source ZIP is missing agent code style requirements")
+    require("MEPlayerActions/tools/java-formatter.xml" in entries, "Source ZIP is missing the Java formatter profile")
     require("MEPlayerActions/docs/CLIENT_PROTOCOL.md" in entries, "Source ZIP is missing the canonical protocol document")
     require("MEPlayerActions/tools/package_current.py" in entries, "Source ZIP is missing the tracked package tool")
     require("MEPlayerActions/client/gradle/wrapper/gradle-wrapper.jar" in entries, "Source ZIP is missing the Gradle wrapper")
@@ -536,9 +542,9 @@ def main() -> None:
                      "仅私人分享无需 ModelEngine 或服务器资源包。使用服务器伪装时，示例蓝图由 ModelEngine 导入并生成原版资源，CraftEngine 继续负责原有资源包合并与下发。\n\n"
                      "客户端接管只下发管理员明确放入 plugins/MEPlayerActions/models/ 的同名完整 BBModel；不会自动回退内置文件或 ME 蓝图。需要两套示例的客户端接管时，可主动复制 examples/models/ 原文件到该目录；没有原文件仍可服务器伪装。\n\n"
                      "三条路径分别为本地私人外观、服务器中继的私人模型分享、服务器模型伪装。私人模型默认仅自己可见，多人共享需玩家明确开启及服务器协商、上传/观看权限；分享不创建 ME 伪装，未安装模组的玩家仍看见原版角色。服务器伪装与私人模型互斥；解除服务器伪装后须显式重新使用私人模型。服务器 private-models/ 属于私人运行时数据，不随源码或安装包分发。\n\n"
-                     f"两端分阶段定向单元检查最后结果保守去重共 {tests['distinct_targeted_cases']} 个显示名身份通过；"
+                     f"两端单元检查最后结果保守去重共 {tests['distinct_targeted_cases']} 个显示名身份通过；"
                      f"原报告共记录 {tests['raw_reported_testcases']} 项执行（含阶段重跑与参数化重名），详见证据；编译与包内容校验通过。"
-                     "本轮未运行完整旧矩阵或游戏/服务器实机复验；未实测 TPS、帧率或网络性能，画面与多人行为由用户测试。交付包不包含私人模型、源数据或用户配置。"
+                     "本轮单元检查范围见构建 JSON；未运行游戏/服务器实机复验，未实测 TPS、帧率或网络性能。交付包不包含私人模型、源数据或用户配置。"
                      f"完整当前源码见 {outputs['source'].name}，证据见 {outputs['tests'].name} / {outputs['build_report'].name}。\n").encode("utf-8")
     server_install["INSTALL.md"] = client_install["INSTALL.md"] = delivery_note
     installer_links(server_install)
@@ -546,13 +552,24 @@ def main() -> None:
     report = {"plugin": "MEPlayerActions", "server_version": VERSION, "client_version": VERSION,
               "release_scope": "server-and-client", "new_server_artifacts_created": True,
               "previous_version_test_evidence_reused": tests["previous_version_test_evidence_reused"], "performance_benchmark_run": False,
-              "validation_profile": tests["profile"], "in_game_verified": False, "in_game_omitted_at_user_request": True,
-              "full_suite_run": False, "old_game_matrix_reused_as_fresh": False,
+              "validation_profile": tests["profile"], "in_game_verified": False, "in_game_omitted_at_user_request": False,
+              "full_suite_run": tests["full_suite_run"], "old_game_matrix_reused_as_fresh": False,
               "tests": tests, "build_commands": command_proof,
               "server": {**server_proof, "compiler_inputs": fingerprint(server_inputs), **facts(server)},
               "client": {**client_proof, "compiler_inputs": fingerprint(client_inputs), **facts(client)},
               "source_entry_count": len(sources), "zip_integrity_and_content_match": True, "java_release": 21, "minecraft": "1.21.11"}
     evidence["build-commands.json"] = (VALIDATION / "build-commands.json").read_bytes()
+    style_report = VALIDATION / "code-style-check.json"
+    if style_report.is_file():
+        require(json.loads(style_report.read_text(encoding="utf-8")).get("version") == VERSION,
+                "Code style report must identify the current release")
+        evidence["code-style-check.json"] = style_report.read_bytes()
+    baseline_probe = VALIDATION / "code-style-baseline-probe.log"
+    if baseline_probe.is_file():
+        evidence[baseline_probe.name] = baseline_probe.read_bytes()
+    for validation_file in sorted(VALIDATION.glob("tools-validation-*")):
+        if validation_file.is_file() and validation_file.suffix in {".json", ".log"}:
+            evidence[validation_file.name] = validation_file.read_bytes()
     evidence["artifact-build-proof.json"] = (json.dumps(report, ensure_ascii=False, indent=2) + "\n").encode()
     # All read-only validation completes before preparing or publishing deliverable files.
     staging = PROJECT / "build" / f"package-{VERSION}-{time.time_ns()}"

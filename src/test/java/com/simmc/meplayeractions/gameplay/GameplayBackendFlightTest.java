@@ -21,24 +21,32 @@ import java.util.logging.Logger;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Exercises real backend code through the public Paper interfaces, without a live server. */
-class GameplayBackendFlightTest {
+class GameplayBackendFlightTest
+{
     private static final Map<UUID, Player> PLAYERS = new HashMap<>();
     private static final Logger LOGGER = quietLogger();
-    private static final PluginManager PLUGIN_MANAGER = proxy(PluginManager.class, (instance, method, args) -> {
-        if (method.getName().equals("getPlugin")) return null; // GSit is deliberately optional here.
+    private static final PluginManager PLUGIN_MANAGER = proxy(PluginManager.class, (instance, method, args) ->
+    {
+        if (method.getName().equals("getPlugin"))
+        {
+            return null;
+        }
+        // GSit is deliberately optional here.
         throw unexpected(method);
     });
-    private static final Server SERVER = proxy(Server.class, (instance, method, args) -> switch (method.getName()) {
-        case "isPrimaryThread" -> true;
-        case "getPluginManager" -> PLUGIN_MANAGER;
-        case "getLogger" -> LOGGER;
-        case "getPlayer" -> PLAYERS.get(args[0]);
-        default -> throw unexpected(method);
+    private static final Server SERVER = proxy(Server.class, (instance, method, args) -> switch (method.getName())
+    {
+    case "isPrimaryThread" -> true;
+    case "getPluginManager" -> PLUGIN_MANAGER;
+    case "getLogger" -> LOGGER;
+    case "getPlayer" -> PLAYERS.get(args[0]);
+    default -> throw unexpected(method);
     });
-    private static final Plugin PLUGIN = proxy(Plugin.class, (instance, method, args) -> switch (method.getName()) {
-        case "getServer" -> SERVER;
-        case "getLogger" -> LOGGER;
-        default -> throw unexpected(method);
+    private static final Plugin PLUGIN = proxy(Plugin.class, (instance, method, args) -> switch (method.getName())
+    {
+    case "getServer" -> SERVER;
+    case "getLogger" -> LOGGER;
+    default -> throw unexpected(method);
     });
 
     private GameplayBackend backend;
@@ -46,126 +54,136 @@ class GameplayBackendFlightTest {
     private Player player;
 
     @BeforeEach
-    void createBackendWithoutGSit() {
-        state = new FlightPlayer();
-        player = proxy(Player.class, state);
-        PLAYERS.put(state.id, player);
-        backend = new GameplayBackend(PLUGIN);
+    void createBackendWithoutGSit()
+    {
+        this.state = new FlightPlayer();
+        this.player = proxy(Player.class, this.state);
+        PLAYERS.put(this.state.id, this.player);
+        this.backend = new GameplayBackend(PLUGIN);
     }
 
     @AfterEach
-    void cleanUpOnlyThisTestsSession() {
-        backend.close();
-        PLAYERS.remove(state.id);
+    void cleanUpOnlyThisTestsSession()
+    {
+        this.backend.close();
+        PLAYERS.remove(this.state.id);
     }
 
     @Test
-    void survivalGrantRestoresOriginalAbilitiesAndCleanupIsIdempotent() {
-        assertFalse(backend.available());
-        backend.enableFlight(player, 0.25);
+    void survivalGrantRestoresOriginalAbilitiesAndCleanupIsIdempotent()
+    {
+        assertFalse(this.backend.available());
+        this.backend.enableFlight(this.player, 0.25);
         assertAbilities(true, true, 0.25f);
 
-        backend.cleanup(player);
+        this.backend.cleanup(this.player);
         assertAbilities(false, false, 0.1f);
-        int writesAfterCleanup = state.writes;
+        int writesAfterCleanup = this.state.writes;
 
-        backend.cleanup(player);
-        backend.disableOwnedFlight(player);
-        assertEquals(writesAfterCleanup, state.writes, "A completed grant must not write again");
+        this.backend.cleanup(this.player);
+        this.backend.disableOwnedFlight(this.player);
+        assertEquals(writesAfterCleanup, this.state.writes, "A completed grant must not write again");
     }
 
     @Test
-    void creativePlayersExistingFlightIsPreserved() {
-        state.mode = GameMode.CREATIVE;
-        state.allowFlight = true;
-        state.flying = true;
-        state.speed = 0.2f;
+    void creativePlayersExistingFlightIsPreserved()
+    {
+        this.state.mode = GameMode.CREATIVE;
+        this.state.allowFlight = true;
+        this.state.flying = true;
+        this.state.speed = 0.2f;
 
-        backend.enableFlight(player, 0.4);
-        backend.disableOwnedFlight(player);
+        this.backend.enableFlight(this.player, 0.4);
+        this.backend.disableOwnedFlight(this.player);
 
         assertAbilities(true, true, 0.2f);
     }
 
     @Test
-    void externallyChangedSpeedSurvivesWhileOtherOwnedFieldsAreRestored() {
-        backend.enableFlight(player, 0.25);
+    void externallyChangedSpeedSurvivesWhileOtherOwnedFieldsAreRestored()
+    {
+        this.backend.enableFlight(this.player, 0.25);
         // Another plugin has taken ownership of the speed after our grant.
-        state.speed = 0.6f;
+        this.state.speed = 0.6f;
 
-        backend.disableOwnedFlight(player);
+        this.backend.disableOwnedFlight(this.player);
 
         assertAbilities(false, false, 0.6f);
     }
 
     @Test
-    void gameModeChangeDiscardsTheOldSnapshotEvenIfThePlayerLaterReturns() {
-        backend.enableFlight(player, 0.25);
-        state.mode = GameMode.CREATIVE;
-        state.allowFlight = true;
-        state.flying = false;
-        state.speed = 0.3f;
-        int writesBeforeCleanup = state.writes;
+    void gameModeChangeDiscardsTheOldSnapshotEvenIfThePlayerLaterReturns()
+    {
+        this.backend.enableFlight(this.player, 0.25);
+        this.state.mode = GameMode.CREATIVE;
+        this.state.allowFlight = true;
+        this.state.flying = false;
+        this.state.speed = 0.3f;
+        int writesBeforeCleanup = this.state.writes;
 
-        backend.disableOwnedFlight(player);
+        this.backend.disableOwnedFlight(this.player);
         assertAbilities(true, false, 0.3f);
-        assertEquals(writesBeforeCleanup, state.writes);
+        assertEquals(writesBeforeCleanup, this.state.writes);
 
-        state.mode = GameMode.SURVIVAL;
-        backend.disableOwnedFlight(player);
+        this.state.mode = GameMode.SURVIVAL;
+        this.backend.disableOwnedFlight(this.player);
         assertAbilities(true, false, 0.3f);
-        assertEquals(writesBeforeCleanup, state.writes, "Returning to survival must not revive an obsolete snapshot");
+        assertEquals(writesBeforeCleanup, this.state.writes,
+                "Returning to survival must not revive an obsolete snapshot");
     }
 
     @Test
-    void invalidSpeedNeverMutatesOrReplacesAnExistingGrant() {
-        backend.enableFlight(player, 0.25);
-        int writesBeforeInvalidRequest = state.writes;
+    void invalidSpeedNeverMutatesOrReplacesAnExistingGrant()
+    {
+        this.backend.enableFlight(this.player, 0.25);
+        int writesBeforeInvalidRequest = this.state.writes;
 
         assertAll(
-                () -> assertThrows(IllegalArgumentException.class, () -> backend.enableFlight(player, Double.NaN)),
-                () -> assertThrows(IllegalArgumentException.class, () -> backend.enableFlight(player, 0)),
-                () -> assertThrows(IllegalArgumentException.class, () -> backend.enableFlight(player, 1.01))
-        );
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> this.backend.enableFlight(this.player, Double.NaN)),
+                () -> assertThrows(IllegalArgumentException.class, () -> this.backend.enableFlight(this.player, 0)),
+                () -> assertThrows(IllegalArgumentException.class, () -> this.backend.enableFlight(this.player, 1.01)));
         assertAbilities(true, true, 0.25f);
-        assertEquals(writesBeforeInvalidRequest, state.writes);
+        assertEquals(writesBeforeInvalidRequest, this.state.writes);
 
-        backend.disableOwnedFlight(player);
+        this.backend.disableOwnedFlight(this.player);
         assertAbilities(false, false, 0.1f);
     }
 
     @Test
-    void replacingOurGrantStillRestoresTheOriginalSurvivalSnapshot() {
-        backend.enableFlight(player, 0.25);
-        backend.enableFlight(player, 0.5);
+    void replacingOurGrantStillRestoresTheOriginalSurvivalSnapshot()
+    {
+        this.backend.enableFlight(this.player, 0.25);
+        this.backend.enableFlight(this.player, 0.5);
         assertAbilities(true, true, 0.5f);
 
-        backend.disableOwnedFlight(player);
+        this.backend.disableOwnedFlight(this.player);
 
         assertAbilities(false, false, 0.1f);
     }
 
     @Test
-    void aFailedAbilityWriteRollsBackTheFieldsAlreadyChanged() {
-        state.failNextSpeedWrite = true;
+    void aFailedAbilityWriteRollsBackTheFieldsAlreadyChanged()
+    {
+        this.state.failNextSpeedWrite = true;
 
-        assertThrows(IllegalStateException.class, () -> backend.enableFlight(player, 0.25));
+        assertThrows(IllegalStateException.class, () -> this.backend.enableFlight(this.player, 0.25));
 
         assertAbilities(false, false, 0.1f);
-        int writesAfterRollback = state.writes;
-        backend.disableOwnedFlight(player);
-        assertEquals(writesAfterRollback, state.writes);
+        int writesAfterRollback = this.state.writes;
+        this.backend.disableOwnedFlight(this.player);
+        assertEquals(writesAfterRollback, this.state.writes);
     }
 
-    private void assertAbilities(boolean allowFlight, boolean flying, float speed) {
-        assertAll(
-                () -> assertEquals(allowFlight, state.allowFlight, "allowFlight"),
-                () -> assertEquals(flying, state.flying, "flying"),
-                () -> assertEquals(speed, state.speed, "flySpeed")
-        );
+    private void assertAbilities(boolean allowFlight, boolean flying, float speed)
+    {
+        assertAll(() -> assertEquals(allowFlight, this.state.allowFlight, "allowFlight"),
+                () -> assertEquals(flying, this.state.flying, "flying"),
+                () -> assertEquals(speed, this.state.speed, "flySpeed"));
     }
 
-    private static final class FlightPlayer implements InvocationHandler {
+    private static final class FlightPlayer implements InvocationHandler
+    {
         final UUID id = UUID.randomUUID();
         GameMode mode = GameMode.SURVIVAL;
         boolean allowFlight, flying, failNextSpeedWrite;
@@ -173,62 +191,83 @@ class GameplayBackendFlightTest {
         int writes;
 
         @Override
-        public Object invoke(Object instance, Method method, Object[] args) {
-            return switch (method.getName()) {
-                case "getUniqueId" -> id;
-                case "getName" -> "FlightTestPlayer";
-                case "isOnline" -> true;
-                case "isDead" -> false;
-                case "getGameMode" -> mode;
-                case "getAllowFlight" -> allowFlight;
-                case "isFlying" -> flying;
-                case "getFlySpeed" -> speed;
-                case "setAllowFlight" -> {
-                    writes++;
-                    allowFlight = (boolean) args[0];
-                    if (!allowFlight) flying = false;
-                    yield null;
+        public Object invoke(Object instance, Method method, Object[] args)
+        {
+            return switch (method.getName())
+            {
+            case "getUniqueId" -> this.id;
+            case "getName" -> "FlightTestPlayer";
+            case "isOnline" -> true;
+            case "isDead" -> false;
+            case "getGameMode" -> this.mode;
+            case "getAllowFlight" -> this.allowFlight;
+            case "isFlying" -> this.flying;
+            case "getFlySpeed" -> this.speed;
+            case "setAllowFlight" ->
+            {
+                this.writes++;
+                this.allowFlight = (boolean) args[0];
+                if (!this.allowFlight)
+                {
+                    this.flying = false;
                 }
-                case "setFlying" -> {
-                    writes++;
-                    boolean requested = (boolean) args[0];
-                    if (requested && !allowFlight) throw new IllegalArgumentException("Flight was not allowed");
-                    flying = requested;
-                    yield null;
+
+                yield null;
+            }
+            case "setFlying" ->
+            {
+                this.writes++;
+                boolean requested = (boolean) args[0];
+                if (requested && !this.allowFlight)
+                {
+                    throw new IllegalArgumentException("Flight was not allowed");
                 }
-                case "setFlySpeed" -> {
-                    writes++;
-                    if (failNextSpeedWrite) {
-                        failNextSpeedWrite = false;
-                        throw new IllegalStateException("Simulated ability update failure");
-                    }
-                    speed = (float) args[0];
-                    yield null;
+
+                this.flying = requested;
+                yield null;
+            }
+            case "setFlySpeed" ->
+            {
+                this.writes++;
+                if (this.failNextSpeedWrite)
+                {
+                    this.failNextSpeedWrite = false;
+                    throw new IllegalStateException("Simulated ability update failure");
                 }
-                default -> throw unexpected(method);
+                this.speed = (float) args[0];
+                yield null;
+            }
+            default -> throw unexpected(method);
             };
         }
     }
 
-    private static <T> T proxy(Class<T> type, InvocationHandler handler) {
-        return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, (instance, method, args) -> {
-            if (method.getDeclaringClass() == Object.class) {
-                return switch (method.getName()) {
-                    case "equals" -> instance == args[0];
-                    case "hashCode" -> System.identityHashCode(instance);
-                    case "toString" -> type.getSimpleName() + "TestDouble";
-                    default -> throw unexpected(method);
+    private static <T> T proxy(Class<T> type, InvocationHandler handler)
+    {
+        return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]
+        { type }, (instance, method, args) ->
+        {
+            if (method.getDeclaringClass() == Object.class)
+            {
+                return switch (method.getName())
+                {
+                case "equals" -> instance == args[0];
+                case "hashCode" -> System.identityHashCode(instance);
+                case "toString" -> type.getSimpleName() + "TestDouble";
+                default -> throw unexpected(method);
                 };
             }
             return handler.invoke(instance, method, args);
         }));
     }
 
-    private static UnsupportedOperationException unexpected(Method method) {
+    private static UnsupportedOperationException unexpected(Method method)
+    {
         return new UnsupportedOperationException("Unexpected API call: " + method);
     }
 
-    private static Logger quietLogger() {
+    private static Logger quietLogger()
+    {
         Logger logger = Logger.getAnonymousLogger();
         logger.setLevel(Level.OFF);
         return logger;

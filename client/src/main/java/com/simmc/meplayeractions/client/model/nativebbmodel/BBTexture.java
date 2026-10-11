@@ -11,7 +11,8 @@ import java.util.UUID;
  * Blockbench 纹理
  * 支持嵌入式（base64）和外部引用
  */
-public class BBTexture {
+public class BBTexture
+{
     public String uuid = "";
     public String name = "";
     public String source = "";
@@ -30,14 +31,16 @@ public class BBTexture {
     /**
      * 检查是否为嵌入式纹理（base64 数据）
      */
-    public boolean isEmbedded() {
-        return source != null && source.startsWith("data:");
+    public boolean isEmbedded()
+    {
+        return this.source != null && this.source.startsWith("data:");
     }
 
     /**
      * 检查是否为外部文件引用
      */
-    public boolean isExternal() {
-        return path != null && !path.isEmpty();
+    public boolean isExternal()
+    {
+        return this.path != null && !this.path.isEmpty();
     }
 }

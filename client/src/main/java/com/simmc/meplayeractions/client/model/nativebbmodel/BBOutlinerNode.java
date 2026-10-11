@@ -31,7 +31,8 @@ import java.util.List;
  * ]
  * </pre>
  */
-public class BBOutlinerNode {
+public class BBOutlinerNode
+{
     /** group 节点的 uuid；element 引用时与 elementUuid 相同。 */
     public String uuid = "";
 
@@ -61,16 +62,19 @@ public class BBOutlinerNode {
     /** 嵌套子节点（既可以是 group 也可以是 element 引用）。 */
     public List<BBOutlinerNode> children = new ArrayList<>();
 
-    public boolean isGroup() {
-        return !elementRef;
+    public boolean isGroup()
+    {
+        return !this.elementRef;
     }
 
-    public boolean isElementRef() {
-        return elementRef;
+    public boolean isElementRef()
+    {
+        return this.elementRef;
     }
 
     /** 构造一个 element 引用节点。 */
-    public static BBOutlinerNode forElement(String elementUuid) {
+    public static BBOutlinerNode forElement(String elementUuid)
+    {
         BBOutlinerNode n = new BBOutlinerNode();
         n.elementRef = true;
         n.elementUuid = elementUuid;

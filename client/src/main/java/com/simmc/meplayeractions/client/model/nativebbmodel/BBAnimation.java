@@ -16,7 +16,8 @@ import java.util.Map;
  * <p>真实文件中 {@code loop} 字段是字符串：{@code "loop" / "once" / "hold"}。
  * 旧文件可能写成 boolean，解析器两种都接。</p>
  */
-public class BBAnimation {
+public class BBAnimation
+{
     public String uuid = "";
     public String name = "";
     /** 解析器拆出来的便捷布尔：true 表示循环。 */
@@ -36,14 +37,16 @@ public class BBAnimation {
     /** Effect/sound/particle timelines。 */
     public List<BBTimeline> timelines = new ArrayList<>();
 
-    public static class BBAnimator {
+    public static class BBAnimator
+    {
         public String name = "";
         /** "bone" / "effect" / "particle" / "sound"。 */
         public String type = "bone";
         public List<BBKeyframe> keyframes = new ArrayList<>();
     }
 
-    public static class BBKeyframe {
+    public static class BBKeyframe
+    {
         /** "rotation" / "position" / "scale" / "particle" / "sound" / "timeline"。 */
         public String channel = "";
         /** 时间，单位秒。 */
@@ -63,7 +66,8 @@ public class BBAnimation {
      * 数据点。Blockbench 把数值字段存成字符串以支持 Molang 表达式，
      * 但实际数值情况下也可能是 number；解析器已统一转字符串。
      */
-    public static class BBDataPoint {
+    public static class BBDataPoint
+    {
         public String x = "";
         public String y = "";
         public String z = "";
@@ -71,13 +75,15 @@ public class BBAnimation {
         public Map<String, String> values = new LinkedHashMap<>();
     }
 
-    public static class BBTimeline {
+    public static class BBTimeline
+    {
         public String name = "";
         public String uuid = "";
         public List<BBTimelineEntry> entries = new ArrayList<>();
     }
 
-    public static class BBTimelineEntry {
+    public static class BBTimelineEntry
+    {
         public float time = 0;
         public String script = "";
     }

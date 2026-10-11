@@ -12,9 +12,16 @@ import java.util.concurrent.CompletableFuture;
 
 /** Only this module's issued model-audio locations use local immutable bytes. */
 @Mixin(SoundLoader.class)
-public abstract class SoundLoaderMixin {
+public abstract class SoundLoaderMixin
+{
     @Inject(method = "loadStreamed(Lnet/minecraft/util/Identifier;Z)Ljava/util/concurrent/CompletableFuture;", at = @At("HEAD"), cancellable = true)
-    private void meplayeractions$modelAudio(Identifier location, boolean repeat, CallbackInfoReturnable<CompletableFuture<AudioStream>> callback) {
-        if (YsmAudioRegistry.isPrivate(location)) callback.setReturnValue(YsmAudioRegistry.openStream(location, repeat));
+    private void meplayeractions$modelAudio(Identifier location, boolean repeat,
+            CallbackInfoReturnable<CompletableFuture<AudioStream>> callback)
+    {
+        if (YsmAudioRegistry.isPrivate(location))
+        {
+            callback.setReturnValue(YsmAudioRegistry.openStream(location, repeat));
+        }
+
     }
 }

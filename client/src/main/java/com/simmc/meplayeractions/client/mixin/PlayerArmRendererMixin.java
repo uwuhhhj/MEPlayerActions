@@ -14,22 +14,36 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(PlayerEntityRenderer.class)
-public abstract class PlayerArmRendererMixin {
+public abstract class PlayerArmRendererMixin
+{
     @Inject(method = "<init>", at = @At("TAIL"))
-    private void meplayeractions$equipmentContext(EntityRendererFactory.Context context, boolean slim, CallbackInfo ci) {
+    private void meplayeractions$equipmentContext(EntityRendererFactory.Context context, boolean slim, CallbackInfo ci)
+    {
         YsmEquipmentRenderer.rendererContext(context);
     }
+
     // As in OpenYSM's AvatarRenderer hand mixin, replace only the native hand entry.
     // HeldItemRenderer owns maps, equip/swing/use transforms and first-person item rendering;
     // ordinary held items must not receive an additional arm in a separate empty-hand basis.
     @Inject(method = "renderRightArm", at = @At("HEAD"), cancellable = true)
-    private void meplayeractions$rightArm(MatrixStack matrices, OrderedRenderCommandQueue queue,
-            int light, Identifier texture, boolean sleeveVisible, CallbackInfo ci) {
-        if (ModelRenderer.renderFirstPersonArm(Arm.RIGHT, matrices, queue, light)) ci.cancel();
+    private void meplayeractions$rightArm(MatrixStack matrices, OrderedRenderCommandQueue queue, int light,
+            Identifier texture, boolean sleeveVisible, CallbackInfo ci)
+    {
+        if (ModelRenderer.renderFirstPersonArm(Arm.RIGHT, matrices, queue, light))
+        {
+            ci.cancel();
+        }
+
     }
+
     @Inject(method = "renderLeftArm", at = @At("HEAD"), cancellable = true)
-    private void meplayeractions$leftArm(MatrixStack matrices, OrderedRenderCommandQueue queue,
-            int light, Identifier texture, boolean sleeveVisible, CallbackInfo ci) {
-        if (ModelRenderer.renderFirstPersonArm(Arm.LEFT, matrices, queue, light)) ci.cancel();
+    private void meplayeractions$leftArm(MatrixStack matrices, OrderedRenderCommandQueue queue, int light,
+            Identifier texture, boolean sleeveVisible, CallbackInfo ci)
+    {
+        if (ModelRenderer.renderFirstPersonArm(Arm.LEFT, matrices, queue, light))
+        {
+            ci.cancel();
+        }
+
     }
 }

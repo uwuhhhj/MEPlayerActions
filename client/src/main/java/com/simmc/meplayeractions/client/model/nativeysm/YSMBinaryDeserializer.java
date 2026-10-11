@@ -5,106 +5,129 @@
  */
 package com.simmc.meplayeractions.client.model.nativeysm;
 
-
-
-
-
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-public class YSMBinaryDeserializer implements AutoCloseable{
+public class YSMBinaryDeserializer implements AutoCloseable
+{
 
     private final YSMByteBuf reader;
     private final int format;
     private final RawYsmModel model;
 
-    public YSMBinaryDeserializer(byte[] decompressedData) {
+    public YSMBinaryDeserializer(byte[] decompressedData)
+    {
         this.reader = new YSMByteBuf(decompressedData);
         this.format = (int) this.reader.readDword();
         this.model = new RawYsmModel();
         this.model.formatVersion = this.format;
     }
 
-    public YSMBinaryDeserializer(byte[] decompressedData, int format) {
+    public YSMBinaryDeserializer(byte[] decompressedData, int format)
+    {
         this.reader = new YSMByteBuf(decompressedData);
         this.format = format;
         this.model = new RawYsmModel();
         this.model.formatVersion = this.format;
     }
 
+    private RawYsmModel deserializeInternal(boolean closeOnExit)
+    {
 
-    private RawYsmModel deserializeInternal(boolean closeOnExit) {
-
-        if (format < 4) {
+        if (this.format < 4)
+        {
             deserializeLegacyV1();
-        } else if (format <= 15) {
+        }
+        else if (this.format <= 15)
+        {
             deserializeLegacyV15();
-        } else {
+        }
+        else
+        {
             deserializeModern();
         }
 
-        model.projectiles.entrySet().removeIf(entry -> { // 老版本格式可能有动画没模型没纹理
+        this.model.projectiles.entrySet().removeIf(entry ->
+        { // 老版本格式可能有动画没模型没纹理
             RawYsmModel.RawSubEntity sub = entry.getValue();
             return sub.model == null || sub.textures.isEmpty();
         });
 
-        int offset = reader.getOffset(); // 关闭前获取偏移量
-        if (closeOnExit) {
+        int offset = this.reader.getOffset(); // 关闭前获取偏移量
+        if (closeOnExit)
+        {
             this.reader.close();
         }
 
-        return model;
+        return this.model;
     }
 
-    public RawYsmModel deserialize() {
+    public RawYsmModel deserialize()
+    {
         return deserializeInternal(true);
     }
 
-    public RawYsmModel deserializeKeepOpen() {
+    public RawYsmModel deserializeKeepOpen()
+    {
         return deserializeInternal(false);
     }
 
-    public void parseYSMFooter(RawYsmModel footer) {
-        try {
-            if (format < 9) { // 《9没有
+    public void parseYSMFooter(RawYsmModel footer)
+    {
+        try
+        {
+            if (this.format < 9)
+            { // 《9没有
                 return;
             }
-            if (format > 26) { // >26 这里有个版本号
-                model.footer.version = reader.readVarInt();
-            } else {
-                model.footer.version = format;
+            if (this.format > 26)
+            { // >26 这里有个版本号
+                this.model.footer.version = this.reader.readVarInt();
+            }
+            else
+            {
+                this.model.footer.version = this.format;
             }
 
-            model.footer.unkInt1 = reader.readVarInt(); // always 1
+            this.model.footer.unkInt1 = this.reader.readVarInt(); // always 1
 
-            model.footer.rand = reader.readString(); // 随机字符串
+            this.model.footer.rand = this.reader.readString(); // 随机字符串
 
-            model.footer.time = reader.readVarLong(); // Unix 时间戳 如 1775738769
+            this.model.footer.time = this.reader.readVarLong(); // Unix 时间戳 如 1775738769
 
-            model.footer.extra = reader.readString(); // 导出时的额外字符串
+            this.model.footer.extra = this.reader.readString(); // 导出时的额外字符串
 
-            if (format >= 24) { // TODO: 这个是什么数据？
-                model.footer.unkInt2 = reader.readVarInt(); // always 0，暂时没看到过其他的情况，似乎是字符串
+            if (this.format >= 24)
+            { // TODO: 这个是什么数据？
+                this.model.footer.unkInt2 = this.reader.readVarInt(); // always 0，暂时没看到过其他的情况，似乎是字符串
             }
 
-        } catch (Throwable t) {
+        }
+        catch (Throwable t)
+        {
 
             throw new IllegalArgumentException("Invalid YSM footer", t);
         }
     }
 
-    private void deserializeLegacyV1() {
-        int unknownNeedSkipBytes = reader.readVarInt();
-        reader.skipBytes(unknownNeedSkipBytes);
+    private void deserializeLegacyV1()
+    {
+        int unknownNeedSkipBytes = this.reader.readVarInt();
+        this.reader.skipBytes(unknownNeedSkipBytes);
 
         List<RawYsmModel.RawGeometry> tempModels = new ArrayList<>();
-        int modelCount = reader.readCount(34);
-        for (int i = 0; i < modelCount; ++i) {
-            int modelId = reader.readVarInt(); // 棄用或僅作為內部ID
-            int unknownMustBeOneFlag = reader.readVarInt();
-            if (unknownMustBeOneFlag != 1) throw new RuntimeException("Expected 1");
+        int modelCount = this.reader.readCount(34);
+        for (int i = 0; i < modelCount; ++i)
+        {
+            int modelId = this.reader.readVarInt(); // 棄用或僅作為內部ID
+            int unknownMustBeOneFlag = this.reader.readVarInt();
+            if (unknownMustBeOneFlag != 1)
+            {
+                throw new RuntimeException("Expected 1");
+            }
+
             RawYsmModel.RawGeometry rawGeometry = parseModels();
             rawGeometry.modelType = modelId;
             tempModels.add(rawGeometry);
@@ -112,23 +135,32 @@ public class YSMBinaryDeserializer implements AutoCloseable{
         assignMainModels(tempModels);
 
         Map<Integer, RawYsmModel.RawAnimationFile> tempAnims = new HashMap<>();
-        int animationBlobCount = reader.readCount(32);
-        for (int i = 0; i < animationBlobCount; ++i) {
-            int animationId = reader.readVarInt();
-            int unknownPadding = reader.readVarInt();
-            if (unknownPadding != 1) throw new RuntimeException("Expected 1");
+        int animationBlobCount = this.reader.readCount(32);
+        for (int i = 0; i < animationBlobCount; ++i)
+        {
+            int animationId = this.reader.readVarInt();
+            int unknownPadding = this.reader.readVarInt();
+            if (unknownPadding != 1)
+            {
+                throw new RuntimeException("Expected 1");
+            }
+
             RawYsmModel.RawAnimationFile rawAnimationFile = parseAnimations();
 
             String animKey = animationFamily(animationId);
-            if (animationId == 5) {
-                RawYsmModel.RawSubEntity arrowEntity = model.projectiles.computeIfAbsent("minecraft:arrow", k -> {
+            if (animationId == 5)
+            {
+                RawYsmModel.RawSubEntity arrowEntity = this.model.projectiles.computeIfAbsent("minecraft:arrow", k ->
+                {
                     RawYsmModel.RawSubEntity newSub = new RawYsmModel.RawSubEntity();
                     newSub.identifier = k;
                     return newSub;
                 });
                 arrowEntity.animationFiles.put(animKey, rawAnimationFile);
-            } else {
-                model.mainEntity.animationFiles.put(animKey, rawAnimationFile);
+            }
+            else
+            {
+                this.model.mainEntity.animationFiles.put(animKey, rawAnimationFile);
             }
 
             rawAnimationFile.animType = animationId;
@@ -136,67 +168,97 @@ public class YSMBinaryDeserializer implements AutoCloseable{
         }
 
         List<RawYsmModel.RawTexture> tempTextures = new ArrayList<>();
-        int customTextureCount = reader.readCount(16);
-        for (int i = 0; i < customTextureCount; ++i) {
+        int customTextureCount = this.reader.readCount(16);
+        for (int i = 0; i < customTextureCount; ++i)
+        {
             RawYsmModel.RawTexture tex = new RawYsmModel.RawTexture();
-            tex.name = reader.readString();
-            if (format < 4) {
-                int unknownFormatFlag = reader.readVarInt();
-                if (unknownFormatFlag != 0x01) throw new RuntimeException("Expected 0x01");
+            tex.name = this.reader.readString();
+            if (this.format < 4)
+            {
+                int unknownFormatFlag = this.reader.readVarInt();
+                if (unknownFormatFlag != 0x01)
+                {
+                    throw new RuntimeException("Expected 0x01");
+                }
+
             }
-            tex.data = reader.readByteArray();
-            tex.width = reader.readVarInt();
-            tex.height = reader.readVarInt();
+            tex.data = this.reader.readByteArray();
+            tex.width = this.reader.readVarInt();
+            tex.height = this.reader.readVarInt();
             tex.imageFormat = -1; // RGBA
 
-
             if ("arrow.png".equals(tex.name))
-                model.projectiles.get("minecraft:arrow").textures.put(tex.name, tex);
+
+            {
+                this.model.projectiles.get("minecraft:arrow").textures.put(tex.name, tex);
+            }
+
             else
-                model.mainEntity.textures.put(tex.name, tex);
+
+            {
+                this.model.mainEntity.textures.put(tex.name, tex);
+            }
 
             tempTextures.add(tex);
         }
 
         // Tables回填Hash
-        int modelTableSize = reader.readCount(200_000);
-        for (int i = 0; i < modelTableSize; ++i) {
-            int modelId = reader.readVarInt();
-            String modelHash = reader.readString();
-            for (RawYsmModel.RawGeometry tempModel : tempModels) {
+        int modelTableSize = this.reader.readCount(200_000);
+        for (int i = 0; i < modelTableSize; ++i)
+        {
+            int modelId = this.reader.readVarInt();
+            String modelHash = this.reader.readString();
+            for (RawYsmModel.RawGeometry tempModel : tempModels)
+            {
                 if (tempModel.modelType == modelId)
+
+                {
                     tempModel.sha256 = modelHash;
+                }
+
             }
         }
 
-        int animationTableSize = reader.readCount(200_000);
-        for (int i = 0; i < animationTableSize; ++i) {
-            int animationId = reader.readVarInt();
-            tempAnims.get(animationId).fileHash = reader.readString();
+        int animationTableSize = this.reader.readCount(200_000);
+        for (int i = 0; i < animationTableSize; ++i)
+        {
+            int animationId = this.reader.readVarInt();
+            tempAnims.get(animationId).fileHash = this.reader.readString();
         }
 
-        int textureTableSize = reader.readCount(200_000);
-        for (int i = 0; i < textureTableSize; ++i) {
-            String textureName = reader.readString();
-            String textureHash = reader.readString();
-            RawYsmModel.RawTexture tex = model.mainEntity.textures.get(textureName);
-            if (tex != null) tex.hash = textureHash;
+        int textureTableSize = this.reader.readCount(200_000);
+        for (int i = 0; i < textureTableSize; ++i)
+        {
+            String textureName = this.reader.readString();
+            String textureHash = this.reader.readString();
+            RawYsmModel.RawTexture tex = this.model.mainEntity.textures.get(textureName);
+            if (tex != null)
+            {
+                tex.hash = textureHash;
+            }
+
         }
 
-        String unkString = reader.readString();
-        model.properties.sha256 = unkString;
+        String unkString = this.reader.readString();
+        this.model.properties.sha256 = unkString;
     }
 
-    private void deserializeLegacyV15() {
-        int unknownNeedSkipBytes = reader.readVarInt();
-        reader.skipBytes(unknownNeedSkipBytes);
+    private void deserializeLegacyV15()
+    {
+        int unknownNeedSkipBytes = this.reader.readVarInt();
+        this.reader.skipBytes(unknownNeedSkipBytes);
 
         List<RawYsmModel.RawGeometry> tempModels = new ArrayList<>();
-        int modelCount = reader.readCount(34);
-        for (int i = 0; i < modelCount; ++i) {
-            int modelId = reader.readVarInt();
-            int unknownPadding = reader.readVarInt();
-            if (unknownPadding != 1) throw new RuntimeException("Expected 1");
+        int modelCount = this.reader.readCount(34);
+        for (int i = 0; i < modelCount; ++i)
+        {
+            int modelId = this.reader.readVarInt();
+            int unknownPadding = this.reader.readVarInt();
+            if (unknownPadding != 1)
+            {
+                throw new RuntimeException("Expected 1");
+            }
+
             RawYsmModel.RawGeometry rawGeometry = parseModels();
             rawGeometry.modelType = modelId;
             tempModels.add(rawGeometry);
@@ -205,37 +267,50 @@ public class YSMBinaryDeserializer implements AutoCloseable{
         assignMainModels(tempModels); //TODO
 
         Map<Integer, RawYsmModel.RawAnimationFile> tempAnims = new HashMap<>();
-        int animationBlobCount = reader.readCount(32);
-        for (int i = 0; i < animationBlobCount; ++i) {
-            int animationId = reader.readVarInt();
-            int unknownPadding = reader.readVarInt();
-            if (unknownPadding != 1) throw new RuntimeException("Expected 1");
+        int animationBlobCount = this.reader.readCount(32);
+        for (int i = 0; i < animationBlobCount; ++i)
+        {
+            int animationId = this.reader.readVarInt();
+            int unknownPadding = this.reader.readVarInt();
+            if (unknownPadding != 1)
+            {
+                throw new RuntimeException("Expected 1");
+            }
+
             RawYsmModel.RawAnimationFile rawAnimationFile = parseAnimations();
 
             String animKey = animationFamily(animationId);
-            if (animationId == 5) {
-                RawYsmModel.RawSubEntity arrowEntity = model.projectiles.computeIfAbsent("minecraft:arrow", k -> {
+            if (animationId == 5)
+            {
+                RawYsmModel.RawSubEntity arrowEntity = this.model.projectiles.computeIfAbsent("minecraft:arrow", k ->
+                {
                     RawYsmModel.RawSubEntity newSub = new RawYsmModel.RawSubEntity();
                     newSub.identifier = k;
                     return newSub;
                 });
                 arrowEntity.animationFiles.put(animKey, rawAnimationFile);
-            } else {
-                model.mainEntity.animationFiles.put(animKey, rawAnimationFile);
+            }
+            else
+            {
+                this.model.mainEntity.animationFiles.put(animKey, rawAnimationFile);
             }
 
             rawAnimationFile.animType = animationId;
             tempAnims.put(animationId, rawAnimationFile);
         }
 
-        if (format > 9) {
-            parseAnimationControllers(model.mainEntity.animationControllerFiles, false);
-            int animationControllerTableSize = reader.readCount(200_000);
-            for (int i = 0; i < animationControllerTableSize; ++i) {
-                String controllerName = reader.readString();
-                String controllerHash = reader.readString();
-                for (RawYsmModel.RawAnimationControllerFile file : model.mainEntity.animationControllerFiles) {
-                    if (controllerName.equals(file.name)) {
+        if (this.format > 9)
+        {
+            parseAnimationControllers(this.model.mainEntity.animationControllerFiles, false);
+            int animationControllerTableSize = this.reader.readCount(200_000);
+            for (int i = 0; i < animationControllerTableSize; ++i)
+            {
+                String controllerName = this.reader.readString();
+                String controllerHash = this.reader.readString();
+                for (RawYsmModel.RawAnimationControllerFile file : this.model.mainEntity.animationControllerFiles)
+                {
+                    if (controllerName.equals(file.name))
+                    {
                         file.hash = controllerHash;
                         break;
                     }
@@ -243,95 +318,124 @@ public class YSMBinaryDeserializer implements AutoCloseable{
             }
         }
 
-        int customTextureCount = reader.readCount(16);
-        for (int i = 0; i < customTextureCount; ++i) {
+        int customTextureCount = this.reader.readCount(16);
+        for (int i = 0; i < customTextureCount; ++i)
+        {
             RawYsmModel.RawTexture tex = new RawYsmModel.RawTexture();
-            tex.name = reader.readString();
-            tex.data = reader.readByteArray();
-            tex.width = reader.readVarInt();
-            tex.height = reader.readVarInt();
+            tex.name = this.reader.readString();
+            tex.data = this.reader.readByteArray();
+            tex.width = this.reader.readVarInt();
+            tex.height = this.reader.readVarInt();
             tex.imageFormat = -1; // RGBA
 
-            int subTextureSize = reader.readCount(2);
-            for (int j = 0; j < subTextureSize; ++j) {
+            int subTextureSize = this.reader.readCount(2);
+            for (int j = 0; j < subTextureSize; ++j)
+            {
                 RawYsmModel.RawTexture.SubTexture sub = new RawYsmModel.RawTexture.SubTexture();
-                sub.specularType = reader.readVarInt();
-                sub.data = reader.readByteArray();
-                sub.width = reader.readVarInt();
-                sub.height = reader.readVarInt();
+                sub.specularType = this.reader.readVarInt();
+                sub.data = this.reader.readByteArray();
+                sub.width = this.reader.readVarInt();
+                sub.height = this.reader.readVarInt();
                 sub.imageFormat = -1; // RGBA
                 tex.subTextures.add(sub);
             }
 
             // 特殊處理一下
             if ("/ARROW\\".equals(tex.name))
-                model.projectiles.get("minecraft:arrow").textures.put(tex.name, tex);
+
+            {
+                this.model.projectiles.get("minecraft:arrow").textures.put(tex.name, tex);
+            }
+
             else
-                model.mainEntity.textures.put(tex.name, tex);
+
+            {
+                this.model.mainEntity.textures.put(tex.name, tex);
+            }
 
         }
 
-        if (format > 9) {
+        if (this.format > 9)
+        {
             parseSoundFiles();
-            int soundTableCount = reader.readCount(200_000);
-            for (int i = 0; i < soundTableCount; ++i) {
-                String soundName = reader.readString();
-                String soundHash = reader.readString();
-                RawYsmModel.RawDataFile sf = model.soundFiles.get(soundName);
-                if (sf != null) sf.hash = soundHash;
+            int soundTableCount = this.reader.readCount(200_000);
+            for (int i = 0; i < soundTableCount; ++i)
+            {
+                String soundName = this.reader.readString();
+                String soundHash = this.reader.readString();
+                RawYsmModel.RawDataFile sf = this.model.soundFiles.get(soundName);
+                if (sf != null)
+                {
+                    sf.hash = soundHash;
+                }
+
             }
         }
 
         List<RawYsmModel.RawImage> tempAvatars = new ArrayList<>();
-        int extraTextureCount = reader.readCount(16);
-        for (int i = 0; i < extraTextureCount; ++i) {
+        int extraTextureCount = this.reader.readCount(16);
+        for (int i = 0; i < extraTextureCount; ++i)
+        {
             RawYsmModel.RawImage avatar = new RawYsmModel.RawImage();
-            avatar.name = reader.readString();
-            avatar.data = reader.readByteArray();
-            avatar.width = reader.readVarInt();
-            avatar.height = reader.readVarInt();
+            avatar.name = this.reader.readString();
+            avatar.data = this.reader.readByteArray();
+            avatar.width = this.reader.readVarInt();
+            avatar.height = this.reader.readVarInt();
             avatar.format = -1; // 兼容旧版默认 RGBA
             tempAvatars.add(avatar);
         }
 
         // Tables回填Hash
-        int modelTableSize = reader.readCount(200_000);
-        for (int i = 0; i < modelTableSize; ++i) {
-            int modelId = reader.readVarInt();
-            String modelHash = reader.readString();
-            for (RawYsmModel.RawGeometry tempModel : tempModels) {
+        int modelTableSize = this.reader.readCount(200_000);
+        for (int i = 0; i < modelTableSize; ++i)
+        {
+            int modelId = this.reader.readVarInt();
+            String modelHash = this.reader.readString();
+            for (RawYsmModel.RawGeometry tempModel : tempModels)
+            {
                 if (tempModel.modelType == modelId)
+
+                {
                     tempModel.sha256 = modelHash;
+                }
+
             }
         }
 
-        int animationTableSize = reader.readCount(200_000);
-        for (int i = 0; i < animationTableSize; ++i) {
-            int animationId = reader.readVarInt();
-            String animationHash = reader.readString();
-//            if (tempAnims.get(animationId) == null) {
-//                "".hashCode();
-//
-//            }
+        int animationTableSize = this.reader.readCount(200_000);
+        for (int i = 0; i < animationTableSize; ++i)
+        {
+            int animationId = this.reader.readVarInt();
+            String animationHash = this.reader.readString();
+            //            if (tempAnims.get(animationId) == null) {
+            //                "".hashCode();
+            //
+            //            }
             tempAnims.get(animationId).fileHash = animationHash;
         }
 
-        int textureTableSize = reader.readCount(200_000);
-        for (int i = 0; i < textureTableSize; ++i) {
-            String textureName = reader.readString();
-            String textureHash = reader.readString();
-            RawYsmModel.RawTexture tex = model.mainEntity.textures.get(textureName);
-            if (tex != null) {
+        int textureTableSize = this.reader.readCount(200_000);
+        for (int i = 0; i < textureTableSize; ++i)
+        {
+            String textureName = this.reader.readString();
+            String textureHash = this.reader.readString();
+            RawYsmModel.RawTexture tex = this.model.mainEntity.textures.get(textureName);
+            if (tex != null)
+            {
                 tex.hash = textureHash;
             }
-            int subTextureSize = reader.readCount(2);
-            for (int j = 0; j < subTextureSize; ++j) {
-                int specularType = reader.readVarInt();
-                String specialImageHash = reader.readString();
+            int subTextureSize = this.reader.readCount(2);
+            for (int j = 0; j < subTextureSize; ++j)
+            {
+                int specularType = this.reader.readVarInt();
+                String specialImageHash = this.reader.readString();
                 // 修復舊版丟棄子紋理Hash
-                if (tex != null) {
-                    for (RawYsmModel.RawTexture.SubTexture sub : tex.subTextures) {
-                        if (sub.specularType == specularType) {
+                if (tex != null)
+                {
+                    for (RawYsmModel.RawTexture.SubTexture sub : tex.subTextures)
+                    {
+                        if (sub.specularType == specularType)
+                        {
                             sub.hash = specialImageHash;
                             break;
                         }
@@ -339,70 +443,90 @@ public class YSMBinaryDeserializer implements AutoCloseable{
                 }
             }
         }
-        for (RawYsmModel.RawSubEntity value : model.projectiles.values()) {
-            for (RawYsmModel.RawTexture rawTexture : value.textures.values()) {
-                model.mainEntity.textures.remove(rawTexture.name);
+        for (RawYsmModel.RawSubEntity value : this.model.projectiles.values())
+        {
+            for (RawYsmModel.RawTexture rawTexture : value.textures.values())
+            {
+                this.model.mainEntity.textures.remove(rawTexture.name);
             }
         }
 
         parseYSMJson();
 
-        for (int i = 0; i < tempAvatars.size(); i++) {
+        for (int i = 0; i < tempAvatars.size(); i++)
+        {
             RawYsmModel.RawImage avatar = tempAvatars.get(i);
-            if (i < model.metadata.authors.size()) {
-                model.metadata.authors.get(i).avatar = avatar.name;
-                model.metadata.authors.get(i).avatarImage = avatar;
-            } else {
-                model.metadata.extraAvatars.add(avatar);
+            if (i < this.model.metadata.authors.size())
+            {
+                this.model.metadata.authors.get(i).avatar = avatar.name;
+                this.model.metadata.authors.get(i).avatarImage = avatar;
+            }
+            else
+            {
+                this.model.metadata.extraAvatars.add(avatar);
             }
         }
     }
 
-    private void deserializeModern() {
+    private void deserializeModern()
+    {
         parseSoundFiles();
         parseFunctionFiles();
         parseLanguageFiles();
 
-        if (format < 26) {
-            int subEntityTotalCount = reader.readCount(200_000);
-            for (int i = 0; i < subEntityTotalCount; ++i) {
-                parseSubEntity(model.vehicles, "SubEntity", i);
+        if (this.format < 26)
+        {
+            int subEntityTotalCount = this.reader.readCount(200_000);
+            for (int i = 0; i < subEntityTotalCount; ++i)
+            {
+                parseSubEntity(this.model.vehicles, "SubEntity", i);
             }
-            int footerFlag = reader.readVarInt(); // always 00
-        } else {
-            int vehiclesTotalCount = reader.readCount(200_000);
-            for (int i = 0; i < vehiclesTotalCount; ++i) parseSubEntity(model.vehicles, "Vehicle", i);
+            int footerFlag = this.reader.readVarInt(); // always 00
+        }
+        else
+        {
+            int vehiclesTotalCount = this.reader.readCount(200_000);
+            for (int i = 0; i < vehiclesTotalCount; ++i)
+            {
+                parseSubEntity(this.model.vehicles, "Vehicle", i);
+            }
 
-            int projectilesTotalCount = reader.readCount(200_000);
-            for (int i = 0; i < projectilesTotalCount; ++i) parseSubEntity(model.projectiles, "Projectile", i);
+            int projectilesTotalCount = this.reader.readCount(200_000);
+            for (int i = 0; i < projectilesTotalCount; ++i)
+            {
+                parseSubEntity(this.model.projectiles, "Projectile", i);
+            }
+
         }
 
-        int unknownEntityFlag = reader.readVarInt();
-        if (unknownEntityFlag != 1) throw new RuntimeException("Expected 1 after SubEntities");
+        int unknownEntityFlag = this.reader.readVarInt();
+        if (unknownEntityFlag != 1)
+        {
+            throw new RuntimeException("Expected 1 after SubEntities");
+        }
 
-        int animationCount = reader.readCount(1024);
-        for (int i = 0; i < animationCount; ++i) {
-            int type = reader.readVarInt();
-            String hash = reader.readString();
+        int animationCount = this.reader.readCount(1024);
+        for (int i = 0; i < animationCount; ++i)
+        {
+            int type = this.reader.readVarInt();
+            String hash = this.reader.readString();
 
             RawYsmModel.RawAnimationFile animRef = parseAnimations();
-            model.mainEntity.animationFiles.put(
-                    animationFamily(type),
-                    animRef
-            );
+            this.model.mainEntity.animationFiles.put(animationFamily(type), animRef);
             animRef.animType = type;
             animRef.fileHash = hash;
         }
 
-        parseAnimationControllers(model.mainEntity.animationControllerFiles,true);
+        parseAnimationControllers(this.model.mainEntity.animationControllerFiles, true);
 
-        parseTextureFiles(model.mainEntity.textures);
+        parseTextureFiles(this.model.mainEntity.textures);
 
-        int modelTotalCount = reader.readCount(34);
+        int modelTotalCount = this.reader.readCount(34);
         List<RawYsmModel.RawGeometry> tempMainModels = new ArrayList<>();
-        for (int i = 0; i < modelTotalCount; ++i) {
-            int modelType = reader.readVarInt();
-            String hash = reader.readString();
+        for (int i = 0; i < modelTotalCount; ++i)
+        {
+            int modelType = this.reader.readVarInt();
+            String hash = this.reader.readString();
 
             RawYsmModel.RawGeometry geoRef = parseModels();
             geoRef.sha256 = hash;
@@ -415,23 +539,25 @@ public class YSMBinaryDeserializer implements AutoCloseable{
         parseYSMJson();
     }
 
-    private void parseSubEntity(Map<String, RawYsmModel.RawSubEntity> targetMap, String categoryName, int index) {
+    private void parseSubEntity(Map<String, RawYsmModel.RawSubEntity> targetMap, String categoryName, int index)
+    {
         RawYsmModel.RawSubEntity subEntity = new RawYsmModel.RawSubEntity();
         String subModuleName = "";
-        if (format <= 26) {
-            subModuleName = reader.readString();
+        if (this.format <= 26)
+        {
+            subModuleName = this.reader.readString();
             subEntity.identifier = subModuleName;
-        } else {
+        }
+        else
+        {
             subEntity.identifier = categoryName + "_" + index; // >=26沒有Header Name
         }
-        int animationCount = reader.readCount(1024);
-        for (int i = 0; i < animationCount; ++i) {
-            String hash = reader.readString();
+        int animationCount = this.reader.readCount(1024);
+        for (int i = 0; i < animationCount; ++i)
+        {
+            String hash = this.reader.readString();
             RawYsmModel.RawAnimationFile rawAnimationFile = parseAnimations();
-            subEntity.animationFiles.put(
-                    categoryName,
-                    rawAnimationFile
-            );
+            subEntity.animationFiles.put(categoryName, rawAnimationFile);
             rawAnimationFile.fileHash = hash;
         }
 
@@ -441,310 +567,363 @@ public class YSMBinaryDeserializer implements AutoCloseable{
         SpecialImageResult imgRes = parseSpecialImage();
         baseTex.hash = imgRes.hash;
         baseTex.data = imgRes.data;
-        baseTex.width = reader.readVarInt();
-        baseTex.height = reader.readVarInt();
-        baseTex.imageFormat = reader.readVarInt();
-        baseTex.unknownFlag = reader.readVarInt();
+        baseTex.width = this.reader.readVarInt();
+        baseTex.height = this.reader.readVarInt();
+        baseTex.imageFormat = this.reader.readVarInt();
+        baseTex.unknownFlag = this.reader.readVarInt();
         baseTex.name = "base_texture_" + index;
         subEntity.textures.put(baseTex.name, baseTex);
 
         // Sub Textures
-        int subTextureSize = reader.readCount(2);
-        for (int i = 0; i < subTextureSize; ++i) {
+        int subTextureSize = this.reader.readCount(2);
+        for (int i = 0; i < subTextureSize; ++i)
+        {
             RawYsmModel.RawTexture.SubTexture subTex = new RawYsmModel.RawTexture.SubTexture();
-            subTex.specularType = reader.readVarInt();
+            subTex.specularType = this.reader.readVarInt();
             SpecialImageResult specRes = parseSpecialImage();
             subTex.hash = specRes.hash;
             subTex.data = specRes.data;
-            subTex.width = reader.readVarInt();
-            subTex.height = reader.readVarInt();
-            subTex.imageFormat = reader.readVarInt();
-            subTex.unknownFlag = reader.readVarInt();
+            subTex.width = this.reader.readVarInt();
+            subTex.height = this.reader.readVarInt();
+            subTex.imageFormat = this.reader.readVarInt();
+            subTex.unknownFlag = this.reader.readVarInt();
             baseTex.subTextures.add(subTex);
         }
 
-        String modelHash = reader.readString();
+        String modelHash = this.reader.readString();
         subEntity.model = parseModels();
         subEntity.model.sha256 = modelHash;
 
-
-        if (format > 26) {
-            int identifierCount = reader.readCount(32);
-            if (identifierCount <= 0 || identifierCount > 128) {
+        if (this.format > 26)
+        {
+            int identifierCount = this.reader.readCount(32);
+            if (identifierCount <= 0 || identifierCount > 128)
+            {
                 throw new RuntimeException("Invalid SubEntity identifier count: " + identifierCount);
             }
 
             List<String> identifiers = new ArrayList<>();
-            for (int i = 0; i < identifierCount; i++) {
-                identifiers.add(reader.readString());
+            for (int i = 0; i < identifierCount; i++)
+            {
+                identifiers.add(this.reader.readString());
             }
 
             subEntity.identifier = identifiers.get(0);
             subEntity.matchIds = identifiers.toArray(new String[0]);
             targetMap.put(subEntity.identifier, subEntity);
-        } else {
+        }
+        else
+        {
             targetMap.put(subEntity.identifier, subEntity);
         }
     }
 
-    private RawYsmModel.RawGeometry parseModels() {
+    private RawYsmModel.RawGeometry parseModels()
+    {
         RawYsmModel.RawGeometry geo = new RawYsmModel.RawGeometry();
 
-        int boneCount = reader.readCount(2047);
-        for (int i = 0; i < boneCount; i++) {
+        int boneCount = this.reader.readCount(2047);
+        for (int i = 0; i < boneCount; i++)
+        {
             RawYsmModel.RawBone bone = new RawYsmModel.RawBone();
-            bone.parentName = reader.readString();
-            int cubeCount = reader.readCount(4096);
+            bone.parentName = this.reader.readString();
+            int cubeCount = this.reader.readCount(4096);
 
-            for (int j = 0; j < cubeCount; j++) {
+            for (int j = 0; j < cubeCount; j++)
+            {
                 RawYsmModel.RawCube cube = new RawYsmModel.RawCube();
-                int faceCount = reader.readCount(6);
-                for (int k = 0; k < faceCount; k++) {
+                int faceCount = this.reader.readCount(6);
+                for (int k = 0; k < faceCount; k++)
+                {
                     RawYsmModel.RawFace face = new RawYsmModel.RawFace();
                     face.normal = readVector3D(); // normal
-                    for (int v = 0; v < 4; v++) {
+                    for (int v = 0; v < 4; v++)
+                    {
                         face.positions[v] = readVector3D(); // position
-                        face.u[v] = reader.readFloat(); // u
-                        face.v[v] = reader.readFloat(); // v
+                        face.u[v] = this.reader.readFloat(); // u
+                        face.v[v] = this.reader.readFloat(); // v
                     }
                     cube.faces.add(face);
                 }
-                cube.unkInt1 = reader.readVarInt();
-                cube.unkInt2 = reader.readVarInt();
-                cube.unkInt3 = reader.readVarInt();
+                cube.unkInt1 = this.reader.readVarInt();
+                cube.unkInt2 = this.reader.readVarInt();
+                cube.unkInt3 = this.reader.readVarInt();
                 bone.cubes.add(cube);
             }
 
-            bone.name = reader.readString();
-            bone.unkPad1 = reader.readVarInt();
-            bone.unkPad2 = reader.readVarInt();
-            bone.unkPad3 = reader.readVarInt();
-            bone.unkPad4 = reader.readVarInt();
-            bone.unkPad5 = reader.readVarInt();
+            bone.name = this.reader.readString();
+            bone.unkPad1 = this.reader.readVarInt();
+            bone.unkPad2 = this.reader.readVarInt();
+            bone.unkPad3 = this.reader.readVarInt();
+            bone.unkPad4 = this.reader.readVarInt();
+            bone.unkPad5 = this.reader.readVarInt();
 
             bone.pivot = readVector3D();
             bone.rotation = readVector3D();
             geo.bones.add(bone);
         }
 
+        geo.identifier = this.reader.readString();
+        geo.textureHeight = this.reader.readFloat();
+        geo.textureWidth = this.reader.readFloat();
+        geo.visibleBoundsHeight = this.reader.readFloat();
+        geo.visibleBoundsWidth = this.reader.readFloat();
 
-        geo.identifier = reader.readString();
-        geo.textureHeight = reader.readFloat();
-        geo.textureWidth = reader.readFloat();
-        geo.visibleBoundsHeight = reader.readFloat();
-        geo.visibleBoundsWidth = reader.readFloat();
-
-        int visibleBoundsOffsetSize = reader.readCount(3);
+        int visibleBoundsOffsetSize = this.reader.readCount(3);
         geo.visibleBoundsOffset = new float[visibleBoundsOffsetSize];
-        for (int i = 0; i < visibleBoundsOffsetSize; i++) {
-            geo.visibleBoundsOffset[i] = reader.readFloat();
+        for (int i = 0; i < visibleBoundsOffsetSize; i++)
+        {
+            geo.visibleBoundsOffset[i] = this.reader.readFloat();
         }
 
-        geo.unkFloat1 = reader.readFloat();
-        geo.unkFloat2 = reader.readFloat();
+        geo.unkFloat1 = this.reader.readFloat();
+        geo.unkFloat2 = this.reader.readFloat();
 
-        int hasInfoJsonFlag = reader.readVarInt();
-        if (hasInfoJsonFlag > 0) {
+        int hasInfoJsonFlag = this.reader.readVarInt();
+        if (hasInfoJsonFlag > 0)
+        {
             parseLegacyYSMInfo();
         }
 
-        geo.footerPad1 = reader.readVarInt();
-        geo.footerPad2 = reader.readVarInt();
-        geo.footerPad3 = reader.readVarInt();
+        geo.footerPad1 = this.reader.readVarInt();
+        geo.footerPad2 = this.reader.readVarInt();
+        geo.footerPad3 = this.reader.readVarInt();
 
         return geo;
     }
 
-    private void parseYSMJson() {
-        model.properties.sha256 = reader.readString();
-        int isNewVersionYsm = reader.readVarInt();
+    private void parseYSMJson()
+    {
+        this.model.properties.sha256 = this.reader.readString();
+        int isNewVersionYsm = this.reader.readVarInt();
 
-        if (isNewVersionYsm != 0) {
-            if (format <= 15) {
-                reader.readVarInt(); // unknown
+        if (isNewVersionYsm != 0)
+        {
+            if (this.format <= 15)
+            {
+                this.reader.readVarInt(); // unknown
             }
 
-            model.metadata.name = reader.readString();
-            model.metadata.tips = reader.readString();
-            model.metadata.licenseType = reader.readString();
-            model.metadata.licenseDescription = reader.readString();
+            this.model.metadata.name = this.reader.readString();
+            this.model.metadata.tips = this.reader.readString();
+            this.model.metadata.licenseType = this.reader.readString();
+            this.model.metadata.licenseDescription = this.reader.readString();
 
-            int authorsCount = reader.readCount(32);
-            for (int i = 0; i < authorsCount; i++) {
+            int authorsCount = this.reader.readCount(32);
+            for (int i = 0; i < authorsCount; i++)
+            {
                 RawYsmModel.RawMetadata.Author author = new RawYsmModel.RawMetadata.Author();
-                author.name = reader.readString();
-                author.role = reader.readString();
-                int contactsCount = reader.readCount(200_000);
-                for (int j = 0; j < contactsCount; j++) {
-                    author.contacts.put(reader.readString(), reader.readString());
+                author.name = this.reader.readString();
+                author.role = this.reader.readString();
+                int contactsCount = this.reader.readCount(200_000);
+                for (int j = 0; j < contactsCount; j++)
+                {
+                    author.contacts.put(this.reader.readString(), this.reader.readString());
                 }
-                author.comment = reader.readString();
-                model.metadata.authors.add(author);
+                author.comment = this.reader.readString();
+                this.model.metadata.authors.add(author);
             }
 
-            int linksCount = reader.readCount(200_000);
-            for (int i = 0; i < linksCount; i++) {
-                model.metadata.links.put(reader.readString(), reader.readString());
+            int linksCount = this.reader.readCount(200_000);
+            for (int i = 0; i < linksCount; i++)
+            {
+                this.model.metadata.links.put(this.reader.readString(), this.reader.readString());
             }
         }
 
-        if (isNewVersionYsm == 0 && format <= 15) return;
+        if (isNewVersionYsm == 0 && this.format <= 15)
+        {
+            return;
+        }
 
-        model.properties.widthScale = reader.readFloat();
-        model.properties.heightScale = reader.readFloat();
+        this.model.properties.widthScale = this.reader.readFloat();
+        this.model.properties.heightScale = this.reader.readFloat();
 
-        int extraAnimationsCount = reader.readCount(200_000);
-        for (int i = 0; i < extraAnimationsCount; i++) {
-            try {
-                model.properties.extraAnimations.put(reader.readString(), reader.readString());
-            } catch (Throwable ex ){
+        int extraAnimationsCount = this.reader.readCount(200_000);
+        for (int i = 0; i < extraAnimationsCount; i++)
+        {
+            try
+            {
+                this.model.properties.extraAnimations.put(this.reader.readString(), this.reader.readString());
+            }
+            catch (Throwable ex)
+            {
                 throw new RuntimeException("Error reading extra animations at index " + i, ex);
             }
         }
 
-        if (format > 9) {
-            int extraAnimationButtonsCount = reader.readCount(32);
-            for (int i = 0; i < extraAnimationButtonsCount; i++) {
+        if (this.format > 9)
+        {
+            int extraAnimationButtonsCount = this.reader.readCount(32);
+            for (int i = 0; i < extraAnimationButtonsCount; i++)
+            {
                 RawYsmModel.ExtraAnimationButton btn = new RawYsmModel.ExtraAnimationButton();
-                btn.id = reader.readString();
-                btn.name = reader.readString();
-                reader.readVarInt(); // buttonPadding
+                btn.id = this.reader.readString();
+                btn.name = this.reader.readString();
+                this.reader.readVarInt(); // buttonPadding
 
-                int configurationFormsCount = reader.readCount(128);
-                for (int j = 0; j < configurationFormsCount; j++) {
+                int configurationFormsCount = this.reader.readCount(128);
+                for (int j = 0; j < configurationFormsCount; j++)
+                {
                     RawYsmModel.ConfigForm form = new RawYsmModel.ConfigForm();
-                    form.type = reader.readString();
-                    form.title = reader.readString();
-                    form.description = reader.readString();
-                    form.defaultValue = reader.readString();
-                    form.step = reader.readFloat();
-                    form.min = reader.readFloat();
-                    form.max = reader.readFloat();
-                    int labelsSize = reader.readCount(200_000);
-                    for (int l = 0; l < labelsSize; l++) {
-                        form.labels.put(reader.readString(), reader.readString());
+                    form.type = this.reader.readString();
+                    form.title = this.reader.readString();
+                    form.description = this.reader.readString();
+                    form.defaultValue = this.reader.readString();
+                    form.step = this.reader.readFloat();
+                    form.min = this.reader.readFloat();
+                    form.max = this.reader.readFloat();
+                    int labelsSize = this.reader.readCount(200_000);
+                    for (int l = 0; l < labelsSize; l++)
+                    {
+                        form.labels.put(this.reader.readString(), this.reader.readString());
                     }
                     btn.forms.add(form);
                 }
-                model.properties.extraAnimationButtons.add(btn);
+                this.model.properties.extraAnimationButtons.add(btn);
             }
 
-            int extraAnimationClassifyCount = reader.readCount(32);
-            for (int i = 0; i < extraAnimationClassifyCount; i++) {
+            int extraAnimationClassifyCount = this.reader.readCount(32);
+            for (int i = 0; i < extraAnimationClassifyCount; i++)
+            {
                 RawYsmModel.ExtraAnimationClassify classify = new RawYsmModel.ExtraAnimationClassify();
-                classify.id = reader.readString();
-                int classificationExtrasCount = reader.readCount(200_000);
-                for (int j = 0; j < classificationExtrasCount; j++) {
-                    classify.extras.put(reader.readString(), reader.readString());
+                classify.id = this.reader.readString();
+                int classificationExtrasCount = this.reader.readCount(200_000);
+                for (int j = 0; j < classificationExtrasCount; j++)
+                {
+                    classify.extras.put(this.reader.readString(), this.reader.readString());
                 }
-                model.properties.extraAnimationClassifies.add(classify);
+                this.model.properties.extraAnimationClassifies.add(classify);
             }
         }
 
-        model.properties.defaultTexture = reader.readString();
-        model.properties.previewAnimation = reader.readString();
-        model.properties.isFree = reader.readVarInt() != 0;
+        this.model.properties.defaultTexture = this.reader.readString();
+        this.model.properties.previewAnimation = this.reader.readString();
+        this.model.properties.isFree = this.reader.readVarInt() != 0;
 
-        if (format > 4) {
-            model.properties.renderLayersFirst = reader.readVarInt() != 0;
+        if (this.format > 4)
+        {
+            this.model.properties.renderLayersFirst = this.reader.readVarInt() != 0;
         }
 
-        if (format >= 15) {
-            model.properties.allCutout = reader.readVarInt() != 0;
-            model.properties.disablePreviewRotation = reader.readVarInt() != 0;
+        if (this.format >= 15)
+        {
+            this.model.properties.allCutout = this.reader.readVarInt() != 0;
+            this.model.properties.disablePreviewRotation = this.reader.readVarInt() != 0;
         }
 
-        if (format > 15) {
-            model.properties.guiNoLighting = reader.readVarInt() != 0;
-            if (format >= 32) {
-                model.properties.mergeMultilineExpr = reader.readVarInt() != 0;
+        if (this.format > 15)
+        {
+            this.model.properties.guiNoLighting = this.reader.readVarInt() != 0;
+            if (this.format >= 32)
+            {
+                this.model.properties.mergeMultilineExpr = this.reader.readVarInt() != 0;
             }
 
-            model.properties.guiForeground = reader.readString();
-            model.properties.guiBackground = reader.readString();
+            this.model.properties.guiForeground = this.reader.readString();
+            this.model.properties.guiBackground = this.reader.readString();
 
-            int avatarsCount = reader.readCount(32);
-            for (int i = 0; i < avatarsCount; i++) {
+            int avatarsCount = this.reader.readCount(32);
+            for (int i = 0; i < avatarsCount; i++)
+            {
                 RawYsmModel.RawImage avatar = new RawYsmModel.RawImage();
-                avatar.name = reader.readString();
-                avatar.data = reader.readByteArray();
-                avatar.width = reader.readVarInt();
-                avatar.height = reader.readVarInt();
-                avatar.format = reader.readVarInt();
-                avatar.unknownFlag = reader.readVarInt();
-                if (i < model.metadata.authors.size()) {
-                    model.metadata.authors.get(i).avatar = avatar.name;
-                    model.metadata.authors.get(i).avatarImage = avatar;
-                } else {
-                    model.metadata.extraAvatars.add(avatar);
+                avatar.name = this.reader.readString();
+                avatar.data = this.reader.readByteArray();
+                avatar.width = this.reader.readVarInt();
+                avatar.height = this.reader.readVarInt();
+                avatar.format = this.reader.readVarInt();
+                avatar.unknownFlag = this.reader.readVarInt();
+                if (i < this.model.metadata.authors.size())
+                {
+                    this.model.metadata.authors.get(i).avatar = avatar.name;
+                    this.model.metadata.authors.get(i).avatarImage = avatar;
+                }
+                else
+                {
+                    this.model.metadata.extraAvatars.add(avatar);
                 }
             }
         }
 
-        if (format <= 15) return;
+        if (this.format <= 15)
+        {
+            return;
+        }
 
-        int backgroundImagesCount = reader.readCount(32);
-        for (int i = 0; i < backgroundImagesCount; i++) {
+        int backgroundImagesCount = this.reader.readCount(32);
+        for (int i = 0; i < backgroundImagesCount; i++)
+        {
             RawYsmModel.RawImage bg = new RawYsmModel.RawImage();
-            bg.name = reader.readString();
-            bg.data = reader.readByteArray();
-            bg.width = reader.readVarInt();
-            bg.height = reader.readVarInt();
-            bg.format = reader.readVarInt();
-            bg.unknownFlag = reader.readVarInt();
-            model.properties.backgroundImages.add(bg);
+            bg.name = this.reader.readString();
+            bg.data = this.reader.readByteArray();
+            bg.width = this.reader.readVarInt();
+            bg.height = this.reader.readVarInt();
+            bg.format = this.reader.readVarInt();
+            bg.unknownFlag = this.reader.readVarInt();
+            this.model.properties.backgroundImages.add(bg);
         }
     }
 
-    private void parseLegacyYSMInfo() {
-        model.metadata.name = reader.readString();
-        model.metadata.tips = reader.readString();
-        int extraAnimationsCount = reader.readCount(200_000);
-        for (int i = 0; i < extraAnimationsCount; i++) {
-            model.properties.extraAnimations.put("extra" + i, reader.readString());
+    private void parseLegacyYSMInfo()
+    {
+        this.model.metadata.name = this.reader.readString();
+        this.model.metadata.tips = this.reader.readString();
+        int extraAnimationsCount = this.reader.readCount(200_000);
+        for (int i = 0; i < extraAnimationsCount; i++)
+        {
+            this.model.properties.extraAnimations.put("extra" + i, this.reader.readString());
         }
-        int authorsCount = reader.readCount(32);
-        for (int i = 0; i < authorsCount; i++) {
+        int authorsCount = this.reader.readCount(32);
+        for (int i = 0; i < authorsCount; i++)
+        {
             RawYsmModel.RawMetadata.Author author = new RawYsmModel.RawMetadata.Author();
-            author.name = reader.readString();
-            model.metadata.authors.add(author);
+            author.name = this.reader.readString();
+            this.model.metadata.authors.add(author);
         }
-        model.metadata.licenseType = reader.readString();
-        model.properties.isFree = reader.readVarInt() != 0;
+        this.model.metadata.licenseType = this.reader.readString();
+        this.model.properties.isFree = this.reader.readVarInt() != 0;
     }
 
-    private RawYsmModel.RawAnimationFile parseAnimations() {
+    private RawYsmModel.RawAnimationFile parseAnimations()
+    {
         RawYsmModel.RawAnimationFile animFile = new RawYsmModel.RawAnimationFile();
 
-        int animationCount = reader.readCount(1024);
-        for (int animIndex = 0; animIndex < animationCount; ++animIndex) {
+        int animationCount = this.reader.readCount(1024);
+        for (int animIndex = 0; animIndex < animationCount; ++animIndex)
+        {
             RawYsmModel.RawAnimation anim = new RawYsmModel.RawAnimation();
-            anim.name = reader.readString();
-            anim.length = reader.readAnimationLength() / 20.0f;
-            anim.loopMode = reader.readVarInt();
+            anim.name = this.reader.readString();
+            anim.length = this.reader.readAnimationLength() / 20.0f;
+            anim.loopMode = this.reader.readVarInt();
 
-            if (format > 9) {
-                anim.unkInt1 = reader.readVarInt();
-                anim.unkInt2 = reader.readVarInt();
-                int blendWeightMolangCount = reader.readCount(200_000);
-                for (int i = 0; i < blendWeightMolangCount; i++) {
+            if (this.format > 9)
+            {
+                anim.unkInt1 = this.reader.readVarInt();
+                anim.unkInt2 = this.reader.readVarInt();
+                int blendWeightMolangCount = this.reader.readCount(200_000);
+                for (int i = 0; i < blendWeightMolangCount; i++)
+                {
                     // 1 = float
                     // 2 = string
-                    byte datatype = reader.readByte();
+                    byte datatype = this.reader.readByte();
 
-                    if (datatype == 0x01) {
-                        anim.blendWeight = reader.readFloat();
-                    } else if (datatype == 0x02) {
-                        anim.blendWeight = reader.readString();
+                    if (datatype == 0x01)
+                    {
+                        anim.blendWeight = this.reader.readFloat();
+                    }
+                    else if (datatype == 0x02)
+                    {
+                        anim.blendWeight = this.reader.readString();
                     }
                 }
-                anim.unkInt4 = reader.readVarInt();
+                anim.unkInt4 = this.reader.readVarInt();
             }
 
-            int boneCount = reader.readCount(2047);
-            for (int i = 0; i < boneCount; ++i) {
+            int boneCount = this.reader.readCount(2047);
+            for (int i = 0; i < boneCount; ++i)
+            {
                 RawYsmModel.RawBoneAnimation ba = new RawYsmModel.RawBoneAnimation();
-                ba.boneName = reader.readString();
+                ba.boneName = this.reader.readString();
                 parseChannel(ba.rotation);
                 parseChannel(ba.position);
                 parseChannel(ba.scale);
@@ -752,24 +931,28 @@ public class YSMBinaryDeserializer implements AutoCloseable{
             }
 
             // Timeline
-            int timelineEventGroupsCount = reader.readCount(200_000);
-            for (int i = 0; i < timelineEventGroupsCount; ++i) {
+            int timelineEventGroupsCount = this.reader.readCount(200_000);
+            for (int i = 0; i < timelineEventGroupsCount; ++i)
+            {
                 RawYsmModel.RawTimelineEvent event = new RawYsmModel.RawTimelineEvent();
-                int timelineEventsCount = reader.readCount(200_000);
-                for (int j = 0; j < timelineEventsCount; ++j) {
-                    event.events.add(reader.readString());
+                int timelineEventsCount = this.reader.readCount(200_000);
+                for (int j = 0; j < timelineEventsCount; ++j)
+                {
+                    event.events.add(this.reader.readString());
                 }
-                event.timestamp = reader.readFloat() / 20.0f;
+                event.timestamp = this.reader.readFloat() / 20.0f;
                 anim.timelineEvents.add(event);
             }
 
             // Effects
-            if (format > 9) {
-                int soundEffectsCount = reader.readCount(32);
-                for (int i = 0; i < soundEffectsCount; i++) {
+            if (this.format > 9)
+            {
+                int soundEffectsCount = this.reader.readCount(32);
+                for (int i = 0; i < soundEffectsCount; i++)
+                {
                     RawYsmModel.RawSoundEffect sfx = new RawYsmModel.RawSoundEffect();
-                    sfx.effectName = reader.readString();
-                    sfx.timestamp = reader.readFloat() / 20.0f;
+                    sfx.effectName = this.reader.readString();
+                    sfx.timestamp = this.reader.readFloat() / 20.0f;
                     anim.soundEffects.add(sfx);
                 }
             }
@@ -779,39 +962,55 @@ public class YSMBinaryDeserializer implements AutoCloseable{
         return animFile;
     }
 
-    private void parseChannel(List<RawYsmModel.RawKeyframe> channel) {
-        int keyframeCount = reader.readCount(200_000);
-        if (keyframeCount == 0) return;
+    private void parseChannel(List<RawYsmModel.RawKeyframe> channel)
+    {
+        int keyframeCount = this.reader.readCount(200_000);
+        if (keyframeCount == 0)
+        {
+            return;
+        }
 
-        for (int i = 0; i < keyframeCount; i++) {
+        for (int i = 0; i < keyframeCount; i++)
+        {
             RawYsmModel.RawKeyframe kf = new RawYsmModel.RawKeyframe();
-            kf.timestamp = reader.readFloat() / 20.0f;
-            kf.interpolationMode = reader.readVarInt();
+            kf.timestamp = this.reader.readFloat() / 20.0f;
+            kf.interpolationMode = this.reader.readVarInt();
 
             Object[] firstData = new Object[3];
-            for (int j = 0; j < 3; j++) {
-                byte datatype = reader.readByte();
-                if (datatype == 0x01) {
-                    firstData[j] = reader.readFloat();
-                } else if (datatype == 0x02) {
-                    firstData[j] = reader.readString();
+            for (int j = 0; j < 3; j++)
+            {
+                byte datatype = this.reader.readByte();
+                if (datatype == 0x01)
+                {
+                    firstData[j] = this.reader.readFloat();
+                }
+                else if (datatype == 0x02)
+                {
+                    firstData[j] = this.reader.readString();
                 }
             }
 
-            kf.hasPreData = reader.readVarInt() > 0;
-            if (kf.hasPreData) {
-                for (int j = 0; j < 3; j++) {
-                    byte datatype = reader.readByte();
-                    if (datatype == 0x01) {
-                        kf.postData[j] = reader.readFloat();
-                    } else if (datatype == 0x02) {
-                        kf.postData[j] = reader.readString();
+            kf.hasPreData = this.reader.readVarInt() > 0;
+            if (kf.hasPreData)
+            {
+                for (int j = 0; j < 3; j++)
+                {
+                    byte datatype = this.reader.readByte();
+                    if (datatype == 0x01)
+                    {
+                        kf.postData[j] = this.reader.readFloat();
+                    }
+                    else if (datatype == 0x02)
+                    {
+                        kf.postData[j] = this.reader.readString();
                     }
                 }
 
                 kf.preData = firstData;
                 kf.hasPreData = true;
-            } else {
+            }
+            else
+            {
 
                 kf.postData = firstData;
                 kf.hasPreData = false;
@@ -820,17 +1019,26 @@ public class YSMBinaryDeserializer implements AutoCloseable{
         }
     }
 
-    private void parseAnimationControllers(List<RawYsmModel.RawAnimationControllerFile> targetList, boolean readName) {
-        int controllerCount = reader.readCount(64);
-        for (int i = 0; i < controllerCount; i++) {
+    private void parseAnimationControllers(List<RawYsmModel.RawAnimationControllerFile> targetList, boolean readName)
+    {
+        int controllerCount = this.reader.readCount(64);
+        for (int i = 0; i < controllerCount; i++)
+        {
             RawYsmModel.RawAnimationControllerFile file = new RawYsmModel.RawAnimationControllerFile();
 
-            if (format <= 15) {
-                file.legacyUnknownInt = reader.readVarInt();
+            if (this.format <= 15)
+            {
+                file.legacyUnknownInt = this.reader.readVarInt();
                 file.name = "legacy_controller_" + i;
-            } else {
-                if (readName) file.name = reader.readString();
-                file.hash = reader.readString();
+            }
+            else
+            {
+                if (readName)
+                {
+                    file.name = this.reader.readString();
+                }
+
+                file.hash = this.reader.readString();
             }
 
             parseAnimationControllerBody(file.controllers);
@@ -838,53 +1046,66 @@ public class YSMBinaryDeserializer implements AutoCloseable{
         }
     }
 
-    private void parseAnimationControllerBody(Map<String, RawYsmModel.RawAnimationController> targetMap) {
-        int animationCount = reader.readCount(1024);
-        for (int animIndex = 0; animIndex < animationCount; ++animIndex) {
+    private void parseAnimationControllerBody(Map<String, RawYsmModel.RawAnimationController> targetMap)
+    {
+        int animationCount = this.reader.readCount(1024);
+        for (int animIndex = 0; animIndex < animationCount; ++animIndex)
+        {
             RawYsmModel.RawAnimationController entry = new RawYsmModel.RawAnimationController();
-            entry.animationName = reader.readString();
-            entry.initialState = reader.readString();
+            entry.animationName = this.reader.readString();
+            entry.initialState = this.reader.readString();
 
-            int statesCount = reader.readCount(64);
-            for (int s = 0; s < statesCount; s++) {
+            int statesCount = this.reader.readCount(64);
+            for (int s = 0; s < statesCount; s++)
+            {
                 RawYsmModel.RawControllerState state = new RawYsmModel.RawControllerState();
-                state.name = reader.readString();
+                state.name = this.reader.readString();
 
                 // animations
-                int animationsSize = reader.readCount(32);
-                for (int j = 0; j < animationsSize; j++) {
-                    state.animations.put(reader.readString(), reader.readString());
+                int animationsSize = this.reader.readCount(32);
+                for (int j = 0; j < animationsSize; j++)
+                {
+                    state.animations.put(this.reader.readString(), this.reader.readString());
                 }
                 // transitions
-                int transitionsSize = reader.readCount(32);
-                for (int j = 0; j < transitionsSize; j++) {
-                    state.transitions.put(reader.readString(), reader.readString());
+                int transitionsSize = this.reader.readCount(32);
+                for (int j = 0; j < transitionsSize; j++)
+                {
+                    state.transitions.put(this.reader.readString(), this.reader.readString());
                 }
                 // on_entry
-                int onEntryCount = reader.readCount(64);
-                for (int j = 0; j < onEntryCount; j++) {
-                    state.onEntry.add(reader.readString());
+                int onEntryCount = this.reader.readCount(64);
+                for (int j = 0; j < onEntryCount; j++)
+                {
+                    state.onEntry.add(this.reader.readString());
                 }
                 // on_exit
-                int onExitCount = reader.readCount(64);
-                for (int j = 0; j < onExitCount; j++) {
-                    state.onExit.add(reader.readString());
+                int onExitCount = this.reader.readCount(64);
+                for (int j = 0; j < onExitCount; j++)
+                {
+                    state.onExit.add(this.reader.readString());
                 }
                 // blend_transition
-                if (reader.readVarInt() != 0) {
-                    state.blendTransitionValue = reader.readFloat();
-                } else {
-                    int blendTransitionsCount = reader.readCount(200_000);
-                    for (int j = 0; j < blendTransitionsCount; j++) {
-                        state.blendTransitions.put(reader.readFloat(), reader.readFloat());
+                if (this.reader.readVarInt() != 0)
+                {
+                    state.blendTransitionValue = this.reader.readFloat();
+                }
+                else
+                {
+                    int blendTransitionsCount = this.reader.readCount(200_000);
+                    for (int j = 0; j < blendTransitionsCount; j++)
+                    {
+                        state.blendTransitions.put(this.reader.readFloat(), this.reader.readFloat());
                     }
                 }
-                state.blendViaShortestPath = reader.readVarInt() != 0;
+                state.blendViaShortestPath = this.reader.readVarInt() != 0;
                 // sound_effects (format > 26)
-                if (format > 26) {
-                    int soundEffectsCount = reader.readCount(32);
-                    for (int j = 0; j < soundEffectsCount; j++) {
-                        state.soundEffects.add(reader.readString());
+                if (this.format > 26)
+                {
+                    int soundEffectsCount = this.reader.readCount(32);
+                    for (int j = 0; j < soundEffectsCount; j++)
+                    {
+                        state.soundEffects.add(this.reader.readString());
                     }
                 }
                 entry.states.add(state);
@@ -893,128 +1114,164 @@ public class YSMBinaryDeserializer implements AutoCloseable{
         }
     }
 
-    private void parseSoundFiles() {
-        int soundCount = reader.readCount(32);
-        for (int i = 0; i < soundCount; i++) {
-            String soundName = reader.readString();
+    private void parseSoundFiles()
+    {
+        int soundCount = this.reader.readCount(32);
+        for (int i = 0; i < soundCount; i++)
+        {
+            String soundName = this.reader.readString();
             String hash = "";
-            if (format > 15) {
-                hash = reader.readString(); // soundHash
+            if (this.format > 15)
+            {
+                hash = this.reader.readString(); // soundHash
             }
-            byte[] data = reader.readByteArray();
-            model.soundFiles.put(soundName, new RawYsmModel.RawDataFile(hash, data));
+            byte[] data = this.reader.readByteArray();
+            this.model.soundFiles.put(soundName, new RawYsmModel.RawDataFile(hash, data));
         }
     }
 
-    private void parseFunctionFiles() {
-        int functionCount = reader.readCount(64);
-        for (int i = 0; i < functionCount; i++) {
-            String functionName = reader.readString();
-            String hash = reader.readString();
-            byte[] data = reader.readByteArray();
-            model.functionFiles.put(functionName, new RawYsmModel.RawDataFile(hash, data));
+    private void parseFunctionFiles()
+    {
+        int functionCount = this.reader.readCount(64);
+        for (int i = 0; i < functionCount; i++)
+        {
+            String functionName = this.reader.readString();
+            String hash = this.reader.readString();
+            byte[] data = this.reader.readByteArray();
+            this.model.functionFiles.put(functionName, new RawYsmModel.RawDataFile(hash, data));
         }
     }
 
-    private void parseLanguageFiles() {
-        int languageCount = reader.readCount(16);
-        for (int i = 0; i < languageCount; i++) {
-            String languageName = reader.readString();
-            String hash = reader.readString();
-            int nodesCount = reader.readCount(2048);
+    private void parseLanguageFiles()
+    {
+        int languageCount = this.reader.readCount(16);
+        for (int i = 0; i < languageCount; i++)
+        {
+            String languageName = this.reader.readString();
+            String hash = this.reader.readString();
+            int nodesCount = this.reader.readCount(2048);
             Map<String, String> langMap = new java.util.LinkedHashMap<>();
-            for (int j = 0; j < nodesCount; j++) {
-                langMap.put(reader.readString(), reader.readString());
+            for (int j = 0; j < nodesCount; j++)
+            {
+                langMap.put(this.reader.readString(), this.reader.readString());
             }
-            model.languageFiles.put(languageName, new RawYsmModel.RawLanguageFile(hash, langMap));
+            this.model.languageFiles.put(languageName, new RawYsmModel.RawLanguageFile(hash, langMap));
         }
     }
 
-    private void parseTextureFiles(Map<String, RawYsmModel.RawTexture> targetMap) {
-        int textureCount = reader.readCount(16);
-        for (int i = 0; i < textureCount; i++) {
+    private void parseTextureFiles(Map<String, RawYsmModel.RawTexture> targetMap)
+    {
+        int textureCount = this.reader.readCount(16);
+        for (int i = 0; i < textureCount; i++)
+        {
             RawYsmModel.RawTexture tex = new RawYsmModel.RawTexture();
-            tex.name = reader.readString();
-            tex.hash = reader.readString();
-            tex.data = reader.readByteArray();
-            tex.width = reader.readVarInt();
-            tex.height = reader.readVarInt();
-            tex.imageFormat = reader.readVarInt();
-            tex.unknownFlag = reader.readVarInt();
+            tex.name = this.reader.readString();
+            tex.hash = this.reader.readString();
+            tex.data = this.reader.readByteArray();
+            tex.width = this.reader.readVarInt();
+            tex.height = this.reader.readVarInt();
+            tex.imageFormat = this.reader.readVarInt();
+            tex.unknownFlag = this.reader.readVarInt();
 
-            int subTextureSize = reader.readCount(2);
-            for (int j = 0; j < subTextureSize; j++) {
+            int subTextureSize = this.reader.readCount(2);
+            for (int j = 0; j < subTextureSize; j++)
+            {
                 RawYsmModel.RawTexture.SubTexture subTex = new RawYsmModel.RawTexture.SubTexture();
-                subTex.specularType = reader.readVarInt();
+                subTex.specularType = this.reader.readVarInt();
                 SpecialImageResult specRes = parseSpecialImage();
                 subTex.hash = specRes.hash;
                 subTex.data = specRes.data;
-                subTex.width = reader.readVarInt();
-                subTex.height = reader.readVarInt();
-                subTex.imageFormat = reader.readVarInt();
-                subTex.unknownFlag = reader.readVarInt();
+                subTex.width = this.reader.readVarInt();
+                subTex.height = this.reader.readVarInt();
+                subTex.imageFormat = this.reader.readVarInt();
+                subTex.unknownFlag = this.reader.readVarInt();
                 tex.subTextures.add(subTex);
             }
             targetMap.put(tex.name, tex);
         }
     }
 
-    private SpecialImageResult parseSpecialImage() {
-        String imageHash = reader.readString();
-        byte[] imageData = reader.readByteArray();
+    private SpecialImageResult parseSpecialImage()
+    {
+        String imageHash = this.reader.readString();
+        byte[] imageData = this.reader.readByteArray();
         return new SpecialImageResult(imageHash, imageData);
     }
 
-    private float[] readVector3D() {
-        return new float[]{reader.readFloat(), reader.readFloat(), reader.readFloat()};
+    private float[] readVector3D()
+    {
+        return new float[]
+        { this.reader.readFloat(), this.reader.readFloat(), this.reader.readFloat() };
     }
 
-    private void assignMainModels(List<RawYsmModel.RawGeometry> tempMainModels) {
-        for (RawYsmModel.RawGeometry tempMainModel : tempMainModels) {
-            switch (tempMainModel.modelType) {
-                case 1:
-                    model.mainEntity.mainModel = tempMainModel;
-                    break;
-                case 2:
-                    model.mainEntity.armModel = tempMainModel;
-                    break;
-                case 3:
-                    RawYsmModel.RawSubEntity subEntity = new RawYsmModel.RawSubEntity();
-                    subEntity.model = tempMainModel;
-                    subEntity.identifier = "minecraft:arrow";
-                    model.projectiles.put(subEntity.identifier, subEntity);
-                    break;
-                default:
-                    throw new RuntimeException("Unknown model type: " + tempMainModel.modelType);
+    private void assignMainModels(List<RawYsmModel.RawGeometry> tempMainModels)
+    {
+        for (RawYsmModel.RawGeometry tempMainModel : tempMainModels)
+        {
+            switch (tempMainModel.modelType)
+            {
+            case 1:
+                this.model.mainEntity.mainModel = tempMainModel;
+                break;
+            case 2:
+                this.model.mainEntity.armModel = tempMainModel;
+                break;
+            case 3:
+                RawYsmModel.RawSubEntity subEntity = new RawYsmModel.RawSubEntity();
+                subEntity.model = tempMainModel;
+                subEntity.identifier = "minecraft:arrow";
+                this.model.projectiles.put(subEntity.identifier, subEntity);
+                break;
+            default:
+                throw new RuntimeException("Unknown model type: " + tempMainModel.modelType);
             }
         }
     }
 
-    private static String animationFamily(int type) {
-        return switch (type) {
-            case 1 -> "main"; case 2 -> "arm"; case 3 -> "extra"; case 4 -> "tac"; case 5 -> "arrow";
-            case 6 -> "carryon"; case 7 -> "parcool"; case 8 -> "swem"; case 9 -> "slashblade";
-            case 10 -> "tlm"; case 11 -> "fp_arm"; case 12 -> "immersive_melodies"; case 13 -> "irons_spell_books";
-            default -> "unk_" + type;
+    private static String animationFamily(int type)
+    {
+        return switch (type)
+        {
+        case 1 -> "main";
+        case 2 -> "arm";
+        case 3 -> "extra";
+        case 4 -> "tac";
+        case 5 -> "arrow";
+        case 6 -> "carryon";
+        case 7 -> "parcool";
+        case 8 -> "swem";
+        case 9 -> "slashblade";
+        case 10 -> "tlm";
+        case 11 -> "fp_arm";
+        case 12 -> "immersive_melodies";
+        case 13 -> "irons_spell_books";
+        default -> "unk_" + type;
         };
     }
+
     @Override
-    public void close() throws Exception {
-        if (reader != null) {
-            reader.close();
+    public void close() throws Exception
+    {
+        if (this.reader != null)
+        {
+            this.reader.close();
         }
     }
 
-    private static class SpecialImageResult {
+    private static class SpecialImageResult
+    {
         public String hash;
         public byte[] data;
-        public SpecialImageResult(String hash, byte[] data) {
+
+        public SpecialImageResult(String hash, byte[] data)
+        {
             this.hash = hash;
             this.data = data;
         }
     }
 
-    public YSMByteBuf getReader() {
-        return reader;
+    public YSMByteBuf getReader()
+    {
+        return this.reader;
     }
 }

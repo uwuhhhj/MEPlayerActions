@@ -1,7 +1,7 @@
 package com.simmc.meplayeractions.client.render;
 
-import net.minecraft.client.render.entity.state.PlayerEntityRenderState;
 import net.minecraft.client.render.entity.state.EntityRenderState;
+import net.minecraft.client.render.entity.state.PlayerEntityRenderState;
 import net.minecraft.entity.EntityPose;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
@@ -11,41 +11,58 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import sun.misc.Unsafe;
 
+import java.lang.reflect.Field;
 import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NativePlayerPresentationTest {
+class NativePlayerPresentationTest
+{
     private static final Unsafe FIXTURE_ALLOCATOR = fixtureAllocator();
 
-    private static Unsafe fixtureAllocator() {
-        try {
-            var field = Unsafe.class.getDeclaredField("theUnsafe");
+    private static Unsafe fixtureAllocator()
+    {
+        try
+        {
+            Field field = Unsafe.class.getDeclaredField("theUnsafe");
             field.setAccessible(true);
             return (Unsafe) field.get(null);
-        } catch (ReflectiveOperationException error) {
+        }
+        catch (ReflectiveOperationException error)
+        {
             throw new AssertionError("Cannot allocate native render-state fixtures", error);
         }
     }
 
-    private static PlayerEntityRenderState nativeState() {
-        try {
+    private static PlayerEntityRenderState nativeState()
+    {
+        try
+        {
             // These tests exercise real vanilla state fields, not Minecraft's item registry.
             // The normal constructor initializes ItemStack.EMPTY, which needs Fabric's remap
             // access transformations unavailable on the plain JUnit classpath. No production
             // object is allocated this way; every field consumed here is explicitly set below.
-            PlayerEntityRenderState state = (PlayerEntityRenderState) FIXTURE_ALLOCATOR.allocateInstance(PlayerEntityRenderState.class);
+            PlayerEntityRenderState state = (PlayerEntityRenderState) FIXTURE_ALLOCATOR
+                    .allocateInstance(PlayerEntityRenderState.class);
             state.pose = EntityPose.STANDING;
             return state;
-        } catch (InstantiationException error) {
+        }
+        catch (InstantiationException error)
+        {
             throw new AssertionError("Cannot allocate native render-state fixture", error);
         }
     }
 
-    @AfterEach void releaseFrame() { NativePlayerPresentation.beginFrame(List.of()); }
+    @AfterEach
+    void releaseFrame()
+    {
+        NativePlayerPresentation.beginFrame(List.of());
+    }
 
-    @Test void sharedBodyUsesTheActualNativeFrameIncludingRendererOnlyOffsets() {
+    @Test
+    void sharedBodyUsesTheActualNativeFrameIncludingRendererOnlyOffsets()
+    {
         UUID owner = UUID.randomUUID();
         PlayerEntityRenderState state = nativeState();
         state.x = 25.125;
@@ -58,7 +75,8 @@ class NativePlayerPresentationTest {
         state.pose = EntityPose.STANDING;
         // PlayerRenderer adds the crouching correction beyond state.positionOffset.
         Vec3d rendererOffset = new Vec3d(0, -.125, .25);
-        var snapshot = NativePlayerPresentation.store(owner, state, .625f, rendererOffset, new Matrix4f(), true);
+        NativePlayerPresentation.Snapshot snapshot = NativePlayerPresentation.store(owner, state, .625f, rendererOffset,
+                new Matrix4f(), true);
         assertEquals(25.125, snapshot.x());
         assertEquals(64.25, snapshot.y());
         assertEquals(-9.25, snapshot.z());
@@ -73,14 +91,17 @@ class NativePlayerPresentationTest {
         assertEquals(new Vec3d(0, 0, .25), state.positionOffset);
     }
 
-    @Test void laterVanillaStateAndMatrixChangesCannotMoveAnAlreadyExtractedModel() {
+    @Test
+    void laterVanillaStateAndMatrixChangesCannotMoveAnAlreadyExtractedModel()
+    {
         UUID owner = UUID.randomUUID();
         PlayerEntityRenderState state = nativeState();
         state.y = 72;
         state.bodyYaw = 90;
         state.pose = EntityPose.STANDING;
         Matrix4f parent = new Matrix4f().translation(0, .25f, 0);
-        var snapshot = NativePlayerPresentation.store(owner, state, .375f, Vec3d.ZERO, parent, true);
+        NativePlayerPresentation.Snapshot snapshot = NativePlayerPresentation.store(owner, state, .375f, Vec3d.ZERO,
+                parent, true);
         state.y = 98;
         state.bodyYaw = -90;
         parent.translation(0, 20, 0);
@@ -91,13 +112,16 @@ class NativePlayerPresentationTest {
         assertEquals(.25f, snapshot.parent().transformPosition(new Vector3f()).y);
     }
 
-    @Test void upsideDownBodyDoesNotReverseAuthorHeadQueriesTwice() {
+    @Test
+    void upsideDownBodyDoesNotReverseAuthorHeadQueriesTwice()
+    {
         PlayerEntityRenderState state = nativeState();
         state.bodyYaw = 45;
         state.relativeHeadYaw = -20;
         state.pitch = 60;
         state.flipUpsideDown = true;
-        var snapshot = NativePlayerPresentation.store(UUID.randomUUID(), state, .5f, Vec3d.ZERO, new Matrix4f(), true);
+        NativePlayerPresentation.Snapshot snapshot = NativePlayerPresentation.store(UUID.randomUUID(), state, .5f,
+                Vec3d.ZERO, new Matrix4f(), true);
         assertEquals(65, snapshot.headYaw());
         assertEquals(-60, snapshot.headPitch());
         assertEquals(-20, state.relativeHeadYaw);
@@ -105,7 +129,9 @@ class NativePlayerPresentationTest {
         assertTrue(state.flipUpsideDown);
     }
 
-    @Test void newFrameNeverReusesACulledOrUntrackedRemoteBody() {
+    @Test
+    void newFrameNeverReusesACulledOrUntrackedRemoteBody()
+    {
         UUID remote = UUID.randomUUID();
         PlayerEntityRenderState state = nativeState();
         state.y = 80;
@@ -116,10 +142,13 @@ class NativePlayerPresentationTest {
         UUID self = UUID.randomUUID();
         NativePlayerPresentation.store(self, state, .75f, Vec3d.ZERO, new Matrix4f(), false);
         assertNotNull(NativePlayerPresentation.get(self));
-        assertFalse(NativePlayerPresentation.captured(self), "A first-person fallback is not a visible native world body");
+        assertFalse(NativePlayerPresentation.captured(self),
+                "A first-person fallback is not a visible native world body");
     }
 
-    @Test void vehicleAndProjectileFramesUseNativeOriginsOffsetsFrozenDeltaAndVisibility() {
+    @Test
+    void vehicleAndProjectileFramesUseNativeOriginsOffsetsFrozenDeltaAndVisibility()
+    {
         UUID entity = UUID.randomUUID();
         EntityRenderState state = new EntityRenderState();
         state.x = 18.25;
@@ -130,7 +159,8 @@ class NativePlayerPresentationTest {
         state.invisible = true;
         state.outlineColor = 0xFF123456;
         Vec3d rendererOffset = new Vec3d(.125, -.25, .5);
-        var frame = NativePlayerPresentation.storeEntity(entity, state, .625f, rendererOffset);
+        NativePlayerPresentation.EntityFrame frame = NativePlayerPresentation.storeEntity(entity, state, .625f,
+                rendererOffset);
         assertEquals(new Vec3d(18.25, 67.75, -4.5), frame.entityPosition());
         assertEquals(new Vec3d(18.375, 67.5, -4), frame.presentationPosition());
         assertEquals(.625f, frame.tickDelta());
@@ -138,7 +168,8 @@ class NativePlayerPresentationTest {
         assertEquals(0xA000A0, frame.light());
         assertTrue(frame.invisible());
         assertEquals(0xFF123456, frame.outlineColor());
-        assertSame(state, frame.state(), "Accessories read the exact native queue snapshot without extracting it again");
+        assertSame(state, frame.state(),
+                "Accessories read the exact native queue snapshot without extracting it again");
         assertSame(frame, NativePlayerPresentation.entityFrame(entity));
         state.x = 999;
         state.age = 999;
@@ -153,7 +184,9 @@ class NativePlayerPresentationTest {
         assertEquals(0xFF123456, frame.outlineColor());
     }
 
-    @Test void worldFrameCameraAndAllEntitySnapshotsAreClearedTogether() {
+    @Test
+    void worldFrameCameraAndAllEntitySnapshotsAreClearedTogether()
+    {
         Vec3d camera = new Vec3d(30.5, 80.125, -40.75);
         NativePlayerPresentation.beginFrame(List.of(), camera);
         UUID entity = UUID.randomUUID();
@@ -165,7 +198,9 @@ class NativePlayerPresentationTest {
         assertEquals(Vec3d.ZERO, NativePlayerPresentation.cameraPosition());
     }
 
-    @Test void sleepingAndUpsideDownParentStateIsCopiedWithoutDisablingVanillaAnimations() {
+    @Test
+    void sleepingAndUpsideDownParentStateIsCopiedWithoutDisablingVanillaAnimations()
+    {
         PlayerEntityRenderState actual = nativeState();
         actual.age = 123.75f;
         actual.height = 1.8f;

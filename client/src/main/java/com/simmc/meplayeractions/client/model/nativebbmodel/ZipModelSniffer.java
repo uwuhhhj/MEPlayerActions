@@ -31,14 +31,12 @@ import java.util.zip.ZipInputStream;
  * <p>同时把 bbmodel 文件的内容和 PNG 纹理读出来供后续直接使用。所有读取在内存中完成，
  * 不写临时文件。</p>
  */
-public final class ZipModelSniffer {
+public final class ZipModelSniffer
+{
 
-    public enum Kind {
-        YSM_FOLDER,
-        FIGURA_AVATAR,
-        PLAIN_BBMODEL,
-        BEDROCK_PACK,
-        UNKNOWN
+    public enum Kind
+    {
+        YSM_FOLDER, FIGURA_AVATAR, PLAIN_BBMODEL, BEDROCK_PACK, UNKNOWN
     }
 
     public final Kind kind;
@@ -59,10 +57,10 @@ public final class ZipModelSniffer {
     /** Bedrock 动画文件（*.animation.json），key 为条目名。 */
     public final Map<String, byte[]> bedrockAnimations;
 
-    private ZipModelSniffer(Kind kind, byte[] bbmodelBytes, String bbmodelPath,
-                            Map<String, byte[]> sideTextures, byte[] avatarJsonBytes,
-                            boolean hasYsmMarkers, byte[] bedrockGeoBytes, String bedrockGeoPath,
-                            Map<String, byte[]> bedrockAnimations) {
+    private ZipModelSniffer(Kind kind, byte[] bbmodelBytes, String bbmodelPath, Map<String, byte[]> sideTextures,
+            byte[] avatarJsonBytes, boolean hasYsmMarkers, byte[] bedrockGeoBytes, String bedrockGeoPath,
+            Map<String, byte[]> bedrockAnimations)
+    {
         this.kind = kind;
         this.bbmodelBytes = bbmodelBytes;
         this.bbmodelPath = bbmodelPath;
@@ -81,25 +79,34 @@ public final class ZipModelSniffer {
      * @param zipBytes 整个 .zip 文件的字节
      * @param sizeLimit 单条目最大字节数，超过即丢弃（防 zip-bomb）。0 = 不限制。
      */
-    public static ZipModelSniffer sniff(byte[] zipBytes, long sizeLimit) {
-        if (zipBytes == null || zipBytes.length < 22 /* EOCD min size */) {
+    public static ZipModelSniffer sniff(byte[] zipBytes, long sizeLimit)
+    {
+        if (zipBytes == null || zipBytes.length < 22 /* EOCD min size */)
+        {
             return unknown();
         }
-        try {
+        try
+        {
             return sniff(zipBytes, sizeLimit, StandardCharsets.UTF_8);
-        } catch (IllegalArgumentException malformedUtf8Name) {
+        }
+        catch (IllegalArgumentException malformedUtf8Name)
+        {
             // Windows tools may write ZIP entry names in the local system code page.
             // Retry with GBK so such archives remain discoverable instead of failing
             // before the model classifier can inspect their contents.
-            try {
+            try
+            {
                 return sniff(zipBytes, sizeLimit, Charset.forName("GBK"));
-            } catch (IllegalArgumentException malformedFallbackName) {
+            }
+            catch (IllegalArgumentException malformedFallbackName)
+            {
                 return unknown();
             }
         }
     }
 
-    private static ZipModelSniffer sniff(byte[] zipBytes, long sizeLimit, Charset charset) {
+    private static ZipModelSniffer sniff(byte[] zipBytes, long sizeLimit, Charset charset)
+    {
         byte[] bbmodel = null;
         String bbmodelPath = null;
         byte[] avatar = null;
@@ -112,83 +119,118 @@ public final class ZipModelSniffer {
         long bestBbmodelSize = -1;
         long bestBedrockGeoSize = -1;
 
-        try (ZipInputStream zin = new ZipInputStream(new ByteArrayInputStream(zipBytes), charset)) {
+        try (ZipInputStream zin = new ZipInputStream(new ByteArrayInputStream(zipBytes), charset))
+        {
             ZipEntry entry;
-            while ((entry = zin.getNextEntry()) != null) {
-                if (entry.isDirectory()) continue;
+            while ((entry = zin.getNextEntry()) != null)
+            {
+                if (entry.isDirectory())
+                {
+                    continue;
+                }
+
                 String fullName = entry.getName();
                 String lower = fullName.toLowerCase(Locale.ROOT);
                 String base = baseName(lower);
 
                 // YSM 标记：ysm.json / main.json / arm.json 任意一个出现即可视为有 YSM 标记
-                if ("ysm.json".equals(base) || "main.json".equals(base) || "arm.json".equals(base)) {
+                if ("ysm.json".equals(base) || "main.json".equals(base) || "arm.json".equals(base))
+                {
                     ysmMarker = true;
                     continue; // YSM 路径会自己读
                 }
 
-                if (lower.endsWith(".bbmodel")) {
+                if (lower.endsWith(".bbmodel"))
+                {
                     byte[] data = readEntry(zin, sizeLimit);
-                    if (data != null && entry.getSize() > bestBbmodelSize) {
+                    if (data != null && entry.getSize() > bestBbmodelSize)
+                    {
                         bbmodel = data;
                         bbmodelPath = fullName;
                         bestBbmodelSize = entry.getSize();
                     }
-                } else if ("avatar.json".equals(base)) {
+                }
+                else if ("avatar.json".equals(base))
+                {
                     avatar = readEntry(zin, sizeLimit);
-                } else if (lower.endsWith(".png")) {
+                }
+                else if (lower.endsWith(".png"))
+                {
                     byte[] data = readEntry(zin, sizeLimit);
-                    if (data != null) {
+                    if (data != null)
+                    {
                         textures.put(base, data);
                     }
-                } else if (lower.endsWith(".geo.json") || "geometry.json".equals(base)) {
+                }
+                else if (lower.endsWith(".geo.json") || "geometry.json".equals(base))
+                {
                     byte[] data = readEntry(zin, sizeLimit);
-                    if (data != null && entry.getSize() > bestBedrockGeoSize) {
+                    if (data != null && entry.getSize() > bestBedrockGeoSize)
+                    {
                         bedrockGeo = data;
                         bedrockGeoPath = fullName;
                         bestBedrockGeoSize = entry.getSize();
                     }
-                } else if (lower.endsWith(".animation.json")) {
+                }
+                else if (lower.endsWith(".animation.json"))
+                {
                     byte[] data = readEntry(zin, sizeLimit);
-                    if (data != null) {
+                    if (data != null)
+                    {
                         bedrockAnimations.put(fullName, data);
                     }
                 }
             }
-        } catch (IOException e) {
+        }
+        catch (IOException e)
+        {
             // 损坏的 zip：直接走 UNKNOWN，让上层处理
             return unknown();
         }
 
         Kind kind;
-        if (ysmMarker) {
+        if (ysmMarker)
+        {
             kind = Kind.YSM_FOLDER;
-        } else if (bbmodel != null && avatar != null) {
+        }
+        else if (bbmodel != null && avatar != null)
+        {
             kind = Kind.FIGURA_AVATAR;
-        } else if (bbmodel != null) {
+        }
+        else if (bbmodel != null)
+        {
             kind = Kind.PLAIN_BBMODEL;
-        } else if (bedrockGeo != null || !bedrockAnimations.isEmpty()) {
+        }
+        else if (bedrockGeo != null || !bedrockAnimations.isEmpty())
+        {
             kind = Kind.BEDROCK_PACK;
-        } else {
+        }
+        else
+        {
             kind = Kind.UNKNOWN;
         }
 
-        return new ZipModelSniffer(kind, bbmodel, bbmodelPath, textures, avatar, ysmMarker,
-                bedrockGeo, bedrockGeoPath, bedrockAnimations);
+        return new ZipModelSniffer(kind, bbmodel, bbmodelPath, textures, avatar, ysmMarker, bedrockGeo, bedrockGeoPath,
+                bedrockAnimations);
     }
 
-    private static ZipModelSniffer unknown() {
+    private static ZipModelSniffer unknown()
+    {
         return new ZipModelSniffer(Kind.UNKNOWN, null, null, null, null, false, null, null, null);
     }
 
     /** 拆下 zip 条目，超过 {@code sizeLimit} 时丢弃返回 null。0 表示无上限。 */
-    private static byte[] readEntry(InputStream in, long sizeLimit) throws IOException {
+    private static byte[] readEntry(InputStream in, long sizeLimit) throws IOException
+    {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         byte[] buf = new byte[8192];
         long total = 0;
         int n;
-        while ((n = in.read(buf)) > 0) {
+        while ((n = in.read(buf)) > 0)
+        {
             total += n;
-            if (sizeLimit > 0 && total > sizeLimit) {
+            if (sizeLimit > 0 && total > sizeLimit)
+            {
                 return null;
             }
             baos.write(buf, 0, n);
@@ -196,7 +238,8 @@ public final class ZipModelSniffer {
         return baos.toByteArray();
     }
 
-    private static String baseName(String path) {
+    private static String baseName(String path)
+    {
         int slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
         return slash < 0 ? path : path.substring(slash + 1);
     }
@@ -205,22 +248,44 @@ public final class ZipModelSniffer {
      * 解析 avatar.json 里的 name 字段，失败返回 null。
      * 简易解析，不依赖 Gson 也能用（避免循环依赖）。
      */
-    public static String parseAvatarName(byte[] avatarJsonBytes) {
-        if (avatarJsonBytes == null || avatarJsonBytes.length == 0) return null;
+    public static String parseAvatarName(byte[] avatarJsonBytes)
+    {
+        if (avatarJsonBytes == null || avatarJsonBytes.length == 0)
+        {
+            return null;
+        }
+
         String text = new String(avatarJsonBytes, StandardCharsets.UTF_8);
         // 抓 "name" : "..."，宽松匹配
         int idx = text.indexOf("\"name\"");
-        if (idx < 0) return null;
+        if (idx < 0)
+        {
+            return null;
+        }
+
         int colon = text.indexOf(':', idx + 6);
-        if (colon < 0) return null;
+        if (colon < 0)
+        {
+            return null;
+        }
+
         int quote = text.indexOf('"', colon + 1);
-        if (quote < 0) return null;
+        if (quote < 0)
+        {
+            return null;
+        }
+
         int endQuote = text.indexOf('"', quote + 1);
-        if (endQuote < 0) return null;
+        if (endQuote < 0)
+        {
+            return null;
+        }
+
         return text.substring(quote + 1, endQuote);
     }
 
-    private ZipModelSniffer() {
+    private ZipModelSniffer()
+    {
         // not instantiable except via static factory
         this(Kind.UNKNOWN, null, null, null, null, false, null, null, null);
     }
