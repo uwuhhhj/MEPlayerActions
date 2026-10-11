@@ -121,6 +121,18 @@ public class LocalAppearanceScreen extends Screen {
     protected String gallerySourceLabel(String id) {return uploadedOnly?"本人服务器存档":sourceLabel(id);}
     protected String galleryStatus() {return uploadedOnly?runtime.privateUploadCatalogStatus():runtime.localAppearanceStatus();}
     protected String galleryPreviewUnavailableText(String id) {return cloudModelHint(id).isEmpty()?"正在加载所选模型…":cloudModelHint(id);}
+    /** Both sources use the same corner affordance; server cards expose cache status instead of uploading. */
+    protected boolean galleryCardCloudVisible() {return localGallery();}
+    protected String galleryCardCloudTooltip(String id) {return uploadTooltip(id);}
+    protected void galleryCardCloudClicked(String id) {
+        if(canUseCloudAction(id)){browseModel(id);uploadSelectedModel();}else setGalleryMessage(uploadTooltip(id));
+    }
+    protected void drawGalleryCardCloud(DrawContext context,String id,int x,int y) {
+        var state=runtime.privateModelUploadState(id);boolean saved=storedPrivateModel(id)!=null;
+        int tint=runtime.deletingUploadedPrivateModel(id)?0xffffd589:state.uploaded()?0xff8df2b5
+                :saved||state.inProgress()||state.published()?0xffffd589:canUploadModel(id)?0xfff3f0e0:0xff8a929c;
+        CloudUploadIcon.draw(context,x,y,tint,saved||state.published());
+    }
     protected boolean canUseGalleryModel(String id,LocalModelLibrary.Loaded loaded) {
         return loaded!=null&&(!uploadedOnly||runtime.privateModelUploadState(id).uploaded());
     }
@@ -748,17 +760,17 @@ public class LocalAppearanceScreen extends Screen {
             String label=label(model.id());
             setMessage(net.minecraft.text.Text.literal(label));
             String description=profile(model.id()).localized(client==null?"zh_cn":client.getLanguageManager().getLanguage(),"metadata.description","");
-            var target=isMouseOver(mouseX,mouseY)?ModelCardActionRegions.target(mouseX-getX(),mouseY-getY(),getWidth(),localGallery()):ModelCardActionRegions.Target.BROWSE;
-            String tooltip=target==ModelCardActionRegions.Target.UPLOAD?uploadTooltip(model.id())
+            var target=isMouseOver(mouseX,mouseY)?ModelCardActionRegions.target(mouseX-getX(),mouseY-getY(),getWidth(),galleryCardCloudVisible()):ModelCardActionRegions.Target.BROWSE;
+            String tooltip=target==ModelCardActionRegions.Target.UPLOAD?galleryCardCloudTooltip(model.id())
                     :target==ModelCardActionRegions.Target.FAVORITE?(isFavoriteModel(model.id())?"取消收藏":"收藏模型")+"\n"+label
                     :label+"\n"+gallerySourceLabel(model.id())+"\n"+model.id()+(description.isBlank()?"":"\n"+description)
-                    +"\n点击预览\n右上角收藏"+(localGallery()?"\n左上角上传／管理服务器存档":"");
+                    +"\n点击预览\n右上角收藏"+(localGallery()?"\n左上角上传／管理服务器存档":galleryCardCloudVisible()?"\n左上角查看资源缓存与接管状态":"");
             if(!tooltip.equals(tooltipText)){tooltipText=tooltip;setTooltip(ModelUiTooltip.of(textRenderer,LocalAppearanceScreen.this.width,tooltip));}
         }
         @Override public void onClick(Click click, boolean doubled) {
-            switch(ModelCardActionRegions.target(click.x()-getX(),click.y()-getY(),getWidth(),localGallery())) {
+            switch(ModelCardActionRegions.target(click.x()-getX(),click.y()-getY(),getWidth(),galleryCardCloudVisible())) {
                 case FAVORITE -> {toggleModelFavorite(model.id());rebuildGrid();}
-                case UPLOAD -> {if(canUseCloudAction(model.id())){browseModel(model.id());uploadSelectedModel();}else setGalleryMessage(uploadTooltip(model.id()));}
+                case UPLOAD -> galleryCardCloudClicked(model.id());
                 case BROWSE -> super.onClick(click,doubled);
             }
         }
@@ -787,13 +799,7 @@ public class LocalAppearanceScreen extends Screen {
                     getX(), getBottom(), 0xfff3f0e0, true);
             if(selection.modelId().equals(model.id()) || hovered || isFocused())context.drawStrokedRectangle(getX(), getY(), getWidth(), getHeight(), -790560);
             context.drawTexture(RenderPipelines.GUI_TEXTURED,GUI_ICONS,getRight()-16,getY(),isFavoriteModel(model.id())?16f:0f,0f,16,16,256,256);
-            if(localGallery()) {
-                var state=runtime.privateModelUploadState(model.id());
-                boolean saved=storedPrivateModel(model.id())!=null;
-                int tint=runtime.deletingUploadedPrivateModel(model.id())?0xffffd589:state.uploaded()?0xff8df2b5
-                        :saved||state.inProgress()||state.published()?0xffffd589:canUploadModel(model.id())?0xfff3f0e0:0xff8a929c;
-                CloudUploadIcon.draw(context,getX()+1,getY()+1,tint,saved||state.published());
-            }
+            if(galleryCardCloudVisible())drawGalleryCardCloud(context,model.id(),getX()+1,getY()+1);
         }
     }
 

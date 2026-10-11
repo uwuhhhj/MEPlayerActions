@@ -20,6 +20,69 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ClientSyncLifecyclePerformanceTest {
     @TempDir Path temporary;
+    @Test void preparationCompletionPublishesResourceSourceWithoutCreatingATakeoverLease() throws Exception {
+        var work = new ArrayDeque<Runnable>();
+        try (Scene scene = new Scene(temporary, work::add)) {
+            Person owner = scene.person(true), viewer = scene.person(false); owner.localRenderable = true;
+            Files.writeString(temporary.resolve("fixture.bbmodel"), "{\"elements\":[],\"outliner\":[],\"textures\":[],\"animations\":[]}");
+            AtomicInteger renderCalls = new AtomicInteger();
+            scene.service.rendering((watcher, id, instance, enabled) -> { renderCalls.incrementAndGet(); return true; });
+            scene.hello(viewer, true, false);
+            JsonObject preparing = viewer.last("state");
+            assertEquals("pending", preparing.get("assetStatus").getAsString());
+            assertEquals("lookup", preparing.get("assetSource").getAsString());
+            assertEquals("", preparing.get("assetHash").getAsString());
+            assertEquals(1, preparing.getAsJsonArray("animations").size());
+            assertEquals(1, work.size());
+            work.remove().run(); viewer.messages.clear();
+            scene.tick += 20; scene.maintain();
+            JsonObject available = viewer.last("state");
+            assertEquals(owner.instance.toString(), available.get("instance").getAsString());
+            assertEquals(owner.sequence, available.get("sequence").getAsLong());
+            assertEquals("ready", available.get("assetStatus").getAsString());
+            assertEquals("own", available.get("assetSource").getAsString());
+            assertEquals(scene.assets.get("fixture").orElseThrow().hash(), available.get("assetHash").getAsString());
+            assertEquals(0, renderCalls.get()); assertEquals(0, viewer.count("render_ack"));
+            Object session = ((Map<?, ?>) field(scene.service, "sessions")).get(viewer.id);
+            assertEquals(0, ((RenderLeases) field(session, "leases")).size());
+            assertEquals(1, ((Map<?, ?>) field(session, "bindings")).size());
+            assertTrue(work.isEmpty());
+        }
+    }
+    @Test void missingResourcesKeepServerOwnershipAndActionsWithoutClaimingLocalTakeover() throws Exception {
+        try (Scene scene = new Scene(temporary)) {
+            Person owner = scene.person(true), viewer = scene.person(false); owner.localRenderable = true;
+            scene.hello(viewer, true, false);
+            JsonObject state = viewer.last("state");
+            assertEquals(owner.instance.toString(), state.get("instance").getAsString());
+            assertEquals("fixture", state.get("modelId").getAsString());
+            assertEquals("missing", state.get("assetStatus").getAsString());
+            assertEquals("none", state.get("assetSource").getAsString());
+            assertEquals("", state.get("assetHash").getAsString());
+            assertTrue(state.get("assetReason").getAsString().contains("均未找到"));
+            assertEquals("idle", state.getAsJsonArray("animations").get(0).getAsJsonObject().get("id").getAsString());
+            assertEquals(0, viewer.count("render_ack")); assertEquals(0, viewer.count("asset_offer"));
+            Object session = ((Map<?, ?>) field(scene.service, "sessions")).get(viewer.id);
+            assertEquals(0, ((RenderLeases) field(session, "leases")).size());
+            assertEquals(1, ((Map<?, ?>) field(session, "bindings")).size());
+        }
+    }
+    @Test void invalidOwnResourceReportsItsActualSourceWithoutClaimingAMissingFileOrTakeover() throws Exception {
+        try (Scene scene = new Scene(temporary)) {
+            Person owner = scene.person(true), viewer = scene.person(false); owner.localRenderable = true;
+            Files.writeString(temporary.resolve("fixture.bbmodel"), "{}");
+            scene.hello(viewer, true, false);
+            JsonObject state = viewer.last("state");
+            assertEquals("invalid", state.get("assetStatus").getAsString());
+            assertEquals("own", state.get("assetSource").getAsString());
+            assertEquals("", state.get("assetHash").getAsString());
+            assertTrue(state.get("assetReason").getAsString().contains("无效或无法读取"));
+            assertEquals(1, state.getAsJsonArray("animations").size());
+            assertEquals(0, viewer.count("render_ack")); assertEquals(0, viewer.count("asset_offer"));
+            Object session = ((Map<?, ?>) field(scene.service, "sessions")).get(viewer.id);
+            assertEquals(0, ((RenderLeases) field(session, "leases")).size());
+        }
+    }
     @Test void hiddenSelfStillReceivesOwnershipStateAndResultsWithoutObtainingARenderLease() throws Exception {
         try (Scene scene = new Scene(temporary)) {
             Person owner = scene.person(true), other = scene.person(false); owner.showSelf = false; scene.local(owner);
@@ -300,6 +363,9 @@ class ClientSyncLifecyclePerformanceTest {
         final UUID worldId = new UUID(3, 1); final World world; final ClientSyncService service; final ModelAssets assets; final Path modelFolder;
         int tick = 100, nextId = 1, singleReads;
         Scene(Path temporary) throws Exception {
+            this(temporary, Runnable::run);
+        }
+        Scene(Path temporary, java.util.function.Consumer<Runnable> preparation) throws Exception {
             modelFolder = temporary;
             world = proxy(World.class, (instance, method, args) -> method.getName().equals("getUID") ? worldId : objectMethod(instance, method, args));
             Server server = proxy(Server.class, (instance, method, args) -> switch (method.getName()) {
@@ -313,7 +379,7 @@ class ClientSyncLifecyclePerformanceTest {
             });
             serverField = Bukkit.class.getDeclaredField("server"); serverField.setAccessible(true); originalServer = serverField.get(null); serverField.set(null, server);
             try {
-                assets = new ModelAssets(temporary, null, name -> null, Runnable::run, ignored -> {});
+                assets = new ModelAssets(temporary, null, name -> null, preparation, ignored -> {});
                 service = new ClientSyncService(plugin, () -> { throw new AssertionError("Full snapshot supplier invoked"); }, ignored -> {}, assets);
                 service.snapshotSources(() -> Set.copyOf(owners.keySet()), id -> { singleReads++; return snapshot(id); });
                 setField(service, "running", true);

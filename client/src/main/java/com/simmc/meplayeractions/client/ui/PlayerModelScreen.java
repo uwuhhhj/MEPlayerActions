@@ -4,6 +4,7 @@ import com.simmc.meplayeractions.client.ClientRuntime;
 import com.simmc.meplayeractions.client.LocalAppearanceSettings;
 import com.simmc.meplayeractions.client.LocalModelLibrary;
 import com.simmc.meplayeractions.client.model.YsmModelProfile;
+import com.simmc.meplayeractions.client.network.ServerModelPresentation;
 import net.minecraft.client.gl.RenderPipelines;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
@@ -79,8 +80,20 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
         return request.isEmpty()?runtime.serverCatalogStatus():request;
     }
     @Override protected String galleryPreviewUnavailableText(String id) {
-        return clientTab?super.galleryPreviewUnavailableText(id):runtime.serverCatalogOfflineMode()
-                ?"正在准备本机缓存预览…":"使用模型后由服务器下发资源";
+        return clientTab?super.galleryPreviewUnavailableText(id):runtime.serverModelPresentation(id).placeholder();
+    }
+    @Override protected boolean galleryCardCloudVisible() {return true;}
+    @Override protected String galleryCardCloudTooltip(String id) {
+        return clientTab?super.galleryCardCloudTooltip(id):runtime.serverModelPresentation(id).tooltip();
+    }
+    @Override protected void galleryCardCloudClicked(String id) {
+        if(clientTab){super.galleryCardCloudClicked(id);return;}
+        // The cloud selects a status/preview only. Only the explicit use button requests a disguise.
+        browseModel(id);setGalleryMessage(runtime.serverModelPresentation(id).placeholder());
+    }
+    @Override protected void drawGalleryCardCloud(DrawContext context,String id,int x,int y) {
+        if(clientTab){super.drawGalleryCardCloud(context,id,x,y);return;}
+        var state=runtime.serverModelPresentation(id);CloudUploadIcon.drawServer(context,x,y,state.cloudColor(),state.cloud());
     }
     @Override protected boolean canUseGalleryModel(String id,LocalModelLibrary.Loaded loaded) {
         return clientTab?super.canUseGalleryModel(id,loaded):runtime.canRequestServerDisguise(id);
@@ -92,16 +105,17 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
                 runtime.canRequestServerDisguise(id),!id.isEmpty()&&runtime.serverModelHasPersistentId(id)&&runtime.serverPreferencesNeedApply(id));
     }
     @Override protected String galleryUseTooltip() {
-        return clientTab?super.galleryUseTooltip():"请求使用所选服务器模型\n由服务器确认并下发资源\n其他玩家可见服务器伪装";
+        return clientTab?super.galleryUseTooltip():"请求使用所选服务器模型\n服务器先确认伪装，再检查可接管资源\n有可用资源才会授权客户端下载\n其他玩家可见服务器伪装";
     }
     @Override protected String galleryUseTooltip(GalleryModelUseState.State state) {
         if(!clientTab && runtime.serverCatalogOfflineMode())return "离线模式，仅可预览缓存\n需要连接服务器取得当前使用授权\n外观设置仍可保存于本机";
-        if(!clientTab && state.current() && state.canUse())return "保存的外观设置尚未应用\n点击后等待服务器确认";
         if(!clientTab && !state.current() && !state.waiting() && !state.canUse()) {
             if(runtime.serverCachedPreviewOnly(selectedModelId()))return "本机缓存，仅供预览\n此模型不在当前服务器授权图库\n缓存不能代替使用授权";
             if(!runtime.pendingServerDisguiseModelId().isEmpty())return "等待另一个伪装请求完成\n收到服务器确认后再切换";
             if(!runtime.serverCatalogReady())return "等待服务器模型图库\n"+runtime.serverCatalogStatus();
         }
+        if(!clientTab)return (state.current()?state.canUse()?"保存的外观设置尚未应用\n点击应用后等待服务器确认":"当前正在使用此服务器伪装\n当前使用不等于已开启本地接管"
+                :state.waiting()?"等待服务器确认伪装请求":"点击请求使用所选服务器伪装")+"\n"+runtime.serverModelPresentation(selectedModelId()).tooltip();
         return super.galleryUseTooltip(state);
     }
     @Override protected String galleryBrowsingMessage() {
@@ -310,33 +324,61 @@ public final class PlayerModelScreen extends LocalAppearanceScreen {
                         :runtime.serverCachedPreviewOnly(id)?"本机缓存 · 尚未授权":"预览 · 点击使用模型伪装",
                 left+6,top+17,previewWidth-12,0xff92b9df);
         if(loaded==null) {
-            clipped(context,galleryPreviewUnavailableText(id),previewX+3,previewY+previewH/2,previewW-6,0xffffc685);
+            renderServerResourceStatus(context,id,previewY,previewH);
             return;
         }
         String actualHash=state.current()?runtime.currentAppearanceAssetHash():"";
         if(!actualHash.isEmpty()&&!actualHash.equals(loaded.hash())) {
-            clipped(context,"等待当前模型资源 · 缓存版本不同",previewX+3,previewY+previewH/2,previewW-6,0xffffc685);
+            renderServerResourceStatus(context,id,previewY,previewH);
             return;
         }
         leftPreviewKey="server-catalog:"+id+":"+loaded.hash();leftPreviewHash=loaded.hash();
-        leftPreviewDrawn=preview.render(context,loaded.model(),leftPreviewKey,previewX,previewY,previewW,previewH,
+        int statusHeight=Math.min(72,Math.max(30,previewH/3)),modelHeight=Math.max(20,previewH-statusHeight-4);
+        leftPreviewDrawn=preview.render(context,loaded.model(),leftPreviewKey,previewX,previewY,previewW,modelHeight,
                 yaw,pitch,ticks+delta,Map.of(),loaded.previewAnimation(),loaded.profile(),ModelPreview.Context.SELECTED);
         if(leftPreviewDrawn)drawnPreviewCount++;
-        else clipped(context,"服务器模型预览暂不可用",previewX+3,previewY+previewH/2,previewW-6,0xffffc685);
+        else clipped(context,"服务器模型预览暂不可用",previewX+3,previewY+modelHeight/2,previewW-6,0xffffc685);
+        renderServerResourceStatus(context,id,previewY+modelHeight+4,statusHeight);
+    }
+
+    /** Narrow panels wrap the key facts first; the cloud/use tooltip retains full source and error details. */
+    private void renderServerResourceStatus(DrawContext context,String id,int y,int height) {
+        var status=runtime.serverModelPresentation(id);
+        var ordered=new java.util.ArrayList<ServerModelPresentation.Line>();
+        for(String prefix:List.of("服务器资源：","客户端资源：","本地接管："))
+            status.lines().stream().filter(line->line.text().startsWith(prefix)).forEach(ordered::add);
+        status.lines().stream().filter(line->!ordered.contains(line)).forEach(ordered::add);
+        int maxLines=Math.max(1,height/10),used=0;
+        context.enableScissor(previewX,y,previewX+previewW,y+height);
+        for(int factIndex=0;factIndex<ordered.size();factIndex++) {
+            var fact=ordered.get(factIndex);
+            var wrapped=textRenderer.wrapLines(Text.literal(fact.text()),Math.max(20,previewW-6));
+            int budget=factIndex<3?Math.max(1,(maxLines-used)/Math.max(1,3-factIndex)):maxLines-used;
+            int count=0;
+            for(var line:wrapped) {
+                if(used>=maxLines)break;
+                context.drawTextWithShadow(textRenderer,line,previewX+3,y+used*10,fact.color());used++;
+                if(++count>=budget)break;
+            }
+            if(used>=maxLines)break;
+        }
+        context.disableScissor();
     }
 
     private void renderServerPreview(DrawContext context,float delta) {
         String id=runtime.serverOwnModelId(),instance=runtime.serverOwnModelInstance();
         clipped(context,id.isEmpty()?"服务器模型":id,left+6,top+6,previewWidth-12,0xfff3f0e0);
-        clipped(context,"当前绑定 · 只读",left+6,top+17,previewWidth-12,0xff92b9df);
-        ClientRuntime.RenderBinding binding=client.player==null?null:runtime.appearanceBinding(client.player.getUuid());
-        if(runtime.serverOwnModelPresent() && binding!=null && instance.equals(binding.instance()) && !binding.motionSource().equals("local-self")) {
-            leftPreviewId=id;leftPreviewKey="server:"+instance+":"+binding.assetHash();
-            leftPreviewSource="server-bound";leftPreviewInstance=instance;leftPreviewHash=binding.assetHash();
-            leftPreviewDrawn=preview.render(context,binding.model(),leftPreviewKey,previewX,previewY,previewW,previewH,yaw,pitch,ticks+delta,Map.of(),"",YsmModelProfile.empty());
+        clipped(context,"服务器当前绑定 · 接管状态独立显示",left+6,top+17,previewWidth-12,0xff92b9df);
+        var loaded=runtime.serverModelForPreview(id);
+        int statusHeight=Math.min(72,Math.max(30,previewH/3)),modelHeight=Math.max(20,previewH-statusHeight-4);
+        if(runtime.serverOwnModelPresent() && loaded!=null) {
+            leftPreviewId=id;leftPreviewKey="server:"+instance+":"+loaded.hash();
+            leftPreviewSource="server-bound";leftPreviewInstance=instance;leftPreviewHash=loaded.hash();
+            leftPreviewDrawn=preview.render(context,loaded.model(),leftPreviewKey,previewX,previewY,previewW,modelHeight,yaw,pitch,ticks+delta,Map.of(),loaded.previewAnimation(),loaded.profile());
             if(leftPreviewDrawn)drawnPreviewCount++;
         }
-        if(!leftPreviewDrawn)clipped(context,runtime.serverOwnModelPresent()?"等待服务器模型就绪":"尚无服务器模型",previewX+3,previewY+previewH/2,previewW-6,0xffffc685);
+        if(!leftPreviewDrawn)renderServerResourceStatus(context,id,previewY,previewH);
+        else renderServerResourceStatus(context,id,previewY+modelHeight+4,statusHeight);
     }
     @Override protected boolean rotationDisabled() {return clientTab && super.rotationDisabled();}
 

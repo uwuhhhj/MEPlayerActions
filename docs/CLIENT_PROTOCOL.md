@@ -44,6 +44,8 @@ state 必须额外包含 `motion` 对象：`features` 为服务器及玩家允�
 
 非空 `assetHash` 表示服务器允许客户端准备这份实例的资产，空值表示保持后端显示，不允许 render_ready。当前 ModelEngine 适配器只有本插件创建、实体没有外来模型且有可分发资产的实例提供非空值；接管原生 ME、外来模型共存或资产失败时 hash 为空。state 还提供 `assetStatus`（pending/ready/missing/invalid，或不允许接管时的 server-only）、`assetReason` 和 `assetSource` 诊断；它们不授予渲染权限，原因不包含服务器私有文件路径。
 
+`assetSource` 的 `own`、`jar`、`modelengine` 分别表示 MPA models 目录、插件内置资源、ModelEngine 蓝图，`lookup` 表示仍在准备，`none` 表示各来源均未找到。准备结果改变时，即使实例与动画序列不变，也更新 state；不会因资源可用而自动授予接管租约。客户端图库将这些诊断与本机缓存、下载／校验、纹理准备及实际 ACK 租约分开显示；未绑定目录项的资源不能凭名称或旧缓存推断。
+
 `state.accessories` 是原模型持久附件状态，仅可包含有限的 `a`、`b` 数字，范围 0–1，对应 `variable.roaming.a/b`。服务器按当前伪装实例同步，模型切换或解除后重置。客户端在时间脚本执行后、几何采样前应用它，避免新观众或离开可视范围后回来时重放动作造成重复切换。物理变量仍由各观看者按本地实体运动计算。该字段缺省为空对象，本地预览自行执行附件脚本。
 
 ## 服务器主动推送与资产身份

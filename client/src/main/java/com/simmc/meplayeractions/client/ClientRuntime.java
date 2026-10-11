@@ -97,6 +97,7 @@ public final class ClientRuntime {
     private final Map<String,LocalModelLibrary.Loaded> cachedServerPreviews=new LinkedHashMap<>(16,.75f,true);
     private final Set<String> cachedServerPreviewLoading=new HashSet<>();
     private final Map<String,Long> cachedServerPreviewRetry=new HashMap<>();
+    private final Map<String,String> cachedServerPreviewErrors=new HashMap<>();
     private boolean serverCacheIndexLoading,serverCacheIndexRefreshPending,serverCacheIndexReady;
     private long serverCacheCatalogRevision,serverCachePreviewEpoch;
 
@@ -197,7 +198,7 @@ public final class ClientRuntime {
         ownAppearanceMissingSince=0;lastAppearanceSnapshotRequest=0;
         localAppearanceVisibility.reset();
         playerInteractionPolicy.reset();knownOwnServerModelId="";
-        serverCachePreviewEpoch++;cachedServerPreviews.clear();cachedServerPreviewLoading.clear();cachedServerPreviewRetry.clear();
+        serverCachePreviewEpoch++;cachedServerPreviews.clear();cachedServerPreviewLoading.clear();cachedServerPreviewRetry.clear();cachedServerPreviewErrors.clear();
         ModelRenderer.clear();
     }
     public void tick() {
@@ -350,6 +351,8 @@ public final class ClientRuntime {
                     String code=WireJson.string(json,"code",64);lastError="服务器："+code;
                     if((code.equals("render_unavailable") || code.equals("render_not_authorized")) && json.has("owner")) {
                         Binding binding=matching(json);if(binding!=null){binding.active=false;binding.readySent=false;
+                            binding.assetState="保持服务器显示";binding.assetError=code.equals("render_not_authorized")
+                                    ?"服务器未授权此次客户端接管":"服务器暂时无法确认客户端接管";
                             failedAssets.put(binding.hash,now);}
                     }
                 }
@@ -541,7 +544,7 @@ public final class ClientRuntime {
             var result=model;
             client.execute(()->{
                 if(!currentPush(offer,epoch))return;
-                if(result!=null) {completePush(offer,result,true,epoch);return;}
+                if(result!=null) {cachedServerPreviewErrors.remove(hash);cachedServerPreviewRetry.remove(hash);completePush(offer,result,true,epoch);return;}
                 pushCacheMisses++;pushState(hash,"正在下载服务器模型","");
                 pushAuthorization.missing(offer,pushBindings(),System.nanoTime());
                 if(!assetStatus(offer,"missing"))rejectPush(offer,"无法反馈服务器模型缓存状态");
@@ -822,7 +825,8 @@ public final class ClientRuntime {
                     // Cache I/O remains off the Minecraft thread, and precedes later cache reads on this executor.
                     if(assets.containsKey(hash) && ModelRenderer.has(hash) && !failedAssets.containsKey(hash)) {
                         try {decoder.execute(()->{
-                            try {if(serverModelCache.writeValidated(offer.identity().modelId(),hash,raw))client.execute(this::refreshServerCacheIndex);}
+                            try {boolean changed=serverModelCache.writeValidated(offer.identity().modelId(),hash,raw);
+                                client.execute(()->{cachedServerPreviewErrors.remove(hash);cachedServerPreviewRetry.remove(hash);if(changed)refreshServerCacheIndex();});}
                             catch(IOException failure) {MEPlayerActionsClient.LOGGER.debug("Server model cache write skipped {}: {}",hash.substring(0,12),failure.toString());}
                         });} catch(RejectedExecutionException busy) {
                             MEPlayerActionsClient.LOGGER.debug("Server model cache write queue full {}",hash.substring(0,12));
@@ -1312,9 +1316,26 @@ public final class ClientRuntime {
         return !(serverCatalogReady() && serverModelCatalog.contains(id) && preparedServerPreview(id)!=null)
                 && cachedServerPreviewMetadata(id)!=null;
     }
+    /** Presentation reads protocol/cache facts, never assumes a gallery preview proves an active render lease. */
+    public ServerModelPresentation.Display serverModelPresentation(String id) {
+        Binding own=client.player==null?null:bindings.get(client.player.getUuid());
+        Binding binding=own!=null && own.modelId.equals(id)?own:bindings.values().stream()
+                .filter(value->value.modelId.equals(id)).findFirst().orElse(null);
+        boolean current=serverOwnModelPresent() && id.equals(serverOwnModelId());
+        var cached=cachedServerPreviewMetadata(id);
+        if(cached!=null && !ServerModelPresentation.cacheMatchesCurrentResource(binding!=null,binding==null?"":binding.hash,cached.hash()))cached=null;
+        boolean prepared=binding!=null && assets.containsKey(binding.hash) && ModelRenderer.has(binding.hash);
+        return ServerModelPresentation.describe(new ServerModelPresentation.Facts(serverBridgeReady(),current,
+                !id.isEmpty()&&id.equals(pendingServerDisguiseModelId()),options.enabled,binding==null||binding.showSelf,options.showSelf,
+                binding!=null && usable(binding,System.nanoTime()),prepared,binding!=null&&loading.contains(binding.hash),
+                cached!=null,cached!=null&&cachedServerPreviewLoading.contains(cached.hash()),
+                cached!=null&&cachedServerPreviewErrors.containsKey(cached.hash()),binding==null?"":binding.serverAssetStatus,
+                binding==null?"":binding.serverAssetSource,binding==null?"":binding.serverAssetReason,
+                binding==null?"":binding.assetState,binding==null?"":binding.assetError));
+    }
     /** Reuses prepared assets or asynchronously reads the local cache; no asset_request, ACK or binding is created. */
     public LocalModelLibrary.Loaded serverModelForPreview(String id) {
-        if(serverCatalogReady() && serverModelCatalog.contains(id)) {
+        if(serverOwnModelPresent() && id.equals(serverOwnModelId()) || serverCatalogReady() && serverModelCatalog.contains(id)) {
             LocalModelLibrary.Loaded prepared=preparedServerPreview(id);if(prepared!=null)return prepared;
         }
         var cached=cachedServerPreviewMetadata(id);if(cached==null)return null;
@@ -1333,7 +1354,7 @@ public final class ClientRuntime {
                 if(!cachedServerCatalog.equals(result)) {
                     cachedServerCatalog=result;serverCacheCatalogRevision++;
                     Set<String> hashes=new HashSet<>();result.forEach(model->hashes.add(model.hash()));
-                    cachedServerPreviews.keySet().retainAll(hashes);cachedServerPreviewRetry.keySet().retainAll(hashes);
+                    cachedServerPreviews.keySet().retainAll(hashes);cachedServerPreviewRetry.keySet().retainAll(hashes);cachedServerPreviewErrors.keySet().retainAll(hashes);
                 }
                 if(serverCacheIndexRefreshPending){serverCacheIndexRefreshPending=false;refreshServerCacheIndex();}
             });
@@ -1351,17 +1372,19 @@ public final class ClientRuntime {
         long epoch=serverCachePreviewEpoch;
         try {previewDecoder.execute(()->{
             LocalModelLibrary.Loaded loaded=null;
+            String error="";
             try {
                 byte[] raw=serverModelCache.readValidated(hash).orElse(null);
                 if(raw!=null){var decoded=BbModelAsset.read(raw);loaded=new LocalModelLibrary.Loaded(hash,decoded.model(),decoded.previewAnimation(),decoded.profile());}
-            }catch(Exception ignored){/* Invalid or removed files remain preview placeholders. */}
-            LocalModelLibrary.Loaded result=loaded;
+                else error="缓存文件不存在或校验未通过";
+            }catch(Exception failure){error="缓存模型解析失败";}
+            LocalModelLibrary.Loaded result=loaded;String failure=error;
             client.execute(()->{
                 if(epoch!=serverCachePreviewEpoch)return;
                 cachedServerPreviewLoading.remove(hash);
-                if(result==null){cachedServerPreviewRetry.put(hash,System.nanoTime()+30*SECOND);return;}
+                if(result==null){cachedServerPreviewErrors.put(hash,failure);cachedServerPreviewRetry.put(hash,System.nanoTime()+30*SECOND);return;}
                 if(cachedServerCatalog.stream().noneMatch(model->model.hash().equals(hash)))return;
-                cachedServerPreviews.put(hash,result);
+                cachedServerPreviewErrors.remove(hash);cachedServerPreviews.put(hash,result);
                 while(cachedServerPreviews.size()>16)cachedServerPreviews.remove(cachedServerPreviews.keySet().iterator().next());
             });
         });}catch(RejectedExecutionException busy){cachedServerPreviewLoading.remove(hash);cachedServerPreviewRetry.put(hash,now+SECOND);}
@@ -1505,6 +1528,9 @@ public final class ClientRuntime {
         values.put("modelId",knownOwnServerModelId);values.put("hash",own==null?"":own.hash);
         values.put("ready",serverOwnModelReady());values.put("bridgeReady",serverBridgeReady());
         values.put("assetState",own==null?"":own.assetState);values.put("assetError",own==null?"":own.assetError);
+        values.put("serverAssetStatus",own==null?"":own.serverAssetStatus);values.put("serverAssetSource",own==null?"":own.serverAssetSource);
+        values.put("serverAssetReason",own==null?"":own.serverAssetReason);
+        values.put("presentation",serverModelPresentation(knownOwnServerModelId).lines().stream().map(ServerModelPresentation.Line::text).toList());
         values.put("interactionLocalMode",policy.interactionLocalMode());
         values.put("interactionSource",policy.interactionLocalMode()?"client":"server");
         values.put("privateEnabled",localAppearance().enabled());values.put("privatePending",localAppearancePending);
@@ -1727,11 +1753,8 @@ public final class ClientRuntime {
         }
         if(!previewId.isEmpty())text.add("本地预览："+previewId);
         Binding own=client.player==null?null:bindings.get(client.player.getUuid());
-        if(own!=null){text.add("模型："+own.modelId+" · "+own.assetState+" · hash "+(own.hash.isEmpty()?"无":own.hash.substring(0,12)));
-            if(!own.assetError.isEmpty())text.add("模型错误："+own.assetError);
-            if(!own.serverAssetStatus.isEmpty())text.add("服务器资产："+own.serverAssetStatus
-                    +(own.serverAssetSource.isEmpty()?"":" · 来源 "+own.serverAssetSource));
-            if(!own.serverAssetReason.isEmpty() && !own.serverAssetReason.equals(own.assetError))text.add("服务器资产原因："+own.serverAssetReason);
+        if(own!=null){text.add("模型："+own.modelId+" · hash "+(own.hash.isEmpty()?"无":own.hash.substring(0,12)));
+            text.addAll(serverModelPresentation(own.modelId).lines().stream().map(ServerModelPresentation.Line::text).toList());
             text.add("动画："+(options.followServerTimeline?own.layers:own.localMotion.layers()).stream()
                     .map(l->l.layer()+"="+l.animation()).reduce((a,b)->a+" / "+b).orElse("基础姿态"));}
         if(!lastError.isEmpty())text.add(lastError);
