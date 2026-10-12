@@ -465,7 +465,11 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
         try {
             this.controller.remove(player, "quit");
         } finally {
-            this.clients.forget(player);
+            try {
+                this.clients.forget(player);
+            } finally {
+                this.bridge.forgetViewer(player.getUniqueId());
+            }
         }
     }
 

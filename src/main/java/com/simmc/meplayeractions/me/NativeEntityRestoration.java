@@ -5,6 +5,18 @@ import java.util.*;
 
 /** Restore a retired native copy only while the original player is still legitimately tracked. */
 final class NativeEntityRestoration {
+    static void prune(Player owner, Set<UUID> previousViewers) {
+        if (previousViewers.isEmpty()) {
+            return;
+        }
+
+        Set<UUID> retained = new HashSet<>();
+        for (Player viewer : recipients(owner, previousViewers)) {
+            retained.add(viewer.getUniqueId());
+        }
+        previousViewers.retainAll(retained);
+    }
+
     static List<Player> recipients(Player owner, Set<UUID> previousViewers) {
         if (previousViewers.isEmpty()) {
             return List.of();

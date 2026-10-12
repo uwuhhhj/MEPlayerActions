@@ -328,7 +328,21 @@ public final class ModelEngineBridge {
 
     public boolean updateAudience(Attachment attachment) {
         Session session = requireSession(attachment);
+        long tick = Integer.toUnsignedLong(Bukkit.getCurrentTick());
+        if (session.nativeViewerValidationTick == Long.MIN_VALUE || tick < session.nativeViewerValidationTick
+                || tick - session.nativeViewerValidationTick >= this.performance.validationTicks()) {
+            NativeEntityRestoration.prune(session.player, session.nativeViewers);
+            session.nativeViewerValidationTick = tick;
+        }
+
         return session.audience != null && session.audience.update(session.player, tracked(session));
+    }
+
+    public void forgetViewer(UUID viewer) {
+        requireMainThread();
+        for (Session session : this.sessions.values()) {
+            session.nativeViewers.remove(viewer);
+        }
     }
 
     public boolean canView(Attachment attachment, UUID viewer) {
@@ -500,6 +514,7 @@ public final class ModelEngineBridge {
             return;
         }
 
+        NativeEntityRestoration.prune(session.player, session.nativeViewers);
         // ME's async model audience is narrower than Paper's native tracking and
         // can miss a cached original player during a same-tick model replacement.
         // Its protected despawn clears the entity and held equipment together.
@@ -646,6 +661,7 @@ public final class ModelEngineBridge {
     }
 
     private void cleanUp(Session session) {
+        NativeEntityRestoration.prune(session.player, session.nativeViewers);
         RuntimeException failure = null;
         if (this.nativeEntities != null) {
             this.nativeEntities.removeOwner(session.attachment.playerId());
@@ -838,9 +854,10 @@ public final class ModelEngineBridge {
         final boolean previousForcedInvisible;
         final Map<Integer, OwnedAnimation> layers = new HashMap<>();
         final List<OwnedAnimation> ownedAnimations = new ArrayList<>();
-        // History for cleanup is separate from the current native relay leases.
+        // Pending restoration follows current vanilla tracking, independently of model audience caps and relay leases.
         final Set<UUID> nativeViewers = new HashSet<>();
         final Set<UUID> nativeRenderers = new HashSet<>();
+        long nativeViewerValidationTick = Long.MIN_VALUE;
         final YsmAnimations compatibility;
         boolean assignedBaseVisible;
         boolean changedBaseVisible;
