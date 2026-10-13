@@ -5,6 +5,7 @@ import com.simmc.meplayeractions.server.PrivateOnlyBackend;
 import com.simmc.meplayeractions.server.ServerBackend;
 import com.simmc.meplayeractions.protection.ResourceProtection;
 import com.simmc.meplayeractions.protection.ResourceSettings;
+import com.simmc.meplayeractions.preferences.PlayerPreferences;
 import org.bukkit.Bukkit;
 import org.bukkit.command.*;
 import org.bukkit.configuration.file.FileConfiguration;
@@ -28,10 +29,15 @@ import org.bukkit.plugin.Plugin;
 public final class MEPlayerActionsPlugin extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
     private ServerBackend backend;
     private ResourceProtection resources;
+    private PlayerPreferences preferences;
     private Constructor<? extends ServerBackend> modelEngineConstructor;
 
     public ResourceProtection resources() {
         return Objects.requireNonNull(this.resources, "资源保护运行时未启动");
+    }
+
+    public PlayerPreferences preferences() {
+        return Objects.requireNonNull(this.preferences, "玩家同步偏好服务未启动");
     }
 
     @Override
@@ -45,6 +51,9 @@ public final class MEPlayerActionsPlugin extends JavaPlugin implements Listener,
         try {
             this.resources = new ResourceProtection(this, ResourceSettings.fromConfiguration(getConfig()));
             this.resources.start();
+            this.preferences = new PlayerPreferences(getDataFolder().toPath().resolve("players.yml"), getLogger());
+            this.preferences.runtime(this.resources);
+            this.preferences.start(this);
             startBackend(prepareBackend());
         } catch (RuntimeException | LinkageError failure) {
             shutdown();
@@ -139,6 +148,18 @@ public final class MEPlayerActionsPlugin extends JavaPlugin implements Listener,
     }
 
     private void shutdown() {
+        PlayerPreferences persistence = this.preferences;
+        this.preferences = null;
+        try {
+            if (persistence != null) {
+                persistence.shutdown();
+            }
+        } finally {
+            shutdownBackend();
+        }
+    }
+
+    private void shutdownBackend() {
         ServerBackend old = this.backend;
         this.backend = null;
         if (old != null) {
@@ -175,11 +196,12 @@ public final class MEPlayerActionsPlugin extends JavaPlugin implements Listener,
                     reloadConfig();
                     return new BackendReload(ResourceSettings.fromConfiguration(getConfig()), prepareBackend());
                 }, prepared -> {
-                    shutdown();
+                    shutdownBackend();
                     this.resources = new ResourceProtection(this, prepared.settings());
                     this.resources.start();
+                    this.preferences.runtime(this.resources);
                     startBackend(prepared.backend());
-                }, this::shutdown);
+                }, this::shutdownBackend);
                 message(sender, "配置已重载，旧伪装和私人共享会话已清理；" + this.backend.diagnosis() + "。客户端将重新协商共享。");
             } catch (RuntimeException | LinkageError failure) {
                 message(sender, "重载失败：" + failure.getMessage());
@@ -247,7 +269,7 @@ public final class MEPlayerActionsPlugin extends JavaPlugin implements Listener,
         this.resources.statusLines(section).forEach(line -> message(sender, line));
     }
 
-    /** Kept as the stable callback for ActionMenu and the authorized client-action bridge. */
+    /** Kept as the stable callback for ActionDialog and the authorized client-action bridge. */
     public void handleAction(Player player, String[] args) {
         try {
             permission(player, "mact.use");

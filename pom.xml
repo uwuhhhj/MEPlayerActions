@@ -2,12 +2,13 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
-  <groupId>com.simmc</groupId><artifactId>MEPlayerActions</artifactId><version>0.6.2</version>
+  <groupId>com.simmc</groupId><artifactId>MEPlayerActions</artifactId><version>0.6.3</version>
   <properties>
     <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     <modelengine.jar>${project.basedir}/../ModelEngine-R4.1.1.jar</modelengine.jar>
+    <gsit.jar>${project.basedir}/build/deps/GSit-3.5.1.jar</gsit.jar>
     <project.build.outputTimestamp>2026-10-11T00:00:00Z</project.build.outputTimestamp>
   </properties>
   <repositories>
@@ -20,6 +21,10 @@
     <dependency>
       <groupId>com.ticxo.modelengine</groupId><artifactId>ModelEngine</artifactId><version>R4.1.1</version>
       <scope>system</scope><systemPath>${modelengine.jar}</systemPath>
+    </dependency>
+    <dependency>
+      <groupId>dev.geco</groupId><artifactId>GSit</artifactId><version>3.5.1</version>
+      <scope>system</scope><systemPath>${gsit.jar}</systemPath>
     </dependency>
     <dependency>
       <groupId>com.google.code.gson</groupId><artifactId>gson</artifactId><version>2.11.0</version><scope>provided</scope>

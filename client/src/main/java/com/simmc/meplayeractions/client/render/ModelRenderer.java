@@ -13,6 +13,7 @@ import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderContext;
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents;
 import net.fabricmc.fabric.api.resource.v1.ResourceLoader;
 import net.fabricmc.fabric.api.resource.v1.reloader.ResourceReloaderKeys;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.AbstractClientPlayerEntity;
 import net.minecraft.client.network.ClientPlayerEntity;
@@ -44,11 +45,14 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.IntConsumer;
+import java.util.function.BooleanSupplier;
+import java.util.function.BiConsumer;
 
 /** Uses the 1.21.11 extraction/command pipeline; no immediate GPU writes during drawing. */
 public final class ModelRenderer {
@@ -57,6 +61,9 @@ public final class ModelRenderer {
     private static final long MAX_ASSET_PIXELS = 16L * 1024 * 1024;
     private static final Map<String, PreparedAsset> ASSETS = new HashMap<>();
     private static final Map<InstanceKey, AnimationPlayer> PLAYERS = new HashMap<>();
+    private static final Map<String, PreparationRequest> REQUESTS = new LinkedHashMap<>();
+    private static final Set<String> FAILED_PREPARATIONS = new LinkedHashSet<>();
+    private static long pendingPixels;
     private static volatile List<FrozenModel> frame = List.of();
     private static volatile List<FrameModel> frameModels = List.of();
     private static volatile int firstPersonSkipped;
@@ -86,84 +93,289 @@ public final class ModelRenderer {
         ResourceLoader resources = ResourceLoader.get(ResourceType.CLIENT_RESOURCES);
         resources.registerReloader(reloadId, (SynchronousResourceReloader) manager -> reloadTextures());
         resources.addReloaderOrdering(ResourceReloaderKeys.AFTER_VANILLA, reloadId);
+        ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
+            try {
+                clear();
+            } finally {
+                TexturePreparation.SHARED.close();
+            }
+        });
         if (Boolean.getBoolean("meplayeractions.e2e")) {
             E2EHarness.register(clientRuntime);
         }
 
     }
 
-    /** Complete texture uploads before acknowledging client rendering to the server. */
+    /** Compatibility callers retry while a bounded background preparation is pending. */
     public static boolean prepare(String hash, BbModel model) {
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (!client.isOnThread() || hash == null || !hash.matches("[0-9a-f]{64}") || model == null) {
-            return false;
-        }
+        return prepare(hash, model, hash, () -> true);
+    }
 
+    public static boolean prepare(String hash, BbModel model, Object consumer, BooleanSupplier current) {
         if (ASSETS.containsKey(hash)) {
             return true;
         }
+        if (FAILED_PREPARATIONS.contains(hash)) {
+            return false;
+        }
+        prepareAsync(hash, model, consumer, current, (success, reason) -> {
+                if (!success && !reason.equals("cancelled")) {
+                    LOGGER.warn("Cannot prepare model {} for rendering: {}", hash, reason);
+                }
+            });
+        return false;
+    }
 
-        Map<Integer, PreparedTexture> textures = new LinkedHashMap<>();
+    public static boolean prepareAsync(String hash, BbModel model, BooleanSupplier current,
+            BiConsumer<Boolean, String> completion) {
+        return prepareAsync(hash, model, completion, current, completion);
+    }
+
+    private static boolean prepareAsync(String hash, BbModel model, Object consumer, BooleanSupplier current,
+            BiConsumer<Boolean, String> completion) {
+        if (!MinecraftClient.getInstance().isOnThread() || hash == null || !hash.matches("[0-9a-f]{64}")
+                || model == null) {
+            completion.accept(false, "Invalid texture request");
+            return true;
+        }
+        if (ASSETS.containsKey(hash)) {
+            completion.accept(current.getAsBoolean(), "");
+            return true;
+        }
+        if (FAILED_PREPARATIONS.contains(hash)) {
+            completion.accept(false, "Invalid texture source");
+            return true;
+        }
+        PreparationRequest previous = REQUESTS.get(hash);
+        if (previous != null) {
+            if (previous.listeners.size() >= 256 && !previous.listeners.containsKey(consumer)) {
+                return false;
+            }
+            previous.listeners.put(consumer, new PreparationListener(current, completion));
+            return true;
+        }
+        PreparationRequest request = new PreparationRequest(hash);
+        request.listeners.put(consumer, new PreparationListener(current, completion));
+        if (!TexturePreparation.SHARED.submit(request, request::current, memory -> decodeTextures(hash, model, memory),
+                (success, reason) -> {
+                    REQUESTS.remove(hash, request);
+                    if (!success && reason.contains("decode:") && !reason.equals("cancelled")) {
+                        FAILED_PREPARATIONS.add(hash);
+                        while (FAILED_PREPARATIONS.size() > 256) {
+                            FAILED_PREPARATIONS.remove(FAILED_PREPARATIONS.iterator().next());
+                        }
+                    }
+                    for (PreparationListener listener : request.listeners.values()) {
+                        try {
+                            listener.completion().accept(success && listener.current().getAsBoolean(), reason);
+                        } catch (RuntimeException failure) {
+                            LOGGER.warn("Texture preparation listener failed for {}", hash, failure);
+                        }
+                    }
+                })) {
+            return false;
+        }
+        REQUESTS.put(hash, request);
+        return true;
+    }
+
+    public static void pumpTexturePreparation() {
+        TexturePreparation.SHARED.pump();
+    }
+
+    private static TexturePreparation.Prepared decodeTextures(String hash, BbModel model,
+            TexturePreparation.Memory memory) throws Exception {
+        List<BbModel.Vertex> basis = model.basisVertices();
+        if (basis.isEmpty() || basis.size() % 4 != 0 || model.textures().isEmpty()) {
+            throw new IllegalArgumentException("Model has no complete visible quad geometry or textures");
+        }
+        Set<Integer> indices = new HashSet<>();
+        List<byte[]> pngs = new ArrayList<>();
+        long pixels = 0;
+        for (BbModel.Texture source : model.textures()) {
+            if (!indices.add(source.index())) {
+                throw new IllegalArgumentException("Duplicate texture index");
+            }
+            byte[] png = source.png();
+            pixels += pngPixels(png);
+            pngs.add(png);
+        }
+        if (pixels > MAX_ASSET_PIXELS) {
+            throw new IllegalArgumentException("Model texture pixel budget exceeded");
+        }
+        for (BbModel.Vertex vertex : basis) {
+            if (!indices.contains(vertex.texture()) || !finite(vertex)) {
+                throw new IllegalArgumentException("Invalid model geometry or texture reference");
+            }
+        }
+        memory.reserve(pixels * 4);
+        List<DecodedTexture> decoded = new ArrayList<>();
         try {
-            long existingPixels = pixelCount();
-            long assetPixels = 0;
-            List<BbModel.Vertex> basis = model.basisVertices();
-            if (basis.isEmpty() || basis.size() % 4 != 0) {
-                throw new IllegalArgumentException("Model has no complete visible quad geometry");
-            }
-            Set<Integer> sourceIndices = new HashSet<>();
-            model.textures().forEach(texture -> sourceIndices.add(texture.index()));
-            for (BbModel.Vertex vertex : basis) {
-                if (!sourceIndices.contains(vertex.texture()) || !finite(vertex)) {
-                    throw new IllegalArgumentException("Invalid model geometry or texture reference");
+            for (int index = 0; index < pngs.size(); index++) {
+                if (memory.cancelled()) {
+                    throw new InterruptedException("Texture preparation cancelled");
                 }
-            }
-            for (BbModel.Texture source : model.textures()) {
-                if (textures.containsKey(source.index())) {
-                    throw new IllegalArgumentException("Duplicate texture index");
-                }
-
-                Identifier id = Identifier.of("meplayeractions", "runtime/" + hash + "/" + source.index());
-                NativeImage image = NativeImage.read(source.png());
-                NativeImageBackedTexture texture = null;
+                NativeImage image = NativeImage.read(pngs.get(index));
+                boolean handedOff = false;
                 try {
-                    if (image.getWidth() <= 0 || image.getHeight() <= 0 || image.getWidth() > 4096
-                            || image.getHeight() > 4096) {
-                        throw new IllegalArgumentException("Texture dimensions exceed 4096 pixels");
-                    }
-                    long pixels = (long) image.getWidth() * image.getHeight();
-                    assetPixels += pixels;
-                    if (assetPixels > MAX_ASSET_PIXELS || existingPixels + assetPixels > MAX_GPU_PIXELS) {
-                        throw new IllegalArgumentException("GPU texture pixel budget exceeded");
-                    }
-                    texture = new NativeImageBackedTexture(() -> "MEPlayerActions " + hash, image);
-                    client.getTextureManager().registerTexture(id, texture);
-                    boolean translucent = partialAlpha(image);
-                    textures.put(source.index(), new PreparedTexture(id, RenderLayers.entityCutoutNoCull(id),
-                            translucent ? RenderLayers.entityTranslucent(id) : RenderLayers.entityCutoutNoCull(id),
-                            pixels));
-                } catch (Exception failure) {
-                    if (texture != null) {
-                        texture.close();
-                    }
-
-                    else {
+                    decoded.add(new DecodedTexture(model.textures().get(index).index(), image, partialAlpha(image)));
+                    handedOff = true;
+                } finally {
+                    if (!handedOff) {
                         image.close();
                     }
-
-                    throw failure;
                 }
             }
-            if (textures.isEmpty()) {
-                throw new IllegalArgumentException("Model has no textures");
+            return new WorldTextures(hash, model, decoded, pixels);
+        } catch (Throwable failure) {
+            for (DecodedTexture texture : decoded) {
+                try {
+                    texture.image.close();
+                } catch (Throwable cleanup) {
+                    failure.addSuppressed(cleanup);
+                }
             }
+            throw failure;
+        }
+    }
 
-            ASSETS.put(hash, new PreparedAsset(model, Map.copyOf(textures)));
-            return true;
-        } catch (Exception failure) {
-            textures.values().forEach(texture -> client.getTextureManager().destroyTexture(texture.id()));
-            LOGGER.warn("Cannot prepare model {} for rendering: {}", hash, failure.toString());
-            return false;
+    public static long pngPixels(byte[] png) {
+        return PngTextureBounds.pixels(png);
+    }
+
+    private record PreparationListener(BooleanSupplier current, BiConsumer<Boolean, String> completion) {
+    }
+
+    private static final class PreparationRequest {
+        private final String hash;
+        private final Map<Object, PreparationListener> listeners = new LinkedHashMap<>();
+
+        private PreparationRequest(String hash) {
+            this.hash = hash;
+        }
+
+        private boolean current() {
+            this.listeners.values().removeIf(listener -> !listener.current().getAsBoolean());
+            return REQUESTS.get(this.hash) == this && !this.listeners.isEmpty();
+        }
+    }
+
+    private static final class DecodedTexture {
+        private final int index;
+        private NativeImage image;
+        private final boolean translucent;
+
+        private DecodedTexture(int index, NativeImage image, boolean translucent) {
+            this.index = index;
+            this.image = image;
+            this.translucent = translucent;
+        }
+    }
+
+    private static final class WorldTextures implements TexturePreparation.Prepared {
+        private final String hash;
+        private final BbModel model;
+        private final List<DecodedTexture> sources;
+        private final long pixels;
+        private final Map<Integer, PreparedTexture> textures = new LinkedHashMap<>();
+        private int next;
+        private boolean reserved;
+        private boolean committed;
+
+        private WorldTextures(String hash, BbModel model, List<DecodedTexture> sources, long pixels) {
+            this.hash = hash;
+            this.model = model;
+            this.sources = sources;
+            this.pixels = pixels;
+        }
+
+        @Override
+        public TexturePreparation.Step upload() {
+            if (!this.reserved) {
+                while (pixelCount() + pendingPixels + this.pixels > MAX_GPU_PIXELS) {
+                    if (runtime == null || !runtime.evictTextureAsset()) {
+                        return TexturePreparation.Step.WAIT;
+                    }
+                }
+                pendingPixels += this.pixels;
+                this.reserved = true;
+            }
+            DecodedTexture source = this.sources.get(this.next);
+            Identifier id = Identifier.of("meplayeractions", "runtime/" + this.hash + "/" + source.index);
+            long texturePixels = (long) source.image.getWidth() * source.image.getHeight();
+            PreparedTexture descriptor = new PreparedTexture(id, RenderLayers.entityCutoutNoCull(id),
+                    source.translucent ? RenderLayers.entityTranslucent(id) : RenderLayers.entityCutoutNoCull(id),
+                    texturePixels);
+            NativeImageBackedTexture texture = new NativeImageBackedTexture(() -> "MEPlayerActions " + this.hash,
+                    source.image);
+            source.image = null;
+            boolean registered = false;
+            try {
+                MinecraftClient.getInstance().getTextureManager().registerTexture(id, texture);
+                registered = true;
+                this.textures.put(source.index, descriptor);
+            } catch (Throwable failure) {
+                try {
+                    if (registered) {
+                        MinecraftClient.getInstance().getTextureManager().destroyTexture(id);
+                    } else {
+                        texture.close();
+                    }
+                } catch (Throwable cleanup) {
+                    failure.addSuppressed(cleanup);
+                    texture.close();
+                }
+                throw failure;
+            }
+            this.next++;
+            if (this.next == this.sources.size()) {
+                ASSETS.put(this.hash, new PreparedAsset(this.model, Map.copyOf(this.textures)));
+                this.committed = true;
+            }
+            return new TexturePreparation.Step(true, this.committed);
+        }
+
+        @Override
+        public void close() {
+            RuntimeException cleanupFailure = null;
+            try {
+                for (DecodedTexture source : this.sources) {
+                    if (source.image != null) {
+                        try {
+                            source.image.close();
+                        } catch (Throwable failure) {
+                            if (cleanupFailure == null) {
+                                cleanupFailure = new IllegalStateException("Cannot release prepared pixels", failure);
+                            } else {
+                                cleanupFailure.addSuppressed(failure);
+                            }
+                        } finally {
+                            source.image = null;
+                        }
+                    }
+                }
+                if (!this.committed) {
+                    for (PreparedTexture texture : this.textures.values()) {
+                        try {
+                            MinecraftClient.getInstance().getTextureManager().destroyTexture(texture.id());
+                        } catch (Throwable failure) {
+                            if (cleanupFailure == null) {
+                                cleanupFailure = new IllegalStateException("Cannot roll back prepared texture", failure);
+                            } else {
+                                cleanupFailure.addSuppressed(failure);
+                            }
+                        }
+                    }
+                }
+            } finally {
+                if (this.reserved) {
+                    pendingPixels -= this.pixels;
+                    this.reserved = false;
+                }
+            }
+            if (cleanupFailure != null) {
+                throw cleanupFailure;
+            }
         }
     }
 
@@ -251,6 +463,11 @@ public final class ModelRenderer {
             client.execute(() -> release(hash));
             return;
         }
+        PreparationRequest pending = REQUESTS.remove(hash);
+        FAILED_PREPARATIONS.remove(hash);
+        if (pending != null) {
+            TexturePreparation.SHARED.cancel(pending);
+        }
         PreparedAsset asset = ASSETS.remove(hash);
         if (asset == null) {
             return;
@@ -273,6 +490,22 @@ public final class ModelRenderer {
         asset.textures().values().forEach(texture -> client.getTextureManager().destroyTexture(texture.id()));
     }
 
+    static void releaseComponent(String hash) {
+        if (runtime != null && runtime.retainsTextureAsset(hash)) {
+            return;
+        }
+        PreparationRequest pending = REQUESTS.remove(hash);
+        if (pending != null) {
+            TexturePreparation.SHARED.cancel(pending);
+        }
+        FAILED_PREPARATIONS.remove(hash);
+        PreparedAsset asset = ASSETS.remove(hash);
+        if (asset != null) {
+            asset.textures().values().forEach(texture -> MinecraftClient.getInstance().getTextureManager()
+                    .destroyTexture(texture.id()));
+        }
+    }
+
     private static boolean finite(BbModel.Vertex vertex) {
         return Float.isFinite(vertex.x()) && Float.isFinite(vertex.y()) && Float.isFinite(vertex.z())
                 && Float.isFinite(vertex.u()) && Float.isFinite(vertex.v()) && Float.isFinite(vertex.nx())
@@ -280,6 +513,7 @@ public final class ModelRenderer {
     }
 
     private static void reloadTextures() {
+        com.simmc.meplayeractions.client.ui.ModelPreview.resourcesReloaded();
         Map<String, BbModel> retained = new LinkedHashMap<>();
         ASSETS.forEach((hash, asset) -> retained.put(hash, asset.model()));
         if (runtime != null) {
@@ -288,8 +522,10 @@ public final class ModelRenderer {
         }
         clear();
         retained.forEach((hash, model) -> {
-            if (!prepare(hash, model) && runtime != null) {
-                runtime.renderFailed(null, "", hash, "Texture upload failed after resource reload");
+            if (runtime != null) {
+                runtime.restoreTextureAsset(hash, model);
+            } else {
+                prepare(hash, model);
             }
         });
     }
@@ -301,6 +537,9 @@ public final class ModelRenderer {
             client.execute(ModelRenderer::clear);
             return;
         }
+        REQUESTS.values().forEach(request -> TexturePreparation.SHARED.cancel(request));
+        REQUESTS.clear();
+        FAILED_PREPARATIONS.clear();
         NativePlayerPresentation.beginFrame(List.of());
         NativeRenderPhases.beginFrame();
         frame = List.of();

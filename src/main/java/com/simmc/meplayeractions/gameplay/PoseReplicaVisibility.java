@@ -87,8 +87,8 @@ final class PoseReplicaVisibility implements AutoCloseable {
                 }
             };
             api.viewers.set(pose, guard);
-            original.clear();
             this.hidden.put(owner, new Hidden(pose, api, original, guard, existing));
+            original.clear();
             for (Player viewer : existing) {
                 api.removeViewer.invoke(pose, viewer);
             }
@@ -160,9 +160,19 @@ final class PoseReplicaVisibility implements AutoCloseable {
 
     @Override
     public void close() {
+        IllegalStateException failure = null;
         for (UUID owner : List.copyOf(this.hidden.keySet())) {
-            restore(owner);
+            try {
+                restore(owner);
+            } catch (RuntimeException | LinkageError cleanup) {
+                if (failure == null) {
+                    failure = new IllegalStateException("GSit pose visibility cleanup failed");
+                }
+                failure.addSuppressed(cleanup);
+            }
         }
-
+        if (failure != null) {
+            throw failure;
+        }
     }
 }

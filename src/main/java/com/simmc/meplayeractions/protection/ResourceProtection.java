@@ -29,6 +29,7 @@ public final class ResourceProtection implements AutoCloseable {
     private final ThreadPoolExecutor executor;
     private final Set<Job<?>> jobs = new LinkedHashSet<>();
     private final Deque<Completion> completions = new ArrayDeque<>();
+    private final Deque<Runnable> exitSignals = new ArrayDeque<>();
     private final Map<UUID, Owner> owners = new HashMap<>();
     private final Map<String, Long> rejections = new LinkedHashMap<>();
     private final Map<String, LongSupplier> gauges = new LinkedHashMap<>();
@@ -144,6 +145,65 @@ public final class ResourceProtection implements AutoCloseable {
     /** A false return has already delivered its structured rejection on the caller thread. */
     public <T> boolean submit(UUID owner, long bytes, String stage, Callable<T> work, Consumer<T> success,
             Consumer<ResourceError> failure) {
+        return submitTracked(owner, bytes, stage, work, success, failure).accepted();
+    }
+
+    public record TaskResult<T>(T value, Throwable failure, boolean canceled) {
+    }
+
+    public final class TaskHandle<T> {
+        private final Job<T> job;
+        private final CompletableFuture<TaskResult<T>> exited;
+
+        private TaskHandle(Job<T> job, CompletableFuture<TaskResult<T>> exited) {
+            this.job = job;
+            this.exited = exited;
+        }
+
+        public boolean accepted() {
+            return this.job != null;
+        }
+
+        public CompletionStage<TaskResult<T>> exited() {
+            return this.exited.minimalCompletionStage();
+        }
+
+        public boolean workerExited() {
+            return this.exited.isDone();
+        }
+
+        public TaskResult<T> result() {
+            return this.exited.getNow(null);
+        }
+
+        public void cancel() {
+            if (this.job != null) {
+                synchronized (ResourceProtection.this.lock) {
+                    Job<T> task = this.job;
+                    ResourceError error = new ResourceError("request_cancelled", task.stage, false, 0);
+                    ResourceProtection.this.cancel(task, error);
+                    Deque<Completion> replacement = new ArrayDeque<>(ResourceProtection.this.completions.size());
+                    for (Completion completion : ResourceProtection.this.completions) {
+                        if (completion.job == task) {
+                            if (!task.canceled) {
+                                ResourceProtection.this.canceled++;
+                            }
+                            task.canceled = true;
+                            replacement.addLast(new Completion(task, () -> task.failure.accept(error), false));
+                        } else {
+                            replacement.addLast(completion);
+                        }
+                    }
+                    ResourceProtection.this.completions.clear();
+                    ResourceProtection.this.completions.addAll(replacement);
+                }
+                signalExits();
+            }
+        }
+    }
+
+    public <T> TaskHandle<T> submitTracked(UUID owner, long bytes, String stage, Callable<T> work,
+            Consumer<T> success, Consumer<ResourceError> failure) {
         Objects.requireNonNull(work);
         Objects.requireNonNull(success);
         Objects.requireNonNull(failure);
@@ -152,7 +212,7 @@ public final class ResourceProtection implements AutoCloseable {
             throw new IllegalArgumentException("negative reservation");
         }
 
-        Job<T> job;
+        Job<T> job = null;
         ResourceError error;
         synchronized (this.lock) {
             error = admission(owner, bytes, stage);
@@ -171,17 +231,22 @@ public final class ResourceProtection implements AutoCloseable {
                 this.peakReservedBytes = Math.max(this.peakReservedBytes, this.reservedBytes);
                 try {
                     this.executor.execute(job);
-                    return true;
+                    return new TaskHandle<>(job, job.exited);
                 } catch (RejectedExecutionException rejected) {
                     releaseWork(job);
                     releaseCompletion(job);
                     error = ResourceError.busy(stage);
+                    finishWorker(job, null, rejected);
+                    job = null;
                 }
             }
             rejectLocked(error.code());
         }
+        signalExits();
         failure.accept(error);
-        return false;
+        CompletableFuture<TaskResult<T>> rejected = CompletableFuture.completedFuture(
+                new TaskResult<>(null, new ResourceRejectedException(error), false));
+        return new TaskHandle<>(null, rejected);
     }
 
     private ResourceError admission(UUID owner, long bytes, String stage) {
@@ -264,6 +329,7 @@ public final class ResourceProtection implements AutoCloseable {
             this.completions.addAll(replacement);
             this.lastDisguise.remove(owner);
         }
+        signalExits();
     }
 
     private void cancel(Job<?> job, ResourceError error) {
@@ -279,8 +345,8 @@ public final class ResourceProtection implements AutoCloseable {
 
         deliver(job, () -> job.failure.accept(error));
         if (this.executor.remove(job)) {
-            job.workerFinished = true;
             releaseWork(job);
+            finishWorker(job, null, new CancellationException(error.code()));
         } else if (job.thread != null) {
             job.thread.interrupt();
         }
@@ -333,6 +399,26 @@ public final class ResourceProtection implements AutoCloseable {
         this.completionReservedBytes -= job.bytes;
     }
 
+    private <T> void finishWorker(Job<T> job, T value, Throwable failure) {
+        if (job.workerFinished) {
+            return;
+        }
+        job.workerFinished = true;
+        TaskResult<T> result = new TaskResult<>(value, failure, job.canceled);
+        this.exitSignals.addLast(() -> job.exited.complete(result));
+    }
+
+    private void signalExits() {
+        List<Runnable> ready;
+        synchronized (this.lock) {
+            ready = new ArrayList<>(this.exitSignals);
+            this.exitSignals.clear();
+        }
+        for (Runnable signal : ready) {
+            signal.run();
+        }
+    }
+
     private final class Job<T> implements Runnable {
         final ResourceProtection runtime = ResourceProtection.this;
         final UUID owner;
@@ -342,6 +428,7 @@ public final class ResourceProtection implements AutoCloseable {
         final Consumer<T> success;
         final Consumer<ResourceError> failure;
         final long queuedAt;
+        final CompletableFuture<TaskResult<T>> exited = new CompletableFuture<>();
         volatile long startedAt, lastProgress;
         volatile Thread thread;
         volatile boolean canceled;
@@ -360,16 +447,25 @@ public final class ResourceProtection implements AutoCloseable {
         }
 
         public void run() {
+            boolean skipped;
             synchronized (ResourceProtection.this.lock) {
-                if (this.canceled || ResourceProtection.this.closed) {
-                    this.workerFinished = true;
+                skipped = this.canceled || ResourceProtection.this.closed;
+                if (skipped) {
                     releaseWork(this);
-                    return;
+                    if (!this.delivered || ResourceProtection.this.closed) {
+                        releaseCompletion(this);
+                    }
+                    finishWorker(this, null, new CancellationException("Resource work canceled"));
+                } else {
+                    this.thread = Thread.currentThread();
+                    this.startedAt = ResourceProtection.this.clock.getAsLong();
+                    this.lastProgress = this.startedAt;
+                    ResourceProtection.this.running++;
                 }
-                this.thread = Thread.currentThread();
-                this.startedAt = ResourceProtection.this.clock.getAsLong();
-                this.lastProgress = this.startedAt;
-                ResourceProtection.this.running++;
+            }
+            if (skipped) {
+                signalExits();
+                return;
             }
             CURRENT.set(this);
             T value = null;
@@ -387,7 +483,6 @@ public final class ResourceProtection implements AutoCloseable {
             final Throwable failed = problem;
             synchronized (ResourceProtection.this.lock) {
                 ResourceProtection.this.running--;
-                this.workerFinished = true;
                 this.thread = null;
                 releaseWork(this);
                 if (!this.canceled && !ResourceProtection.this.closed) {
@@ -411,8 +506,9 @@ public final class ResourceProtection implements AutoCloseable {
                 } else if (!this.delivered) {
                     releaseCompletion(this);
                 }
-
+                finishWorker(this, result, failed);
             }
+            signalExits();
         }
     }
 
@@ -454,6 +550,7 @@ public final class ResourceProtection implements AutoCloseable {
 
             }
         }
+        signalExits();
         if (this.plugin != null) {
             double[] recent = this.plugin.getServer().getTPS();
             sample(recent.length == 0 ? 20 : recent[0], this.plugin.getServer().getAverageTickTime(), now);
@@ -554,6 +651,7 @@ public final class ResourceProtection implements AutoCloseable {
             }
 
         }
+        signalExits();
     }
 
     private void change(State next, String why, long now) {
@@ -930,12 +1028,13 @@ public final class ResourceProtection implements AutoCloseable {
             this.lastDisguise.clear();
             for (Runnable queued : this.executor.shutdownNow()) {
                 if (queued instanceof ResourceProtection.Job<?> job) {
-                    job.workerFinished = true;
                     releaseWork(job);
                     releaseCompletion(job);
+                    finishWorker(job, null, new CancellationException("Server stopped"));
                 }
             }
 
         }
+        signalExits();
     }
 }

@@ -497,6 +497,132 @@ class ResourceProtectionTest {
         }
     }
 
+    @Test
+    void trackedCancelSignalsActualExitAndKeepsRunningReservationsUntilThen() throws Exception {
+        AtomicBoolean finish = new AtomicBoolean();
+        CountDownLatch entered = new CountDownLatch(1);
+        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), System::nanoTime)) {
+            ResourceProtection.TaskHandle<Integer> task = runtime.submitTracked(null, MIB, "cleanup_preferences", () -> {
+                entered.countDown();
+                while (!finish.get()) {
+                    try {
+                        Thread.sleep(1);
+                    } catch (InterruptedException ignored) {
+                    }
+                }
+                return 3;
+            }, ignored -> {
+            }, ignored -> {
+            });
+            assertTrue(task.accepted());
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+            task.cancel();
+            runtime.drainCompletions();
+            assertFalse(task.workerExited());
+            assertEquals(MIB, runtime.snapshot().get("tasks.reservedBytes"));
+            finish.set(true);
+            ResourceProtection.TaskResult<Integer> result = task.exited().toCompletableFuture().get(5, TimeUnit.SECONDS);
+            assertTrue(result.canceled());
+            assertEquals(0, runtime.snapshot().get("tasks.reservedBytes"));
+        } finally {
+            finish.set(true);
+        }
+    }
+
+    @Test
+    void trackedQueuedRemovalAndClosedRuntimeSignalWithoutRunningTheirWork() throws Exception {
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        AtomicInteger executed = new AtomicInteger();
+        try (ResourceProtection runtime = new ResourceProtection(withTasks(1, 2, 4, 4 * MIB, 4 * MIB, 4),
+                System::nanoTime)) {
+            runtime.submit(null, MIB, "cleanup", () -> {
+                entered.countDown();
+                release.await();
+                return 1;
+            }, ignored -> {
+            }, ignored -> {
+            });
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+            ResourceProtection.TaskHandle<Integer> canceled = runtime.submitTracked(null, MIB, "cleanup",
+                    executed::incrementAndGet, ignored -> {
+                    }, ignored -> {
+                    });
+            canceled.cancel();
+            assertTrue(canceled.workerExited());
+            assertTrue(canceled.result().canceled());
+            assertEquals(MIB, runtime.snapshot().get("tasks.reservedBytes"));
+            ResourceProtection.TaskHandle<Integer> stopped = runtime.submitTracked(null, MIB, "cleanup",
+                    executed::incrementAndGet, ignored -> {
+                    }, ignored -> {
+                    });
+            runtime.close();
+            assertTrue(stopped.workerExited());
+            assertTrue(stopped.result().canceled());
+            assertEquals(0, executed.get());
+        } finally {
+            release.countDown();
+        }
+    }
+
+    @Test
+    void trackedCancelReplacesFinishedPendingCommitOnceAndKeepsCompletionReservationUntilDrain() throws Exception {
+        AtomicInteger successes = new AtomicInteger();
+        List<ResourceError> failures = new ArrayList<>();
+        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), System::nanoTime)) {
+            ResourceProtection.TaskHandle<Integer> task = runtime.submitTracked(null, MIB, "cleanup", () -> 1,
+                    ignored -> successes.incrementAndGet(), failures::add);
+            ResourceProtection.TaskResult<Integer> exited = task.exited().toCompletableFuture().get(5, TimeUnit.SECONDS);
+            assertFalse(exited.canceled());
+            assertEquals(0, runtime.snapshot().get("tasks.reservedBytes"));
+            assertEquals(MIB, runtime.snapshot().get("tasks.completionReservedBytes"));
+            task.cancel();
+            task.cancel();
+            assertSame(exited, task.result());
+            assertEquals(1, runtime.snapshot().get("tasks.pendingCompletions"));
+            assertEquals(MIB, runtime.snapshot().get("tasks.completionReservedBytes"));
+            assertEquals(1, runtime.snapshot().get("tasks.canceled"));
+            runtime.drainCompletions();
+            assertEquals(0, successes.get());
+            assertEquals(1, failures.size());
+            assertEquals("request_cancelled", failures.getFirst().code());
+            assertEquals(0, runtime.snapshot().get("tasks.completionReservedBytes"));
+            task.cancel();
+            runtime.drainCompletions();
+            assertEquals(1, failures.size());
+            assertEquals(1, runtime.snapshot().get("tasks.canceled"));
+        }
+    }
+
+    @Test
+    void trackedExitCallbacksRunOutsideRuntimeLock() throws Exception {
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        try (ResourceProtection runtime = new ResourceProtection(ResourceSettings.defaults(), System::nanoTime)) {
+            ResourceProtection.TaskHandle<Integer> task = runtime.submitTracked(null, 1, "cleanup", () -> {
+                entered.countDown();
+                release.await();
+                return 1;
+            }, ignored -> {
+            }, ignored -> {
+            });
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+            CompletableFuture<Void> checked = task.exited().thenAccept(result -> {
+                CompletableFuture<Map<String, Long>> otherThread = new CompletableFuture<>();
+                Thread thread = new Thread(() -> otherThread.complete(runtime.snapshot()));
+                thread.setDaemon(true);
+                thread.start();
+                try {
+                    assertEquals(0, otherThread.get(1, TimeUnit.SECONDS).get("tasks.reservedBytes"));
+                } catch (Exception failure) {
+                    throw new AssertionError("Exit callback held the resource runtime lock", failure);
+                }
+            }).toCompletableFuture();
+            release.countDown();
+            checked.get(5, TimeUnit.SECONDS);
+        } finally {
+            release.countDown();
+        }
+    }
+
     private static ResourceSettings withTasks(int threads, int queue, int ownerJobs, long bytes, long ownerBytes,
             int completions) {
         ResourceSettings d = ResourceSettings.defaults();

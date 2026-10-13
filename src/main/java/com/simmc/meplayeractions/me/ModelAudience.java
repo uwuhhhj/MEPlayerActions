@@ -87,6 +87,10 @@ public final class ModelAudience {
         return this.allowed.contains(viewer);
     }
 
+    Set<UUID> viewerIds() {
+        return this.allowed;
+    }
+
     private boolean renders(UUID viewer) {
         return this.allowed.contains(viewer) && !this.localRenderers.contains(viewer);
     }

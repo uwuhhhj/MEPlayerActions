@@ -1,6 +1,6 @@
 # MEPlayerActions 架构
 
-本文对应服务端和客户端 0.6.2。安装与命令见 [README](README.md)，开发流程见 [CONTRIBUTING](CONTRIBUTING.md)，消息字段与限制以 [协议](docs/CLIENT_PROTOCOL.md) 为准。
+本文对应服务端和客户端 0.6.3。安装与命令见 [README](README.md)，开发流程见 [CONTRIBUTING](CONTRIBUTING.md)，消息字段与限制以 [协议](docs/CLIENT_PROTOCOL.md) 为准。
 
 ## 职责
 
@@ -14,6 +14,8 @@
 
 服务器伪装当前使用 ModelEngine R4.1.1；插件入口通过反射隔离这个可选后端。没有可用的 ME 时，同一 JAR 进入私人多人同步模式，不能提供服务器伪装。客户端不引用 Bukkit、ME 或 GSit；更换服务器引擎需要服务端实现相同的资产、绑定、追踪与接管语义。
 
+GSit 公共 API 由独立的 `DirectGSitBridge` 直接调用，核心动作服务仅持有不引用 GSit 类型的 `GSitAccess`。缺失、未启用或非 3.x 版本不会加载适配器；初始化或运行时发生 `RuntimeException` / `LinkageError` 时停用该接入，姿态采样回退到 Paper 原生状态，飞行及其他服务继续运行。公共 API 故障不会逐 tick 重试，恢复需重建后端（本插件 reload 或重启）。只有 GSit 3.5.1 假玩家隐藏访问内部成员并按实现类缓存反射对象；该显示适配器故障只停用内部显示适配，保留公共姿态接入，并尝试恢复所有已替换的观众缓存。
+
 三条路径分别是本地私人外观、服务器中继私人多人分享、服务器 ME 伪装。本地外观不发送资源；私人分享使用独立权限与频道，服务器只校验、缓存和分发完整资源，不执行 YSM 脚本、不创建 ME 蓝图或伪装实体。服务器伪装发送完整原 `.bbmodel`，不依赖原版资源包恢复已烘焙的表达式，只有当前授权绑定可获得资产 offer。配置与模型放置见 [模型部署](docs/MODEL_DELIVERY.md)。
 
 ## 模块索引
@@ -23,7 +25,7 @@
 | 模块 | 入口与用途 |
 | --- | --- |
 | 启动与后端 | [MEPlayerActionsPlugin](src/main/java/com/simmc/meplayeractions/MEPlayerActionsPlugin.java)、[ServerBackend](src/main/java/com/simmc/meplayeractions/server/ServerBackend.java)、[ModelEngineBackend](src/main/java/com/simmc/meplayeractions/me/ModelEngineBackend.java)、[PrivateOnlyBackend](src/main/java/com/simmc/meplayeractions/server/PrivateOnlyBackend.java) |
-| 配置与命令 | [config/](src/main/java/com/simmc/meplayeractions/config/)、[CommandLayout](src/main/java/com/simmc/meplayeractions/command/CommandLayout.java)、[ActionMenu](src/main/java/com/simmc/meplayeractions/ui/ActionMenu.java) |
+| 配置与命令 | [config/](src/main/java/com/simmc/meplayeractions/config/)、[CommandLayout](src/main/java/com/simmc/meplayeractions/command/CommandLayout.java)、[ActionDialog](src/main/java/com/simmc/meplayeractions/ui/ActionDialog.java)；Dialog 为未安装客户端、无法使用 J 轮盘时偶尔使用的备用菜单 |
 | 动作会话 | [ActionController](src/main/java/com/simmc/meplayeractions/action/ActionController.java)；[action/](src/main/java/com/simmc/meplayeractions/action/) 中的姿态、移动、跳跃、交互、视觉历史与分批发现 |
 | ME 与观众 | [ModelEngineBridge](src/main/java/com/simmc/meplayeractions/me/ModelEngineBridge.java)、[ModelAudience](src/main/java/com/simmc/meplayeractions/me/ModelAudience.java)；创建或接管模型，按观众选择显示路径 |
 | 原版实体追踪 | [NativeEntityRelay](src/main/java/com/simmc/meplayeractions/me/NativeEntityRelay.java) 与 `NativeEntity*`；异步安装通道，保护授权玩家的原版追踪包及恢复配对 |
@@ -81,6 +83,9 @@ flowchart LR
 - 所有客户端模型位置复用已追踪玩家的原版当帧渲染状态，不叠加位置缓冲。`followServerTimeline` 只选择服务器动画层与时间线；没有实体时不绘制幽灵模型。
 - 普通锚点为玩家脚底，原生床与 GSit 接触面分开处理；卧倒由作者动画负责，避免再叠加整模型姿态旋转。缩放和视觉延迟不改变真实碰撞或坐标。
 - Bukkit 模型、玩法和授权操作在主线程；资产校验使用后台工作。Netty 安装不阻塞主线程，完成结果必须重新核对连接、实例与权限。
+- 玩家同步偏好协调器属于插件生命周期，后端重载复用即时内存值和最新待保存变更。独立 YAML 写入通过共享后台运行时合并完成；任务句柄确认实际 worker 退出后才允许后继写入，停服收尾最多等待 250 ms。
+- 世界、组件及 GUI 纹理共用一个有界准备调度，后台解码／透明度分类／atlas 拼接，客户端线程每 tick 分批安装。待提交 GPU 像素也计入预算；未全部安装和身份复核前不发送 ready，清理／撤权使迟到结果失效。
+- 受管伪装的同步候选来自现有观众集合的增量反向索引；外部接管保留兼容候选。握手快照与后台发现共享每 tick 128 个候选额度，按观察者轮转续扫；索引只提供候选，当前授权、已有绑定维护及撤权独立复查。
 - 资源工作由共享固定线程池和有界队列执行，排队、运行与待主线程结果各自有数量／字节上限；拒绝不会在调用线程补跑。主线程先快检，后台读写、校验与准备不可变资源，回调再核对生命周期和授权。取消运行作业时，实际退出前保留其工作预留。
 - 两同步频道共用全服上下行、包数与传输额度，私人资源继续有自身子预算。保护状态按服务器与本插件压力分级，先减速，再暂停新增，紧急时分批清理自有实例；安全撤销、必要确认和退出处理继续。全局 `status` 读取运行指标快照，配置、恢复与 API 边界见 [资源保护](docs/SERVER_RESOURCE_PROTECTION.md)。
 - ME 渲染线程只读不可变偏移；Netty 处理器只读已发布实体集合。客户端绑定和 GPU 安装回到 Minecraft 主线程，绘制阶段只消费冻结几何；所有后台结果受生命周期标识约束。

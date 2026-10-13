@@ -3,6 +3,8 @@ package com.simmc.meplayeractions.client;
 import com.google.gson.*;
 import com.simmc.meplayeractions.action.DisguiseOptions;
 import com.simmc.meplayeractions.protection.ResourceError;
+import com.simmc.meplayeractions.protection.ResourceSettings;
+import com.simmc.meplayeractions.protection.ResourceProtection;
 import org.bukkit.*;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
@@ -18,6 +20,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Logger;
 import static org.junit.jupiter.api.Assertions.*;
 import java.util.function.Consumer;
+import java.util.function.LongSupplier;
 
 class ClientSyncLifecyclePerformanceTest {
     @TempDir
@@ -714,6 +717,396 @@ class ClientSyncLifecyclePerformanceTest {
         }
     }
 
+    @Test
+    void indexedDiscoverySharesOneQuotaAcrossFiveHundredHandshakes() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
+            List<Person> people = new ArrayList<>();
+            Map<UUID, Set<UUID>> candidates = new HashMap<>();
+            for (int number = 0; number < 500; number++) {
+                scene.nextId = (number + 1) * 40;
+                people.add(scene.person(number < 200));
+            }
+            for (int number = 0; number < 200; number++) {
+                for (int slot = 1; slot <= 10; slot++) {
+                    UUID viewer = people.get((number + slot) % people.size()).id;
+                    candidates.computeIfAbsent(viewer, ignored -> new HashSet<>()).add(people.get(number).id);
+                }
+            }
+            scene.service.audienceCandidates(viewer -> candidates.getOrDefault(viewer, Set.of()));
+            scene.service.audience((viewer, owner) -> candidates.getOrDefault(viewer.getUniqueId(), Set.of())
+                    .contains(owner));
+            for (Person person : people) {
+                scene.hello(person, true, false);
+                assertTrue((int) field(scene.service, "discoveryCandidatesThisTick") <= 128);
+            }
+            int started = scene.tick;
+            while (!((Deque<?>) field(scene.service, "discoveryQueue")).isEmpty()) {
+                assertTrue(scene.tick - started < 100);
+                scene.tick++;
+                scene.maintain();
+                assertTrue((int) field(scene.service, "discoveryCandidatesThisTick") <= 128);
+            }
+            assertEquals(2200L, field(scene.service, "discoveryCandidatesTotal"));
+            for (Person person : people) {
+                Set<UUID> expected = new HashSet<>(candidates.getOrDefault(person.id, Set.of()));
+                if (scene.owners.containsKey(person.id)) {
+                    expected.add(person.id);
+                }
+                Object session = ((Map<?, ?>) field(scene.service, "sessions")).get(person.id);
+                assertEquals(expected, ((Map<?, ?>) field(session, "bindings")).keySet());
+            }
+            System.out.println("Indexed discovery: 200 owners, 500 observers, 2200 candidates, max 128/tick, "
+                    + (scene.tick - started + 1) + " ticks including handshake tick");
+        }
+    }
+
+    @Test
+    void partialFallbackSweepsPreserveBindingsAndEndSnapshotsOnlyAfterCompletion() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
+            scene.allowLargeSnapshot();
+            for (int number = 0; number < 200; number++) {
+                scene.person(true);
+            }
+            Person first = scene.person(false), second = scene.person(false), third = scene.person(false);
+            for (Person viewer : List.of(first, second, third)) {
+                scene.hello(viewer, true, false);
+                assertEquals(1, viewer.count("snapshot_begin"));
+                assertEquals(0, viewer.count("snapshot_end"));
+            }
+            assertEquals(128, field(scene.service, "discoveryCandidatesThisTick"));
+            scene.maintain();
+            assertEquals(0, first.count("unbind"));
+            int started = scene.tick;
+            while (!((Deque<?>) field(scene.service, "discoveryQueue")).isEmpty()) {
+                assertTrue(scene.tick - started < 20);
+                scene.tick++;
+                scene.maintain();
+                assertTrue((int) field(scene.service, "discoveryCandidatesThisTick") <= 128);
+            }
+            for (Person viewer : List.of(first, second, third)) {
+                assertEquals(200, viewer.count("state"));
+                assertEquals(1, viewer.count("snapshot_end"));
+                assertEquals(0, viewer.count("unbind"));
+                assertTrue(viewer.messages.indexOf(viewer.last("snapshot_end"))
+                        > viewer.messages.indexOf(viewer.last("state")));
+            }
+        }
+    }
+
+    @Test
+    void staleCandidateIndexCannotGrantVisibilityOrRevokeAnOtherwiseValidBinding() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
+            Person owner = scene.person(true), viewer = scene.person(false);
+            scene.service.audienceCandidates(id -> Set.of(owner.id));
+            scene.service.audience((watcher, id) -> false);
+            scene.hello(viewer, true, false);
+            assertEquals(0, viewer.count("state"));
+            scene.service.audience((watcher, id) -> true);
+            scene.service.sendSnapshot(viewer.player);
+            assertEquals(1, viewer.count("state"));
+            scene.service.audienceCandidates(id -> Set.of());
+            viewer.messages.clear();
+            scene.service.sendSnapshot(viewer.player);
+            assertEquals(1, viewer.count("state"));
+            assertEquals(0, viewer.count("unbind"));
+            viewer.visible = false;
+            scene.service.observationChanged(viewer.player);
+            assertEquals(1, viewer.count("unbind"));
+        }
+    }
+
+    @Test
+    void existingStateUpdatesAndLeaseRevocationContinueWhenDiscoveryQuotaIsExhausted() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
+            Person owner = scene.person(true), viewer = scene.person(false);
+            scene.local(owner);
+            AtomicInteger restored = new AtomicInteger();
+            scene.service.rendering((watcher, id, instance, enabled) -> {
+                if (!enabled) {
+                    restored.incrementAndGet();
+                }
+                return true;
+            });
+            scene.hello(viewer, true, false);
+            scene.ready(viewer, owner);
+            for (int number = 0; number < 200; number++) {
+                scene.person(true);
+            }
+            scene.tick++;
+            Person joining = scene.person(false);
+            scene.hello(joining, true, false);
+            assertEquals(128, field(scene.service, "discoveryCandidatesThisTick"));
+            viewer.messages.clear();
+            owner.sequence++;
+            scene.service.broadcast(scene.snapshot(owner.id));
+            assertEquals(1, viewer.count("state"));
+            viewer.visible = false;
+            scene.service.observationChanged(viewer.player);
+            assertEquals(1, viewer.count("unbind"));
+            assertEquals(1, restored.get());
+            Object session = ((Map<?, ?>) field(scene.service, "sessions")).get(viewer.id);
+            assertEquals(0, ((RenderLeases) field(session, "leases")).size());
+            assertEquals(128, field(scene.service, "discoveryCandidatesThisTick"));
+        }
+    }
+
+    @Test
+    void quitCancelsAPartialScanAndANewHandshakeStartsAFreshSnapshot() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
+            scene.allowLargeSnapshot();
+            for (int number = 0; number < 200; number++) {
+                scene.person(true);
+            }
+            Person viewer = scene.person(false);
+            scene.hello(viewer, true, false);
+            assertEquals(0, viewer.count("snapshot_end"));
+            scene.service.forget(viewer.player);
+            assertTrue(((Deque<?>) field(scene.service, "discoveryQueue")).isEmpty());
+            viewer.messages.clear();
+            scene.hello(viewer, true, false);
+            assertEquals(1, viewer.count("snapshot_begin"));
+            assertEquals(0, viewer.count("state"));
+            assertEquals(1, ((Deque<?>) field(scene.service, "discoveryQueue")).size());
+            for (int number = 0; number < 2; number++) {
+                scene.tick++;
+                scene.maintain();
+            }
+            assertEquals(200, viewer.count("state"));
+            assertEquals(1, viewer.count("snapshot_end"));
+        }
+    }
+
+    @Test
+    void remainingCandidatesUseCurrentInstancesAndVisibilityAfterAYield() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
+            scene.allowLargeSnapshot();
+            for (int number = 0; number < 200; number++) {
+                scene.person(true);
+            }
+            Person viewer = scene.person(false);
+            scene.hello(viewer, true, false);
+            Object session = ((Map<?, ?>) field(scene.service, "sessions")).get(viewer.id);
+            Map<?, ?> bindings = (Map<?, ?>) field(session, "bindings");
+            List<Person> remaining = scene.owners.values().stream().filter(person -> !bindings.containsKey(person.id))
+                    .toList();
+            assertEquals(72, remaining.size());
+            Person replaced = remaining.get(0), distant = remaining.get(1), revoked = remaining.get(2);
+            UUID previousInstance = replaced.instance;
+            replaced.instance = UUID.randomUUID();
+            distant.x = 65;
+            scene.service.audience((watcher, owner) -> !owner.equals(revoked.id));
+            scene.tick++;
+            scene.maintain();
+            assertEquals(0, viewer.messages.stream().filter(packet -> packet.get("type").getAsString().equals("state")
+                    && packet.get("instance").getAsString().equals(previousInstance.toString())).count());
+            assertTrue(viewer.messages.stream().anyMatch(packet -> packet.get("type").getAsString().equals("state")
+                    && packet.get("instance").getAsString().equals(replaced.instance.toString())));
+            assertFalse(bindings.containsKey(distant.id));
+            assertFalse(bindings.containsKey(revoked.id));
+            assertEquals(1, viewer.count("snapshot_end"));
+            assertEquals(0, viewer.count("unbind"));
+        }
+    }
+
+    @Test
+    void mainWorkBudgetPausesDiscoveryWithoutDelayingRevocationAndThenResumes() throws Exception {
+        Constructor<ResourceProtection> constructor = ResourceProtection.class.getDeclaredConstructor(
+                ResourceSettings.class, LongSupplier.class);
+        constructor.setAccessible(true);
+        try (Scene scene = new Scene(this.temporary);
+                ResourceProtection runtime = constructor.newInstance(ResourceSettings.defaults(), (LongSupplier) () -> 0)) {
+            scene.allowLargeSnapshot();
+            Person owner = scene.person(true), viewer = scene.person(false);
+            scene.hello(viewer, true, false);
+            for (int number = 0; number < 200; number++) {
+                scene.person(true);
+            }
+            scene.tick++;
+            Person joining = scene.person(false);
+            scene.hello(joining, true, false);
+            assertEquals(128, field(scene.service, "discoveryCandidatesThisTick"));
+            setField(scene.service, "protection", runtime);
+            assertTrue(runtime.tryMainWork(runtime.settings().protection().mainWorkPerTick()));
+            int delivered = joining.count("state");
+            viewer.visible = false;
+            scene.service.observationChanged(viewer.player);
+            assertEquals(1, viewer.count("unbind"));
+            scene.tick++;
+            scene.maintain();
+            assertEquals(delivered, joining.count("state"));
+            assertEquals(0, joining.count("snapshot_end"));
+            assertEquals(0, field(scene.service, "discoveryCandidatesThisTick"));
+            for (int number = 0; number < 20 && joining.count("snapshot_end") == 0; number++) {
+                runtime.tick();
+                scene.tick++;
+                scene.maintain();
+            }
+            assertEquals(201, joining.count("state"));
+            assertEquals(1, joining.count("snapshot_end"));
+        }
+    }
+
+    @Test
+    void pushDiscoveryRechecksAuthorizationOnceForAllBatchesInEachPump() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
+            scene.allowLargeSnapshot();
+            for (int number = 0; number < 200; number++) {
+                Person owner = scene.person(true);
+                if (number == 0) {
+                    scene.local(owner);
+                }
+                owner.localRenderable = true;
+            }
+            Person viewer = scene.person(false);
+            scene.helloPush(viewer);
+            Object session = ((Map<?, ?>) field(scene.service, "sessions")).get(viewer.id);
+            assertEquals(128, ((Map<?, ?>) field(session, "bindings")).size());
+            assertEquals(1L, field(scene.service, "authorizationRefreshesTotal"));
+            assertEquals(128L, field(scene.service, "authorizationBindingChecksTotal"));
+            assertEquals(Set.of(scene.assets.get("fixture").orElseThrow().hash()), field(session, "authorized"));
+            assertEquals(1, viewer.count("asset_offer"));
+            assertEquals(0, viewer.count("asset_cancel"));
+
+            scene.tick++;
+            Method pump = ClientSyncService.class.getDeclaredMethod("pumpDiscovery");
+            pump.setAccessible(true);
+            pump.invoke(scene.service);
+            assertEquals(200, ((Map<?, ?>) field(session, "bindings")).size());
+            assertEquals(2L, field(scene.service, "authorizationRefreshesTotal"));
+            assertEquals(328L, field(scene.service, "authorizationBindingChecksTotal"));
+            assertEquals(0, field(session, "authorizationBatchDepth"));
+            assertEquals(0, viewer.count("asset_cancel"));
+            assertEquals(1, viewer.count("snapshot_end"));
+        }
+    }
+
+    @Test
+    void validationCancelsRevokedOffersAfterOneAuthorizationRefreshWithoutDiscoveryWork() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
+            scene.allowLargeSnapshot();
+            for (int number = 0; number < 20; number++) {
+                Person owner = scene.person(true);
+                if (number == 0) {
+                    scene.local(owner);
+                }
+                owner.localRenderable = true;
+            }
+            Person viewer = scene.person(false);
+            scene.helloPush(viewer);
+            long before = (long) field(scene.service, "authorizationRefreshesTotal");
+            int candidates = (int) field(scene.service, "discoveryCandidatesThisTick");
+            viewer.visible = false;
+            scene.service.observationChanged(viewer.player);
+            Object session = ((Map<?, ?>) field(scene.service, "sessions")).get(viewer.id);
+            assertTrue(((Map<?, ?>) field(session, "bindings")).isEmpty());
+            assertEquals(Set.of(), field(session, "authorized"));
+            assertEquals(before + 1, field(scene.service, "authorizationRefreshesTotal"));
+            assertEquals(20, viewer.count("unbind"));
+            assertEquals(1, viewer.count("asset_cancel"));
+            assertEquals(candidates, field(scene.service, "discoveryCandidatesThisTick"));
+            assertEquals(0, field(session, "authorizationBatchDepth"));
+        }
+    }
+
+    @Test
+    void revokingOneHashAliasPreservesTheOfferUntilTheLastValidOwnerIsRemoved() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
+            scene.allowLargeSnapshot();
+            Person first = scene.person(true), second = scene.person(true), viewer = scene.person(false);
+            scene.local(first);
+            second.localRenderable = true;
+            scene.helloPush(viewer);
+            Object session = ((Map<?, ?>) field(scene.service, "sessions")).get(viewer.id);
+            String offer = viewer.last("asset_offer").get("offerId").getAsString();
+            scene.service.audience((watcher, owner) -> owner.equals(second.id));
+            long before = (long) field(scene.service, "authorizationRefreshesTotal");
+            scene.service.observationChanged(viewer.player);
+            assertEquals(Set.of(second.id), ((Map<?, ?>) field(session, "bindings")).keySet());
+            assertEquals(Set.of(scene.assets.get("fixture").orElseThrow().hash()), field(session, "authorized"));
+            assertEquals(before + 1, field(scene.service, "authorizationRefreshesTotal"));
+            assertEquals(0, viewer.count("asset_cancel"));
+            assertEquals(offer, viewer.last("asset_offer").get("offerId").getAsString());
+
+            scene.service.unbind(second.id, second.instance, "test_revoke");
+            assertEquals(Set.of(), field(session, "authorized"));
+            assertEquals(1, viewer.count("asset_cancel"));
+            assertEquals(before + 2, field(scene.service, "authorizationRefreshesTotal"));
+            assertEquals(0, field(session, "authorizationBatchDepth"));
+        }
+    }
+
+    @Test
+    void failedDiscoveryStillClosesAuthorizationBatchesForAllTouchedViewers() throws Exception {
+        try (Scene scene = new Scene(this.temporary)) {
+            scene.allowLargeSnapshot();
+            for (int number = 0; number < 200; number++) {
+                Person owner = scene.person(true);
+                if (number == 0) {
+                    scene.local(owner);
+                }
+                owner.localRenderable = true;
+            }
+            Person first = scene.person(false), second = scene.person(false);
+            scene.helloPush(first);
+            scene.helloPush(second);
+            AtomicBoolean fail = new AtomicBoolean(true);
+            scene.service.audience((watcher, owner) -> {
+                if (watcher.getUniqueId().equals(first.id) && fail.getAndSet(false)) {
+                    throw new IllegalStateException("fixture audience failure");
+                }
+                return true;
+            });
+            long before = (long) field(scene.service, "authorizationRefreshesTotal");
+            scene.tick++;
+            Method pump = ClientSyncService.class.getDeclaredMethod("pumpDiscovery");
+            pump.setAccessible(true);
+            pump.invoke(scene.service);
+            assertEquals(before + 2, field(scene.service, "authorizationRefreshesTotal"));
+            for (Person viewer : List.of(first, second)) {
+                Object session = ((Map<?, ?>) field(scene.service, "sessions")).get(viewer.id);
+                assertEquals(0, field(session, "authorizationBatchDepth"));
+                assertFalse((boolean) field(session, "authorizationDirty"));
+                assertEquals(Set.of(scene.assets.get("fixture").orElseThrow().hash()), field(session, "authorized"));
+                assertEquals(0, viewer.count("asset_cancel"));
+            }
+        }
+    }
+
+    @Test
+    void partialDiscoveryStillFlushesAuthorizationWhenMainBudgetStopsTheNextBatch() throws Exception {
+        Constructor<ResourceProtection> constructor = ResourceProtection.class.getDeclaredConstructor(
+                ResourceSettings.class, LongSupplier.class);
+        constructor.setAccessible(true);
+        try (Scene scene = new Scene(this.temporary);
+                ResourceProtection runtime = constructor.newInstance(ResourceSettings.defaults(), (LongSupplier) () -> 0)) {
+            scene.allowLargeSnapshot();
+            for (int number = 0; number < 200; number++) {
+                Person owner = scene.person(true);
+                if (number == 0) {
+                    scene.local(owner);
+                }
+                owner.localRenderable = true;
+            }
+            Person viewer = scene.person(false);
+            scene.helloPush(viewer);
+            assertTrue(runtime.tryMainWork(runtime.settings().protection().mainWorkPerTick() - 1));
+            setField(scene.service, "protection", runtime);
+            scene.tick++;
+            Method pump = ClientSyncService.class.getDeclaredMethod("pumpDiscovery");
+            pump.setAccessible(true);
+            pump.invoke(scene.service);
+            Object session = ((Map<?, ?>) field(scene.service, "sessions")).get(viewer.id);
+            assertEquals(136, ((Map<?, ?>) field(session, "bindings")).size());
+            assertEquals(2L, field(scene.service, "authorizationRefreshesTotal"));
+            assertEquals(264L, field(scene.service, "authorizationBindingChecksTotal"));
+            assertEquals(Set.of(scene.assets.get("fixture").orElseThrow().hash()), field(session, "authorized"));
+            assertEquals(0, field(session, "authorizationBatchDepth"));
+            assertFalse((boolean) field(session, "authorizationDirty"));
+            assertEquals(0, viewer.count("asset_cancel"));
+            assertEquals(0, viewer.count("snapshot_end"));
+        }
+    }
+
     private static final class Scene implements AutoCloseable {
         final Field serverField;
         final Object originalServer;
@@ -798,6 +1191,16 @@ class ClientSyncLifecyclePerformanceTest {
             hello(person, incremental, timeline, false);
         }
 
+        void helloPush(Person person) {
+            JsonObject packet = new JsonObject();
+            JsonArray capabilities = new JsonArray();
+            for (String capability : List.of("local_render", "server_push_models", "incremental_state")) {
+                capabilities.add(capability);
+            }
+            packet.add("capabilities", capabilities);
+            send(person, "hello", packet);
+        }
+
         void hello(Person person, boolean incremental, boolean timeline, boolean disguiseResults) {
             JsonObject packet = new JsonObject();
             packet.addProperty("protocol", 3);
@@ -824,6 +1227,18 @@ class ClientSyncLifecyclePerformanceTest {
             Method method = ClientSyncService.class.getDeclaredMethod("maintainSessions");
             method.setAccessible(true);
             method.invoke(this.service);
+        }
+
+        void allowLargeSnapshot() throws Exception {
+            ResourceSettings.Network defaults = ResourceSettings.defaults().network();
+            ConnectionLimits limits = (ConnectionLimits) field(this.service, "limits");
+            limits.configure(new ResourceSettings.Network(defaults.globalUploadBytesPerSecond(),
+                    defaults.globalDownloadBytesPerSecond(), defaults.uploadBytesPerSecond(),
+                    defaults.downloadBytesPerSecond(), defaults.assetDownloadBytesPerSecond(),
+                    defaults.globalPacketsPerSecond(), 512, defaults.burstBytes(), defaults.bytesPerTick(),
+                    defaults.assetBytesPerTick(), defaults.globalTransfers(), defaults.transfersPerPlayer(),
+                    defaults.waitingTransfers(), defaults.transferQueueTicks(), defaults.transferIdleTicks(),
+                    defaults.transferTotalTicks(), defaults.readyTicks(), defaults.maxQueuedOutgoingBytes()));
         }
 
         void local(Person owner) throws Exception {
@@ -874,14 +1289,15 @@ class ClientSyncLifecyclePerformanceTest {
         double x;
         long sequence = 1;
         int lastBytes;
-        boolean localRenderable, showSelf = true, invisible;
+        boolean localRenderable, showSelf = true, invisible, visible = true;
         List<ClientSyncService.AnimationInfo> animations = List.of(new ClientSyncService.AnimationInfo("idle", "Idle"));
 
         Person(UUID id, World world) {
             this.id = id;
             this.player = proxy(Player.class, (instance, method, args) -> switch (method.getName()) {
             case "getUniqueId" -> id;
-            case "isOnline", "canSee" -> true;
+            case "isOnline" -> true;
+            case "canSee" -> this.visible;
             case "getWorld" -> world;
             case "getLocation" -> new Location(world, this.x, 64, 0);
             case "getFoodLevel" -> 20;

@@ -297,24 +297,52 @@ class PreviewSceneTest {
     }
 
     @Test
-    void selectedPreviewRetainsItsAuthorsGuiAndParametersWithoutTheCurrentOwnersHands() throws Exception {
-        BbModel model = tinyModel("gui", "ysm.has_mainhand ? 160 : v.roaming.preview_position * 16", "HOLD", 65535,
-                null);
+    void selectedPreviewUsesTheOwnerAnimationPathWithItsOwnParametersAndClock() throws Exception {
+        BbModel model = tinyModel("gui", "v.roaming.preview_position * 16", "HOLD", 65535, null);
         AtomicInteger ownerBindings = new AtomicInteger();
         PreviewScene.NativeInputs owner = new PreviewScene.NativeInputs(
                 nativeSample(0, VanillaYsmAnimations.VanillaState.NONE), Map.of("ysm.has_mainhand", 1d), context -> {
                     ownerBindings.incrementAndGet();
                     context.query("ysm.has_mainhand", 1d);
                 });
-        PreviewScene.Sample selected = new PreviewScene(model, "gui", ModelPreview.Context.SELECTED).sample(300,
-                Map.of("variable.roaming.preview_position", 3d), owner);
+        PreviewScene selectedScene = new PreviewScene(model, "gui", ModelPreview.Context.SELECTED);
+        PreviewScene currentScene = new PreviewScene(model, "gui", ModelPreview.Context.OWNER);
+        selectedScene.sample(300, Map.of("variable.roaming.preview_position", 3d), owner);
+        currentScene.sample(300, Map.of("variable.roaming.preview_position", 3d), owner);
+        PreviewScene.Sample selected = selectedScene.sample(303, Map.of("variable.roaming.preview_position", 3d), owner);
+        PreviewScene.Sample current = currentScene.sample(303, Map.of("variable.roaming.preview_position", 3d), owner);
         assertEquals(ModelPreview.Context.SELECTED, selected.context());
-        assertEquals(List.of("gui"), selected.animations());
-        assertEquals(List.of("player.cap"), selected.slots());
-        assertEquals("HOLD", selected.layers().getFirst().loop());
+        assertEquals(List.of("idle"), selected.animations());
+        assertEquals(current.layers(), selected.layers());
+        assertEquals(current.vertices(), selected.vertices());
         assertEquals(3, minimumX(selected.vertices()), 1e-5,
-                "The selected model uses its own author parameter and empty preview hands");
-        assertEquals(0, ownerBindings.get(), "Pending selection never binds the current world owner's entity");
+                "The selected model keeps its own saved author parameters");
+        assertEquals(4, ownerBindings.get(), "Both large previews consume the same read-only player input");
+    }
+
+    @Test
+    void bundledLargePreviewsMatchTheCurrentModelPoseInsteadOfTheCardGuiAnimation() throws Exception {
+        PreviewScene.NativeInputs input = new PreviewScene.NativeInputs(
+                nativeSample(0, VanillaYsmAnimations.VanillaState.NONE), Map.of(), context -> {
+                    context.stringQuery("ysm.entity_type", "player");
+                    context.query("ctrl.idle", 1d);
+                });
+        for (String id : BuiltinYsmModels.ids()) {
+            YsmFolderModel.Imported imported = YsmFolderModel.bundledWithProfile(id, null);
+            BbModel model = BbModel.parse(imported.raw());
+            PreviewScene selected = new PreviewScene(model, imported.previewAnimation(), ModelPreview.Context.SELECTED);
+            PreviewScene current = new PreviewScene(model, imported.previewAnimation(), ModelPreview.Context.OWNER);
+            selected.enableNativeYsm();
+            current.enableNativeYsm();
+            for (double tick : List.of(300d, 301d, 310d)) {
+                PreviewScene.Sample selectedSample = selected.sample(tick, Map.of(), input);
+                PreviewScene.Sample currentSample = current.sample(tick, Map.of(), input);
+                assertEquals(currentSample.layers(), selectedSample.layers(), id);
+                assertEquals(currentSample.vertices(), selectedSample.vertices(), id);
+                assertFalse(selectedSample.animations().contains("gui"), id);
+                assertFalse(selectedSample.vertices().isEmpty(), id);
+            }
+        }
     }
 
     @Test
@@ -328,18 +356,19 @@ class PreviewSceneTest {
         PreviewScene owner = new PreviewScene(model, "gui", ModelPreview.Context.OWNER);
         card.sample(100, Map.of());
         PreviewScene.Sample cardBefore = card.sample(110, Map.of());
-        selected.sample(100, Map.of());
-        selected.sample(105, Map.of());
         PreviewScene.NativeInputs ownerInput = new PreviewScene.NativeInputs(
                 nativeSample(0, VanillaYsmAnimations.VanillaState.NONE), Map.of(), ignored -> {
                 });
+        PreviewScene.Sample initialSelection = selected.sample(100, Map.of(), ownerInput);
+        selected.sample(105, Map.of(), ownerInput);
         owner.sample(100, Map.of(), ownerInput);
         PreviewScene.Sample ownerBefore = owner.sample(108, Map.of(), ownerInput);
         selected.restart();
-        PreviewScene.Sample restarted = selected.sample(110, Map.of());
+        PreviewScene.Sample restarted = selected.sample(110, Map.of(), ownerInput);
         assertEquals(0, restarted.age());
         assertEquals(2, restarted.startCount());
-        assertEquals(1, minimumX(restarted.vertices()), 1e-5);
+        assertEquals(initialSelection.vertices(), restarted.vertices(),
+                "Selection restart returns to the same initial pose and transition");
         assertSame(cardBefore, card.sample(110, Map.of()),
                 "Selection changes preserve the visible card's author clock");
         assertSame(ownerBefore, owner.sample(108, Map.of(), ownerInput),

@@ -2,6 +2,8 @@ package com.simmc.meplayeractions.client;
 
 import com.google.gson.*;
 import com.simmc.meplayeractions.config.PerformanceSettings;
+import com.simmc.meplayeractions.protection.ResourceProtection;
+import com.simmc.meplayeractions.protection.ResourceSettings;
 import org.bukkit.*;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
@@ -20,6 +22,7 @@ import java.util.zip.ZipOutputStream;
 import static org.junit.jupiter.api.Assertions.*;
 import java.nio.file.Files;
 import java.util.logging.Logger;
+import java.util.function.LongSupplier;
 
 /** Targeted cadence/authorization checks using the actual relay, without a running server. */
 class PrivateModelPerformanceTest {
@@ -612,6 +615,45 @@ class PrivateModelPerformanceTest {
         }
     }
 
+    @Test
+    void nearestHeapKeepsVisibilityFiltersStrictRangeAndOrderedGlobalAdmission() throws Exception {
+        ResourceSettings defaults = ResourceSettings.defaults();
+        ResourceSettings.Models models = defaults.models();
+        ResourceSettings bounded = new ResourceSettings(defaults.tasks(), defaults.network(), defaults.protection(),
+                new ResourceSettings.Models(models.maxDisguises(), models.maxPublications(), 2,
+                        models.maxModelsPerViewer(), models.newDisguisesPerSecond(), models.disguiseCooldownTicks(),
+                        models.emergencyRemovalsPerTick(), models.maxAssetCacheBytes(), models.maxAssetCacheModels()),
+                defaults.disk(), defaults.complexity());
+        Constructor<ResourceProtection> constructor = ResourceProtection.class.getDeclaredConstructor(
+                ResourceSettings.class, LongSupplier.class);
+        constructor.setAccessible(true);
+        try (Scene scene = new Scene(true, 3);
+                ResourceProtection runtime = constructor.newInstance(bounded, (LongSupplier) () -> 0)) {
+            scene.start();
+            Person tieFirst = scene.person(1), tieSecond = scene.person(1), farther = scene.person(2);
+            Person denied = scene.person(0.1), hidden = scene.person(0.2), offline = scene.person(0.3);
+            Person unnegotiated = scene.person(0.4), otherWorld = scene.person(0.5), boundary = scene.person(64);
+            for (Person candidate : List.of(tieFirst, tieSecond, farther, denied, hidden, offline, otherWorld, boundary)) {
+                scene.hello(candidate);
+                scene.owner.tracked.add(candidate.player);
+            }
+            scene.owner.tracked.add(unnegotiated.player);
+            scene.owner.tracked.add(scene.owner.player);
+            denied.allowed = false;
+            hidden.visible = false;
+            offline.online = false;
+            otherWorld.world = proxy(World.class, PrivateModelPerformanceTest::objectMethod);
+            Object publication = scene.publications().get(scene.owner.id);
+            Method discover = PrivateModelSyncService.class.getDeclaredMethod("discoverAudience", publication.getClass());
+            discover.setAccessible(true);
+            assertEquals(List.of(scene.viewer.id, tieFirst.id, tieSecond.id),
+                    new ArrayList<>((Set<?>) discover.invoke(scene.service, publication)));
+            setField(scene.service, "resources", runtime);
+            assertEquals(List.of(scene.viewer.id, tieFirst.id),
+                    new ArrayList<>((Set<?>) discover.invoke(scene.service, publication)));
+        }
+    }
+
     private static final class Scene implements AutoCloseable {
         final Field bukkitServer = Bukkit.class.getDeclaredField("server");
         final Object previousServer;
@@ -875,12 +917,14 @@ class PrivateModelPerformanceTest {
         final Player player;
         final Set<Player> tracked = new HashSet<>();
         final List<JsonObject> messages = new ArrayList<>();
-        boolean allowed = true, flying;
+        boolean allowed = true, flying, online = true, visible = true;
+        World world;
         int discoveryIterations;
         Runnable onChunk;
 
         Person(UUID id, World world, double x) {
             this.id = id;
+            this.world = world;
             Set<Player> trackingView = new AbstractSet<>() {
                 @Override
                 public Iterator<Player> iterator() {
@@ -900,10 +944,10 @@ class PrivateModelPerformanceTest {
             };
             this.player = proxy(Player.class, (instance, method, args) -> switch (method.getName()) {
             case "getUniqueId" -> id;
-            case "isOnline" -> true;
-            case "getWorld" -> world;
-            case "getLocation" -> new Location(world, x, 64, 0);
-            case "canSee" -> true;
+            case "isOnline" -> this.online;
+            case "getWorld" -> this.world;
+            case "getLocation" -> new Location(this.world, x, 64, 0);
+            case "canSee" -> this.visible;
             case "getTrackedBy" -> trackingView;
             case "isFlying" -> this.flying;
             case "hasPermission" ->

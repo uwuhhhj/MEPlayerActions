@@ -1,6 +1,6 @@
 # MEPlayerActions
 
-Paper 玩家伪装与动画插件，配套可选的 Fabric 客户端模组。当前服务端与客户端均为 **0.6.2**，目标版本 **Minecraft 1.21.11／Java 21**。作者：SIMMC、Loliiiico。
+Paper 玩家伪装与动画插件，配套可选的 Fabric 客户端模组。当前服务端与客户端均为 **0.6.3**，目标版本 **Minecraft 1.21.11／Java 21**。作者：SIMMC、Loliiiico。
 
 同一个客户端提供三条独立路径。模型上传到服务器不等于创建服务器伪装：
 
@@ -27,6 +27,8 @@ Paper 玩家伪装与动画插件，配套可选的 Fabric 客户端模组。当
 
 ## 基本使用
 
+所有固定权限节点均为 `default: false`，普通玩家和 OP 都需通过 LuckPerms 等权限插件显式授权。所有服务端命令需要 `mact.use`；服务器模型目录与伪装另需 `mact.disguise`，直接播放原始动画另需 `mact.play`，坐下／爬行／同步设置分别需要 `mact.sit`／`mact.crawl`／`mact.sync`。配置动作按各自的 `permission` 检查，缺省为 `mact.use`。飞行、伪装药水、诊断、重载以及私人上传与观看也须按各自节点授权。已有用户组、继承或通配符授权仍有效，修改默认值不会撤销权限插件中的授权。完整节点与默认值见 [plugin.yml](src/main/resources/plugin.yml)。
+
 服务器指令支持 Tab 补全，`/meplayeractions help` 查看完整帮助：
 
 ```text
@@ -38,6 +40,8 @@ Paper 玩家伪装与动画插件，配套可选的 Fabric 客户端模组。当
 ```
 
 伪装后自动响应普通移动、姿态和交互。服务器决定模型身份、观看权限、距离和人数；客户端接管失败时保留或恢复服务器显示。
+
+`/meplayeractions menu` 打开原生 Dialog 动作对话菜单，提供动画选择、姿态操作和翻页。这是不常用的备用入口，仅在未安装 MPA 客户端、无法使用 J 轮盘调用动画时偶尔使用；安装客户端后优先使用 J 轮盘。Dialog 菜单无需客户端模组，但服务器伪装与动作仍需要 ModelEngine。
 
 管理员使用 `/meplayeractions status` 查看全服资源与保护状态，`status network`、`status tasks`、`status models`、`status protection` 查看分类指标，`status player <玩家名>` 查看单个在线玩家。上传、下载和后台任务共享有界预算；服务器负载升高时延迟非关键工作、暂停新增模型，已有显示与安全清理按保护等级处理。默认值、错误提示与调优见 [服务器资源保护](docs/SERVER_RESOURCE_PROTECTION.md)。
 

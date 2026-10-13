@@ -12,20 +12,20 @@ commands:
     permission: mact.use
 permissions:
   mact.use:
-    default: true
+    default: false
   mact.disguise:
-    default: true
+    default: false
   mact.disguise.effects:
     description: 为本次伪装施加缓慢药水效果
-    default: op
+    default: false
   mact.play:
-    default: true
+    default: false
   mact.sit:
-    default: true
+    default: false
   mact.crawl:
-    default: true
+    default: false
   mact.sync:
-    default: true
+    default: false
   mact.private.upload:
     description: 显式发布本人私人模型与配置给有权限的跟踪观看者
     default: false
@@ -33,8 +33,8 @@ permissions:
     description: 接收并显示获准发布的私人模型
     default: false
   mact.flight:
-    default: op
+    default: false
   mact.debug:
-    default: op
+    default: false
   mact.admin:
-    default: op
+    default: false

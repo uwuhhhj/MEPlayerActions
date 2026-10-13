@@ -6,6 +6,8 @@
 
 ## 适配器约束
 
+服务器同步发现可以跨 tick 分批执行。受管伪装的候选来源复用已选观众，兼容路径仍可使用完整拥有者目录；候选身份不能替代实时授权。`snapshot_end` 必须等待该次扫描和待发状态完成，扫描期间继续维护已有绑定与撤权，不得将尚未处理的候选视为不可见。调度额度见 [性能说明](PERFORMANCE.md)。
+
 v3 是玩家模型资产、动画状态及观众渲染接管协议。客户端只依赖 Fabric Loader、Minecraft、Java 与 Fabric API，协议字段不要求 ModelEngine 对象或引擎标识。本仓库的服务端实现使用 ModelEngine；文中涉及 ME、Paper、GSit、插件目录和命令权限的行为说明该适配器的实现。
 
 其他引擎要使用现有客户端，应实现同频道、版本、字段范围及以下语义：主动推送当次授权的完整 `.bbmodel` 与对应 hash（兼容旧客户端时另提供下述资源包或 legacy 路径）；提供已解析的动画层和 `motion` 状态映射；为观众保留可追踪的原版玩家实体；匹配 ready/ack 后才切换该观众的后端显示；失败、解绑和租约超时恢复正常显示。服务器的姿态后端可将已支持的 sit/sleep/crawl 与接触面偏移映射到 `specialPose` 和 anchor 字段，无需安装 GSit 才能发送这些字段。实现兼容适配器后，更换服务器引擎本身不要求更新客户端；这不表示客户端会自动识别未知引擎、新状态枚举或不支持的模型格式。
@@ -16,7 +18,7 @@ v3 是玩家模型资产、动画状态及观众渲染接管协议。客户端�
 
 客户端发送：
 ```json
-{"protocol":3,"type":"hello","clientVersion":"0.6.2","capabilities":["local_render","server_push_models","incremental_state","server_model_catalog","disguise_results"]}
+{"protocol":3,"type":"hello","clientVersion":"0.6.3","capabilities":["local_render","server_push_models","incremental_state","server_model_catalog","disguise_results"]}
 ```
 `capabilities` 必须含 `local_render`，还可声明 `server_push_models`、`resource_pack_models`、`incremental_state`／`server_timeline`、`server_model_catalog` 和 `disguise_results`；不允许重复，其他 capability 拒绝。客户端默认声明增量、模型目录与伪装结果能力，显式启用 `followServerTimeline` 时另声明 `server_timeline`。`clientVersion` 可省略（最多 64 字符）。hello 两次接受之间至少相隔一个单调时钟秒；这一时间戳属于玩家连接，未知协议结束会话或重新 hello 都不能重置。新 hello 清理已有绑定并恢复其 ME 可见性，不授予渲染权限。
 
@@ -94,7 +96,7 @@ hello／hello_ack 双方确认 `server_model_catalog` 后，服务器主动发�
 {"protocol":3,"type":"asset_status","offerId":"00000000-0000-0000-0000-000000000003","hash":"0000000000000000000000000000000000000000000000000000000000000000","status":"missing"}
 ```
 
-`status` 只允许 `cached`、`missing`、`rejected`。`cached` 表示客户端已校验资产、解析并准备 GPU，不授予渲染租约；仍需另发 `render_ready` 并收到精确 ACK。`missing` 将已签发的 offer 转入服务器受限传输队列，客户端不能借反馈选择其他模型。`rejected` 取消该 offer。旧或重复 token 的反馈静默忽略，无法重新开始已完成的传输。
+`status` 只允许 `cached`、`missing`、`rejected`。`cached` 表示客户端已完整校验缓存资产并解析，GPU 准备可继续排队；该反馈及时结束等待缓存状态的阶段，不授予渲染租约。完整 GPU 安装成功且绑定仍有效后，客户端另发 `render_ready` 并等待精确 ACK。`missing` 将已签发的 offer 转入服务器受限传输队列，客户端不能借反馈选择其他模型。`rejected` 取消该 offer。旧或重复 token 的反馈静默忽略，无法重新开始已完成的传输。
 
 服务器只为有效 missing offer 发送：
 

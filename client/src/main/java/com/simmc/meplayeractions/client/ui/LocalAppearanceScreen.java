@@ -1510,7 +1510,7 @@ public class LocalAppearanceScreen extends Screen {
         this.leftPreviewHash = entry.loaded.hash();
         YsmModelProfile profile = entry.loaded.profile();
         // The upstream PlayerTextureScreen owns a separate PlayerPreviewEntity. A browsing draft
-        // uses its own dummy/cap clock, never the live owner's model, gear, manual action or network hook.
+        // shares the owner's read-only pose inputs while keeping its own model, clock and network-free controller.
         this.leftPreviewDrawn = this.preview.render(context, entry.loaded.model(), this.leftPreviewKey, this.previewX,
                 this.previewY, this.previewW, this.previewH, this.yaw, this.pitch, this.ticks + delta,
                 profile.isYsm() ? parameters(id) : Map.of(), entry.loaded.previewAnimation(), profile,

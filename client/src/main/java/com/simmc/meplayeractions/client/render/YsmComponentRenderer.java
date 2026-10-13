@@ -53,6 +53,8 @@ public final class YsmComponentRenderer {
     private static Set<UUID> replaced = Set.of();
     private static Map<UUID, PassengerModel> passengerModels = Map.of();
     private static Set<Key> live = new HashSet<>();
+    private static final Set<String> COMPONENT_TEXTURES = new HashSet<>();
+    private static Set<String> requestedTextures = new HashSet<>();
     private static Map<Arm, ArmFrame> nextArms = new EnumMap<>(Arm.class);
     private static long submittedComponents, submittedArms;
     private static final AtomicLong emittedComponentVertices = new AtomicLong(), emittedArmVertices = new AtomicLong();
@@ -119,6 +121,7 @@ public final class YsmComponentRenderer {
 
     static void beginExtraction(ClientRuntime runtime, WorldExtractionContext context) {
         live = new HashSet<>();
+        requestedTextures = new HashSet<>();
         nextArms = new EnumMap<>(Arm.class);
         armDraws = List.of();
         List<ComponentFrame> next = new ArrayList<>();
@@ -154,12 +157,19 @@ public final class YsmComponentRenderer {
             }
 
             try {
-                if (!ModelRenderer.prepare(component.hash(), component.model())) {
+                requestedTextures.add(component.hash());
+                COMPONENT_TEXTURES.add(component.hash());
+                Key key = new Key(owner.getUuid(), binding.instance(), entity.getUuid(), component.kind(),
+                        component.id(), component.hash());
+                if (!ModelRenderer.prepare(component.hash(), component.model(), key, () -> {
+                    ClientRuntime.RenderBinding current = runtime.appearanceBinding(owner.getUuid());
+                    return current != null && current.instance().equals(binding.instance()) && !entity.isRemoved()
+                            && runtime.modelProfile(owner.getUuid()).components().stream()
+                                    .anyMatch(value -> value.hash().equals(component.hash()));
+                })) {
                     continue;
                 }
 
-                Key key = new Key(owner.getUuid(), binding.instance(), entity.getUuid(), component.kind(),
-                        component.id(), component.hash());
                 live.add(key);
                 Playback playback = PLAYERS.computeIfAbsent(key, ignored -> new Playback(component.model()));
                 playback.player.enableNativeYsm();
@@ -407,12 +417,22 @@ public final class YsmComponentRenderer {
                 .filter(value -> value.kind().equals("fp_arm")).findFirst()
                 .orElseGet(() -> runtime.modelProfile(binding.owner()).components().stream()
                         .filter(value -> value.kind().equals("arm")).findFirst().orElse(null));
-        if (component == null || !ModelRenderer.prepare(component.hash(), component.model())) {
+        if (component == null) {
             return;
         }
-
         Key key = new Key(binding.owner(), binding.instance(), binding.owner(), component.kind(), component.id(),
                 component.hash());
+        requestedTextures.add(component.hash());
+        COMPONENT_TEXTURES.add(component.hash());
+        if (!ModelRenderer.prepare(component.hash(), component.model(), key, () -> {
+            ClientRuntime.RenderBinding current = runtime.appearanceBinding(binding.owner());
+            return current != null && current.instance().equals(binding.instance())
+                    && client.options.getPerspective().isFirstPerson()
+                    && runtime.modelProfile(binding.owner()).components().stream()
+                            .anyMatch(value -> value.hash().equals(component.hash()));
+        })) {
+            return;
+        }
         live.add(key);
         Playback playback = PLAYERS.computeIfAbsent(key, ignored -> new Playback(component.model()));
         playback.player.enableNativeYsm();
@@ -500,6 +520,13 @@ public final class YsmComponentRenderer {
     }
 
     static void finishExtraction() {
+        COMPONENT_TEXTURES.removeIf(hash -> {
+            if (requestedTextures.contains(hash)) {
+                return false;
+            }
+            ModelRenderer.releaseComponent(hash);
+            return true;
+        });
         arms = Map.copyOf(nextArms);
         PLAYERS.entrySet().removeIf(entry -> {
             if (live.contains(entry.getKey())) {
@@ -624,6 +651,10 @@ public final class YsmComponentRenderer {
     }
 
     static void clear() {
+        List<String> textures = List.copyOf(COMPONENT_TEXTURES);
+        COMPONENT_TEXTURES.clear();
+        requestedTextures.clear();
+        textures.forEach(ModelRenderer::releaseComponent);
         PLAYERS.values().forEach(value -> value.player.dispose());
         PLAYERS.clear();
         frame = List.of();

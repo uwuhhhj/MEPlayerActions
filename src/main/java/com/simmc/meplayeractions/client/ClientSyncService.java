@@ -32,6 +32,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     public static final String DISGUISE_RESULTS = "disguise_results";
     private static final int DISGUISE_RECEIPTS = 32;
     private static final int HEARTBEAT_TICKS = 20;
+    private static final int DISCOVERY_CANDIDATES_PER_TICK = 128, DISCOVERY_BATCH_SIZE = 8;
     private static final Gson GSON = new GsonBuilder().setStrictness(Strictness.STRICT).create();
     private static final Pattern ANIMATION_NAME = Pattern.compile("[a-zA-Z0-9_.:/-]{1,128}");
     private static final Pattern MODEL_ID = Pattern.compile("[a-z0-9_-]{1,64}"), HASH = Pattern.compile("[a-f0-9]{64}");
@@ -44,6 +45,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     private final ModelAssets assets;
     private final Map<UUID, Session> sessions = new HashMap<>();
     private final Map<UUID, Set<UUID>> viewersByOwner = new HashMap<>();
+    private final Deque<Session> discoveryQueue = new ArrayDeque<>();
     private final Map<UUID, StatePacket> statePackets = new HashMap<>();
     private final Map<UUID, StateMetadata> stateMetadata = new HashMap<>();
     private final ConnectionLimits limits = new ConnectionLimits();
@@ -61,6 +63,10 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     private boolean failureWarningInitialized;
     private int audienceRefreshTicks = 40, validationTicks = 20, viewerRotation;
     private BiPredicate<Player, UUID> audience = (viewer, owner) -> true;
+    private Function<UUID, Set<UUID>> audienceCandidates = viewer -> readOwnerIds();
+    private long discoveryTick = -1, discoveryCandidatesTotal, discoveryMaxWaitTicks;
+    private int discoveryCandidatesThisTick;
+    private long authorizationRefreshesTotal, authorizationBindingChecksTotal;
     private RenderControl renderControl = (viewer, owner, instance, enabled) -> !enabled;
     private BukkitTask maintenanceTask;
 
@@ -85,6 +91,10 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
 
     public void snapshotSources(Supplier<Set<UUID>> ownerIds, Function<UUID, StateSnapshot> snapshot) {
         this.snapshotCache.configure(ownerIds, snapshot);
+    }
+
+    public void audienceCandidates(Function<UUID, Set<UUID>> candidates) {
+        this.audienceCandidates = Objects.requireNonNull(candidates);
     }
 
     public void configurePerformance(PerformanceSettings performance) {
@@ -113,6 +123,13 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         }
 
         runtime.gauge("models.modViewerRelations", this::viewerRelationships);
+        runtime.gauge("models.discoveryCandidatesPerTick",
+                () -> this.discoveryTick == currentTick() ? this.discoveryCandidatesThisTick : 0);
+        runtime.gauge("models.discoveryCandidatesTotal", () -> this.discoveryCandidatesTotal);
+        runtime.gauge("models.discoveryPending", () -> this.discoveryQueue.size());
+        runtime.gauge("models.discoveryMaxWaitTicks", () -> this.discoveryMaxWaitTicks);
+        runtime.gauge("models.authorizationRefreshesTotal", () -> this.authorizationRefreshesTotal);
+        runtime.gauge("models.authorizationBindingChecksTotal", () -> this.authorizationBindingChecksTotal);
         for (Session session : this.sessions.values()) {
             session.offers.configure(runtime.settings().network());
         }
@@ -430,22 +447,25 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             return;
         }
 
+        if (session.discovery != null && session.discovery.fullSnapshot) {
+            return;
+        }
+
         if (this.protection != null && (!this.protection.shouldStartTransfer() || !this.protection.tryMainWork(1))) {
             return;
         }
 
-        long started = System.nanoTime(), id = session.pendingSnapshotId;
-        session.pendingSnapshotId = 0;
+        long started = System.nanoTime();
         try {
             reconcile(player, session, true);
-            session.lastDiscoveryTick = ClientSyncCadence.initialTick(session.viewer, currentTick(),
-                    this.audienceRefreshTicks);
-            session.endingSnapshotId = id;
-            finishSnapshot(player, session);
         } finally {
             if (this.protection != null && !this.inMaintenance) {
                 this.protection.recordWork(System.nanoTime() - started);
             }
+        }
+
+        if (!this.inMaintenance) {
+            pumpDiscovery();
         }
     }
 
@@ -812,12 +832,14 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     }
 
     private Set<String> authorizedHashes(Player viewer, Session session) {
+        this.authorizationRefreshesTotal++;
         Set<String> result = new HashSet<>();
         if (viewer == null) {
             return result;
         }
 
         for (Map.Entry<UUID, ClientSyncService.BoundState> entry : session.bindings.entrySet()) {
+            this.authorizationBindingChecksTotal++;
             BoundState bound = entry.getValue();
             StateSnapshot snapshot = readSnapshot(entry.getKey());
             if (snapshot != null && snapshot.localRenderable() && !bound.hash().isEmpty()
@@ -948,7 +970,32 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     }
 
     private void cancelUnauthorizedOffers(Player viewer, Session session, long tick) {
-        expireOffers(viewer, session, tick, authorizedHashes(viewer, session));
+        session.authorizationDirty = true;
+        refreshAuthorization(viewer, session, tick);
+    }
+
+    private void refreshAuthorization(Player viewer, Session session, long tick) {
+        if (!session.authorizationDirty || session.authorizationBatchDepth != 0) {
+            return;
+        }
+
+        try {
+            session.authorized = session.pushModels ? authorizedHashes(viewer, session) : Set.of();
+            session.authorizationDirty = false;
+        } catch (RuntimeException exception) {
+            session.authorized = Set.of();
+            warnFailure("Cannot refresh client asset authorization", exception);
+        }
+        if (session.pushModels) {
+            expireOffers(viewer, session, tick, session.authorized);
+        }
+    }
+
+    private void finishAuthorizationBatch(Player viewer, Session session, long tick) {
+        session.authorizationBatchDepth--;
+        if (this.sessions.get(session.viewer) == session) {
+            refreshAuthorization(viewer, session, tick);
+        }
     }
 
     private void expireOffers(Player viewer, Session session, long tick, Set<String> authorized) {
@@ -1070,12 +1117,15 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         try {
             for (Session session : ordered) {
                 long workStarted = System.nanoTime();
+                Player viewer = Bukkit.getPlayer(session.viewer);
+                boolean authorizationBatch = false;
                 try {
-                    Player viewer = Bukkit.getPlayer(session.viewer);
                     if (viewer == null || !viewer.isOnline()) {
                         endSession(session.viewer, viewer, session, "offline");
                         continue;
                     }
+                    session.authorizationBatchDepth++;
+                    authorizationBatch = true;
                     session.controls.drain(payload -> sendBytes(viewer, payload, false), tick, 4);
                     maintainReady(viewer, session, tick);
                     expireLegacyTransfers(viewer, session, tick);
@@ -1092,11 +1142,12 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
 
                     finishSnapshot(viewer, session);
                     if (ClientSyncCadence.due(tick, session.lastDiscoveryTick, this.audienceRefreshTicks)
+                            && session.discovery == null && session.pendingSnapshotId == 0
+                            && session.endingSnapshotId == 0 && !session.snapshotBeginning
                             && (this.protection == null
                                     || this.protection.shouldStartTransfer() && this.protection.tryMainWork(1))) {
                         reconcile(viewer, session, false);
                         updateCatalog(viewer, session);
-                        session.lastDiscoveryTick = tick;
                     }
                     if (ClientSyncCadence.due(tick, session.lastValidationTick, this.validationTicks)) {
                         validateBindings(viewer, session);
@@ -1115,7 +1166,6 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
                             }
                         }
 
-                        session.authorized = session.pushModels ? authorizedHashes(viewer, session) : Set.of();
                     }
                     if ((!session.incremental
                             && ClientSyncCadence.due(tick, session.lastLegacyTick, ClientSyncCadence.LEGACY_STATE_TICKS)
@@ -1138,6 +1188,8 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
 
                     }
                     pumpCatalog(viewer, session);
+                    authorizationBatch = false;
+                    finishAuthorizationBatch(viewer, session, tick);
                     maintainOffers(viewer, session, tick, session.authorized);
                     pumpAssets(viewer, session, session.authorized);
                     if (ClientSyncCadence.due(tick, session.lastHeartbeatTick, HEARTBEAT_TICKS)) {
@@ -1145,11 +1197,15 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
                         session.lastHeartbeatTick = tick;
                     }
                 } finally {
+                    if (authorizationBatch) {
+                        finishAuthorizationBatch(viewer, session, tick);
+                    }
                     if (this.protection != null) {
                         this.protection.recordWork(System.nanoTime() - workStarted);
                     }
                 }
             }
+            pumpDiscovery();
         } finally {
             this.inMaintenance = false;
         }
@@ -1231,14 +1287,19 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     }
 
     private void validateBindings(Player viewer, Session session) {
-        for (Map.Entry<UUID, ClientSyncService.BoundState> entry : List.copyOf(session.bindings.entrySet())) {
-            StateSnapshot current = readSnapshot(entry.getKey());
-            BoundState bound = entry.getValue();
-            if (current == null || !current.instance().equals(bound.instance())
-                    || !current.modelId().equals(bound.modelId()) || !canObserve(viewer, entry.getKey())) {
-                removeBinding(viewer, session, entry.getKey(), "not_visible_or_active");
+        session.authorizationBatchDepth++;
+        session.authorizationDirty = true;
+        try {
+            for (Map.Entry<UUID, ClientSyncService.BoundState> entry : List.copyOf(session.bindings.entrySet())) {
+                StateSnapshot current = readSnapshot(entry.getKey());
+                BoundState bound = entry.getValue();
+                if (current == null || !current.instance().equals(bound.instance())
+                        || !current.modelId().equals(bound.modelId()) || !canObserve(viewer, entry.getKey())) {
+                    removeBinding(viewer, session, entry.getKey(), "not_visible_or_active");
+                }
             }
-
+        } finally {
+            finishAuthorizationBatch(viewer, session, currentTick());
         }
     }
 
@@ -1550,25 +1611,123 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     }
 
     private void reconcile(Player viewer, Session session, boolean fullSnapshot) {
-        Set<UUID> visible = new HashSet<>();
-        for (UUID owner : readOwnerIds()) {
-            if (canObserve(viewer, owner)) {
-                StateSnapshot snapshot = readSnapshot(owner);
-                if (snapshot != null) {
-                    visible.add(owner);
-                    sendState(viewer, session, snapshot, fullSnapshot, fullSnapshot);
+        Set<UUID> candidates = new LinkedHashSet<>();
+        if (readOwnerIds().contains(session.viewer)) {
+            candidates.add(session.viewer);
+        }
+        candidates.addAll(session.bindings.keySet());
+        candidates.addAll(session.pendingStates.keySet());
+        try {
+            candidates.addAll(this.audienceCandidates.apply(session.viewer));
+        } catch (RuntimeException exception) {
+            warnFailure("Cannot obtain client audience candidates", exception);
+            candidates.addAll(readOwnerIds());
+        }
+        session.discovery = new DiscoveryScan(candidates.iterator(), fullSnapshot, currentTick());
+        if (candidates.isEmpty()) {
+            finishDiscovery(viewer, session);
+        } else if (!session.discoveryQueued) {
+            session.discoveryQueued = true;
+            this.discoveryQueue.addLast(session);
+        }
+    }
+
+    private void pumpDiscovery() {
+        long tick = currentTick();
+        if (this.discoveryTick != tick) {
+            this.discoveryTick = tick;
+            this.discoveryCandidatesThisTick = 0;
+        }
+
+        Set<Session> authorizationBatches = new LinkedHashSet<>();
+        try {
+            // All handshakes and background sweeps share one quota; each viewer yields after a small batch.
+            while (!this.discoveryQueue.isEmpty()
+                    && this.discoveryCandidatesThisTick < DISCOVERY_CANDIDATES_PER_TICK) {
+                if (this.protection != null
+                        && (!this.protection.shouldStartTransfer() || !this.protection.tryMainWork(1))) {
+                    return;
+                }
+                Session session = this.discoveryQueue.removeFirst();
+                session.discoveryQueued = false;
+                Player viewer = Bukkit.getPlayer(session.viewer);
+                if (this.sessions.get(session.viewer) != session || session.discovery == null) {
+                    continue;
+                }
+                if (viewer == null || !viewer.isOnline()) {
+                    endSession(session.viewer, viewer, session, "offline");
+                    continue;
+                }
+                if (authorizationBatches.add(session)) {
+                    session.authorizationBatchDepth++;
+                    session.authorizationDirty = true;
+                }
+
+                long started = System.nanoTime();
+                try {
+                    DiscoveryScan scan = session.discovery;
+                    int batch = 0;
+                    while (scan.candidates.hasNext() && batch < DISCOVERY_BATCH_SIZE
+                            && this.discoveryCandidatesThisTick < DISCOVERY_CANDIDATES_PER_TICK) {
+                        UUID owner = scan.candidates.next();
+                        batch++;
+                        this.discoveryCandidatesThisTick++;
+                        this.discoveryCandidatesTotal++;
+                        StateSnapshot snapshot = canObserve(viewer, owner) ? readSnapshot(owner) : null;
+                        if (snapshot != null) {
+                            sendState(viewer, session, snapshot, scan.fullSnapshot, scan.fullSnapshot);
+                        } else {
+                            removeBinding(viewer, session, owner, "not_visible_or_active");
+                        }
+                    }
+                    if (!scan.candidates.hasNext()) {
+                        finishDiscovery(viewer, session);
+                    } else {
+                        session.discoveryQueued = true;
+                        this.discoveryQueue.addLast(session);
+                    }
+                } catch (RuntimeException exception) {
+                    session.discovery = null;
+                    session.snapshotRequested |= session.pendingSnapshotId != 0;
+                    session.pendingSnapshotId = 0;
+                    warnFailure("Cannot reconcile client audience", exception);
+                } finally {
+                    if (this.protection != null) {
+                        this.protection.recordWork(System.nanoTime() - started);
+                    }
+                }
+            }
+        } finally {
+            // Closing the entire pump also refreshes partial sweeps when protection stops the next batch.
+            for (Session session : authorizationBatches) {
+                long started = System.nanoTime();
+                try {
+                    finishAuthorizationBatch(Bukkit.getPlayer(session.viewer), session, tick);
+                } catch (RuntimeException exception) {
+                    session.authorizationDirty = true;
+                    warnFailure("Cannot finish client asset authorization", exception);
+                } finally {
+                    if (this.protection != null) {
+                        this.protection.recordWork(System.nanoTime() - started);
+                    }
                 }
             }
         }
+    }
 
-        for (UUID owner : List.copyOf(session.bindings.keySet())) {
-            if (!visible.contains(owner)) {
-                removeBinding(viewer, session, owner, "not_visible_or_active");
-            }
-
+    private void finishDiscovery(Player viewer, Session session) {
+        DiscoveryScan scan = session.discovery;
+        session.discovery = null;
+        long tick = currentTick();
+        this.discoveryMaxWaitTicks = Math.max(this.discoveryMaxWaitTicks,
+                ClientSyncCadence.distance(tick, scan.startedTick));
+        session.lastDiscoveryTick = scan.fullSnapshot
+                ? ClientSyncCadence.initialTick(session.viewer, tick, this.audienceRefreshTicks) : tick;
+        if (scan.fullSnapshot) {
+            session.endingSnapshotId = session.pendingSnapshotId;
+            session.pendingSnapshotId = 0;
+            finishSnapshot(viewer, session);
         }
-
-        session.authorized = session.pushModels ? authorizedHashes(viewer, session) : Set.of();
     }
 
     private boolean canObserve(Player viewer, UUID ownerId) {
@@ -1650,7 +1809,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             return;
         }
         session.payloadFailures.remove(owner);
-        session.bindings.put(owner, packet.binding());
+        BoundState previous = session.bindings.put(owner, packet.binding());
         session.controls.cancel("unbind:" + owner + ":" + packet.binding().instance());
         this.viewersByOwner.computeIfAbsent(owner, ignored -> new HashSet<>()).add(session.viewer);
         session.sentState.put(owner, packet.signature());
@@ -1658,10 +1817,9 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
             session.sentMenus.put(owner, packet.publishedMenu());
         }
 
-        if (!packet.binding().hash().isEmpty()) {
-            HashSet<String> authorized = new HashSet<>(session.authorized);
-            authorized.add(packet.binding().hash());
-            session.authorized = Set.copyOf(authorized);
+        if (!packet.binding().equals(previous)) {
+            session.authorizationDirty = true;
+            refreshAuthorization(viewer, session, currentTick());
         }
         offerAsset(viewer, session, owner, packet.binding(), currentTick());
     }
@@ -1907,6 +2065,9 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
     }
 
     private void endSession(UUID id, Player viewer, Session session, String reason) {
+        this.discoveryQueue.remove(session);
+        session.discoveryQueued = false;
+        session.discovery = null;
         for (UUID owner : List.copyOf(session.bindings.keySet())) {
             removeBinding(viewer, session, owner, reason);
         }
@@ -1940,6 +2101,7 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         }
 
         this.sessions.clear();
+        this.discoveryQueue.clear();
         this.viewersByOwner.clear();
         this.statePackets.clear();
         this.stateMetadata.clear();
@@ -2438,6 +2600,18 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         }
     }
 
+    private static final class DiscoveryScan {
+        final Iterator<UUID> candidates;
+        final boolean fullSnapshot;
+        final long startedTick;
+
+        DiscoveryScan(Iterator<UUID> candidates, boolean fullSnapshot, long startedTick) {
+            this.candidates = candidates;
+            this.fullSnapshot = fullSnapshot;
+            this.startedTick = startedTick;
+        }
+    }
+
     private static final class Session {
         final UUID viewer;
         final boolean packModels, pushModels, incremental, timeline, catalog, disguiseResults;
@@ -2474,11 +2648,15 @@ public final class ClientSyncService implements PluginMessageListener, AutoClose
         DeferredClientPackets controls = new DeferredClientPackets();
         final LinkedHashMap<UUID, DisguiseReceipt> disguiseReceipts = new LinkedHashMap<>();
         Set<String> authorized = Set.of();
+        int authorizationBatchDepth;
+        boolean authorizationDirty;
         long lastDiscoveryTick, lastValidationTick, lastLegacyTick, lastHeartbeatTick;
         String clientVersion = "unspecified";
         long snapshotId;
         long pendingSnapshotId, endingSnapshotId;
         boolean snapshotRequested, snapshotBeginning;
+        DiscoveryScan discovery;
+        boolean discoveryQueued;
         boolean helloAcknowledged;
         ServerModelCatalog.Plan catalogPlan;
         int catalogIndex;

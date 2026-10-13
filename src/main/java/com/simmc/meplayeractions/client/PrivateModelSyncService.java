@@ -21,7 +21,6 @@ import java.util.function.Consumer;
 import java.util.concurrent.Callable;
 import java.util.regex.Pattern;
 import java.util.concurrent.CancellationException;
-import java.util.stream.Collectors;
 import org.bukkit.Location;
 import org.bukkit.plugin.messaging.Messenger;
 
@@ -1660,17 +1659,15 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
         }
         Location origin = owner.getLocation();
         double range = this.policy.viewDistance() * this.policy.viewDistance();
-        Set<UUID> discovered = owner.getTrackedBy().stream().filter(Player::isOnline)
-                .filter(candidate -> !candidate.getUniqueId().equals(owner.getUniqueId()))
-                .filter(candidate -> receivesModels(candidate.getUniqueId()) && canView(candidate)
-                        && candidate.getWorld().equals(owner.getWorld()) && candidate.canSee(owner))
-                .map(candidate -> new AudienceCandidate(candidate.getUniqueId(),
-                        candidate.getLocation().distanceSquared(origin)))
-                .filter(candidate -> candidate.distance < range)
-                .sorted(Comparator.comparingDouble(AudienceCandidate::distance)
-                        .thenComparing(AudienceCandidate::viewer))
-                .limit(this.policy.maxViewers()).map(AudienceCandidate::viewer)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
+        PrivateAudienceSelector nearest = new PrivateAudienceSelector(this.policy.maxViewers(), range);
+        for (Player candidate : owner.getTrackedBy()) {
+            if (candidate.isOnline() && !candidate.getUniqueId().equals(owner.getUniqueId())
+                    && receivesModels(candidate.getUniqueId()) && canView(candidate)
+                    && candidate.getWorld().equals(owner.getWorld()) && candidate.canSee(owner)) {
+                nearest.consider(candidate.getUniqueId(), candidate.getLocation().distanceSquared(origin));
+            }
+        }
+        Set<UUID> discovered = nearest.viewers();
         if (this.resources == null) {
             return discovered;
         }
@@ -2653,9 +2650,6 @@ public final class PrivateModelSyncService implements PluginMessageListener, Aut
             this.publication = publication;
             this.created = this.lastProgress = tick;
         }
-    }
-
-    private record AudienceCandidate(UUID viewer, double distance) {
     }
 
     private record ObservationFailure(UUID owner, UUID generation, String sourceId, String kind, String hash,

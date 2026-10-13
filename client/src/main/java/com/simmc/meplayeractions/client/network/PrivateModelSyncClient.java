@@ -12,6 +12,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 
 /** Optional server-mediated native model sharing. Offers authorize bytes, leases authorize display. */
 public final class PrivateModelSyncClient {
@@ -57,6 +59,11 @@ public final class PrivateModelSyncClient {
         void dispatch(Runnable task);
 
         boolean prepare(Remote remote, LocalModelLibrary.Loaded loaded);
+
+        default void prepareAsync(Remote remote, LocalModelLibrary.Loaded loaded, BooleanSupplier current,
+                Consumer<Boolean> completion) {
+            completion.accept(current.getAsBoolean() && prepare(remote, loaded));
+        }
 
         void remove(UUID owner, UUID generation);
 
@@ -1458,20 +1465,35 @@ public final class PrivateModelSyncClient {
                         remove(remote);
                         return;
                     }
-                    if (error != null || loaded == null || !this.host.prepare(remote, loaded)) {
+                    if (error != null || loaded == null) {
                         receiveFailed(remote,
                                 error == null ? "客户端无法准备模型贴图或几何" : "客户端模型解析失败：" + error.getClass().getSimpleName());
                         status(remote.offerId, remote.hash, "rejected");
                         remove(remote);
                         return;
                     }
-                    remote.ready = true;
-                    remote.phase = ReceivingPhase.WAITING_ACK;
-                    remote.lastLease = this.clockNow;
-                    remote.lastReadyAttempt = -1;
-                    this.host.state(remote);
-                    flushControl(remote, this.clockNow);
-                    this.host.cache(remote.hash, remote.bundle);
+                    this.host.prepareAsync(remote, loaded,
+                            () -> current(remote, revision) && decodeRevision == remote.decodeRevision
+                                    && this.host.viewEnabled(),
+                            success -> this.host.dispatch(() -> {
+                                if (!current(remote, revision) || decodeRevision != remote.decodeRevision
+                                        || !this.host.viewEnabled()) {
+                                    return;
+                                }
+                                if (!success) {
+                                    receiveFailed(remote, "客户端无法准备模型贴图或几何");
+                                    status(remote.offerId, remote.hash, "rejected");
+                                    remove(remote);
+                                    return;
+                                }
+                                remote.ready = true;
+                                remote.phase = ReceivingPhase.WAITING_ACK;
+                                remote.lastLease = this.clockNow;
+                                remote.lastReadyAttempt = -1;
+                                this.host.state(remote);
+                                flushControl(remote, this.clockNow);
+                                this.host.cache(remote.hash, remote.bundle);
+                            }));
                 }));
     }
 

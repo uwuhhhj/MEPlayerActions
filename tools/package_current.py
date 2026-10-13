@@ -1,4 +1,4 @@
-"""Package server/client 0.6.2 after saved unit checks and final builds.
+"""Package server/client 0.6.3 after saved unit checks and final builds.
 
 This helper does not run a build, a test, Minecraft, or the old runtime release gate.
 Both sides must be freshly built. All stages must belong to this release and retain
@@ -25,7 +25,7 @@ import zipfile
 
 PROJECT = Path(__file__).resolve().parents[1]
 CLIENT = PROJECT / "client"
-VERSION = "0.6.2"
+VERSION = "0.6.3"
 SERVER_VERSION = VERSION
 VALIDATION = PROJECT / "build" / f"validation-{VERSION}"
 EVIDENCE_VERSIONS = {VERSION}

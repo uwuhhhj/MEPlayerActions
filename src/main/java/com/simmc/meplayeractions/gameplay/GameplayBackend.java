@@ -1,23 +1,13 @@
 package com.simmc.meplayeractions.gameplay;
 
 import org.bukkit.GameMode;
-import org.bukkit.block.Block;
-import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Boat;
 import org.bukkit.entity.Minecart;
 import com.simmc.meplayeractions.action.StateSelector.Vehicle;
 import org.bukkit.plugin.Plugin;
-import org.bukkit.event.Event;
-import org.bukkit.event.EventPriority;
 import org.bukkit.event.HandlerList;
 import org.bukkit.event.Listener;
-import org.bukkit.event.player.PlayerEvent;
-
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.MethodType;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -26,7 +16,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.logging.Level;
 import java.util.List;
-import org.bukkit.Location;
+import java.util.function.Supplier;
+import java.util.function.Function;
 import org.bukkit.entity.Entity;
 
 /**
@@ -35,56 +26,68 @@ import org.bukkit.entity.Entity;
  */
 public final class GameplayBackend implements AutoCloseable {
     private final Plugin plugin;
-    private final GSitBridge gsit;
+    private final GSitAccess gsit;
     private final Map<UUID, OwnedPosture> postures = new HashMap<>();
     private final Map<UUID, FlightSession> flights = new HashMap<>();
     private final PoseReplicaVisibility replicas = new PoseReplicaVisibility();
     private final Listener poseLifecycle = new Listener() {
     };
     private boolean replicaAdapter;
-    private final Set<String> replicaWarnings = new HashSet<>();
+    private boolean gsitFailed;
+    private boolean replicaRestoreWarning;
     private String gsitDiagnosis = "GSit 后端尚未初始化。";
     private boolean closed;
 
     public GameplayBackend(Plugin plugin) {
+        this(plugin, null);
+    }
+
+    GameplayBackend(Plugin plugin, Function<Plugin, GSitAccess> factory) {
         this.plugin = Objects.requireNonNull(plugin, "plugin");
-        this.gsit = loadGSit();
-        this.replicaAdapter = this.gsit != null && this.gsit.dependency.getDescription().getVersion().equals("3.5.1");
+        this.gsit = loadGSit(factory);
         if (this.replicaAdapter) {
             try {
                 registerPoseLifecycle();
-            } catch (RuntimeException failure) {
-                this.replicaAdapter = false;
-                plugin.getLogger().log(Level.WARNING, "GSit 假玩家适配器已停用；公共姿态采样仍可使用", failure);
+            } catch (RuntimeException | LinkageError failure) {
+                disableReplica(failure);
             }
         }
     }
 
     /** Whether the supported optional backend is currently enabled. */
     public boolean available() {
-        return !this.closed && this.gsit != null && this.gsit.enabled();
+        if (this.closed || this.gsit == null || this.gsitFailed) {
+            return false;
+        }
+        try {
+            if (this.gsit.enabled()) {
+                return true;
+            }
+            disableGSit(new IllegalStateException("GSit 已被停用"));
+        } catch (RuntimeException | LinkageError failure) {
+            disableGSit(failure);
+        }
+        return false;
     }
 
     public String diagnosis() {
         if (this.closed) {
             return "玩家动作服务已经关闭。";
         }
-        if (this.gsit != null && !this.gsit.enabled()) {
-            return "GSit 已被停用，真实坐下和爬行不可用。";
-        }
+        available();
         return this.gsitDiagnosis;
     }
 
     /** Includes postures started by GSit itself or another plugin. */
     public boolean isSitting(Player player) {
         Objects.requireNonNull(player, "player");
-        return this.gsit != null && this.gsit.enabled() && this.gsit.seat(player) != null;
+        return gsitCall(() -> this.gsit.seat(player) != null, false);
     }
 
     /** Includes postures started by GSit itself or another plugin. */
     public boolean isCrawling(Player player) {
         Objects.requireNonNull(player, "player");
-        return this.gsit != null && this.gsit.enabled() && this.gsit.crawl(player) != null;
+        return gsitCall(() -> this.gsit.crawl(player) != null, false);
     }
 
     /** Read-only: never dismounts or changes another plugin's posture. */
@@ -93,37 +96,39 @@ public final class GameplayBackend implements AutoCloseable {
         Vehicle type = vehicle == null ? Vehicle.NONE
                 : (vehicle instanceof Boat ? Vehicle.BOAT
                         : (vehicle instanceof Minecart ? Vehicle.MINECART : Vehicle.OTHER));
-        String pose = this.gsit != null && this.gsit.enabled() ? this.gsit.poseType(player) : "";
-        return PostureResolver.resolve(isSitting(player), isCrawling(player), pose, player.isSleeping(),
+        PostureResolver.Posture nativePosture = PostureResolver.resolve(false, false, "", player.isSleeping(),
                 player.getPose(), player.isInWater(), player.isFlying(), player.isGliding(), type);
+        return gsitCall(() -> PostureResolver.resolve(this.gsit.seat(player) != null,
+                this.gsit.crawl(player) != null, this.gsit.poseType(player), player.isSleeping(),
+                player.getPose(), player.isInWater(), player.isFlying(), player.isGliding(), type), nativePosture);
     }
 
     /** Model contact and direction from GSit's public seat API, never its lowered player mount. */
     public GSitAnchor visualAnchor(Player player) {
-        return this.gsit != null && this.gsit.enabled() ? this.gsit.visualAnchor(player) : null;
+        return gsitCall(() -> this.gsit.visualAnchor(player), null);
     }
 
     /** Suppress the GSit packet replica only when this plugin owns and hides the player's disguise. */
     public void syncPoseReplica(Player player, boolean hideAvatar) {
         requireMainThread();
-        if (!hideAvatar || this.gsit == null || !this.gsit.enabled() || !this.replicaAdapter) {
-            this.replicas.restore(player.getUniqueId());
+        if (!hideAvatar || !available() || !this.replicaAdapter) {
+            restoreReplica(player.getUniqueId());
             return;
         }
         try {
-            Object pose = this.gsit.pose(player);
+            Object pose = gsitCall(() -> this.gsit.pose(player), null);
+            if (!available()) {
+                return;
+            }
             if (pose != null && (!pose.getClass().getName().startsWith("dev.geco.gsit.mcv.")
                     || !pose.getClass().getName().endsWith(".model.Pose"))) {
                 throw new IllegalStateException("Unknown GSit pose implementation: " + pose.getClass().getName());
             }
 
             this.replicas.suppress(player.getUniqueId(), pose);
-        } catch (RuntimeException failure) {
+        } catch (RuntimeException | LinkageError failure) {
             // Optional private rendering hooks must never prevent public pose/animation synchronization.
-            if (this.replicaWarnings.add(failure.getMessage())) {
-                this.plugin.getLogger().log(Level.WARNING, "GSit 3.5.1 假玩家隐藏失败；姿态同步保持启用", failure);
-            }
-
+            disableReplica(failure);
         }
     }
 
@@ -133,7 +138,8 @@ public final class GameplayBackend implements AutoCloseable {
         if (!preparePosture(player, PostureKind.SIT)) {
             return;
         }
-        Object seat = this.gsit.createSeat(player);
+        Object seat = gsitCall(() -> this.gsit.createSeat(player), null);
+        requireGSit();
         if (seat == null) {
             throw new IllegalStateException("无法坐下：GSit 创建座位失败，或动作被其他插件取消。");
         }
@@ -146,7 +152,8 @@ public final class GameplayBackend implements AutoCloseable {
         if (!preparePosture(player, PostureKind.CRAWL)) {
             return;
         }
-        Object crawl = this.gsit.startCrawl(player);
+        Object crawl = gsitCall(() -> this.gsit.startCrawl(player), null);
+        requireGSit();
         if (crawl == null) {
             throw new IllegalStateException("无法爬行：GSit 创建爬行会话失败，或动作被其他插件取消。");
         }
@@ -167,19 +174,20 @@ public final class GameplayBackend implements AutoCloseable {
         if (owned == null) {
             return;
         }
-        if (this.gsit == null || !this.gsit.enabled()) {
+        if (!available()) {
             // A disabled GSit owns its own shutdown cleanup; do not call stale API objects.
             this.postures.remove(id, owned);
             return;
         }
-        Object current = owned.kind == PostureKind.SIT ? this.gsit.seat(player) : this.gsit.crawl(player);
+        Object current = gsitCall(() -> owned.kind == PostureKind.SIT ? this.gsit.seat(player)
+                : this.gsit.crawl(player), null);
         if (current != owned.handle) {
             this.postures.remove(id, owned);
             return;
         }
-        boolean stopped = owned.kind == PostureKind.SIT ? this.gsit.removeSeat(owned.handle, useSafeDismount)
-                : this.gsit.stopCrawl(owned.handle);
-        if (!stopped) {
+        Boolean stopped = gsitCall(() -> owned.kind == PostureKind.SIT
+                ? this.gsit.removeSeat(owned.handle, useSafeDismount) : this.gsit.stopCrawl(owned.handle), null);
+        if (Boolean.FALSE.equals(stopped)) {
             // Keep ownership so another cleanup attempt can inspect the actual live object.
             throw new IllegalStateException("无法结束动作：GSit 未成功停止本插件创建的姿态。");
         }
@@ -301,11 +309,7 @@ public final class GameplayBackend implements AutoCloseable {
         requireMainThread();
         Objects.requireNonNull(player, "player");
         RuntimeException failure = null;
-        try {
-            this.replicas.restore(player.getUniqueId());
-        } catch (RuntimeException e) {
-            failure = e;
-        }
+        restoreReplica(player.getUniqueId());
         try {
             stopOwnedPosture(player, useSafeDismount);
         } catch (RuntimeException e) {
@@ -343,15 +347,20 @@ public final class GameplayBackend implements AutoCloseable {
                 this.plugin.getLogger().log(Level.WARNING, "无法完整清理玩家 " + player.getName() + " 的动作状态。", failure);
             }
         }
-        this.replicas.close();
+        try {
+            this.replicas.close();
+        } catch (RuntimeException | LinkageError failure) {
+            this.plugin.getLogger().log(Level.WARNING, "GSit 假玩家显示清理失败；其他服务继续关闭", failure);
+        }
         HandlerList.unregisterAll(this.poseLifecycle);
         this.closed = true;
     }
 
     private boolean preparePosture(Player player, PostureKind requested) {
         UUID id = player.getUniqueId();
-        Object seat = this.gsit.seat(player);
-        Object crawl = this.gsit.crawl(player);
+        Object seat = gsitCall(() -> this.gsit.seat(player), null);
+        Object crawl = gsitCall(() -> this.gsit.crawl(player), null);
+        requireGSit();
         OwnedPosture owned = this.postures.get(id);
         if (owned != null && (owned.kind == PostureKind.SIT ? seat : crawl) != owned.handle) {
             this.postures.remove(id, owned);
@@ -404,53 +413,98 @@ public final class GameplayBackend implements AutoCloseable {
         }
     }
 
-    private GSitBridge loadGSit() {
-        Plugin dependency = this.plugin.getServer().getPluginManager().getPlugin("GSit");
-        if (dependency == null || !dependency.isEnabled()) {
-            this.gsitDiagnosis = "未启用兼容的 GSit，GSit 坐姿和爬行指令不可用；原生趴下、床上睡眠和载具动画仍可识别。";
-            this.plugin.getLogger().warning(this.gsitDiagnosis);
-            return null;
-        }
-        String version = dependency.getDescription().getVersion();
-        if (!version.startsWith("3.")) {
-            this.gsitDiagnosis = "检测到 GSit " + version + "；本插件需要 GSit 3.x 公共 API，GSit 姿态后端已停用。";
-            this.plugin.getLogger().warning(this.gsitDiagnosis);
-            return null;
-        }
+    private GSitAccess loadGSit(Function<Plugin, GSitAccess> factory) {
         try {
-            GSitBridge bridge = new GSitBridge(dependency);
+            Plugin dependency = this.plugin.getServer().getPluginManager().getPlugin("GSit");
+            if (dependency == null || !dependency.isEnabled()) {
+                this.gsitDiagnosis = "未启用 GSit，GSit 坐姿和爬行指令不可用；原生趴下、床上睡眠和载具动画仍可识别。";
+                this.plugin.getLogger().info(this.gsitDiagnosis);
+                return null;
+            }
+            String version = dependency.getDescription().getVersion();
+            if (!version.startsWith("3.")) {
+                this.gsitDiagnosis = "检测到 GSit " + version + "；本插件需要 GSit 3.x 公共 API，GSit 姿态后端已停用。";
+                this.plugin.getLogger().warning(this.gsitDiagnosis);
+                return null;
+            }
+            // Load the class that references GSit only after checking the optional plugin.
+            GSitAccess bridge = Objects.requireNonNull(factory == null ? new DirectGSitBridge(dependency)
+                    : factory.apply(dependency), "GSit adapter");
+            this.replicaAdapter = version.equals("3.5.1");
             this.gsitDiagnosis = "已接入 GSit " + version + " 公共 API：坐姿/躺下/趴下/爬行可识别。"
-                    + (bridge.startCrawl == null ? " 当前 API 无单参数爬行入口，请用 GSit 自身命令开始爬行。" : " 坐下和爬行指令可用。");
+                    + (this.replicaAdapter ? " 假玩家隐藏适配可用。" : " 当前版本未启用假玩家隐藏适配。");
             this.plugin.getLogger().info(this.gsitDiagnosis);
             return bridge;
-        } catch (ReflectiveOperationException | LinkageError failure) {
-            this.gsitDiagnosis = "GSit " + version + " 公共 API 加载失败，GSit 姿态后端已停用。";
+        } catch (RuntimeException | LinkageError failure) {
+            this.replicaAdapter = false;
+            this.gsitDiagnosis = "GSit 公共 API 加载失败，GSit 姿态后端已停用；其他功能继续运行。";
             this.plugin.getLogger().log(Level.WARNING, this.gsitDiagnosis, failure);
             return null;
         }
     }
 
     private void registerPoseLifecycle() {
+        this.gsit.registerPoseLifecycle(this.plugin, this.poseLifecycle, (owner, pose) -> {
+            int range = owner.getWorld().getSimulationDistance() * 16;
+            List<Player> fallback = owner.getWorld().getPlayers().stream()
+                    .filter(viewer -> viewer.canSee(owner) && viewer.getLocation()
+                            .distanceSquared(owner.getLocation()) <= (double) range * range)
+                    .toList();
+            this.replicas.beforeRemoval(owner.getUniqueId(), pose, fallback);
+        }, this::disableReplica);
+    }
+
+    private <T> T gsitCall(Supplier<T> operation, T fallback) {
+        if (!available()) {
+            return fallback;
+        }
         try {
-            Class<? extends Event> beforeStop = Class.forName("dev.geco.gsit.api.event.PrePlayerStopPoseEvent", true,
-                    this.gsit.dependency.getClass().getClassLoader()).asSubclass(Event.class);
-            Method eventPose = beforeStop.getMethod("getPose");
-            this.plugin.getServer().getPluginManager().registerEvent(beforeStop, this.poseLifecycle,
-                    EventPriority.MONITOR, (listener, event) -> {
-                        try {
-                            Player owner = ((PlayerEvent) event).getPlayer();
-                            int range = owner.getWorld().getSimulationDistance() * 16;
-                            List<Player> fallback = owner.getWorld().getPlayers().stream()
-                                    .filter(viewer -> viewer.canSee(owner) && viewer.getLocation()
-                                            .distanceSquared(owner.getLocation()) <= (double) range * range)
-                                    .toList();
-                            this.replicas.beforeRemoval(owner.getUniqueId(), eventPose.invoke(event), fallback);
-                        } catch (ReflectiveOperationException | RuntimeException failure) {
-                            this.plugin.getLogger().log(Level.WARNING, "GSit 姿态结束前恢复显示失败", failure);
-                        }
-                    }, this.plugin, true);
-        } catch (ReflectiveOperationException failure) {
-            throw new IllegalStateException("GSit pose lifecycle API is unavailable", failure);
+            return operation.get();
+        } catch (RuntimeException | LinkageError failure) {
+            disableGSit(failure);
+            return fallback;
+        }
+    }
+
+    private void disableGSit(Throwable failure) {
+        if (this.gsitFailed) {
+            return;
+        }
+        this.gsitFailed = true;
+        this.postures.clear();
+        this.gsitDiagnosis = "GSit 已停用或 API 调用失败，GSit 接入已隔离；原生姿态和其他功能继续运行。";
+        if (this.replicaAdapter) {
+            disableReplica(failure);
+        }
+        this.plugin.getLogger().log(Level.WARNING, this.gsitDiagnosis, failure);
+    }
+
+    private void disableReplica(Throwable failure) {
+        if (!this.replicaAdapter) {
+            return;
+        }
+        this.replicaAdapter = false;
+        this.gsitDiagnosis = this.gsitDiagnosis.replace("假玩家隐藏适配可用。", "假玩家隐藏适配已因故障停用。");
+        HandlerList.unregisterAll(this.poseLifecycle);
+        try {
+            this.replicas.close();
+        } catch (RuntimeException | LinkageError cleanup) {
+            if (cleanup != failure) {
+                failure.addSuppressed(cleanup);
+            }
+        }
+        this.plugin.getLogger().log(Level.WARNING, "GSit 假玩家适配器已停用；公共姿态接入不受此适配器故障影响", failure);
+    }
+
+    private void restoreReplica(UUID owner) {
+        try {
+            this.replicas.restore(owner);
+        } catch (RuntimeException | LinkageError failure) {
+            disableReplica(failure);
+            if (!this.replicaRestoreWarning) {
+                this.replicaRestoreWarning = true;
+                this.plugin.getLogger().log(Level.WARNING, "GSit 假玩家显示恢复失败；其他功能继续运行", failure);
+            }
         }
     }
 
@@ -489,141 +543,4 @@ public final class GameplayBackend implements AutoCloseable {
         }
     }
 
-    /** Public API signatures checked at runtime, without a hard optional dependency. */
-    private static final class GSitBridge {
-        private final Plugin dependency;
-        private final Method createSeat;
-        private final Method getSeat;
-        private final Method removeSeat;
-        private final Method startCrawl;
-        private final Method getCrawl;
-        private final Method stopCrawl;
-        private final Method getPose;
-        private final Method getPoseType;
-        private final Method getPoseSeat;
-        private final Method getSeatLocation;
-        private final Object sitService;
-        private final Method getBaseOffset;
-        private final Object pluginReason;
-
-        private GSitBridge(Plugin dependency) throws ReflectiveOperationException {
-            this.dependency = dependency;
-            ClassLoader loader = dependency.getClass().getClassLoader();
-            Class<?> api = Class.forName("dev.geco.gsit.api.GSitAPI", true, loader);
-            Class<?> seat = Class.forName("dev.geco.gsit.model.Seat", true, loader);
-            Class<?> crawl = Class.forName("dev.geco.gsit.model.Crawl", true, loader);
-            Class<?> reason = Class.forName("dev.geco.gsit.model.StopReason", true, loader);
-            this.pluginReason = reason.getField("PLUGIN").get(null);
-            this.createSeat = api.getMethod("createSeat", Block.class, LivingEntity.class, boolean.class, double.class,
-                    double.class, double.class, float.class, boolean.class);
-            this.getSeat = api.getMethod("getSeatByEntity", LivingEntity.class);
-            this.removeSeat = api.getMethod("removeSeat", seat, reason, boolean.class);
-            Method crawlStart;
-            try {
-                crawlStart = api.getMethod("startCrawl", Player.class);
-            } catch (NoSuchMethodException ignored) {
-                crawlStart = null;
-            }
-            this.startCrawl = crawlStart;
-            this.getCrawl = api.getMethod("getCrawlByPlayer", Player.class);
-            this.stopCrawl = api.getMethod("stopCrawl", crawl, reason);
-            this.getPose = api.getMethod("getPoseByPlayer", Player.class);
-            this.getPoseType = this.getPose.getReturnType().getMethod("getPoseType");
-            this.getPoseSeat = this.getPose.getReturnType().getMethod("getSeat");
-            this.getSeatLocation = seat.getMethod("getLocation");
-            // Class.getMethod enumerates every GSitMain return type and accidentally loads
-            // optional PlaceholderAPI classes. Resolve just this exact public signature.
-            Class<?> sitServiceType = Class.forName("dev.geco.gsit.service.SitService", true, loader);
-            try {
-                this.sitService = MethodHandles.publicLookup()
-                        .findVirtual(dependency.getClass(), "getSitService", MethodType.methodType(sitServiceType))
-                        .invoke(dependency);
-            } catch (Throwable failure) {
-                if (failure instanceof RuntimeException runtime) {
-                    throw runtime;
-                }
-
-                if (failure instanceof Error error) {
-                    throw error;
-                }
-
-                throw new ReflectiveOperationException("GSit getSitService resolution failed", failure);
-            }
-            this.getBaseOffset = this.sitService.getClass().getMethod("getBaseOffset");
-        }
-
-        private boolean enabled() {
-            return this.dependency.isEnabled();
-        }
-
-        private Object createSeat(Player player) {
-            // Stay at the player's X/Z instead of snapping to the center of the supporting block.
-            Block block = player.getLocation().clone().subtract(0.0, 0.1, 0.0).getBlock();
-            return invoke(this.createSeat, "创建座位", block, player, true, 0.0, 0.0, 0.0, player.getLocation().getYaw(),
-                    false);
-        }
-
-        private Object seat(Player player) {
-            return invoke(this.getSeat, "查询坐姿", player);
-        }
-
-        private boolean removeSeat(Object seat, boolean useSafeDismount) {
-            return Boolean.TRUE.equals(invoke(this.removeSeat, "结束坐姿", seat, this.pluginReason, useSafeDismount));
-        }
-
-        private Object startCrawl(Player player) {
-            if (this.startCrawl == null) {
-                throw new IllegalStateException("当前 GSit 版本没有兼容的 startCrawl(Player) 入口，请使用 GSit 的爬行命令；动画照常同步。");
-            }
-
-            return invoke(this.startCrawl, "开始爬行", player);
-        }
-
-        private Object crawl(Player player) {
-            return invoke(this.getCrawl, "查询爬行", player);
-        }
-
-        private String poseType(Player player) {
-            Object pose = pose(player);
-            if (pose == null) {
-                return "";
-            }
-
-            try {
-                return ((Enum<?>) this.getPoseType.invoke(pose)).name();
-            } catch (ReflectiveOperationException ex) {
-                throw new IllegalStateException("GSit 查询姿态类型失败", ex);
-            }
-        }
-
-        private Object pose(Player player) {
-            return invoke(this.getPose, "查询躺卧姿态", player);
-        }
-
-        private GSitAnchor visualAnchor(Player player) {
-            Object pose = pose(player);
-            try {
-                Object seat = pose == null ? seat(player) : this.getPoseSeat.invoke(pose);
-                return seat == null ? null
-                        : GSitAnchor.of((Location) this.getSeatLocation.invoke(seat),
-                                ((Number) this.getBaseOffset.invoke(this.sitService)).doubleValue());
-            } catch (ReflectiveOperationException failure) {
-                throw new IllegalStateException("GSit 查询姿态接触面失败", failure);
-            }
-        }
-
-        private boolean stopCrawl(Object crawl) {
-            return Boolean.TRUE.equals(invoke(this.stopCrawl, "结束爬行", crawl, this.pluginReason));
-        }
-
-        private static Object invoke(Method method, String operation, Object... args) {
-            try {
-                return method.invoke(null, args);
-            } catch (InvocationTargetException e) {
-                throw new IllegalStateException("GSit " + operation + "失败。", e.getCause());
-            } catch (ReflectiveOperationException | IllegalArgumentException e) {
-                throw new IllegalStateException("无法调用 GSit 的" + operation + "公共接口。", e);
-            }
-        }
-    }
 }

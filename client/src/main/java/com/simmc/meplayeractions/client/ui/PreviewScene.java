@@ -83,7 +83,7 @@ final class PreviewScene {
                 selected.add(layer("gui", previewAnimation, "LOOP"));
             }
 
-        } else if (context != ModelPreview.Context.OWNER && previewAnimation != null
+        } else if (context == ModelPreview.Context.CARD && previewAnimation != null
                 && model.animations().contains(previewAnimation)) {
             // OpenYSM's dummy stops main/hand predicates and submits currentAnimation to cap.
             // An explicit cap slot also keeps ctrl.playing_extra_animation false in the dummy.
@@ -135,9 +135,9 @@ final class PreviewScene {
             this.startCount++;
         }
         this.previousClock = clock;
-        boolean owner = this.model.ysmControllers() && this.context == ModelPreview.Context.OWNER;
-        NativeInputs effective = owner ? (inputs.cardDummy() ? NativeInputs.EMPTY : inputs)
-                : (this.context != ModelPreview.Context.OWNER && inputs.cardDummy() ? inputs : NativeInputs.EMPTY);
+        boolean entityPreview = this.model.ysmControllers() && this.context != ModelPreview.Context.CARD;
+        NativeInputs effective = entityPreview ? (inputs.cardDummy() ? NativeInputs.EMPTY : inputs)
+                : (this.context == ModelPreview.Context.CARD && inputs.cardDummy() ? inputs : NativeInputs.EMPTY);
         // Repeated draws and partial-tick jitter do not replay events or rewind physics.
         double nextAge = Math.max(this.age, clock - this.startedAt);
         if (this.last == null || nextAge != this.age || !this.lastParameters.equals(parameters)
@@ -145,14 +145,14 @@ final class PreviewScene {
                 || !this.lastQueries.equals(effective.queries())) {
             this.age = nextAge;
             List<BbModel.Layer> layers = this.staticLayers;
-            if (owner && effective.motion() != null) {
+            if (entityPreview && effective.motion() != null) {
                 this.motion.update((long) Math.floor(this.age), effective.motion(), this.policy, List.of(),
                         this.model.animationCatalog());
                 layers = this.motion.layers();
             }
             this.player.configureFrame(environment -> {
                 effective.configure().accept(environment);
-                if (this.context != ModelPreview.Context.OWNER) {
+                if (this.context == ModelPreview.Context.CARD) {
                     VanillaYsmQueries.populatePreviewDefaults(environment);
                 }
 
@@ -162,7 +162,7 @@ final class PreviewScene {
                 environment.query("ysm.is_first_person", 0d);
                 environment.query("query.is_first_person", 0d);
                 environment.query("ysm.person_view", 2d);
-                if (owner && effective.motion() != null) {
+                if (entityPreview && effective.motion() != null) {
                     for (String slot : this.motion.pausedControllers()) {
                         environment.query("ysm.pause." + slot, 1d);
                     }
@@ -170,7 +170,7 @@ final class PreviewScene {
                 }
 
             });
-            Map<String, Double> queries = owner ? effective.queries() : CARD_QUERIES;
+            Map<String, Double> queries = entityPreview ? effective.queries() : CARD_QUERIES;
             float headYaw = queries.getOrDefault("ysm.head_yaw", 0d).floatValue();
             float headPitch = queries.getOrDefault("ysm.head_pitch", 0d).floatValue();
             this.last = new Sample(

@@ -21,6 +21,10 @@ MPA 将模型资源任务、两个同步频道和服务器伪装纳入共享预�
 
 ## 配置与共享预算
 
+`status models` 的同步发现指标包括：`models.discoveryCandidatesPerTick`（当前 tick 已检查的发现候选）、`models.discoveryCandidatesTotal`（累计候选）、`models.discoveryPending`（等待续扫的观察者数）和 `models.discoveryMaxWaitTicks`（已完成扫描的最长等待 tick 数）。最长等待不包含 ME 选观众之前的等待、资产下载或尚未完成的扫描；这些计数不包含其他授权与租约复查。
+
+`models.authorizationRefreshesTotal` 与 `models.authorizationBindingChecksTotal` 分别累计资产授权集合重算次数与绑定访问次数；它们用于观察合并效果，不代表所有安全检查数量。全局状态中的 `preferences.pending`、`preferences.writing`、`preferences.failures`、`preferences.writes` 与 `preferences.retryMillis` 显示待保存偏好、当前写入及重试状态，后端重载保留协调器累计值。
+
 所有新配置位于 `resource-protection`。升级保留已有 `config.yml`，缺失字段自动使用默认值；无效范围在重载替换旧后端前报错。完整键名见 [默认配置](../src/main/resources/config.yml)，这里只列调优常用项。字节额度以实际 UTF-8 Plugin Message 计算，包含 Base64 与 JSON 封装；`MiB` 为 1024² 字节。
 
 | 配置组 | 默认预算 |
@@ -59,6 +63,8 @@ MPA 将模型资源任务、两个同步频道和服务器伪装纳入共享预�
 阈值位于 `resource-protection.protection`。恢复要求 TPS ≥ 19、MSPT ≤ 45 ms，连续健康 `recovery-ticks: 600` 折算的 30 秒，逐级恢复；该等待使用单调时钟，期间再次超限重新计时。`main-budget-millis` 默认 3 ms、`main-work-per-tick` 默认 64 项，限制被纳入预算的非关键工作；它们不能强行中断已经进入的 Bukkit／ModelEngine 调用。动画与安全清理各自维护必要时序，不能把预算理解为整个插件任意代码的硬执行时间上限。
 
 已计量的 MPA 主线程工作均值达到主预算 1 倍、3 倍、6 倍时，也分别进入减速、保护、紧急等级；默认对应 3／9／18 ms。该均值只覆盖接入计量的插件工作段，不等于全进程采样，仍可在服务器 TPS 看似正常时提前减少本插件负载。
+
+玩家同步偏好的 `players.yml` 在共享后台运行时合并保存，内存立即应用、相同值不重复写盘。保存协调器跨后端重载保留最新变更；失败重试起步 5 秒、最多 30 秒间隔。停服最多等待 250 ms，超时告警并允许最后一批未保存；ME 实例和动态动画对象装配、正在执行的动作／表达式循环及安全撤权也不能被主预算中断。新发现的 128 候选额度只覆盖对应扫描计数。当前同步路径、元数据累积与仍可减少的重复检查见 [资源生命周期与性能风险](STATIC_REVIEW.md)。
 
 `models.emergency-removals-per-tick` 默认 2，服务器伪装与私人中继分别按该额度分批结束本插件拥有的展示／发布；设为 0 保留现有实例，仍拒绝新增负载。清理不会销毁外来模型。解绑、撤权、断线、必要确认及租约维护继续执行，避免保护状态造成永久隐藏或泄漏。
 

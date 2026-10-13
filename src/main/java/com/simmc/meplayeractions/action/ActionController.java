@@ -20,6 +20,8 @@ import com.simmc.meplayeractions.me.ModelAudience;
 import com.simmc.meplayeractions.protection.ResourceError;
 import com.simmc.meplayeractions.protection.ResourceProtection;
 import com.simmc.meplayeractions.protection.ResourceRejectedException;
+import com.simmc.meplayeractions.protection.ResourceSettings;
+import com.simmc.meplayeractions.preferences.PlayerPreferences;
 import com.ticxo.modelengine.api.events.BoneTransformReadEvent;
 import com.ticxo.modelengine.api.model.ActiveModel;
 import com.ticxo.modelengine.api.animation.BlueprintAnimation.LoopMode;
@@ -28,13 +30,11 @@ import org.bukkit.Input;
 import org.bukkit.Location;
 import org.bukkit.block.Block;
 import org.bukkit.inventory.EquipmentSlot;
-import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
 
 import java.io.File;
-import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import com.simmc.meplayeractions.gameplay.PostureResolver.Posture;
@@ -50,11 +50,12 @@ public final class ActionController {
     private final DisguiseAdmission admission;
     private final Map<UUID, Session> sessions = new LinkedHashMap<>();
     private Set<UUID> ownerIds = Set.of();
+    private final AudienceIndex audienceIndex = new AudienceIndex();
     private final Map<ActiveModel, VisualOffset> visualOffsets = new ConcurrentHashMap<>();
     private final Set<UUID> adoptWarning = new HashSet<>();
     private final Set<UUID> adoptPaused = new HashSet<>();
-    private final File preferenceFile;
-    private final YamlConfiguration preferences;
+    private final PlayerPreferences preferences;
+    private final boolean ownsResources;
     private BukkitTask task;
     private ClientSyncService clients;
     private long clock;
@@ -103,6 +104,7 @@ public final class ActionController {
         long nextCleanup;
         String manualPosture = "standing";
         int audienceRelationships;
+        Set<UUID> indexedAudience = Set.of();
 
         Session(Player player, Attachment attachment, List<String> animations, Settings settings,
                 DisguiseOptions options) {
@@ -122,7 +124,16 @@ public final class ActionController {
         this.settings = settings;
         this.bridge = bridge;
         this.gameplay = gameplay;
-        this.resources = plugin instanceof MEPlayerActionsPlugin main ? main.resources() : null;
+        this.ownsResources = !(plugin instanceof MEPlayerActionsPlugin);
+        if (plugin instanceof MEPlayerActionsPlugin main) {
+            this.resources = main.resources();
+            this.preferences = main.preferences();
+        } else {
+            this.resources = new ResourceProtection(plugin, ResourceSettings.fromConfiguration(plugin.getConfig()));
+            this.preferences = new PlayerPreferences(new File(plugin.getDataFolder(), "players.yml").toPath(),
+                    plugin.getLogger());
+            this.preferences.runtime(this.resources);
+        }
         this.admission = new DisguiseAdmission(
                 this.resources == null ? 256 : this.resources.settings().maxServerDisguises(),
                 this.resources == null ? 20 : 0);
@@ -153,8 +164,6 @@ public final class ActionController {
         }
         this.adoption = new RollingScan<>(settings.performance.adoptionScanTicks());
         this.clock = Integer.toUnsignedLong(Bukkit.getCurrentTick());
-        this.preferenceFile = new File(plugin.getDataFolder(), "players.yml");
-        this.preferences = YamlConfiguration.loadConfiguration(this.preferenceFile);
     }
 
     public void clients(ClientSyncService clients) {
@@ -162,6 +171,10 @@ public final class ActionController {
     }
 
     public void start() {
+        if (this.ownsResources) {
+            this.resources.start();
+            this.preferences.start(this.plugin);
+        }
         this.task = Bukkit.getScheduler().runTaskTimer(this.plugin, this::tick, 1, 1);
     }
 
@@ -306,6 +319,12 @@ public final class ActionController {
         this.adoptWarning.remove(player.getUniqueId());
         this.adoptPaused.remove(player.getUniqueId());
         try {
+            if (attachment.owned()) {
+                session.indexedAudience = this.bridge.audienceViewers(attachment);
+                this.audienceIndex.update(player.getUniqueId(), session.indexedAudience);
+            } else {
+                this.audienceIndex.unrestricted(player.getUniqueId());
+            }
             session.effects.apply(options.effects(), this.clock);
             update(player, session);
             changed(session);
@@ -336,6 +355,7 @@ public final class ActionController {
         }
 
         boolean owned = s.attachment.owned();
+        this.audienceIndex.remove(player.getUniqueId());
         RuntimeException failure = attempt(null, () -> stopLayers(s));
         failure = attempt(failure,
                 () -> s.effects.clear(Integer.toUnsignedLong(Bukkit.getCurrentTick()), !reason.equals("death")));
@@ -584,16 +604,11 @@ public final class ActionController {
 
     public boolean syncEnabled(Player player, SyncFeature feature) {
         return this.settings.syncEnabled && this.settings.sync(feature)
-                && this.preferences.getBoolean(player.getUniqueId() + "." + feature.key(), true);
+                && this.preferences.enabled(player.getUniqueId(), feature.key());
     }
 
     public void synchronization(Player player, SyncFeature feature, Boolean value) {
-        this.preferences.set(player.getUniqueId() + "." + feature.key(), value);
-        try {
-            this.preferences.save(this.preferenceFile);
-        } catch (IOException ex) {
-            throw new IllegalStateException("无法保存玩家同步偏好", ex);
-        }
+        this.preferences.set(player.getUniqueId(), feature.key(), value);
         Session s = this.sessions.get(player.getUniqueId());
         if (s != null) {
             clearPosture(s);
@@ -681,6 +696,10 @@ public final class ActionController {
         return this.ownerIds;
     }
 
+    public Set<UUID> audienceCandidates(UUID viewer) {
+        return this.audienceIndex.candidates(viewer);
+    }
+
     /** Build only the requested owner's current state; absent sessions have no snapshot. */
     public StateSnapshot snapshot(UUID owner) {
         Session session = this.sessions.get(owner);
@@ -724,7 +743,15 @@ public final class ActionController {
                     remove(player, "external-undisguise");
                     continue;
                 }
-                if (this.bridge.updateAudience(s.attachment)) {
+                boolean audienceChanged = this.bridge.updateAudience(s.attachment);
+                if (s.attachment.owned()) {
+                    Set<UUID> currentAudience = this.bridge.audienceViewers(s.attachment);
+                    if (currentAudience != s.indexedAudience) {
+                        this.audienceIndex.update(s.attachment.playerId(), currentAudience);
+                        s.indexedAudience = currentAudience;
+                    }
+                }
+                if (audienceChanged) {
                     int count = this.bridge.relationshipCount(s.attachment);
                     this.relationships += count - s.audienceRelationships;
                     s.audienceRelationships = count;
@@ -1182,6 +1209,7 @@ public final class ActionController {
         }
         this.sessions.clear();
         this.ownerIds = Set.of();
+        this.audienceIndex.clear();
         this.adoption.clear();
         this.visualOffsets.clear();
         this.adoptPaused.clear();
@@ -1189,5 +1217,12 @@ public final class ActionController {
         this.admission.clear();
         this.emergencyCleanup.clear();
         this.ownedSessions = this.adoptedSessions = this.relationships = this.cleanupSessions = 0;
+        if (this.ownsResources) {
+            try {
+                this.preferences.shutdown();
+            } finally {
+                this.resources.close();
+            }
+        }
     }
 }

@@ -15,9 +15,7 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -39,8 +37,7 @@ public final class LocalModelLibrary {
     }
 
     private final Path directory;
-    private final Map<String, byte[]> sourceBundles = new LinkedHashMap<>();
-    private final Map<String, String> sourceBundleErrors = new LinkedHashMap<>();
+    private final SourceBundleCache sourceCache = new SourceBundleCache();
 
     public LocalModelLibrary(Path directory) {
         this.directory = directory.toAbsolutePath().normalize();
@@ -121,6 +118,10 @@ public final class LocalModelLibrary {
     }
 
     public Loaded load(String id, String textureId) throws IOException {
+        return load(id, textureId, this.sourceCache.generation());
+    }
+
+    private Loaded load(String id, String textureId, long generation) throws IOException {
         if (!LocalAppearanceSettings.isValidModelId(id)) {
             throw new IOException("无效的本地模型选择");
         }
@@ -145,8 +146,8 @@ public final class LocalModelLibrary {
             }
             Map<String, byte[]> files = NativeBbModel.localSourceFiles(file, raw);
             YsmFolderModel.Imported imported = NativeBbModel.read(raw, files, textureId);
-            if (!hasSource(id)) {
-                rememberFiles(id, "bbmodel", "model.bbmodel", files);
+            if (!this.sourceCache.contains(id, generation)) {
+                rememberFiles(id, "bbmodel", "model.bbmodel", files, generation);
             }
 
             return new Loaded(AssetTransfer.hash(imported.raw()), BbModel.parseLocal(imported.raw()),
@@ -158,82 +159,41 @@ public final class LocalModelLibrary {
             raw = imported.raw();
             previewAnimation = imported.previewAnimation();
             profile = imported.profile();
-            rememberImported(id, imported);
+            rememberImported(id, imported, generation);
         } else {
             YsmFolderModel.Imported imported = YsmFolderModel.bundledWithProfile(id, textureId);
             raw = imported.raw();
             previewAnimation = imported.previewAnimation();
             profile = imported.profile();
-            rememberImported(id, imported);
+            rememberImported(id, imported, generation);
         }
         return new Loaded(AssetTransfer.hash(raw), BbModel.parseLocal(raw), previewAnimation, profile);
     }
 
     /** Skin and variable snapshots stay outside this stable full-asset identity. */
-    public synchronized byte[] sourceBundle(String id) throws IOException {
-        byte[] cached = this.sourceBundles.get(id);
-        if (cached == null && this.sourceBundleErrors.containsKey(id)) {
-            throw new IOException(this.sourceBundleErrors.get(id));
-        }
-
-        if (cached == null) {
-            load(id);
-            cached = this.sourceBundles.get(id);
-        }
-        if (cached == null && this.sourceBundleErrors.containsKey(id)) {
-            throw new IOException(this.sourceBundleErrors.get(id));
-        }
-
-        if (cached == null) {
-            throw new IOException("模型完整原始资产不可用");
-        }
-
-        return cached.clone();
+    public byte[] sourceBundle(String id) throws IOException {
+        return this.sourceCache.bundle(id, generation -> load(id, null, generation));
     }
 
     /** Explicit library reload can invalidate source identity; selecting a skin does not. */
-    public synchronized void clearSourceBundleCache() {
-        this.sourceBundles.clear();
-        this.sourceBundleErrors.clear();
+    public void clearSourceBundleCache() {
+        this.sourceCache.clear();
     }
 
-    private synchronized boolean hasSource(String id) {
-        return this.sourceBundles.containsKey(id) || this.sourceBundleErrors.containsKey(id);
-    }
-
-    private void rememberImported(String id, YsmFolderModel.Imported imported) throws IOException {
-        if (!hasSource(id)) {
-            rememberFiles(id, "ysm", "ysm.json", imported.sourceFiles());
+    private void rememberImported(String id, YsmFolderModel.Imported imported, long generation) throws IOException {
+        if (!this.sourceCache.contains(id, generation)) {
+            rememberFiles(id, "ysm", "ysm.json", imported.sourceFiles(), generation);
         }
 
     }
 
-    private void rememberFiles(String id, String kind, String entry, Map<String, byte[]> files) throws IOException {
+    private void rememberFiles(String id, String kind, String entry, Map<String, byte[]> files, long generation)
+            throws IOException {
         try {
-            rememberSource(id, NativeModelBundle.encode(kind, entry, files));
+            this.sourceCache.remember(id, NativeModelBundle.encode(kind, entry, files), generation);
         } catch (NativeModelBundle.NetworkBudgetExceededException limit) {
-            synchronized (this) {
-                this.sourceBundleErrors.put(id, limit.getMessage());
-                while (this.sourceBundleErrors.size() > 16) {
-                    this.sourceBundleErrors.remove(this.sourceBundleErrors.keySet().iterator().next());
-                }
-
-            }
+            this.sourceCache.error(id, limit.getMessage(), generation);
         }
-    }
-
-    private synchronized void rememberSource(String id, byte[] bytes) {
-        this.sourceBundleErrors.remove(id);
-        // Cache transfer bytes across texture/profile changes; explicit reload is a separate operation.
-        byte[] previous = this.sourceBundles.get(id);
-        if (previous == null || !Arrays.equals(previous, bytes)) {
-            this.sourceBundles.put(id, bytes);
-        }
-
-        while (this.sourceBundles.size() > 16) {
-            this.sourceBundles.remove(this.sourceBundles.keySet().iterator().next());
-        }
-
     }
 
     private void checkDirectory() throws IOException {

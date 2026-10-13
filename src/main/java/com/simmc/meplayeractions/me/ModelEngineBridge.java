@@ -350,6 +350,11 @@ public final class ModelEngineBridge {
         return session.audience == null || session.audience.allows(viewer);
     }
 
+    public Set<UUID> audienceViewers(Attachment attachment) {
+        Session session = requireSession(attachment);
+        return session.audience == null ? Set.of() : session.audience.viewerIds();
+    }
+
     public int viewerCount(Attachment attachment) {
         Session session = requireSession(attachment);
         return session.audience == null ? -1 : session.audience.otherViewers(attachment.playerId());

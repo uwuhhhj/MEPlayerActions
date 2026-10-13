@@ -46,6 +46,7 @@ import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.Consumer;
+import java.util.function.BooleanSupplier;
 
 /** All live session and GPU mutations run on the Minecraft thread. Asset decoding does not. */
 public final class ClientRuntime {
@@ -83,6 +84,8 @@ public final class ClientRuntime {
 
     private final ArrayDeque<PendingSync> pendingPrivateEvents = new ArrayDeque<>();
     private PrivateModelSyncClient privateModels;
+    private final Map<String, PendingInstall> textureInstalls = new LinkedHashMap<>();
+    private final Set<String> textureInstallSlots = new HashSet<>();
     private long localExtraSequence;
     private long lastRoamingFlush;
     private final Map<String, BbModel> assets = new LinkedHashMap<>(16, 0.75f, true);
@@ -93,7 +96,7 @@ public final class ClientRuntime {
     private final Set<String> serverAssets = new HashSet<>();
     private final Map<String, String> serverModelAssets = new HashMap<>();
     private final ServerPushAuthorization pushAuthorization = new ServerPushAuthorization();
-    private final Map<String, Long> failedAssets = new HashMap<>();
+    private final FailedAssetCache failedAssets = new FailedAssetCache(this::activeAssetHashes);
     private final Set<String> loading = new HashSet<>();
     private final ThreadPoolExecutor decoder = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
             new LinkedBlockingQueue<>(8), r -> {
@@ -256,23 +259,25 @@ public final class ClientRuntime {
 
             @Override
             public boolean prepare(PrivateModelSyncClient.Remote remote, LocalModelLibrary.Loaded loaded) {
-                if (client.world == null) {
-                    return false;
-                }
+                return ClientRuntime.this.assets.containsKey(loaded.hash()) && ModelRenderer.has(loaded.hash());
+            }
 
-                install(loaded.hash(), loaded.model());
-                if (!ClientRuntime.this.assets.containsKey(loaded.hash()) || !ModelRenderer.has(loaded.hash())) {
-                    return false;
-                }
-
-                Binding binding = new Binding(remote.owner, remote.generation.toString(), "private:" + remote.hash,
-                        loaded.hash());
-                binding.profile = loaded.profile();
-                binding.motion = localMotionPolicy(loaded.model());
-                binding.hidePlayer = true;
-                ClientRuntime.this.privateBindings.put(remote.owner, binding);
-                ClientRuntime.this.privateExtraSequences.remove(remote.owner);
-                return true;
+            @Override
+            public void prepareAsync(PrivateModelSyncClient.Remote remote, LocalModelLibrary.Loaded loaded,
+                    BooleanSupplier current, Consumer<Boolean> completion) {
+                install(loaded.hash(), loaded.model(), () -> current.getAsBoolean() && client.world != null,
+                        success -> {
+                            if (success && current.getAsBoolean()) {
+                                Binding binding = new Binding(remote.owner, remote.generation.toString(),
+                                        "private:" + remote.hash, loaded.hash());
+                                binding.profile = loaded.profile();
+                                binding.motion = localMotionPolicy(loaded.model());
+                                binding.hidePlayer = true;
+                                ClientRuntime.this.privateBindings.put(remote.owner, binding);
+                                ClientRuntime.this.privateExtraSequences.remove(remote.owner);
+                            }
+                            completion.accept(success && current.getAsBoolean());
+                        });
             }
 
             @Override
@@ -336,6 +341,8 @@ public final class ClientRuntime {
     }
 
     public void reset() {
+        this.textureInstalls.clear();
+        this.textureInstallSlots.clear();
         this.options.flushRoamingVariables();
         this.lastRoamingFlush = 0;
         if (this.privateModels != null) {
@@ -391,6 +398,7 @@ public final class ClientRuntime {
     public void tick() {
         this.localTick++;
         long now = System.nanoTime();
+        this.failedAssets.prune(now);
         this.serverDisguiseRequest.expire(now);
         if (now - this.lastRoamingFlush >= SECOND) {
             this.options.flushRoamingVariables();
@@ -402,6 +410,8 @@ public final class ClientRuntime {
             this.connected = wasConnected;
             this.world = this.client.world;
         }
+        pumpTextureInstalls();
+        ModelRenderer.pumpTexturePreparation();
         // This private mode is independent of the server handshake and also runs in single player.
         ensureLocalAppearance();
         updateLocalAppearanceMotion();
@@ -469,7 +479,7 @@ public final class ClientRuntime {
                         && !binding.hash.isEmpty() && this.assets.containsKey(binding.hash)
                         && ModelRenderer.has(binding.hash) && !binding.active && !binding.unsupported
                         && now - binding.lastReady > SECOND
-                        && now - this.failedAssets.getOrDefault(binding.hash, 0L) > 30 * SECOND) {
+                        && !this.failedAssets.coolingDown(binding.hash, now)) {
                     JsonObject ready = identity("render_ready", binding);
                     if (send(ready)) {
                         binding.readySent = true;
@@ -1038,6 +1048,11 @@ public final class ClientRuntime {
 
     private void completePush(ServerPushAuthorization.Offer offer, BbModelAsset.Decoded decoded, boolean cached,
             long epoch) {
+        completePush(offer, decoded, cached, epoch, null);
+    }
+
+    private void completePush(ServerPushAuthorization.Offer offer, BbModelAsset.Decoded decoded, boolean cached,
+            long epoch, byte[] validatedBytes) {
         if (!currentPush(offer, epoch)) {
             return;
         }
@@ -1045,35 +1060,67 @@ public final class ClientRuntime {
         String hash = offer.identity().hash();
         pushState(hash, "准备服务器模型渲染", "");
         BbModel model = decoded.model();
-        install(hash, model);
-        boolean supported = this.bindings.values().stream().filter(binding -> binding.hash.equals(hash))
-                .anyMatch(binding -> !binding.unsupported);
-        if (!this.assets.containsKey(hash) || !ModelRenderer.has(hash) || !supported) {
-            rejectPush(offer, "服务器模型无法准备渲染或缺少对应动画");
+        if (cached && !assetStatus(offer, "cached")) {
+            rejectPush(offer, "无法确认已校验的服务器模型缓存");
             return;
         }
-        this.failedAssets.remove(hash);
-        this.loading.remove(hash);
-        this.pushGpuPrepared++;
-        if (cached) {
-            if (!assetStatus(offer, "cached")) {
-                rejectPush(offer, "无法确认已校验的服务器模型缓存");
+        install(hash, model, () -> currentPush(offer, epoch), success -> {
+            if (!currentPush(offer, epoch)) {
                 return;
             }
-            this.pushCacheHits++;
-        } else {
-            this.pushTransfersCompleted++;
-        }
+            boolean supported = this.bindings.values().stream().filter(binding -> binding.hash.equals(hash))
+                    .anyMatch(binding -> !binding.unsupported);
+            if (!success || !supported) {
+                rejectPush(offer, "服务器模型无法准备渲染或缺少对应动画");
+                return;
+            }
+            this.failedAssets.remove(hash);
+            this.loading.remove(hash);
+            this.pushGpuPrepared++;
+            if (cached) {
+                this.pushCacheHits++;
+            } else {
+                this.pushTransfersCompleted++;
+            }
 
-        this.assetMetadata.put(hash, decoded);
-        this.serverAssets.add(hash);
-        this.serverModelAssets.put(offer.identity().modelId(), hash);
-        if (cached) {
-            rememberCachedServerModel(offer.identity().modelId(), hash);
-        }
+            this.assetMetadata.put(hash, decoded);
+            this.serverAssets.add(hash);
+            this.serverModelAssets.put(offer.identity().modelId(), hash);
+            if (cached) {
+                rememberCachedServerModel(offer.identity().modelId(), hash);
+            }
 
-        pushState(hash, "等待服务器渲染确认", "");
-        this.pushAuthorization.remove(offer);
+            pushState(hash, "等待服务器渲染确认", "");
+            if (validatedBytes != null) {
+                cachePreparedPush(offer.identity().modelId(), hash, validatedBytes, epoch);
+            }
+            this.pushAuthorization.remove(offer);
+        });
+    }
+
+    private void cachePreparedPush(String modelId, String hash, byte[] raw, long epoch) {
+        try {
+            this.decoder.execute(() -> {
+                try {
+                    boolean changed = this.serverModelCache.writeValidated(modelId, hash, raw);
+                    this.client.execute(() -> {
+                        if (epoch != this.generation) {
+                            return;
+                        }
+                        this.cachedServerPreviewErrors.remove(hash);
+                        this.cachedServerPreviewRetry.remove(hash);
+                        if (changed) {
+                            refreshServerCacheIndex();
+                        }
+                    });
+                } catch (IOException failure) {
+                    MEPlayerActionsClient.LOGGER.debug("Server model cache write skipped {}: {}", hash.substring(0, 12),
+                            failure.toString());
+                }
+            });
+        } catch (RejectedExecutionException busy) {
+            MEPlayerActionsClient.LOGGER.debug("Server model cache write queue full {}", hash.substring(0, 12));
+        }
     }
 
     private void rejectPush(ServerPushAuthorization.Offer offer, String reason) {
@@ -1763,33 +1810,7 @@ public final class ClientRuntime {
                             return;
                         }
 
-                        completePush(offer, model, false, epoch);
-                        // Only a successfully prepared, still-authorized model may enter the disk cache.
-                        // Cache I/O remains off the Minecraft thread, and precedes later cache reads on this executor.
-                        if (this.assets.containsKey(hash) && ModelRenderer.has(hash)
-                                && !this.failedAssets.containsKey(hash)) {
-                            try {
-                                this.decoder.execute(() -> {
-                                    try {
-                                        boolean changed = this.serverModelCache
-                                                .writeValidated(offer.identity().modelId(), hash, raw);
-                                        this.client.execute(() -> {
-                                            this.cachedServerPreviewErrors.remove(hash);
-                                            this.cachedServerPreviewRetry.remove(hash);
-                                            if (changed) {
-                                                refreshServerCacheIndex();
-                                            }
-                                        });
-                                    } catch (IOException failure) {
-                                        MEPlayerActionsClient.LOGGER.debug("Server model cache write skipped {}: {}",
-                                                hash.substring(0, 12), failure.toString());
-                                    }
-                                });
-                            } catch (RejectedExecutionException busy) {
-                                MEPlayerActionsClient.LOGGER.debug("Server model cache write queue full {}",
-                                        hash.substring(0, 12));
-                            }
-                        }
+                        completePush(offer, model, false, epoch, raw);
                     });
                 } catch (Exception exception) {
                     this.client.execute(() -> {
@@ -1804,45 +1825,133 @@ public final class ClientRuntime {
         }
     }
 
-    private void install(String hash, BbModel model) {
-        if (this.assets.size() >= 16 && !this.assets.containsKey(hash) && !evictInactive()) {
-            failAsset(hash, "同时显示的模型过多，保持服务器显示");
+    private void install(String hash, BbModel model, BooleanSupplier current, Consumer<Boolean> completion) {
+        if (!current.getAsBoolean()) {
             return;
         }
-        try {
-            if (!ModelRenderer.prepare(hash, model)) {
-                while (evictInactive()) {
-                    if (ModelRenderer.prepare(hash, model)) {
-                        break;
-                    }
+        if (this.assets.containsKey(hash) && ModelRenderer.has(hash)) {
+            finishTextureInstall(hash, model);
+            completion.accept(true);
+            return;
+        }
+        PendingInstall pending = this.textureInstalls.get(hash);
+        if (pending == null) {
+            if (this.textureInstalls.size() >= 16) {
+                completion.accept(false);
+                return;
+            }
+            pending = new PendingInstall(model);
+            this.textureInstalls.put(hash, pending);
+        }
+        pending.listeners.add(new InstallListener(current, completion));
+    }
 
+    private void pumpTextureInstalls() {
+        for (Map.Entry<String, PendingInstall> entry : List.copyOf(this.textureInstalls.entrySet())) {
+            String hash = entry.getKey();
+            PendingInstall pending = entry.getValue();
+            pending.listeners.removeIf(listener -> !listener.current().getAsBoolean());
+            if (pending.listeners.isEmpty()) {
+                this.textureInstalls.remove(hash, pending);
+                this.textureInstallSlots.remove(hash);
+                continue;
+            }
+            if (pending.submitted) {
+                continue;
+            }
+            while (!this.assets.containsKey(hash) && this.assets.size() + this.textureInstallSlots.stream()
+                    .filter(value -> !this.assets.containsKey(value)).count() >= 16
+                    && !this.textureInstallSlots.contains(hash)) {
+                if (!evictInactive()) {
+                    break;
                 }
+            }
+            if (!this.assets.containsKey(hash) && !this.textureInstallSlots.contains(hash)
+                    && this.assets.size() + this.textureInstallSlots.stream()
+                            .filter(value -> !this.assets.containsKey(value)).count() >= 16) {
+                continue;
+            }
+            this.textureInstallSlots.add(hash);
+            pending.submitted = ModelRenderer.prepareAsync(hash, pending.model,
+                    () -> this.textureInstalls.get(hash) == pending && pending.listeners.stream()
+                            .anyMatch(listener -> listener.current().getAsBoolean()),
+                    (success, reason) -> {
+                        if (this.textureInstalls.get(hash) != pending) {
+                            return;
+                        }
+                        if (!success && reason.equals("cancelled") && pending.listeners.stream()
+                                .anyMatch(listener -> listener.current().getAsBoolean())) {
+                            pending.submitted = false;
+                            return;
+                        }
+                        this.textureInstalls.remove(hash, pending);
+                        this.textureInstallSlots.remove(hash);
+                        if (success) {
+                            finishTextureInstall(hash, pending.model);
+                        } else if (!reason.equals("cancelled")) {
+                            failAsset(hash, "模型纹理加载失败");
+                        }
+                        for (InstallListener listener : pending.listeners) {
+                            if (listener.current().getAsBoolean()) {
+                                listener.completion().accept(success);
+                            }
+                        }
+                    });
+            if (!pending.submitted) {
+                this.textureInstallSlots.remove(hash);
+            }
+        }
+    }
 
-                if (!ModelRenderer.has(hash)) {
-                    throw new IllegalStateException("Texture preparation failed");
+    private void finishTextureInstall(String hash, BbModel model) {
+        this.assets.put(hash, model);
+        this.failedAssets.remove(hash);
+        if (!this.unsupportedHandshake) {
+            this.lastError = "";
+        }
+
+        for (Binding binding : this.bindings.values()) {
+            if (binding.hash.equals(hash)) {
+                binding.unsupported = binding.layers.stream()
+                        .anyMatch(layer -> !model.animations().contains(layer.animation()));
+                if (binding.unsupported) {
+                    failed(binding, "客户端模型缺少对应动画，请更新服务器 bbmodel");
                 }
 
             }
-            this.assets.put(hash, model);
-            if (!this.unsupportedHandshake) {
-                this.lastError = "";
+        }
+
+        MEPlayerActionsClient.LOGGER.info("Prepared MPA model {}: {} cubes, {} animations", hash.substring(0, 12),
+                model.cubeCount(), model.animations().size());
+    }
+
+    public boolean evictTextureAsset() {
+        return evictInactive();
+    }
+
+    public boolean retainsTextureAsset(String hash) {
+        return this.assets.containsKey(hash) || this.textureInstalls.containsKey(hash);
+    }
+
+    public void restoreTextureAsset(String hash, BbModel model) {
+        long epoch = this.generation;
+        install(hash, model, () -> epoch == this.generation && this.assets.get(hash) == model, success -> {
+            if (!success) {
+                renderFailed(null, "", hash, "Texture upload failed after resource reload");
             }
+        });
+    }
 
-            for (Binding binding : this.bindings.values()) {
-                if (binding.hash.equals(hash)) {
-                    binding.unsupported = binding.layers.stream()
-                            .anyMatch(layer -> !model.animations().contains(layer.animation()));
-                    if (binding.unsupported) {
-                        failed(binding, "客户端模型缺少对应动画，请更新服务器 bbmodel");
-                    }
+    private record InstallListener(BooleanSupplier current, Consumer<Boolean> completion) {
+    }
 
-                }
-            }
+    private static final class PendingInstall {
+        private final BbModel model;
+        private final List<InstallListener> listeners = new ArrayList<>();
+        private boolean submitted;
 
-            MEPlayerActionsClient.LOGGER.info("Prepared MPA model {}: {} cubes, {} animations", hash.substring(0, 12),
-                    model.cubeCount(), model.animations().size());
-        } catch (Exception exception) {
-            failAsset(hash, "模型纹理加载失败");
+        private PendingInstall(BbModel model) {
+            this.model = model;
         }
     }
 
@@ -1894,6 +2003,19 @@ public final class ClientRuntime {
             }
         }
 
+    }
+
+    private Set<String> activeAssetHashes() {
+        Set<String> active = new HashSet<>(this.loading);
+        this.bindings.values().forEach(binding -> active.add(binding.hash));
+        this.privateBindings.values().forEach(binding -> active.add(binding.hash));
+        if (this.localSelf != null) {
+            active.add(this.localSelf.hash);
+        }
+        if (!this.previewHash.isEmpty()) {
+            active.add(this.previewHash);
+        }
+        return active;
     }
 
     private Binding matching(JsonObject json) {
@@ -3265,6 +3387,9 @@ public final class ClientRuntime {
         result.put("transfersBegun", this.pushTransfersBegun);
         result.put("transfersCompleted", this.pushTransfersCompleted);
         result.put("gpuPrepared", this.pushGpuPrepared);
+        result.put("texturePreparation", com.simmc.meplayeractions.client.render.TexturePreparation.SHARED.diagnostics());
+        result.put("textureInstalls", this.textureInstalls.size());
+        result.put("failedAssetRecords", this.failedAssets.size());
         result.put("renderReadySent", this.pushReadySent);
         result.put("renderAcks", this.pushRenderAcks);
         result.put("assetRequestPacketsSent", this.pushAssetRequests);
@@ -3520,26 +3645,31 @@ public final class ClientRuntime {
                             return;
                         }
 
-                        this.localAppearancePending = false;
                         if (this.client.world == null || this.client.player == null
                                 || !owner.equals(this.client.player.getUuid()) || !localAppearance().enabled()
                                 || !canUseLocalAppearance()) {
+                            this.localAppearancePending = false;
                             return;
                         }
-
-                        install(loaded.hash(), loaded.model());
-                        if (!this.assets.containsKey(loaded.hash()) || !ModelRenderer.has(loaded.hash())) {
-                            this.localAppearanceError = "本地模型纹理加载失败";
-                            this.localAppearanceRetryAfter = System.nanoTime() + 30 * SECOND;
-                            return;
-                        }
-                        this.localSelf = new Binding(owner, "local-self:" + token, id, loaded.hash());
-                        rememberLocalProfile(id, loaded);
-                        this.localSelf.profile = loaded.profile();
-                        this.localSelf.motion = localMotionPolicy(loaded.model());
-                        this.localSelf.hidePlayer = true;
-                        this.localAppearanceError = "";
-                        this.localAppearanceRetryAfter = 0;
+                        install(loaded.hash(), loaded.model(),
+                                () -> token == this.localAppearanceRequest && epoch == this.generation
+                                        && this.client.world != null && this.client.player != null
+                                        && owner.equals(this.client.player.getUuid()) && localAppearance().enabled()
+                                        && canUseLocalAppearance(), success -> {
+                            this.localAppearancePending = false;
+                            if (!success) {
+                                this.localAppearanceError = "本地模型纹理加载失败";
+                                this.localAppearanceRetryAfter = System.nanoTime() + 30 * SECOND;
+                                return;
+                            }
+                            this.localSelf = new Binding(owner, "local-self:" + token, id, loaded.hash());
+                            rememberLocalProfile(id, loaded);
+                            this.localSelf.profile = loaded.profile();
+                            this.localSelf.motion = localMotionPolicy(loaded.model());
+                            this.localSelf.hidePlayer = true;
+                            this.localAppearanceError = "";
+                            this.localAppearanceRetryAfter = 0;
+                        });
                     });
                 } catch (Exception failure) {
                     this.client.execute(() -> {
@@ -3722,20 +3852,22 @@ public final class ClientRuntime {
                 String hash = loaded.hash();
                 this.client.execute(() -> {
                     if (epoch == this.generation && token == this.previewRequest && canUseLocalActions()) {
-                        this.previewPending = false;
                         if (packSource) {
                             this.packAssets.add(hash);
                         }
-                        install(hash, model);
-                        if (this.assets.containsKey(hash)) {
-                            this.assetMetadata.put(hash,
-                                    new BbModelAsset.Decoded(model, loaded.previewAnimation(), loaded.profile()));
-                            this.previewId = id;
-                            this.previewHash = hash;
-                            this.previewManual = "";
-                            this.previewStarted = this.client.world.getTime();
-                            notify("本地模型预览已开启，请切换第三人称；J 打开动作轮盘");
-                        }
+                        install(hash, model, () -> epoch == this.generation && token == this.previewRequest
+                                && canUseLocalActions() && this.client.world != null, success -> {
+                            this.previewPending = false;
+                            if (success) {
+                                this.assetMetadata.put(hash,
+                                        new BbModelAsset.Decoded(model, loaded.previewAnimation(), loaded.profile()));
+                                this.previewId = id;
+                                this.previewHash = hash;
+                                this.previewManual = "";
+                                this.previewStarted = this.client.world.getTime();
+                                notify("本地模型预览已开启，请切换第三人称；J 打开动作轮盘");
+                            }
+                        });
                     }
                 });
             } catch (Exception exception) {

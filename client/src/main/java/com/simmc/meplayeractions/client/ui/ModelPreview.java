@@ -9,6 +9,8 @@ import com.simmc.meplayeractions.client.model.YsmRenderScale;
 import com.simmc.meplayeractions.client.render.YsmEquipmentRenderer;
 import com.simmc.meplayeractions.client.render.YsmItemRenderer;
 import com.simmc.meplayeractions.client.render.YsmPlayerSkin;
+import com.simmc.meplayeractions.client.render.TexturePreparation;
+import com.simmc.meplayeractions.client.render.ModelRenderer;
 
 import com.mojang.authlib.GameProfile;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
@@ -40,6 +42,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.WeakHashMap;
+import java.util.Collections;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -57,11 +61,13 @@ public final class ModelPreview implements AutoCloseable {
     private static final long MAX_ASSET_PIXELS = 16L * 1024 * 1024;
     private static final long MAX_CACHE_PIXELS = 32L * 1024 * 1024;
     private static final AtomicLong IDS = new AtomicLong();
+    private static final Set<ModelPreview> INSTANCES = Collections.newSetFromMap(new WeakHashMap<>());
     private static final RenderPipeline PREVIEW_PIPELINE = RenderPipelines.register(RenderPipeline
             .builder(RenderPipelines.POSITION_TEX_COLOR_SNIPPET)
             .withLocation(Identifier.of("meplayeractions", "pipeline/gui_model_preview")).withCull(false).build());
     private final Map<String, Asset> assets = new LinkedHashMap<>(16, .75f, true);
     private final Map<String, BbModel> failed = new LinkedHashMap<>();
+    private final Map<String, PreviewRequest> pending = new LinkedHashMap<>();
     private final List<Asset> retired = new ArrayList<>();
     private final Set<Asset> usedThisFrame = new HashSet<>();
     private final AtomicLong emittedVertices = new AtomicLong();
@@ -76,6 +82,11 @@ public final class ModelPreview implements AutoCloseable {
 
     public ModelPreview(ClientRuntime runtime) {
         this.runtime = runtime;
+        INSTANCES.add(this);
+    }
+
+    public static void resourcesReloaded() {
+        List.copyOf(INSTANCES).forEach(ModelPreview::clear);
     }
 
     public boolean render(DrawContext context, BbModel model, String key, int x, int y, int width, int height,
@@ -128,33 +139,46 @@ public final class ModelPreview implements AutoCloseable {
             asset = null;
         }
         if (asset == null) {
-            if (this.failed.get(key) == model || !makeRoom(0, true)) {
+            if (this.failed.get(key) == model) {
                 return false;
             }
-
-            try {
-                asset = prepare(model, previewAnimation, profile);
-                this.assets.put(key, asset);
-                this.failed.remove(key);
-            } catch (CacheFullException full) {
-                return false;
-            } catch (Exception failure) {
-                recordFailure(key, model);
-                LOGGER.warn("Cannot prepare GUI model preview {}: {}", key, failure.toString());
-                return false;
+            PreviewRequest request = this.pending.get(key);
+            if (request != null && (request.model != model || request.profile != profile)) {
+                this.pending.remove(key);
+                TexturePreparation.SHARED.cancel(request);
+                request = null;
             }
+            if (request == null && this.pending.size() < MAX_MODELS) {
+                PreviewRequest fresh = new PreviewRequest(model, profile);
+                if (TexturePreparation.SHARED.submit(fresh, () -> this.pending.get(key) == fresh,
+                        memory -> prepare(key, model, previewAnimation, profile, memory), (success, reason) -> {
+                            if (!this.pending.remove(key, fresh)) {
+                                return;
+                            }
+                            if (success) {
+                                this.failed.remove(key);
+                            } else if (!reason.equals("cancelled")) {
+                                recordFailure(key, model);
+                                LOGGER.warn("Cannot prepare GUI model preview {}: {}", key, reason);
+                            }
+                        })) {
+                    this.pending.put(key, fresh);
+                }
+            }
+            return false;
         }
         try {
             boolean nativeCamera = NativeGuiPreviewCamera.appliesTo(profile);
-            ClientRuntime.GuiPreviewInput nativeInput = nativeCamera && previewContext == Context.OWNER
+            boolean entityPreview = previewContext != Context.CARD;
+            ClientRuntime.GuiPreviewInput nativeInput = nativeCamera && entityPreview
                     && this.runtime != null ? this.runtime.guiPreviewInput() : null;
-            PreviewScene.NativeInputs sceneInput = nativeCamera && previewContext == Context.OWNER
+            PreviewScene.NativeInputs sceneInput = nativeCamera && entityPreview
                     && this.runtime != null
                             ? new PreviewScene.NativeInputs(nativeInput.sample(), Map.of(),
                                     ctx -> this.runtime.configureGuiPreviewExpressionContext(ctx,
                                             profile.selectedTexture()))
                             : PreviewScene.NativeInputs.EMPTY;
-            if (nativeCamera && previewContext != Context.OWNER) {
+            if (nativeCamera && !entityPreview) {
                 OtherClientPlayerEntity dummy = asset.previewDummy(client.world, previewContext);
                 sceneInput = PreviewScene.NativeInputs.card(environment -> VanillaYsmQueries.populate(client, dummy, 20,
                         profile.selectedTexture(), environment));
@@ -213,9 +237,9 @@ public final class ModelPreview implements AutoCloseable {
             }
             NativeGuiRenderBackend.Evidence nativeExecution = new NativeGuiRenderBackend.Evidence();
             NativeGuiRenderBackend.Attachments attachments = NativeGuiRenderBackend.Attachments.EMPTY;
-            if (camera != null && previewContext == Context.OWNER && client.player != null) {
+            if (camera != null && entityPreview && client.player != null) {
                 try {
-                    PreviewScene scene = asset.scenes.get(Context.OWNER);
+                    PreviewScene scene = asset.scenes.get(previewContext);
                     List<YsmItemRenderer.Attachment> items = YsmItemRenderer.extract(client.player,
                             scene.animationPlayer(), profile.isImportedBbModel());
                     List<YsmEquipmentRenderer.Attachment> equipment = this.runtime != null
@@ -232,7 +256,7 @@ public final class ModelPreview implements AutoCloseable {
             int hashSeparator = key.lastIndexOf(':');
             String sourceId = hashSeparator < 0 ? key : key.substring(0, hashSeparator);
             Identifier skin = profile.isYsm()
-                    ? YsmPlayerSkin.resolve(sourceId, previewContext == Context.OWNER ? client.player : null)
+                    ? YsmPlayerSkin.resolve(sourceId, entityPreview ? client.player : null)
                     : null;
             context.state.addSpecialElement(new NativeGuiRenderBackend.State(x, y, x + width, y + height, pose, scissor,
                     scissor, modelQuads, asset.rects, asset.id, asset.texture.getSampler(), pixelsPerBlock,
@@ -279,6 +303,10 @@ public final class ModelPreview implements AutoCloseable {
             return;
         }
         Asset asset = this.assets.remove(key);
+        PreviewRequest request = this.pending.remove(key);
+        if (request != null) {
+            TexturePreparation.SHARED.cancel(request);
+        }
         this.failed.remove(key);
         if (asset != null) {
             retire(asset);
@@ -307,6 +335,8 @@ public final class ModelPreview implements AutoCloseable {
             return;
         }
         this.assets.values().forEach(this::destroy);
+        this.pending.values().forEach(TexturePreparation.SHARED::cancel);
+        this.pending.clear();
         this.retired.forEach(this::destroy);
         this.assets.clear();
         this.retired.clear();
@@ -508,22 +538,57 @@ public final class ModelPreview implements AutoCloseable {
         asset.scenes.values().forEach(PreviewScene::dispose);
     }
 
-    private Asset prepare(BbModel model, String previewAnimation, YsmModelProfile profile) throws IOException {
+    private TexturePreparation.Prepared prepare(String key, BbModel model, String previewAnimation, YsmModelProfile profile,
+            TexturePreparation.Memory memory) throws Exception {
         List<Source> sources = new ArrayList<>();
         NativeImage atlas = null;
-        NativeImageBackedTexture texture = null;
-        boolean registered = false;
-        Identifier id = Identifier.of("meplayeractions", "gui_preview/atlas_" + IDS.incrementAndGet());
+        boolean handedOff = false;
         try {
+            Map<Integer, byte[]> pngs = new LinkedHashMap<>();
+            long sourcePixels = 0;
+            for (BbModel.Texture source : model.textures()) {
+                byte[] png = source.png();
+                if (pngs.put(source.index(), png) != null || pngs.size() > 16) {
+                    throw new IOException("Too many or duplicate preview textures");
+                }
+                sourcePixels += ModelRenderer.pngPixels(png);
+            }
+            PreviewMesh.Settings settings = PreviewMesh.settings(profile.properties());
+            for (Map.Entry<Integer, String> decoration : Map.of(-1, settings.background(), -2, settings.foreground())
+                    .entrySet()) {
+                if (!decoration.getValue().isEmpty()) {
+                    Optional<byte[]> png = profile.resourcePng(decoration.getValue());
+                    if (png.isPresent()) {
+                        sourcePixels += ModelRenderer.pngPixels(png.get());
+                        pngs.put(decoration.getKey(), png.get());
+                    }
+                }
+            }
+            if (sourcePixels > MAX_ASSET_PIXELS || pngs.isEmpty()) {
+                throw new IOException("Preview texture pixel budget or empty model");
+            }
+            List<BbModel.Vertex> basis = model.basisVertices();
+            if (basis.isEmpty() || basis.size() % 4 != 0 || basis.stream().anyMatch(vertex ->
+                    !pngs.containsKey(vertex.texture()) || !Float.isFinite(vertex.x()) || !Float.isFinite(vertex.y())
+                            || !Float.isFinite(vertex.z()) || !Float.isFinite(vertex.u()) || !Float.isFinite(vertex.v())
+                            || !Float.isFinite(vertex.nx()) || !Float.isFinite(vertex.ny())
+                            || !Float.isFinite(vertex.nz()))) {
+                throw new IOException("Invalid preview geometry or texture reference");
+            }
+            // Reserve sources plus the largest permitted atlas before native allocation.
+            memory.reserve((sourcePixels + MAX_ASSET_PIXELS) * 4);
             long pixels = 0;
             Set<Integer> indices = new HashSet<>();
-            for (BbModel.Texture source : model.textures()) {
-                if (!indices.add(source.index()) || sources.size() >= 16) {
+            for (Map.Entry<Integer, byte[]> source : pngs.entrySet()) {
+                if (memory.cancelled()) {
+                    throw new InterruptedException("Preview preparation cancelled");
+                }
+                if (!indices.add(source.getKey()) || sources.size() >= 18) {
                     throw new IOException("Too many or duplicate preview textures");
                 }
 
-                NativeImage image = decodePng(source.png());
-                sources.add(new Source(source.index(), image, true));
+                NativeImage image = decodePng(source.getValue());
+                sources.add(new Source(source.getKey(), image, true));
                 if (image.getWidth() <= 0 || image.getHeight() <= 0 || image.getWidth() > MAX_DIMENSION
                         || image.getHeight() > MAX_DIMENSION) {
                     throw new IOException("Preview texture dimensions");
@@ -539,30 +604,7 @@ public final class ModelPreview implements AutoCloseable {
                 throw new IOException("Model has no preview texture");
             }
 
-            PreviewMesh.Settings settings = PreviewMesh.settings(profile.properties());
-            for (Map.Entry<Integer, String> decoration : Map.of(-1, settings.background(), -2, settings.foreground())
-                    .entrySet()) {
-                if (decoration.getValue().isEmpty()) {
-                    continue;
-                }
-
-                Optional<byte[]> png = profile.resourcePng(decoration.getValue());
-                if (png.isEmpty()) {
-                    continue;
-                }
-
-                NativeImage image = decodePng(png.get());
-                sources.add(new Source(decoration.getKey(), image, true));
-                pixels += (long) image.getWidth() * image.getHeight();
-                if (pixels > MAX_ASSET_PIXELS) {
-                    throw new IOException("Preview texture pixel budget");
-                }
-
-            }
             Layout layout = pack(sources);
-            if (!makeRoom(layout.pixels(), false)) {
-                throw new CacheFullException();
-            }
 
             atlas = new NativeImage(layout.width, layout.height, true);
             // Explicitly clear gaps: native allocation must not expose uninitialized pixels.
@@ -580,37 +622,108 @@ public final class ModelPreview implements AutoCloseable {
                 }
 
             }
-            texture = new NativeImageBackedTexture(() -> "MEPlayerActions GUI preview " + id, atlas);
-            MinecraftClient.getInstance().getTextureManager().registerTexture(id, texture);
-            registered = true;
             Map<Integer, PreviewAtlasUv> rects = new LinkedHashMap<>();
             for (Placement p : layout.placements) {
                 rects.put(p.source.index, new PreviewAtlasUv(p.x, p.y, p.source.image.getWidth(),
                         p.source.image.getHeight(), layout.width, layout.height));
             }
 
-            return new Asset(model, id, texture, Map.copyOf(rects), layout.pixels(), previewAnimation, profile,
-                    settings);
+            PreviewTexture result = new PreviewTexture(key, model, atlas, Map.copyOf(rects), layout.pixels(),
+                    previewAnimation, profile, settings);
+            handedOff = true;
+            return result;
         } catch (Exception failure) {
-            if (registered) {
-                MinecraftClient.getInstance().getTextureManager().destroyTexture(id);
-            }
-
-            else if (texture != null) {
-                texture.close();
-            }
-
-            else if (atlas != null) {
-                atlas.close();
-            }
-
             if (failure instanceof IOException io) {
                 throw io;
             }
 
             throw new IOException("Preview preparation failed", failure);
         } finally {
-            sources.forEach(source -> source.image.close());
+            for (Source source : sources) {
+                try {
+                    source.image.close();
+                } catch (Throwable failure) {
+                    LOGGER.warn("Cannot close preview source pixels", failure);
+                }
+            }
+            if (!handedOff && atlas != null) {
+                atlas.close();
+            }
+        }
+    }
+
+    private static final class PreviewRequest {
+        private final BbModel model;
+        private final YsmModelProfile profile;
+
+        private PreviewRequest(BbModel model, YsmModelProfile profile) {
+            this.model = model;
+            this.profile = profile;
+        }
+    }
+
+    private final class PreviewTexture implements TexturePreparation.Prepared {
+        private final String key;
+        private final BbModel model;
+        private NativeImage atlas;
+        private final Map<Integer, PreviewAtlasUv> rects;
+        private final long pixels;
+        private final String animation;
+        private final YsmModelProfile profile;
+        private final PreviewMesh.Settings settings;
+
+        private PreviewTexture(String key, BbModel model, NativeImage atlas, Map<Integer, PreviewAtlasUv> rects, long pixels,
+                String animation, YsmModelProfile profile, PreviewMesh.Settings settings) {
+            this.key = key;
+            this.model = model;
+            this.atlas = atlas;
+            this.rects = rects;
+            this.pixels = pixels;
+            this.animation = animation;
+            this.profile = profile;
+            this.settings = settings;
+        }
+
+        @Override
+        public TexturePreparation.Step upload() {
+            if (!makeRoom(this.pixels, true)) {
+                return TexturePreparation.Step.WAIT;
+            }
+            Identifier id = Identifier.of("meplayeractions", "gui_preview/atlas_" + IDS.incrementAndGet());
+            NativeImageBackedTexture texture = new NativeImageBackedTexture(() -> "MEPlayerActions GUI preview " + id,
+                    this.atlas);
+            this.atlas = null;
+            boolean registered = false;
+            try {
+                MinecraftClient.getInstance().getTextureManager().registerTexture(id, texture);
+                registered = true;
+                ModelPreview.this.assets.put(this.key, new Asset(this.model, id, texture, this.rects, this.pixels,
+                        this.animation, this.profile, this.settings));
+            } catch (Throwable failure) {
+                try {
+                    if (registered) {
+                        MinecraftClient.getInstance().getTextureManager().destroyTexture(id);
+                    } else {
+                        texture.close();
+                    }
+                } catch (Throwable cleanup) {
+                    failure.addSuppressed(cleanup);
+                    texture.close();
+                }
+                throw failure;
+            }
+            return new TexturePreparation.Step(true, true);
+        }
+
+        @Override
+        public void close() {
+            if (this.atlas != null) {
+                try {
+                    this.atlas.close();
+                } finally {
+                    this.atlas = null;
+                }
+            }
         }
     }
 
@@ -703,9 +816,6 @@ public final class ModelPreview implements AutoCloseable {
         long pixels() {
             return (long) this.width * this.height;
         }
-    }
-
-    private static final class CacheFullException extends IOException {
     }
 
     private static final class Asset {

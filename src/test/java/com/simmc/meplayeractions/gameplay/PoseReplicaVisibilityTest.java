@@ -68,6 +68,20 @@ class PoseReplicaVisibilityTest {
     }
 
     @Test
+    void failedViewerCacheMutationRestoresTheOriginalCache() {
+        UUID owner = UUID.randomUUID();
+        Pose pose = new Pose();
+        Player viewer = viewer();
+        Set<Player> original = Set.of(viewer);
+        pose.nearbyPlayers = original;
+        PoseReplicaVisibility visibility = new PoseReplicaVisibility();
+
+        assertThrows(IllegalStateException.class, () -> visibility.suppress(owner, pose));
+        assertSame(original, pose.nearbyPlayers);
+        assertDoesNotThrow(visibility::close);
+    }
+
+    @Test
     void hiddenReplicaCannotRespawnOnViewerJoinReentryOrEquipmentChange() {
         UUID owner = UUID.randomUUID();
         Pose pose = new Pose();

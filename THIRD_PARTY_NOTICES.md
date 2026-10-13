@@ -4,6 +4,16 @@ This document identifies the third-party code and resources used by
 MEPlayerActions, their pinned sources, host adaptations and licenses.
 Current functionality is described in [YSM compatibility](docs/YSM_COMPATIBILITY.md).
 
+## GSit optional server integration
+
+The server compiles its public posture adapter against
+[Gecolay/GSit 3.5.1](https://github.com/Gecolay/GSit/tree/3.5.1),
+whose upstream license is [GPL version 3](https://github.com/Gecolay/GSit/blob/3.5.1/LICENSE).
+GSit is installed separately and its JAR is not bundled in MEPlayerActions.
+The version-specific replica visibility adapter targets the internal viewer
+and equipment caches in
+[the Minecraft 1.21.11 pose implementation](https://github.com/Gecolay/GSit/blob/3.5.1/mcv/v1_21_11/src/main/java/dev/geco/gsit/mcv/v1_21_11/model/Pose.java).
+
 ## OpenYSM default player model
 
 The independent client includes the `builtin/default` player model from
@@ -358,7 +368,7 @@ at the same MIT revision. MPA's `NativeGuiPreviewCamera`, `PreviewScene` and
 `ModelPreview` adapt the actual-player inventory framing (size 70 / offset
 0.0625) separately from the standing dummy-card framing (size 30 / disabled
 rotation offset 5.5). Gallery selections remain drafts until applied.
-OWNER samples native pose and typed queries in third-person inventory mode;
+OWNER and SELECTED sample native pose and typed queries in third-person inventory mode;
 CARD submits only the author's preview clip to `player.cap`.
 The source-sized card is fixed at 52 by 90 pixels,
 with 55/93-pixel slot strides and 45-pixel title wrapping in at most two centered

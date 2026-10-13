@@ -16,6 +16,8 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import javax.imageio.ImageIO;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -23,6 +25,75 @@ import static org.junit.jupiter.api.Assertions.*;
 /** Real bundle decoding with a deterministic host clock; no game, network or sleeps. */
 class PrivateModelSyncClientTest {
     private static final long NOW = 10_000_000_000L, SECOND = 1_000_000_000L;
+
+    @Test
+    void cachedStatusPrecedesGpuCompletionAndEarlyAckCannotDisplayThePendingModel() throws Exception {
+        Rig rig = new Rig();
+        rig.acknowledge(false, true);
+        rig.host.cached = CompletableFuture.completedFuture(rig.bundle);
+        rig.host.gpuPreparation = new CompletableFuture<>();
+        Offer offer = rig.offer();
+        rig.receive(offer.packet(), NOW);
+        rig.host.drain();
+        assertTrue(rig.host.sent("private_status").stream()
+                .anyMatch(packet -> packet.get("status").getAsString().equals("cached")));
+        assertFalse(rig.client.remote(offer.owner).ready);
+        assertTrue(rig.host.sent("private_ready").isEmpty());
+        rig.receive(offer.identity("private_ack"), NOW);
+        assertFalse(rig.client.remote(offer.owner).active);
+        assertTrue(rig.host.visible.isEmpty());
+        rig.host.gpuPreparation.complete(true);
+        rig.host.drain();
+        assertTrue(rig.client.remote(offer.owner).ready);
+        assertFalse(rig.client.remote(offer.owner).active);
+        assertEquals(1, rig.host.sent("private_ready").size());
+        rig.receive(offer.identity("private_ack"), NOW);
+        assertTrue(rig.client.remote(offer.owner).active);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = { "reset", "pause", "permission", "replacement" })
+    void gpuCompletionCannotReviveAnInvalidatedPrivateIdentity(String change) throws Exception {
+        Rig rig = new Rig();
+        rig.acknowledge(false, true);
+        rig.host.cached = CompletableFuture.completedFuture(rig.bundle);
+        CompletableFuture<Boolean> old = new CompletableFuture<>();
+        rig.host.gpuPreparation = old;
+        Offer offer = rig.offer();
+        rig.receive(offer.packet(), NOW);
+        rig.host.drain();
+        switch (change) {
+            case "reset" -> rig.client.reset();
+            case "pause" -> {
+                rig.host.viewEnabled = false;
+                rig.client.viewerRenderingChanged();
+            }
+            case "permission" -> {
+                JsonObject packet = heartbeat();
+                packet.addProperty("allowedView", false);
+                rig.receive(packet, NOW);
+            }
+            case "replacement" -> {
+                rig.host.gpuPreparation = new CompletableFuture<>();
+                JsonObject replacement = offer.packet();
+                replacement.addProperty("generation", UUID.randomUUID().toString());
+                replacement.addProperty("offerId", UUID.randomUUID().toString());
+                rig.receive(replacement, NOW);
+                rig.host.drain();
+            }
+            default -> fail(change);
+        }
+        old.complete(true);
+        rig.host.drain();
+        assertEquals(0, rig.host.prepared);
+        assertTrue(rig.host.sent("private_ready").isEmpty());
+        assertTrue(rig.host.visible.isEmpty());
+        if (!change.equals("replacement")) {
+            assertNull(rig.client.remote(offer.owner));
+        } else {
+            assertFalse(rig.client.remote(offer.owner).ready);
+        }
+    }
 
     @Test
     void pausedViewerNegotiatesItsIntentWithoutLoadingOffersOrClaimingReadiness() throws Exception {
@@ -2073,6 +2144,7 @@ class PrivateModelSyncClientTest {
         boolean channel = true, explicitLocal, viewEnabled = true;
         int cacheReads, bundleReads, decodes, prepared;
         CompletableFuture<byte[]> cached = CompletableFuture.completedFuture(null), publication;
+        CompletableFuture<Boolean> gpuPreparation;
         final Deque<CompletableFuture<LocalModelLibrary.Loaded>> decodeResults = new ArrayDeque<>();
         final Deque<Runnable> dispatch = new ArrayDeque<>();
         final List<JsonObject> packets = new ArrayList<>();
@@ -2153,6 +2225,16 @@ class PrivateModelSyncClientTest {
             assertNotNull(loaded.model());
             this.prepared++;
             return true;
+        }
+
+        public void prepareAsync(PrivateModelSyncClient.Remote remote, LocalModelLibrary.Loaded loaded,
+                BooleanSupplier current, Consumer<Boolean> completion) {
+            if (this.gpuPreparation == null) {
+                PrivateModelSyncClient.Host.super.prepareAsync(remote, loaded, current, completion);
+            } else {
+                this.gpuPreparation.whenComplete((success, error) -> completion.accept(current.getAsBoolean()
+                        && error == null && Boolean.TRUE.equals(success) && prepare(remote, loaded)));
+            }
         }
 
         public void remove(UUID owner, UUID generation) {

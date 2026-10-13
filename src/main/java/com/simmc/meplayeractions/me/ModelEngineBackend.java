@@ -12,7 +12,7 @@ import com.simmc.meplayeractions.config.AnimationLabels;
 import com.simmc.meplayeractions.config.Settings;
 import com.simmc.meplayeractions.gameplay.GameplayBackend;
 import com.simmc.meplayeractions.gameplay.PaperEffectPort;
-import com.simmc.meplayeractions.ui.ActionMenu;
+import com.simmc.meplayeractions.ui.ActionDialog;
 import com.simmc.meplayeractions.command.CommandLayout;
 import com.simmc.meplayeractions.command.DisguiseRequestId;
 import com.ticxo.modelengine.api.animation.BlueprintAnimation.LoopMode;
@@ -47,7 +47,7 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
     private ModelEngineBridge bridge;
     private GameplayBackend gameplay;
     private ClientSyncService clients;
-    private ActionMenu menu;
+    private ActionDialog dialog;
 
     public ModelEngineBackend(MEPlayerActionsPlugin plugin, FileConfiguration config) {
         this.plugin = Objects.requireNonNull(plugin);
@@ -74,6 +74,7 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
         this.clients.writability(viewer -> ModelEngineAPI.getNetworkHandler().getPipeline(viewer)
                 .map(pipeline -> pipeline.getChannel().isWritable()).orElse(false));
         this.clients.snapshotSources(this.controller::ownerIds, this.controller::snapshot);
+        this.clients.audienceCandidates(this.controller::audienceCandidates);
         this.clients.modelCatalog(this.controller::models);
         this.clients.configurePerformance(this.settings.performance);
         this.clients.configurePrivateModels(this.settings.privateModels);
@@ -90,8 +91,8 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
             }
         });
         this.controller.clients(this.clients);
-        this.menu = new ActionMenu(this.plugin, () -> this.controller, () -> this.settings, this.plugin::handleAction);
-        Bukkit.getPluginManager().registerEvents(this.menu, this.plugin);
+        this.dialog = new ActionDialog(() -> this.controller, () -> this.settings, this.plugin::handleAction);
+        Bukkit.getPluginManager().registerEvents(this.dialog, this.plugin);
         Bukkit.getPluginManager().registerEvents(this, this.plugin);
         this.clients.enable();
         this.controller.start();
@@ -135,9 +136,9 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
         this.running = false;
         HandlerList.unregisterAll(this);
         try {
-            if (this.menu != null) {
-                HandlerList.unregisterAll(this.menu);
-                this.menu.closeAll();
+            if (this.dialog != null) {
+                HandlerList.unregisterAll(this.dialog);
+                this.dialog.closeAll();
             }
         } finally {
             try {
@@ -231,9 +232,9 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
                 ServerMessages.list("§e当前模型动作：", this.controller.animations(player).stream()
                         .map(clip -> AnimationLabels.displayWithId(clip, this.settings.animationLabel(clip))).toList())
                         .forEach(line -> message(player, line));
-                message(player, "§7播放：/meplayeractions play <动作 ID>；J 轮盘或 menu 可直接选择。");
+                message(player, "§7播放：/meplayeractions play <动作 ID>；客户端使用 J 轮盘，未安装客户端时可偶尔使用 menu 备用对话菜单。");
             }
-            case "menu" -> this.menu.open(player, 0);
+            case "menu" -> this.dialog.open(player, 0);
             case "play" -> {
                 if (args.length < 2) {
                     throw new IllegalArgumentException("用法：/meplayeractions play <动作> [速度] [ONCE|LOOP|HOLD]");
@@ -338,7 +339,8 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
                 "§7模型名：1–64 位小写英文、数字、_、-；沿用 MPA 的安全格式。", "伪装参数：scale、hide-self、delay、effect=slowness:等级[:秒数]；药水仅支持缓慢。",
                 "观众参数：show-self（默认 " + this.settings.showSelf + "）、view-distance（默认 " + this.settings.modelViewDistance
                         + " 格）、max-viewers（默认 " + this.settings.maxViewers + " 名其他玩家）。",
-                "§e动画：" + prefix + " menu 中文菜单；animations 动画列表；play <动作名> [速度] [ONCE|LOOP|HOLD]。",
+                "§e动画：客户端使用 J 轮盘；animations 动画列表；play <动作名> [速度] [ONCE|LOOP|HOLD]。",
+                "§7备用入口：" + prefix + " menu 打开 Dialog 对话菜单；不常用，仅在未安装客户端、无法用轮盘调用动画时偶尔使用。",
                 "§e姿态：" + prefix + " pose sit 坐下；pose crawl 爬行；pose fly [on|off] 飞行。",
                 "§e停止／重置：" + prefix + " stop 停止手动动作；reset 重置动作、姿态和受管药水。",
                 "§e同步：" + prefix + " sync <类型> <on|off|default>，省略全部参数查看设置；类型："
@@ -462,6 +464,7 @@ public final class ModelEngineBackend implements ServerBackend, Listener {
 
     @Override
     public void forget(Player player) {
+        this.dialog.forget(player);
         try {
             this.controller.remove(player, "quit");
         } finally {

@@ -24,6 +24,7 @@ Java 代码规范见 [AGENTS.md](AGENTS.md)。IDE 可导入 [Eclipse / IntelliJ 
 
 - 使用 JDK 21，将 `JAVA_HOME` 指向 JDK 根目录，并确认 Maven/Gradle 实际使用该 JDK。
 - 服务端使用 PATH 中的 Maven；[pom.xml](pom.xml) 需要管理员合法提供的 ModelEngine R4.1.1 JAR。默认路径是仓库相邻的 `../ModelEngine-R4.1.1.jar`，也可用 `-Dmodelengine.jar=<JAR绝对路径>` 覆盖。编译需要它，与插件运行时可切入私人中继模式是两件事。
+- GSit 公共 API 直接调用的编译依赖为 [GSit 3.5.1](https://github.com/Gecolay/GSit/tree/3.5.1)，从项目官方发布渠道获取 JAR，默认放在 `build/deps/GSit-3.5.1.jar`，或用 `-Dgsit.jar=<JAR绝对路径>` 指定。该 JAR 不打入本插件，运行时 GSit 仍为可选依赖；不要提交第三方 JAR。
 - 客户端使用已入库的 Gradle Wrapper，无需全局 Gradle。Minecraft、Fabric、Maven 与 Gradle 依赖首次构建需要网络；具体版本以 [build.gradle](client/build.gradle)、[wrapper 配置](client/gradle/wrapper/gradle-wrapper.properties) 和 [pom.xml](pom.xml) 为准。
 - 打包与模型工具使用 Python 3。第三方源码、资源来源与许可见 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md)，不要移除来源文件。
 
@@ -69,9 +70,9 @@ finally { Pop-Location }
 python tools/package_current.py --help
 ```
 
-它读取已构建的两端 0.6.2 JAR、阶段报告与实际命令记录，校验后输出工作区 `dist/` 的 JAR、安装 ZIP、源码 ZIP、证据 ZIP 和构建 JSON。同名文件已存在时拒绝输出。最终构建记录位于 `build/validation-0.6.2/`；只接受 0.6.2 的本轮阶段与实际报告，包括失败尝试，不复用历史发布证据。显式证据清单保留本轮阶段的原目录、命令、报告和退出码。工具不执行构建、测试或实机验收；参数、阶段顺序与证据结构见 [工具说明](tools/README.md)。
+它读取已构建的两端 0.6.3 JAR、阶段报告与实际命令记录，校验后输出工作区 `dist/` 的 JAR、安装 ZIP、源码 ZIP、证据 ZIP 和构建 JSON。同名文件已存在时拒绝输出。最终构建记录位于 `build/validation-0.6.3/`；只接受 0.6.3 的本轮阶段与实际报告，包括失败尝试，不复用历史发布证据。显式证据清单保留本轮阶段的原目录、命令、报告和退出码。工具不执行构建、测试或实机验收；参数、阶段顺序与证据结构见 [工具说明](tools/README.md)。
 
-脚本的版本及最终构建合同固定为 0.6.2。行为发布须同步 `pom.xml`、`client/build.gradle`、脚本版本合同和相应证据。源码交付排除服务端 `private-models/`、`private-fixture*` 和其他私有输入，完整保留正常 `src` 资源与公开示例。文档整理本身不必递增软件版本。[package_release.py](tools/package_release.py) 提供资源、许可和 ZIP 辅助校验；其 `full` / `interactions` 流程不作为当前打包入口。
+脚本的版本及最终构建合同固定为 0.6.3。行为发布须同步 `pom.xml`、`client/build.gradle`、脚本版本合同和相应证据。源码交付排除服务端 `private-models/`、`private-fixture*` 和其他私有输入，完整保留正常 `src` 资源与公开示例。文档整理本身不必递增软件版本。[package_release.py](tools/package_release.py) 提供资源、许可和 ZIP 辅助校验；其 `full` / `interactions` 流程不作为当前打包入口。
 
 打包前核对插件/模组描述、安装说明和第三方声明；打包后检查 ZIP 完整性、结构、版本、许可、内容与当前源码/JAR 一致性，继续修改后重新打包。`tools/prepare_models.py` 准备示例原模型和 ME 蓝图，`tools/build_client_resource_pack.py` 用于资源包兼容模式；主动推送部署不需要运行它们，文档整理不重写模型资产。提交、推送和发布按用户授权执行。
 

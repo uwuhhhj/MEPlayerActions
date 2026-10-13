@@ -5,6 +5,8 @@ import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.permissions.Permission;
+import org.bukkit.plugin.PluginDescriptionFile;
 import org.junit.jupiter.api.Test;
 import java.io.InputStreamReader;
 import java.net.URL;
@@ -26,6 +28,20 @@ class OptionalModelEngineBootstrapTest {
         assertTrue(descriptor.getStringList("softdepend").containsAll(List.of("ModelEngine", "GSit")));
         assertFalse(descriptor.getBoolean("permissions.mact.private.upload.default"));
         assertFalse(descriptor.getBoolean("permissions.mact.private.view.default"));
+    }
+
+    @Test
+    void descriptorDeniesOrdinaryPlayersAndOperatorsByDefault() throws Exception {
+        try (InputStreamReader source = new InputStreamReader(getClass().getResourceAsStream("/plugin.yml"),
+                StandardCharsets.UTF_8)) {
+            PluginDescriptionFile descriptor = new PluginDescriptionFile(source);
+            assertEquals("mact.use", descriptor.getCommands().get("meplayeractions").get("permission"));
+            assertFalse(descriptor.getPermissions().isEmpty());
+            for (Permission permission : descriptor.getPermissions()) {
+                assertFalse(permission.getDefault().getValue(false), permission.getName());
+                assertFalse(permission.getDefault().getValue(true), permission.getName());
+            }
+        }
     }
 
     @Test

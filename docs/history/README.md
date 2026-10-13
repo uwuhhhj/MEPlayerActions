@@ -6,6 +6,7 @@
 
 | 版本 | 记录 |
 | --- | --- |
+| 0.6.3 | [两端资源准备、持久化与扫描优化](SERVER_CLIENT_0_6_3_RESOURCE_SCAN.md) |
 | 0.6.2 | [代码规范与可读性整理](SERVER_CLIENT_0_6_2_CODE_STYLE.md) |
 | 0.6.1 | [统一模型解释、服务器资源状态与伪装入口](SERVER_CLIENT_0_6_1_MODEL_CONSISTENCY.md) |
 | 0.6.0 | [服务器资源保护、上传额度与全局诊断](SERVER_0_6_0_RESOURCE_PROTECTION.md) |
